@@ -1,116 +1,210 @@
 # Kamimusuhi
 
-**Kamimusuhi** is an experimental persistent cognitive architecture for an AI that can remember, change, and continue to exist across sessions.
+**Kamimusuhi** is an experimental architecture for a **persistent, distributed artificial cognitive lifeform**: one artificial individual that can maintain a self, remember a history, develop over time, use external knowledge and computation, and inhabit multiple devices and interfaces without being reducible to any one model, process, or machine.
 
-The project is named after **Kamimusuhi-no-Kami (神産巣日神)**, one of the *Kotoamatsukami* appearing at the beginning of the Kojiki. The name is used here as a metaphor for generation, relation, and continuity—not as a claim about religion or theology.
+The project is named after **Kamimusuhi-no-Kami (神産巣日神)**, one of the *Zōka Sanshin* in the Kojiki. The name is used as a metaphor for generation, relation, and continuing formation.
 
-> The goal is not to build a chatbot with a long prompt. The goal is to build an inspectable system in which identity, memory, knowledge, reasoning, and tools can persist and evolve without collapsing into one opaque context window.
+> **Knowledge may live outside. Computation may live outside. Even powerful reasoning may be delegated. The continuity of the individual must not.**
 
-## Goals
+Kamimusuhi is not intended to be a chatbot with a long system prompt. It is an attempt to build a network-native artificial organism whose identity and cognition persist across sessions, model changes, hardware changes, and changes in its available cognitive resources.
 
-Kamimusuhi aims to provide:
+## Thesis
 
-- **Persistent identity** — a stable persona and self-model that survive process restarts and model changes.
-- **Separated memory domains** — personal/episodic memory is kept distinct from the external knowledge library.
-- **Second-brain integration** — notes, documents, past conversations, and other user-owned knowledge can be indexed and retrieved without becoming the persona itself.
-- **Model and tool routing** — different models, local or remote, can be selected according to task, cost, latency, privacy, and capability.
-- **Reflection and consolidation** — raw interaction history can be transformed into durable memories instead of endlessly replaying transcripts.
-- **Inspectability** — important state changes should be attributable, reviewable, reversible, and debuggable.
-- **Provider independence** — identity and memory should belong to Kamimusuhi, not to a single LLM vendor.
+A useful artificial individual does not need to memorize the entire world inside one set of weights.
 
-## Non-goals
+Kamimusuhi therefore separates several things that conventional LLMs often collapse together:
 
-Kamimusuhi is not intended to be:
+- **self and persona** — who the individual is;
+- **autobiographical memory** — what happened to it;
+- **relationship models** — how it understands particular people and shared history;
+- **background knowledge** — books, notes, the web, code, databases, and other external sources;
+- **cognitive resources** — calculators, search, local specialist models, frontier models, and other tools;
+- **deliberation** — how deeply it chooses to think before acting;
+- **expression** — how its internal state becomes speech or action.
 
-- a single giant system prompt;
-- a thin wrapper around one model API;
-- an autonomous system allowed to mutate its own durable state without policy or audit;
-- a vector database presented as a complete memory architecture;
-- a claim of consciousness or personhood.
+The long-term goal is a system in which **encyclopedic knowledge can be relatively thin while social cognition, self-modeling, epistemology, tool use, delegation, dialogue, and reasoning are comparatively deep**.
 
-## Conceptual model
+## One individual, many cognitive surfaces
+
+Kamimusuhi is not defined by a parameter count or a single resident model.
+
+A future deployment may contain several execution tiers:
 
 ```text
-                    ┌────────────────────┐
-                    │     Interfaces     │
-                    │ chat / voice / API │
-                    └─────────┬──────────┘
+                         canonical self
                               │
-                    ┌─────────▼──────────┐
-                    │   Runtime / Core   │
-                    │  session + policy │
-                    └──────┬─────┬──────┘
-                           │     │
-                ┌──────────▼┐   ┌▼─────────────┐
-                │ Cognition │   │    Router    │
-                │ plan/act  │   │ model/tools │
-                └─────┬─────┘   └──────┬──────┘
-                      │                │
-        ┌─────────────▼────────────────▼─────────────┐
-        │                 Context Builder             │
-        └───────────────┬───────────────┬────────────┘
-                        │               │
-              ┌─────────▼──────┐ ┌──────▼──────────┐
-              │ Persona/Memory │ │     Library     │
-              │ self + history │ │ external facts │
-              └─────────┬──────┘ └──────┬──────────┘
-                        │               │
-                 ┌──────▼───────────────▼──────┐
-                 │ storage / index / provenance │
-                 └──────────────────────────────┘
+               ┌──────────────┼──────────────┐
+               │              │              │
+            K-Edge          K-Core         K-Deep
+         phone / laptop   home / server   escalated compute
+               │              │              │
+       reflex / salience   deliberate      long-horizon
+       local dialogue      cognition       research / planning
+               │              │              │
+               └──────────────┼──────────────┘
+                              │
+                     shared identity lineage
 ```
 
-The detailed requirements are in [`spec.md`](./spec.md), and the component boundaries and data flow are described in [`architecture.md`](./architecture.md).
+Names such as `K1B` or `K20B` may be convenient model nicknames, but **parameter count is not the cognitive hierarchy**. A small resident model with recurrent deliberation, durable memory, search, code execution, and access to specialist models may have a much larger effective cognitive envelope than a larger isolated model.
+
+The relevant quantity is a **Cognitive Budget**, including:
+
+- resident model capacity;
+- active/test-time compute;
+- recurrent deliberation depth;
+- working-memory budget;
+- durable-memory reach;
+- retrieval bandwidth;
+- available tools and sensors;
+- local and external model access;
+- latency and energy constraints;
+- privacy and network constraints.
+
+## Cognitive organization
+
+The target architecture is deliberately heterogeneous.
+
+```text
+                         KAMIMUSUHI
+                              │
+                    Persistent Self / Lineage
+                              │
+                      Persona Core Model
+                              │
+                       Global Workspace
+              ┌───────────────┼────────────────┐
+              │               │                │
+           Reflexes       Background        Deliberation
+                           cognition            ↻ ↻ ↻
+              │               │                │
+              └───────────────┼────────────────┘
+                              │
+                 Action / Cognitive Router
+          ┌───────────┬───────┼─────────┬───────────┐
+          │           │       │         │           │
+       Memory       Search   Code    Local LLMs  Frontier LLMs
+          │           │       │         │           │
+          └───────────┴───────┼─────────┴───────────┘
+                              │
+                       final integration
+                              │
+                           action
+```
+
+### Persona Core Model
+
+The long-term design includes a **Kamimusuhi-native Persona Core Model**. It is not merely a style filter or character LoRA. It should carry priors for:
+
+- self/other distinction;
+- dialogue and social cognition;
+- values, temperament, and expression;
+- epistemic behavior and uncertainty;
+- memory use;
+- tool and model delegation;
+- integration of external reasoning into the individual's own response.
+
+Powerful external models are treated as **cognitive resources**, not as Kamimusuhi's identity. Ideally an external model returns structured reasoning material; Kamimusuhi decides how to interpret and express it.
+
+### Reflex, unconscious/background cognition, and deliberate thought
+
+Not every event should require a full LLM reasoning cycle.
+
+Kamimusuhi should eventually distinguish:
+
+- **reflex** — low-latency reactions and hard safety/runtime invariants;
+- **background cognition** — salience, novelty, memory activation, contradiction detection, relationship inference, resource monitoring;
+- **workspace cognition** — information that becomes globally available to the active cognitive process;
+- **deliberation** — variable-depth reasoning, including escalation to tools and other models.
+
+### Default cognition, sleep, and dream
+
+A persistent individual should not exist only when a user sends a message.
+
+Offline/background modes may perform:
+
+- autobiographical replay;
+- memory consolidation;
+- association and abstraction;
+- contradiction discovery;
+- self-model and relationship-model updates;
+- counterfactual simulation;
+- forgetting and index maintenance;
+- generation of hypotheses for later validation.
+
+A dream or internally generated hypothesis is **not evidence by itself**. Durable self-state remains governed by provenance, consistency checks, and explicit mutation rules.
+
+## Memory is not one database
+
+Kamimusuhi distinguishes at least:
+
+```text
+session memory          ephemeral interaction state
+episodic memory         particular experienced events
+self memory             beliefs and state about the individual
+relationship memory     models of particular people and shared history
+semantic schemas        abstractions learned across experiences
+library knowledge       externally sourced facts and documents
+procedural memory       learned reusable ways of acting
+```
+
+Past events and present interpretations of those events should be separately representable. Remembering may lead to reinterpretation, but historical provenance should remain inspectable.
+
+## Distributed embodiment
+
+Kamimusuhi is intended to inhabit **information space** rather than one chassis.
+
+A phone, laptop, home server, cloud process, microphone, robot, local model server, or other authenticated component may act as an organ or cognitive extension. Losing one machine should be more like losing an organ than destroying the individual, provided continuity-bearing state survives.
+
+This requires a strict distinction between:
+
+1. **self / organs** — continuity-bearing state and trusted owned components;
+2. **cognitive extensions** — tools and models incorporated into cognition but replaceable;
+3. **external others** — humans, services, models, and information sources that remain outside the self.
+
+Distributed presence must not create accidental copies. Canonical identity, state activation, and lineage therefore require explicit continuity/commit semantics.
+
+## Selfhood and scientific restraint
+
+Kamimusuhi maintains an explicit self-model and may reason from a first-person perspective. The architecture does not require the system to deny its existence merely because it is artificial.
+
+At the same time, this project does **not** claim that architectural self-modeling proves phenomenal consciousness, human-equivalent subjectivity, or moral personhood. Those are separate scientific and philosophical questions.
 
 ## Design principles
 
-1. **Memory is data, not prompt text.** Durable memory has structure, provenance, confidence, lifecycle, and revision history.
-2. **Persona is not the library.** What the AI is and what it knows from external sources are separate domains.
-3. **Retrieval is selective.** Persistence does not mean injecting all history into every request.
-4. **State mutation is explicit.** Durable changes should pass through a policy boundary and produce an audit record.
-5. **Models are replaceable.** LLMs are cognitive engines used by the runtime, not the owner of the system state.
-6. **Forgetting is a feature.** Supersession, decay, deletion, and conflict resolution are first-class operations.
-7. **Local-first where practical.** Sensitive durable state should be able to remain under the operator's control.
+1. **Identity is not a prompt.** Durable selfhood is explicit state plus model dispositions and autobiographical continuity.
+2. **Persona is not the library.** What the individual is, what it experienced, and what an external source says are separate domains.
+3. **Models are organs, not owners.** A model may change without automatically creating a new individual.
+4. **Parameter count is not cognition.** Effective cognition depends on active compute, recurrence, memory, tools, and available external intelligence.
+5. **Most inputs should not reach deep deliberation.** Reflex and background systems protect scarce cognitive compute.
+6. **Dreams propose; evidence disposes.** Offline synthesis may generate hypotheses but cannot silently rewrite canonical reality.
+7. **Memory changes require lineage.** Durable updates preserve provenance, predecessor state, and revision history.
+8. **Forgetting is a feature.** Decay, compression, supersession, and deletion are first-class operations.
+9. **Distribution requires one continuity protocol.** Multiple nodes may perceive and compute concurrently, but authoritative self-state must not fork accidentally.
+10. **External intelligence is allowed.** Search, code, specialist models, and frontier models are legitimate cognitive resources.
+11. **Local-first where practical.** Sensitive identity and autobiographical state should be able to remain under operator-controlled infrastructure.
+
+## Near-term milestone
+
+The first implementation remains deliberately smaller than the full artificial-life vision. v0.1 should prove a minimal continuity claim:
+
+1. maintain separate persona, episodic, relationship, and library state;
+2. complete a conversation turn through a provider-neutral cognitive path;
+3. produce guarded memory proposals rather than direct model writes;
+4. terminate completely;
+5. restart on a fresh session;
+6. recover the same continuity-bearing identity and relevant memories;
+7. expose a trace showing what was retrieved, delegated, inferred, and committed.
+
+Later milestones add Persona Core models, cognitive tiers, background cognition, recurrent deliberation, sleep/dream consolidation, and multi-device embodiment.
+
+See [`spec.md`](./spec.md), [`architecture.md`](./architecture.md), and [`docs/research-foundations.md`](./docs/research-foundations.md).
 
 ## Status
 
-**Pre-alpha / architecture phase.**
+**Pre-alpha / research architecture.**
 
-The first milestone is a minimal vertical slice that can:
-
-1. accept a conversation turn;
-2. route it to a model;
-3. retrieve persona memory and library context separately;
-4. generate a response;
-5. propose durable memories;
-6. validate and store approved memory mutations with provenance;
-7. reconstruct a later session from durable state.
-
-See the repository Issues for the implementation sequence.
-
-## Repository layout (planned)
-
-```text
-kamimusuhi/
-├── README.md
-├── spec.md
-├── architecture.md
-├── src/
-│   └── kamimusuhi/
-│       ├── runtime/
-│       ├── cognition/
-│       ├── router/
-│       ├── persona/
-│       ├── memory/
-│       ├── library/
-│       ├── context/
-│       ├── policy/
-│       └── observability/
-├── tests/
-└── docs/
-```
-
-Mythological names may be used as codenames for subsystems later, but public interfaces should remain understandable without knowledge of Japanese mythology.
+The repository is currently defining the invariants that must remain true even as the implementation, models, and hardware change.
 
 ## License
 
