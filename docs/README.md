@@ -30,6 +30,10 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 
 ## Current index
 
+### Implementation plans
+
+- [`implementation/phase-1-implementation-plan.md`](./implementation/phase-1-implementation-plan.md) — **第一次実装計画書**。v0.1 continuity vertical slice を実コードへ落とすため、Rust + SQLite single-writer、Cargo workspace、schema v1、atomic activation、Fake Persona Core / resource A・B、restart demo、failpoint test、local CI、Wave W0–W5、Definition of Done を具体化。現時点では計画であり実装済みではない。
+
 ### 器官設計監査 / Organ design audit
 
 - [`audits/2026-09-08-organ-design-audit.md`](./audits/2026-09-08-organ-design-audit.md) — 日本語。固定 commit を基準に26機能領域を監査し、18件の横断的な設計不足・接続未確定点、既存設計、優先順位、確認限界を整理。実装済みという判定ではない。
