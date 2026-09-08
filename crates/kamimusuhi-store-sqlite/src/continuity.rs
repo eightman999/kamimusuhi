@@ -9,15 +9,22 @@ use kamimusuhi_core::continuity::{
     ContinuityStore, ExpectedHead, Generation, Individual, IndividualBootstrap, NewIndividual,
     WriterEpoch, WriterIdentity,
 };
+use kamimusuhi_core::domain_separation::{SeparationContext, check_domain_separation};
 use kamimusuhi_core::ids::{
-    AuditEventId, BootId, CommitId, IndividualId, NodeId, PolicyVersion, ProposalId, ReceiptId,
+    AuditEventId, BootId, CommitId, IndividualId, MemoryId, NodeId, PolicyVersion, ProposalId,
+    ReceiptId,
 };
 use kamimusuhi_core::mutation::{Disposition, MutationDecision, MutationProposal, ReasonCode};
 use kamimusuhi_core::time::UtcTimestamp;
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
 use crate::error::map_sqlite;
+use crate::evidence::{corrected_by, facts_in};
 use crate::failpoints::Failpoint;
+use crate::memory::{
+    insert_state_record, invalidate_records_supported_by, mark_superseded, state_facts_in,
+    state_kind,
+};
 use crate::store::SqliteStore;
 
 fn corrupt(detail: impl Into<String>) -> ContinuityError {
@@ -226,8 +233,8 @@ fn insert_proposal(
             proposal_id, individual_id, domain, operation, subject_key, candidate_json,
             expected_commit_id, expected_generation, evidence_refs_json, origin_class,
             requested_by_json, writer_epoch, policy_version, idempotency_key,
-            payload_fingerprint, created_at, recorded_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            payload_fingerprint, created_at, recorded_at, supersedes_state_record_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             proposal.proposal_id.to_string(),
             proposal.individual_id.to_string(),
@@ -246,6 +253,7 @@ fn insert_proposal(
             proposal.payload_fingerprint(),
             proposal.created_at.unix_millis(),
             now.unix_millis(),
+            proposal.supersedes.map(|s| s.to_string()),
         ],
     )
     .map_err(map_sqlite)?;
@@ -342,6 +350,7 @@ fn proposed_payload(proposal: &MutationProposal) -> serde_json::Value {
         "subject_key": proposal.subject_key,
         "expected_head": proposal.expected_head,
         "evidence_refs": proposal.evidence_refs,
+        "supersedes": proposal.supersedes,
         "origin_class": proposal.origin_class,
         "requested_by": proposal.requested_by,
         "policy_version": proposal.policy_version,
@@ -685,14 +694,97 @@ impl ContinuityStore for SqliteStore {
             return Ok(ActivationOutcome::Rejected(rejection));
         }
 
+        // Domain separation is re-checked under the write lock: the policy
+        // read evidence outside this transaction, and a decision must not be
+        // applied against state that moved since.
+        let separation = SeparationContext {
+            evidence: facts_in(&tx, &proposal.evidence_refs)?,
+            supersedes_target: proposal
+                .supersedes
+                .map(|id| state_facts_in(&tx, id))
+                .transpose()?
+                .flatten(),
+        };
+        if let Err(violation) = check_domain_separation(proposal, &separation) {
+            let rejection = MutationDecision::reject(
+                proposal,
+                violation.reason_code,
+                violation.detail,
+                decision.policy_version,
+                now,
+            );
+            record_rejection_in(&tx, self, proposal, &rejection, now)?;
+            tx.commit().map_err(map_sqlite)?;
+            return Ok(ActivationOutcome::Rejected(rejection));
+        }
+
         insert_proposal(&tx, proposal, now)?;
         self.failpoint(Failpoint::AfterProposalInsert)?;
         insert_decision(&tx, decision)?;
-        // Wave 2 appends derived state records here.
-        self.failpoint(Failpoint::AfterStateInsert)?;
 
         let commit_id = CommitId::generate(self.ids());
         let generation = head.generation.next();
+
+        // Derived state. The FK to the commit row is DEFERRED, so the record
+        // can name the commit that is written a few statements below.
+        let state_record_id = MemoryId::generate(self.ids());
+        insert_state_record(
+            &tx,
+            state_record_id,
+            proposal.individual_id,
+            proposal.domain,
+            proposal.subject_key.as_deref(),
+            state_kind(proposal.operation),
+            &proposal.candidate,
+            commit_id,
+            proposal.supersedes,
+            &proposal.evidence_refs,
+            now,
+        )?;
+        if let Some(target) = proposal.supersedes {
+            mark_superseded(&tx, target, state_record_id)?;
+            insert_audit(
+                &tx,
+                self,
+                proposal.individual_id,
+                AuditKind::StateSuperseded,
+                (Some(commit_id), Some(proposal.proposal_id)),
+                serde_json::json!({
+                    "reason": "explicit_correction",
+                    "superseded_state_record_id": target,
+                    "replacement_state_record_id": state_record_id,
+                }),
+                now,
+            )?;
+        }
+        // Correcting a source takes what rested on it out of the current view
+        // instead of leaving it standing as an independent fact (audit A03).
+        let corrected = corrected_by(&tx, &proposal.evidence_refs)?;
+        if !corrected.is_empty() {
+            let invalidated = invalidate_records_supported_by(
+                &tx,
+                proposal.individual_id,
+                &corrected,
+                Some(state_record_id),
+            )?;
+            if !invalidated.is_empty() {
+                insert_audit(
+                    &tx,
+                    self,
+                    proposal.individual_id,
+                    AuditKind::StateSuperseded,
+                    (Some(commit_id), Some(proposal.proposal_id)),
+                    serde_json::json!({
+                        "reason": "supporting_evidence_corrected",
+                        "corrected_evidence": corrected,
+                        "invalidated_state_record_ids": invalidated,
+                    }),
+                    now,
+                )?;
+            }
+        }
+        self.failpoint(Failpoint::AfterStateInsert)?;
+
         tx.execute(
             "INSERT INTO canonical_commits(commit_id, individual_id, generation, predecessor_commit_id, proposal_id, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -774,6 +866,7 @@ impl ContinuityStore for SqliteStore {
             (Some(commit_id), Some(proposal.proposal_id)),
             serde_json::json!({
                 "receipt_id": receipt.receipt_id,
+                "state_record_id": state_record_id,
                 "predecessor_commit_id": receipt.predecessor_commit_id,
                 "generation": receipt.generation,
                 "policy_version": decision.policy_version,

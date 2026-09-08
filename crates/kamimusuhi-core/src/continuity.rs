@@ -17,7 +17,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::audit::AuditEvent;
+use crate::evidence::{EvidenceError, EvidenceLookup};
 use crate::ids::{BootId, CommitId, IndividualId, NodeId, ProposalId, ReceiptId, SchemaVersion};
+use crate::memory::{MemoryError, StateLookup};
 use crate::mutation::{
     Disposition, MutationDecision, MutationPolicy, MutationProposal, PolicyContext, PolicyError,
 };
@@ -189,6 +191,10 @@ pub enum ContinuityError {
     DecisionNotAccepting(Disposition),
     #[error("mutation policy failed: {0}")]
     Policy(#[from] PolicyError),
+    #[error("evidence lookup failed: {0}")]
+    Evidence(#[from] EvidenceError),
+    #[error("durable memory lookup failed: {0}")]
+    Memory(#[from] MemoryError),
     /// Lock contention or busy timeout. Distinct from identity conflicts:
     /// callers may retry; they must not treat this as a stale predecessor.
     #[error("canonical store is busy: {detail}")]
@@ -254,17 +260,25 @@ pub trait ContinuityStore: Send + Sync {
     -> Result<Vec<AuditEvent>, ContinuityError>;
 }
 
-/// Orchestrates proposal → policy → activation over a [`ContinuityStore`].
+/// The canonical store as the kernel needs it: lineage plus the two
+/// payload-free lookups a decision depends on.
+pub trait CanonicalStore: ContinuityStore + EvidenceLookup + StateLookup {}
+
+impl<T: ContinuityStore + EvidenceLookup + StateLookup> CanonicalStore for T {}
+
+/// Orchestrates proposal → evidence resolution → policy → activation over a
+/// [`CanonicalStore`].
 ///
 /// The kernel performs no model or network calls, so no canonical transaction
-/// is ever held open across one.
+/// is ever held open across one. Evidence and supersession facts are read
+/// before the decision and re-checked inside the activation transaction.
 pub struct ContinuityKernel<S, P, C> {
     store: S,
     policy: P,
     clock: C,
 }
 
-impl<S: ContinuityStore, P: MutationPolicy, C: Clock> ContinuityKernel<S, P, C> {
+impl<S: CanonicalStore, P: MutationPolicy, C: Clock> ContinuityKernel<S, P, C> {
     pub fn new(store: S, policy: P, clock: C) -> Self {
         Self {
             store,
@@ -299,9 +313,16 @@ impl<S: ContinuityStore, P: MutationPolicy, C: Clock> ContinuityKernel<S, P, C> 
         }
 
         let current_head = self.store.load_head(proposal.individual_id)?;
+        let evidence = self.store.facts(&proposal.evidence_refs)?;
+        let supersedes_target = match proposal.supersedes {
+            Some(id) => self.store.state_facts(id)?,
+            None => None,
+        };
         let context = PolicyContext {
             current_head,
             now: self.clock.now_utc(),
+            evidence,
+            supersedes_target,
         };
         let decision = self.policy.decide(proposal, &context)?;
         if decision.disposition == Disposition::Accept {
@@ -318,10 +339,14 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::ids::{EvidenceId, ReceiptId};
+    use crate::evidence::{EvidenceFacts, EvidenceKind, EvidenceSnapshot};
+    use crate::ids::{EvidenceId, MemoryId, ReceiptId};
+    use crate::memory::StateRecordFacts;
     use crate::mutation::{
         MutationDomain, MutationOperation, MutationPolicyV0, OriginClass, ReasonCode,
     };
+
+    const UTTERANCE: EvidenceId = EvidenceId::from_u128(50);
 
     /// Minimal in-memory store that records which entry points the kernel used.
     #[derive(Default)]
@@ -433,6 +458,32 @@ mod tests {
         }
     }
 
+    impl EvidenceLookup for MockStore {
+        fn facts(&self, evidence_ids: &[EvidenceId]) -> Result<EvidenceSnapshot, EvidenceError> {
+            // Only the fixture utterance exists in this mock store.
+            Ok(EvidenceSnapshot::new(
+                evidence_ids
+                    .iter()
+                    .filter(|id| **id == UTTERANCE)
+                    .map(|id| {
+                        EvidenceFacts::standalone(
+                            *id,
+                            IndividualId::from_u128(1),
+                            EvidenceKind::UserUtterance,
+                            OriginClass::Reported,
+                        )
+                    })
+                    .collect(),
+            ))
+        }
+    }
+
+    impl StateLookup for MockStore {
+        fn state_facts(&self, _: MemoryId) -> Result<Option<StateRecordFacts>, MemoryError> {
+            Ok(None)
+        }
+    }
+
     struct TestClock;
 
     impl Clock for TestClock {
@@ -460,7 +511,8 @@ mod tests {
             subject_key: Some("user-fixture".to_owned()),
             candidate: serde_json::json!({ "preference": "ほうじ茶" }),
             expected_head: expected,
-            evidence_refs: vec![EvidenceId::from_u128(50)],
+            evidence_refs: vec![UTTERANCE],
+            supersedes: None,
             origin_class: OriginClass::Reported,
             requested_by: WriterIdentity {
                 node_id: NodeId::from_u128(7),

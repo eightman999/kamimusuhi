@@ -9,7 +9,13 @@ use kamimusuhi_core::continuity::{
     ContinuityError, ContinuityKernel, ContinuityStore, ExpectedHead, IndividualBootstrap,
     NewIndividual, WriterIdentity,
 };
-use kamimusuhi_core::ids::{BootId, CommitId, EvidenceId, IndividualId, NodeId, ProposalId};
+use kamimusuhi_core::evidence::{
+    EvidenceKind, EvidenceRecord, EvidenceSource, EvidenceStore, NewEvidence, NewSession, NewTurn,
+    RetentionClass,
+};
+use kamimusuhi_core::ids::{
+    BootId, CommitId, EvidenceId, IndividualId, NodeId, ProposalId, SessionId, TurnId,
+};
 use kamimusuhi_core::mutation::{
     MutationDomain, MutationOperation, MutationPolicyV0, MutationProposal, OriginClass,
 };
@@ -22,6 +28,9 @@ pub const ROOT_COMMIT: CommitId = CommitId::from_u128(0xC0);
 pub const NODE: NodeId = NodeId::from_u128(0x0E);
 pub const BOOT_A: BootId = BootId::from_u128(0xB1);
 pub const BOOT_B: BootId = BootId::from_u128(0xB2);
+pub const SESSION: SessionId = SessionId::from_u128(0x51);
+pub const TURN: TurnId = TurnId::from_u128(0x71);
+/// The fixture user utterance every relationship proposal cites.
 pub const EVIDENCE: EvidenceId = EvidenceId::from_u128(0xE1);
 
 pub struct TempDb {
@@ -56,15 +65,61 @@ pub fn open(path: &Path, id_seed: u64) -> SqliteStore {
     open_store(path, id_seed).unwrap()
 }
 
+/// Create the individual and append the session, turn and user utterance that
+/// the relationship fixtures cite. A proposal whose evidence does not exist is
+/// rejected, so continuity tests need real evidence on disk.
 pub fn bootstrap(store: &SqliteStore, boot: BootId) -> IndividualBootstrap {
-    store
+    let bootstrap = store
         .create_individual(NewIndividual {
             individual_id: INDIVIDUAL,
             root_commit_id: ROOT_COMMIT,
             node_id: NODE,
             boot_id: boot,
         })
+        .unwrap();
+    append_fixture_utterance(store);
+    bootstrap
+}
+
+/// Append the fixture session/turn/utterance. Idempotent, so a second
+/// "process" opening the same database can call it again.
+pub fn append_fixture_utterance(store: &SqliteStore) -> EvidenceRecord {
+    store
+        .open_session(NewSession {
+            session_id: SESSION,
+            individual_id: INDIVIDUAL,
+        })
+        .unwrap();
+    store
+        .record_turn(NewTurn {
+            turn_id: TURN,
+            session_id: SESSION,
+            individual_id: INDIVIDUAL,
+            sequence: 0,
+        })
+        .unwrap();
+    store
+        .append(user_utterance(EVIDENCE, "私はほうじ茶が好き。覚えておいて"))
         .unwrap()
+}
+
+/// A raw user utterance in the fixture session/turn.
+pub fn user_utterance(evidence_id: EvidenceId, text: &str) -> NewEvidence {
+    NewEvidence {
+        evidence_id,
+        individual_id: INDIVIDUAL,
+        session_id: Some(SESSION),
+        turn_id: Some(TURN),
+        kind: EvidenceKind::UserUtterance,
+        origin_class: OriginClass::Reported,
+        payload: serde_json::json!({ "text": text }),
+        source: EvidenceSource {
+            source_id: Some("fixture-channel".to_owned()),
+            source_sequence: Some(0),
+            content_digest: None,
+        },
+        retention_class: RetentionClass::Standard,
+    }
 }
 
 pub type Kernel = ContinuityKernel<SqliteStore, MutationPolicyV0, FixedClock>;
@@ -88,6 +143,7 @@ pub fn relationship_fact(
         candidate: serde_json::json!({ "preference": preference }),
         expected_head,
         evidence_refs: vec![EVIDENCE],
+        supersedes: None,
         origin_class: OriginClass::Reported,
         requested_by: writer,
         policy_version: MutationPolicyV0::VERSION,
@@ -106,6 +162,8 @@ pub struct RowCounts {
     pub decisions: i64,
     pub receipts: i64,
     pub audits: i64,
+    pub evidence: i64,
+    pub state_records: i64,
     pub head_generation: i64,
 }
 
@@ -129,6 +187,8 @@ pub fn row_counts(path: &Path) -> RowCounts {
         decisions: count("mutation_decisions"),
         receipts: count("activation_receipts"),
         audits: count("audit_events"),
+        evidence: count("evidence_records"),
+        state_records: count("state_records"),
         head_generation,
     }
 }

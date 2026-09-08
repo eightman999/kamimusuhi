@@ -134,6 +134,8 @@ fn accepted_activation_increments_generation_and_records_receipt_and_audit() {
             proposals: 1,
             decisions: 1,
             receipts: 1,
+            evidence: 1,
+            state_records: 1,
             audits: 4,
             head_generation: 1,
         }
@@ -257,6 +259,8 @@ fn rejected_proposal_is_durable_and_does_not_move_head() {
             proposals: 1,
             decisions: 1,
             receipts: 0,
+            evidence: 1,
+            state_records: 0,
             audits: 4,
             head_generation: 0,
         }

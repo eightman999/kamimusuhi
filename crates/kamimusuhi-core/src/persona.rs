@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{EvidenceId, IndividualId, SessionId, TurnId};
+use crate::ids::{EvidenceId, IndividualId, MemoryId, SessionId, TurnId};
 use crate::mutation::{MutationDomain, MutationOperation, OriginClass};
 
 /// Correlation IDs for one cognitive turn.
@@ -44,6 +44,11 @@ pub struct ProposalDraft {
     pub subject_key: Option<String>,
     pub candidate: serde_json::Value,
     pub evidence_refs: Vec<EvidenceId>,
+    /// Set only for a correction: the durable record this draft replaces.
+    /// The Persona Core may point at a record it retrieved, but it cannot
+    /// decide that the replacement happens.
+    #[serde(default)]
+    pub supersedes: Option<MemoryId>,
     pub origin_class: OriginClass,
 }
 

@@ -17,14 +17,21 @@ struct Migration {
     sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: SchemaVersion(1),
-    name: "continuity",
-    sql: include_str!("../migrations/0001_continuity.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: SchemaVersion(1),
+        name: "continuity",
+        sql: include_str!("../migrations/0001_continuity.sql"),
+    },
+    Migration {
+        version: SchemaVersion(2),
+        name: "evidence_memory",
+        sql: include_str!("../migrations/0002_evidence_memory.sql"),
+    },
+];
 
 /// Newest schema this build can read and write.
-pub const SUPPORTED_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
+pub const SUPPORTED_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
 
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 

@@ -10,7 +10,10 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::continuity::{ContinuityHead, ExpectedHead, WriterIdentity};
-use crate::ids::{EvidenceId, IndividualId, PolicyVersion, ProposalId};
+use crate::domain_separation::{SeparationContext, check_domain_separation};
+use crate::evidence::EvidenceSnapshot;
+use crate::ids::{EvidenceId, IndividualId, MemoryId, PolicyVersion, ProposalId};
+use crate::memory::StateRecordFacts;
 use crate::persona::ProposalDraft;
 use crate::time::UtcTimestamp;
 
@@ -158,7 +161,7 @@ pub struct UnknownVocabulary {
 }
 
 impl UnknownVocabulary {
-    fn new(field: &'static str, value: &str) -> Self {
+    pub fn new(field: &'static str, value: &str) -> Self {
         Self {
             field,
             value: value.to_owned(),
@@ -177,6 +180,10 @@ pub struct MutationProposal {
     pub candidate: serde_json::Value,
     pub expected_head: ExpectedHead,
     pub evidence_refs: Vec<EvidenceId>,
+    /// The state record this proposal replaces. Only a
+    /// [`MutationOperation::Correction`] may set it, and the old record is
+    /// marked superseded rather than rewritten.
+    pub supersedes: Option<MemoryId>,
     pub origin_class: OriginClass,
     pub requested_by: WriterIdentity,
     pub policy_version: PolicyVersion,
@@ -209,6 +216,7 @@ impl MutationProposal {
             candidate: draft.candidate,
             expected_head: attribution.expected_head,
             evidence_refs: draft.evidence_refs,
+            supersedes: draft.supersedes,
             origin_class: draft.origin_class,
             requested_by: attribution.requested_by,
             policy_version: attribution.policy_version,
@@ -251,6 +259,7 @@ impl MutationProposal {
             "subject_key": self.subject_key,
             "candidate": self.candidate,
             "evidence_refs": evidence,
+            "supersedes": self.supersedes,
             "origin_class": self.origin_class,
             "expected_head": self.expected_head,
         });
@@ -306,6 +315,18 @@ pub enum ReasonCode {
     /// The proposing writer's epoch has been superseded by a newer claimant.
     StaleWriterEpoch,
     MissingEvidence,
+    /// A cited evidence record does not exist in this store.
+    EvidenceNotFound,
+    /// A cited evidence record belongs to a different individual.
+    EvidenceOwnerMismatch,
+    /// The cited evidence cannot support the targeted domain (Library text or
+    /// resource output offered as first-party testimony, a derived summary
+    /// offered as a raw capture, ...).
+    EvidenceDomainMismatch,
+    /// Outside content was offered as a statement about Kamimusuhi itself.
+    SelfDomainContamination,
+    /// A correction named no target, or a target that cannot be superseded.
+    SupersedeTargetInvalid,
     UnsupportedOperation,
     PolicyVersionMismatch,
     IndividualMismatch,
@@ -322,6 +343,11 @@ impl ReasonCode {
             Self::StalePredecessor => "STALE_PREDECESSOR",
             Self::StaleWriterEpoch => "STALE_WRITER_EPOCH",
             Self::MissingEvidence => "MISSING_EVIDENCE",
+            Self::EvidenceNotFound => "EVIDENCE_NOT_FOUND",
+            Self::EvidenceOwnerMismatch => "EVIDENCE_OWNER_MISMATCH",
+            Self::EvidenceDomainMismatch => "EVIDENCE_DOMAIN_MISMATCH",
+            Self::SelfDomainContamination => "SELF_DOMAIN_CONTAMINATION",
+            Self::SupersedeTargetInvalid => "SUPERSEDE_TARGET_INVALID",
             Self::UnsupportedOperation => "UNSUPPORTED_OPERATION",
             Self::PolicyVersionMismatch => "POLICY_VERSION_MISMATCH",
             Self::IndividualMismatch => "INDIVIDUAL_MISMATCH",
@@ -347,6 +373,11 @@ impl FromStr for ReasonCode {
             "STALE_PREDECESSOR" => Self::StalePredecessor,
             "STALE_WRITER_EPOCH" => Self::StaleWriterEpoch,
             "MISSING_EVIDENCE" => Self::MissingEvidence,
+            "EVIDENCE_NOT_FOUND" => Self::EvidenceNotFound,
+            "EVIDENCE_OWNER_MISMATCH" => Self::EvidenceOwnerMismatch,
+            "EVIDENCE_DOMAIN_MISMATCH" => Self::EvidenceDomainMismatch,
+            "SELF_DOMAIN_CONTAMINATION" => Self::SelfDomainContamination,
+            "SUPERSEDE_TARGET_INVALID" => Self::SupersedeTargetInvalid,
             "UNSUPPORTED_OPERATION" => Self::UnsupportedOperation,
             "POLICY_VERSION_MISMATCH" => Self::PolicyVersionMismatch,
             "INDIVIDUAL_MISMATCH" => Self::IndividualMismatch,
@@ -404,11 +435,39 @@ impl MutationDecision {
 }
 
 /// What the policy may look at. Loaded before the decision, outside any
-/// long-running call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// long-running call, so no canonical transaction is held open while a model
+/// or network call runs.
+///
+/// The evidence and supersession facts are payload-free by construction: a
+/// decision must not depend on the text of a record.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyContext {
     pub current_head: ContinuityHead,
     pub now: UtcTimestamp,
+    /// Resolved facts for `proposal.evidence_refs`, lineage included.
+    pub evidence: EvidenceSnapshot,
+    /// Facts about `proposal.supersedes`, if it names an existing record.
+    pub supersedes_target: Option<StateRecordFacts>,
+}
+
+impl PolicyContext {
+    /// Context for a proposal that cites no stored evidence. Such a proposal
+    /// is rejected, so this is only useful for head-level tests.
+    pub fn without_evidence(current_head: ContinuityHead, now: UtcTimestamp) -> Self {
+        Self {
+            current_head,
+            now,
+            evidence: EvidenceSnapshot::default(),
+            supersedes_target: None,
+        }
+    }
+
+    fn separation(&self) -> SeparationContext {
+        SeparationContext {
+            evidence: self.evidence.clone(),
+            supersedes_target: self.supersedes_target.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -430,9 +489,11 @@ pub trait MutationPolicy: Send + Sync {
 /// Deterministic allow/deny baseline. Not an LLM judge.
 ///
 /// Wave 1 scope: structural, version, vocabulary, origin, writer-epoch and
-/// predecessor checks. Evidence existence, ownership, Library/external-only
-/// contamination and correction/supersession rules arrive with the evidence
-/// store in Wave 2; until then everything not explicitly allowed is rejected.
+/// predecessor checks. Wave 2 adds evidence existence, evidence ownership,
+/// domain separation (Library/resource/derived content cannot become
+/// first-party or self state) and correction/supersession target checks, all
+/// delegated to [`check_domain_separation`]. Everything not explicitly
+/// allowed is still rejected.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MutationPolicyV0;
 
@@ -444,6 +505,7 @@ impl MutationPolicyV0 {
             (domain, operation),
             (MutationDomain::Episodic, MutationOperation::Capture)
                 | (MutationDomain::Relationship, MutationOperation::Fact)
+                | (MutationDomain::Relationship, MutationOperation::Correction)
         )
     }
 }
@@ -490,6 +552,15 @@ impl MutationPolicy for MutationPolicyV0 {
                 ),
             );
         }
+        // Domain separation runs before the supported-operation check for the
+        // self domain. "this evidence cannot support self state" stays the
+        // accurate reason once self mutation is implemented, whereas
+        // UNSUPPORTED_OPERATION would silently change meaning.
+        if proposal.domain == MutationDomain::SelfModel
+            && let Err(violation) = check_domain_separation(proposal, &context.separation())
+        {
+            return reject(violation.reason_code, violation.detail);
+        }
         if !Self::supports(proposal.domain, proposal.operation) {
             return reject(
                 ReasonCode::UnsupportedOperation,
@@ -527,6 +598,9 @@ impl MutationPolicy for MutationPolicyV0 {
                 "relationship proposal has no subject_key".to_owned(),
             );
         }
+        if let Err(violation) = check_domain_separation(proposal, &context.separation()) {
+            return reject(violation.reason_code, violation.detail);
+        }
         if proposal.requested_by.writer_epoch != context.current_head.writer_epoch {
             return reject(
                 ReasonCode::StaleWriterEpoch,
@@ -559,9 +633,14 @@ impl MutationPolicy for MutationPolicyV0 {
 #[cfg(test)]
 mod tests {
     use crate::continuity::{Generation, WriterEpoch};
+    use crate::evidence::{EvidenceFacts, EvidenceKind};
     use crate::ids::{BootId, CommitId, NodeId};
+    use crate::memory::LifecycleState;
 
     use super::*;
+
+    const UTTERANCE: EvidenceId = EvidenceId::from_u128(50);
+    const PRIOR_FACT: MemoryId = MemoryId::from_u128(70);
 
     fn head() -> ContinuityHead {
         ContinuityHead {
@@ -585,7 +664,8 @@ mod tests {
                 commit_id: CommitId::from_u128(10),
                 generation: Generation(3),
             },
-            evidence_refs: vec![EvidenceId::from_u128(50)],
+            evidence_refs: vec![UTTERANCE],
+            supersedes: None,
             origin_class: OriginClass::Reported,
             requested_by: WriterIdentity {
                 node_id: NodeId::from_u128(7),
@@ -598,16 +678,31 @@ mod tests {
         }
     }
 
+    /// The fixture utterance, owned by the individual under test.
+    fn utterance_facts() -> EvidenceFacts {
+        EvidenceFacts::standalone(
+            UTTERANCE,
+            IndividualId::from_u128(1),
+            EvidenceKind::UserUtterance,
+            OriginClass::Reported,
+        )
+    }
+
+    fn context() -> PolicyContext {
+        PolicyContext {
+            current_head: head(),
+            now: UtcTimestamp::from_unix_millis(5),
+            evidence: EvidenceSnapshot::new(vec![utterance_facts()]),
+            supersedes_target: None,
+        }
+    }
+
     fn decide(p: &MutationProposal) -> MutationDecision {
-        MutationPolicyV0
-            .decide(
-                p,
-                &PolicyContext {
-                    current_head: head(),
-                    now: UtcTimestamp::from_unix_millis(5),
-                },
-            )
-            .unwrap()
+        decide_with(p, &context())
+    }
+
+    fn decide_with(p: &MutationProposal, context: &PolicyContext) -> MutationDecision {
+        MutationPolicyV0.decide(p, context).unwrap()
     }
 
     #[test]
@@ -645,14 +740,32 @@ mod tests {
                 ReasonCode::PolicyVersionMismatch,
             ),
             (
-                "self domain",
+                "self domain fed from outside",
                 Box::new(|p| p.domain = MutationDomain::SelfModel),
+                ReasonCode::SelfDomainContamination,
+            ),
+            (
+                "episodic correction is not supported",
+                Box::new(|p| {
+                    p.domain = MutationDomain::Episodic;
+                    p.operation = MutationOperation::Correction;
+                }),
                 ReasonCode::UnsupportedOperation,
             ),
             (
-                "correction not yet supported",
+                "correction without a target",
                 Box::new(|p| p.operation = MutationOperation::Correction),
-                ReasonCode::UnsupportedOperation,
+                ReasonCode::SupersedeTargetInvalid,
+            ),
+            (
+                "fact that claims to supersede",
+                Box::new(|p| p.supersedes = Some(PRIOR_FACT)),
+                ReasonCode::MalformedProposal,
+            ),
+            (
+                "evidence that does not exist",
+                Box::new(|p| p.evidence_refs = vec![EvidenceId::from_u128(51)]),
+                ReasonCode::EvidenceNotFound,
             ),
             (
                 "no evidence",
@@ -706,6 +819,58 @@ mod tests {
     }
 
     #[test]
+    fn evidence_of_another_individual_is_rejected() {
+        let mut context = context();
+        context.evidence = EvidenceSnapshot::new(vec![EvidenceFacts::standalone(
+            UTTERANCE,
+            IndividualId::from_u128(2),
+            EvidenceKind::UserUtterance,
+            OriginClass::Reported,
+        )]);
+        let decision = decide_with(&proposal(), &context);
+        assert_eq!(decision.disposition, Disposition::Reject);
+        assert_eq!(decision.reason_code, ReasonCode::EvidenceOwnerMismatch);
+    }
+
+    #[test]
+    fn library_text_alone_cannot_create_a_relationship_fact() {
+        let mut context = context();
+        context.evidence = EvidenceSnapshot::new(vec![EvidenceFacts::standalone(
+            UTTERANCE,
+            IndividualId::from_u128(1),
+            EvidenceKind::LibraryExcerpt,
+            OriginClass::Reported,
+        )]);
+        let decision = decide_with(&proposal(), &context);
+        assert_eq!(decision.reason_code, ReasonCode::EvidenceDomainMismatch);
+    }
+
+    #[test]
+    fn a_user_preference_never_reaches_the_self_domain() {
+        let mut p = proposal();
+        p.domain = MutationDomain::SelfModel;
+        let decision = decide(&p);
+        assert_eq!(decision.disposition, Disposition::Reject);
+        assert_eq!(decision.reason_code, ReasonCode::SelfDomainContamination);
+    }
+
+    #[test]
+    fn relationship_correction_with_a_live_target_is_supported() {
+        let mut p = proposal();
+        p.operation = MutationOperation::Correction;
+        p.supersedes = Some(PRIOR_FACT);
+        let mut context = context();
+        context.supersedes_target = Some(crate::memory::StateRecordFacts {
+            state_record_id: PRIOR_FACT,
+            individual_id: IndividualId::from_u128(1),
+            domain: MutationDomain::Relationship,
+            subject_key: Some("user-fixture".to_owned()),
+            lifecycle_state: LifecycleState::Active,
+        });
+        assert_eq!(decide_with(&p, &context).disposition, Disposition::Accept);
+    }
+
+    #[test]
     fn episodic_capture_is_supported() {
         let mut p = proposal();
         p.domain = MutationDomain::Episodic;
@@ -724,10 +889,14 @@ mod tests {
         assert_eq!(a.payload_fingerprint(), b.payload_fingerprint());
 
         let mut c = proposal();
-        c.evidence_refs = vec![EvidenceId::from_u128(51), EvidenceId::from_u128(50)];
+        c.evidence_refs = vec![EvidenceId::from_u128(51), UTTERANCE];
         let mut d = proposal();
-        d.evidence_refs = vec![EvidenceId::from_u128(50), EvidenceId::from_u128(51)];
+        d.evidence_refs = vec![UTTERANCE, EvidenceId::from_u128(51)];
         assert_eq!(c.payload_fingerprint(), d.payload_fingerprint());
+
+        let mut f = proposal();
+        f.supersedes = Some(PRIOR_FACT);
+        assert_ne!(a.payload_fingerprint(), f.payload_fingerprint());
 
         let mut e = proposal();
         e.candidate = serde_json::json!({ "preference": "緑茶" });
@@ -741,6 +910,11 @@ mod tests {
             ReasonCode::StalePredecessor,
             ReasonCode::StaleWriterEpoch,
             ReasonCode::MissingEvidence,
+            ReasonCode::EvidenceNotFound,
+            ReasonCode::EvidenceOwnerMismatch,
+            ReasonCode::EvidenceDomainMismatch,
+            ReasonCode::SelfDomainContamination,
+            ReasonCode::SupersedeTargetInvalid,
             ReasonCode::UnsupportedOperation,
             ReasonCode::PolicyVersionMismatch,
             ReasonCode::IndividualMismatch,

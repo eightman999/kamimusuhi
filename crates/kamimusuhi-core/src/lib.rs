@@ -16,7 +16,10 @@
 
 pub mod audit;
 pub mod continuity;
+pub mod domain_separation;
+pub mod evidence;
 pub mod ids;
+pub mod memory;
 pub mod mutation;
 pub mod persona;
 pub mod time;

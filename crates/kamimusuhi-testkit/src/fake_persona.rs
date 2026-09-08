@@ -51,6 +51,7 @@ impl PersonaCore for FakePersonaCore {
                     subject_key: Some(FIXTURE_USER_SUBJECT.to_owned()),
                     candidate: serde_json::json!({ "preference": preference }),
                     evidence_refs: vec![input.input.evidence_id],
+                    supersedes: None,
                     origin_class: OriginClass::Reported,
                 }],
             ),

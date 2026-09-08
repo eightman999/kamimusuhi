@@ -11,7 +11,9 @@
 
 mod continuity;
 mod error;
+mod evidence;
 pub mod failpoints;
+mod memory;
 pub mod migrations;
 mod store;
 

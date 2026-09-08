@@ -197,6 +197,8 @@ fn failures_before_commit_roll_back_every_activation_row_and_recover_on_retry() 
                 proposals: 0,
                 decisions: 0,
                 receipts: 0,
+                evidence: 1,
+                state_records: 0,
                 audits: 2,
                 head_generation: 0,
             },
