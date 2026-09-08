@@ -195,7 +195,48 @@ Mac-class nodes are plausible K-Edge/K-Core organs because model state and promp
 
 See `latency-architecture.md`.
 
-## 6. Persistent identity / continuity research
+## 6. Yui Agent — integrated personal-agent failure modes
+
+Repository: https://github.com/sakuranaga/yui-agent
+
+Yui Agent is a self-hosted personal AI assistant with a VRM/avatar interface, speech, memory, tools, scheduled/background processing, external integrations, specialist execution, and proactive behavior. Its value to Kamimusuhi is less the surface feature set than the unusually explicit design/refactor notes documenting integration failures and recovery semantics.
+
+### Why it matters
+
+Particularly relevant lessons include:
+
+- raw messages vs extracted memories vs profile/diary/task state;
+- rolling and stale-session extraction rather than session-end-only memory;
+- provisional memory and soft invalidation;
+- hybrid retrieval and reference resolution;
+- separating a synthesized person model from atomic memories;
+- tool gating before grounded facts/actions;
+- assistant utterances as verification context but not mutation authority;
+- transactional background-job enqueue and durable outbox delivery;
+- scheduler ownership and interactive/background resource separation;
+- explicit crash windows across confirmation, external side effects, finalization, and user delivery;
+- refusing unsafe replay when external outcome is ambiguous;
+- separating stable persona from dynamic affinity/regulatory state.
+
+### Kamimusuhi stance
+
+Treat Yui as **implementation prior art / failure-mode evidence**, not as a target architecture. Kamimusuhi still requires stronger explicit continuity/lineage authority, distributed K-Edge/K-Core semantics, proposal-only identity mutation, and model-independent self continuity.
+
+The detailed pitfall catalogue is kept in [`persistent-agent-implementation-pitfalls.md`](./persistent-agent-implementation-pitfalls.md).
+
+### Watch items
+
+- which design notes are implemented vs planned;
+- long-run behavior after worker separation;
+- memory growth and reconciliation quality over months;
+- task/result exactly-once delivery semantics;
+- multi-surface interaction behavior;
+- autonomous-action safety and notification arbitration;
+- provenance of user-profile/person-model synthesis;
+- model/backend migration behavior;
+- whether raw-history retention remains practical at larger scale.
+
+## 7. Persistent identity / continuity research
 
 Keep monitoring work that separates an agent's continuity-bearing state from replaceable inference substrate.
 
@@ -210,7 +251,7 @@ Current references are recorded in `research-foundations.md`, including runtime-
 - model upgrade continuity testing;
 - migration between local/cloud hardware.
 
-## 7. Persona / social cognition benchmarks
+## 8. Persona / social cognition benchmarks
 
 Current baselines:
 
@@ -231,7 +272,7 @@ Current baselines:
 
 See `persona-core-training-taxonomy.md`.
 
-## 8. Review policy
+## 9. Review policy
 
 For any promising external technology, record four things:
 
