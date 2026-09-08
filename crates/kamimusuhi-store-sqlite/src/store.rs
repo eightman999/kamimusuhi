@@ -2,15 +2,16 @@
 
 use std::fmt;
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use kamimusuhi_core::continuity::ContinuityError;
-use kamimusuhi_core::ids::SchemaVersion;
+use kamimusuhi_core::ids::{IdGenerator, SchemaVersion};
 use kamimusuhi_core::time::Clock;
 use rusqlite::Connection;
 
 use crate::error::map_sqlite;
+use crate::failpoints::{Failpoint, FailpointHook};
 use crate::migrations;
 
 /// Runtime-tunable knobs. None of these change identity semantics.
@@ -36,13 +37,17 @@ impl Default for StoreConfig {
 /// front so a second process cannot interleave.
 pub struct SqliteStore {
     conn: Mutex<Connection>,
+    clock: Arc<dyn Clock>,
+    ids: Arc<dyn IdGenerator>,
     schema_version: SchemaVersion,
+    failpoint_hook: Option<Arc<dyn FailpointHook>>,
 }
 
 impl fmt::Debug for SqliteStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SqliteStore")
             .field("schema_version", &self.schema_version)
+            .field("failpoint_hook", &self.failpoint_hook.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -56,7 +61,8 @@ impl SqliteStore {
     pub fn open(
         path: impl AsRef<Path>,
         config: &StoreConfig,
-        clock: &dyn Clock,
+        clock: Arc<dyn Clock>,
+        ids: Arc<dyn IdGenerator>,
     ) -> Result<Self, ContinuityError> {
         let mut conn = Connection::open(path).map_err(map_sqlite)?;
         conn.busy_timeout(config.busy_timeout).map_err(map_sqlite)?;
@@ -64,8 +70,18 @@ impl SqliteStore {
         let schema_version = migrations::migrate(&mut conn, clock.now_utc())?;
         Ok(Self {
             conn: Mutex::new(conn),
+            clock,
+            ids,
             schema_version,
+            failpoint_hook: None,
         })
+    }
+
+    /// Test harness only: inject failures/crashes at fixed points of the
+    /// activation transaction. Production code never sets a hook.
+    pub fn with_failpoint_hook(mut self, hook: Arc<dyn FailpointHook>) -> Self {
+        self.failpoint_hook = Some(hook);
+        self
     }
 
     pub fn schema_version(&self) -> SchemaVersion {
@@ -86,10 +102,29 @@ impl SqliteStore {
         Ok(names)
     }
 
+    pub(crate) fn clock(&self) -> &dyn Clock {
+        self.clock.as_ref()
+    }
+
+    pub(crate) fn ids(&self) -> &dyn IdGenerator {
+        self.ids.as_ref()
+    }
+
     pub(crate) fn conn(&self) -> Result<MutexGuard<'_, Connection>, ContinuityError> {
         self.conn.lock().map_err(|_| ContinuityError::Backend {
             message: "store mutex poisoned by an earlier panic".to_owned(),
         })
+    }
+
+    pub(crate) fn failpoint(&self, point: Failpoint) -> Result<(), ContinuityError> {
+        match &self.failpoint_hook {
+            Some(hook) => hook
+                .hit(point)
+                .map_err(|triggered| ContinuityError::Backend {
+                    message: triggered.to_string(),
+                }),
+            None => Ok(()),
+        }
     }
 }
 

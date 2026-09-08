@@ -5,13 +5,23 @@ use kamimusuhi_core::continuity::ContinuityError;
 use kamimusuhi_core::ids::SchemaVersion;
 use kamimusuhi_store_sqlite::migrations::SUPPORTED_SCHEMA_VERSION;
 use kamimusuhi_store_sqlite::{SqliteStore, StoreConfig};
-use kamimusuhi_testkit::FixedClock;
+use kamimusuhi_testkit::{FixedClock, FixedIdGenerator};
 use rusqlite::{Connection, params};
+use std::sync::Arc;
 
 fn temp_db() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("kamimusuhi.sqlite");
     (dir, path)
+}
+
+fn open(path: impl AsRef<std::path::Path>) -> Result<SqliteStore, ContinuityError> {
+    SqliteStore::open(
+        path,
+        &StoreConfig::default(),
+        Arc::new(FixedClock::baseline()),
+        Arc::new(FixedIdGenerator::default()),
+    )
 }
 
 const EXPECTED_TABLES: &[&str] = &[
@@ -29,8 +39,7 @@ const EXPECTED_TABLES: &[&str] = &[
 #[test]
 fn migrates_empty_database_to_v1_deterministically() {
     let (_dir, path) = temp_db();
-    let clock = FixedClock::baseline();
-    let store = SqliteStore::open(&path, &StoreConfig::default(), &clock).unwrap();
+    let store = open(&path).unwrap();
     assert_eq!(store.schema_version(), SchemaVersion(1));
     assert_eq!(SUPPORTED_SCHEMA_VERSION, SchemaVersion(1));
     assert_eq!(store.table_names().unwrap(), EXPECTED_TABLES);
@@ -39,9 +48,8 @@ fn migrates_empty_database_to_v1_deterministically() {
 #[test]
 fn reopening_is_idempotent_and_keeps_version() {
     let (_dir, path) = temp_db();
-    let clock = FixedClock::baseline();
     {
-        SqliteStore::open(&path, &StoreConfig::default(), &clock).unwrap();
+        open(&path).unwrap();
     }
     let raw = Connection::open(&path).unwrap();
     let rows_before: i64 = raw
@@ -49,7 +57,7 @@ fn reopening_is_idempotent_and_keeps_version() {
         .unwrap();
     drop(raw);
 
-    let store = SqliteStore::open(&path, &StoreConfig::default(), &clock).unwrap();
+    let store = open(&path).unwrap();
     assert_eq!(store.schema_version(), SchemaVersion(1));
     assert_eq!(store.table_names().unwrap(), EXPECTED_TABLES);
 
@@ -66,9 +74,8 @@ fn reopening_is_idempotent_and_keeps_version() {
 #[test]
 fn refuses_database_from_a_newer_schema() {
     let (_dir, path) = temp_db();
-    let clock = FixedClock::baseline();
     {
-        SqliteStore::open(&path, &StoreConfig::default(), &clock).unwrap();
+        open(&path).unwrap();
     }
     let raw = Connection::open(&path).unwrap();
     raw.execute(
@@ -78,7 +85,7 @@ fn refuses_database_from_a_newer_schema() {
     .unwrap();
     drop(raw);
 
-    let err = SqliteStore::open(&path, &StoreConfig::default(), &clock).unwrap_err();
+    let err = open(&path).unwrap_err();
     assert_eq!(
         err,
         ContinuityError::SchemaVersionMismatch {
@@ -91,26 +98,21 @@ fn refuses_database_from_a_newer_schema() {
 #[test]
 fn refuses_corrupt_schema_meta() {
     let (_dir, path) = temp_db();
-    let clock = FixedClock::baseline();
     {
-        SqliteStore::open(&path, &StoreConfig::default(), &clock).unwrap();
+        open(&path).unwrap();
     }
     let raw = Connection::open(&path).unwrap();
     raw.execute("DELETE FROM schema_meta WHERE key = 'schema_version'", [])
         .unwrap();
     drop(raw);
 
-    assert!(matches!(
-        SqliteStore::open(&path, &StoreConfig::default(), &clock),
-        Err(ContinuityError::Corrupt { .. })
-    ));
+    assert!(matches!(open(&path), Err(ContinuityError::Corrupt { .. })));
 }
 
 #[test]
 fn durability_pragmas_are_applied() {
     let (_dir, path) = temp_db();
-    let clock = FixedClock::baseline();
-    let _store = SqliteStore::open(&path, &StoreConfig::default(), &clock).unwrap();
+    let _store = open(&path).unwrap();
 
     let raw = Connection::open(&path).unwrap();
     let journal_mode: String = raw
@@ -125,17 +127,15 @@ fn durability_pragmas_are_applied() {
 
 #[test]
 fn in_memory_database_is_refused_because_wal_is_unavailable() {
-    let clock = FixedClock::baseline();
-    let err = SqliteStore::open(":memory:", &StoreConfig::default(), &clock).unwrap_err();
+    let err = open(":memory:").unwrap_err();
     assert!(matches!(err, ContinuityError::Backend { .. }), "{err}");
 }
 
 #[test]
 fn foreign_keys_are_enforced_on_the_store_connection() {
     let (_dir, path) = temp_db();
-    let clock = FixedClock::baseline();
     {
-        SqliteStore::open(&path, &StoreConfig::default(), &clock).unwrap();
+        open(&path).unwrap();
     }
     // A fresh connection with the same pragma set reproduces the store's
     // enforcement: a commit for a non-existent individual must be refused.
