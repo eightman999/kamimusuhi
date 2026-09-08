@@ -14,6 +14,8 @@
 //! - Contracts are synchronous. Async runtimes and worker scheduling belong to
 //!   the runtime layer, outside the canonical domain interface.
 
+pub mod audit;
+pub mod continuity;
 pub mod ids;
 pub mod mutation;
 pub mod persona;
