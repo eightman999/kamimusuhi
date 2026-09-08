@@ -50,6 +50,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 ### External projects / technologies
 
 - [`technology-watchlist.md`](./technology-watchlist.md) — OpenLife, Tebasaki_lab/MagicDelta, artificial nervous systems, llama.cpp, MLX-LM, continuity research, social-cognition benchmarks.
+- [`fio-system-reference-analysis.md`](./fio-system-reference-analysis.md) — FIO's long-running persistence discipline: canonical evidence vs derived renderings, layered/verbatim memory, internal-thought boundaries, background-cognition freshness, chokepoint routing, and silent-defect detection; mapped to Kamimusuhi with adoption hypotheses and experiments.
 
 ## Normative project documents
 
