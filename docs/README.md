@@ -41,6 +41,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 ### Reflex / control substrate
 
 - [`learned-discrete-reflex-layer.md`](./learned-discrete-reflex-layer.md) — learned low-latency nervous-system layer beneath K-Edge: DLGN/LDLGN, DWN/LUT controllers, stochastic-computing inspiration, temporal state, teacher distillation, shadow deployment, auditability, and benchmark plan.
+- [`fly-brain-connectome-reference.md`](./fly-brain-connectome-reference.md) — FlyWire/Shiu/Eon reference analysis: validated connectome-derived LIF sensorimotor results, multi-backend `fly-brain` implementation, 2026 embodied-loop caveats, mechanistic criticism, K-Nerve mapping, ablation tests, and backend-parity methodology.
 
 ### Sensory and motor embodiment
 
