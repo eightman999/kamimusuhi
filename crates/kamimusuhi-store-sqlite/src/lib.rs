@@ -8,6 +8,9 @@
 pub mod error;
 pub mod failpoint;
 pub mod migrations;
+pub mod recovery;
+pub mod store;
 pub mod transaction;
 
 pub use error::StoreError;
+pub use store::SqliteContinuityStore;
