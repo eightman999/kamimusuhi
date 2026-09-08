@@ -30,6 +30,12 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 
 ## Current index
 
+### 器官設計監査 / Organ design audit
+
+- [`audits/2026-09-08-organ-design-audit.md`](./audits/2026-09-08-organ-design-audit.md) — 日本語。固定 commit を基準に26機能領域を監査し、18件の横断的な設計不足・接続未確定点、既存設計、優先順位、確認限界を整理。実装済みという判定ではない。
+- [`organ-contracts-and-implementation-plan.md`](./organ-contracts-and-implementation-plan.md) — 日本語。状態所有者、event/信念/正典変更/目標/行為/音声/停止復旧/忘却学習の契約案、28件の未実施テスト仕様、段階的な有効化 gate。規範仕様へ未昇格の提案。
+- [`research/2026-09-08-organ-audit-literature.md`](./research/2026-09-08-organ-audit-literature.md) — 日本語。関連文献21本を本文該当節・一次要旨・書誌のみの確認深度で区別し、適用先と一般化できない点を記録。
+
 ### Core research
 
 - [`research/README.md`](./research/README.md) — research-map index and promotion flow from daily survey to durable research/design knowledge.
