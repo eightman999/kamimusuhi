@@ -12,6 +12,7 @@ It is intentionally different from the existing research notes:
 ## Documents
 
 - [`landscape.md`](./landscape.md) — cross-disciplinary research landscape, comparison matrix, research gaps, and prioritized experimental agenda. Baseline: 2026-09-08.
+- [`fio-neural-function-growth-2026-09-08.md`](./fio-neural-function-growth-2026-09-08.md) — Markdown transcription of FIO's *神経関数が育つ* experiment record plus Kamimusuhi analysis of descending modulation, perceptual gating vs motor reflex, anti-self-blinding safeguards, shadow comparison, and reproducibility metrics.
 
 ## Promotion flow
 
