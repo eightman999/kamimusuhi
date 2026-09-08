@@ -1,4 +1,4 @@
-# Kamimusuhi / 神結
+# Kamimusuhi / かみむすび
 
 [日本語](./README.md) | **English (this page)**
 
