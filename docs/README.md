@@ -40,6 +40,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 ### Native cognition / model training
 
 - [`persona-core-training-taxonomy.md`](./persona-core-training-taxonomy.md) — what a Kamimusuhi Persona Core should learn: self/other, human/social cognition, epistemology, delegation, persona priors, long-horizon relationship competence, evaluation.
+- [`model-ecology-and-lineage.md`](./model-ecology-and-lineage.md) — model ecology across two scales: a medium `novllm`-derived Persona Core plus small specialist-model organs inside each individual, and a multi-user population of distinct individual lineages with privacy-gated population-level inheritance.
 
 ### Reflex / control substrate
 
@@ -71,7 +72,8 @@ At repository root:
 
 - [`../README.md`](../README.md) — project thesis and orientation;
 - [`../spec.md`](../spec.md) — normative behavioral/system requirements;
-- [`../architecture.md`](../architecture.md) — normative architectural boundaries and evolution direction.
+- [`../architecture.md`](../architecture.md) — normative architectural boundaries and evolution direction;
+- [`../model-ecology-architecture.md`](../model-ecology-architecture.md) — architecture addendum for the Persona Core / specialist-organ model ecology, distinct per-user individual lineages, and privacy-gated inheritance across a population.
 
 ## Suggested future docs
 
