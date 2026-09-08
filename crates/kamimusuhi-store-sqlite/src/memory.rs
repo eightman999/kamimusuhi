@@ -8,7 +8,7 @@
 use std::str::FromStr;
 
 use kamimusuhi_core::continuity::ContinuityError;
-use kamimusuhi_core::evidence::EvidenceSnapshot;
+use kamimusuhi_core::evidence::{EvidenceError, EvidenceSnapshot, resolve_roots};
 use kamimusuhi_core::ids::{CommitId, EvidenceId, IndividualId, MemoryId};
 use kamimusuhi_core::memory::{
     AttributedMemory, LifecycleState, MemoryError, MemoryQuery, MemoryRepository, StateLookup,
@@ -18,7 +18,7 @@ use kamimusuhi_core::mutation::{MutationDomain, MutationOperation};
 use kamimusuhi_core::time::UtcTimestamp;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
-use crate::evidence::facts_in;
+use crate::evidence::{facts_in, link_graph};
 use crate::store::SqliteStore;
 
 fn corrupt(detail: impl Into<String>) -> MemoryError {
@@ -369,53 +369,76 @@ pub(crate) fn mark_superseded(
     Ok(())
 }
 
-/// Move every active record that rests on `evidence_ids` to `invalidated`.
+/// Move every active record that rests on `corrected` to `invalidated`.
 ///
-/// This is the re-evaluation edge of audit A03: correcting a source does not
-/// declare the derived interpretation false, it takes it out of the current
-/// view until something re-establishes it. Returns the affected records.
-pub(crate) fn invalidate_records_supported_by(
+/// "Rests on" is the *root closure* of the record's cited evidence, not just
+/// its direct citations. A state record built from a reflection on a summary
+/// of a corrected utterance is reached exactly like one that cited the
+/// utterance directly: correcting a source must not leave a two-step
+/// derivation standing as an independent fact (audit A03).
+///
+/// This is the re-evaluation edge, not a refutation: the record is taken out
+/// of the current view, its row and its provenance are kept, and nothing
+/// declares it false. Returns the affected records.
+pub(crate) fn invalidate_records_rooted_in(
     tx: &Transaction<'_>,
     individual_id: IndividualId,
-    evidence_ids: &[EvidenceId],
+    corrected: &[EvidenceId],
     except: Option<MemoryId>,
 ) -> Result<Vec<MemoryId>, ContinuityError> {
+    if corrected.is_empty() {
+        return Ok(Vec::new());
+    }
     let backend = |e: rusqlite::Error| ContinuityError::Backend {
         message: e.to_string(),
     };
+    let to_continuity = |e: EvidenceError| ContinuityError::Evidence(e);
+
+    let links = link_graph(tx).map_err(to_continuity)?;
+
+    let mut stmt = tx
+        .prepare(
+            "SELECT state_record_id FROM state_records
+             WHERE individual_id = ?1 AND lifecycle_state = 'active'
+             ORDER BY created_at, state_record_id",
+        )
+        .map_err(backend)?;
+    let active = stmt
+        .query_map(params![individual_id.to_string()], |r| {
+            r.get::<_, String>(0)
+        })
+        .map_err(backend)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(backend)?;
+    drop(stmt);
+
     let mut affected = Vec::new();
-    for evidence_id in evidence_ids {
-        let mut stmt = tx
-            .prepare(
-                "SELECT s.state_record_id FROM state_records s
-                 JOIN state_record_evidence e ON e.state_record_id = s.state_record_id
-                 WHERE s.individual_id = ?1 AND e.evidence_id = ?2 AND s.lifecycle_state = 'active'",
-            )
-            .map_err(backend)?;
-        let ids = stmt
-            .query_map(
-                params![individual_id.to_string(), evidence_id.to_string()],
-                |r| r.get::<_, String>(0),
-            )
-            .map_err(backend)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(backend)?;
-        drop(stmt);
-        for id in ids {
-            let record_id: MemoryId = id.parse().map_err(|e| ContinuityError::Corrupt {
-                detail: format!("state_records.state_record_id holds {id:?}: {e}"),
-            })?;
-            if except == Some(record_id) || affected.contains(&record_id) {
-                continue;
-            }
-            tx.execute(
-                "UPDATE state_records SET lifecycle_state = 'invalidated'
-                 WHERE state_record_id = ?1 AND lifecycle_state = 'active'",
-                params![id],
-            )
-            .map_err(backend)?;
-            affected.push(record_id);
+    for raw_id in active {
+        let record_id: MemoryId = raw_id.parse().map_err(|e| ContinuityError::Corrupt {
+            detail: format!("state_records.state_record_id holds {raw_id:?}: {e}"),
+        })?;
+        if except == Some(record_id) {
+            continue;
         }
+        let evidence_refs = evidence_refs_of(tx, record_id).map_err(ContinuityError::Memory)?;
+        // Both the cited records and everything they rest on: a citation may
+        // itself be the corrected record, or a derivation of it.
+        let touched = evidence_refs.iter().any(|cited| {
+            corrected.contains(cited)
+                || resolve_roots(*cited, &links)
+                    .iter()
+                    .any(|root| corrected.contains(root))
+        });
+        if !touched {
+            continue;
+        }
+        tx.execute(
+            "UPDATE state_records SET lifecycle_state = 'invalidated'
+             WHERE state_record_id = ?1 AND lifecycle_state = 'active'",
+            params![raw_id],
+        )
+        .map_err(backend)?;
+        affected.push(record_id);
     }
     Ok(affected)
 }

@@ -316,7 +316,9 @@ pub struct EvidenceFacts {
     pub root_evidence: Vec<EvidenceId>,
     /// Records this one explicitly corrects.
     pub corrects: Vec<EvidenceId>,
-    /// A later record corrects this one, so it is no longer current.
+    /// A later record corrects this one, or corrects something in its
+    /// [`Self::root_evidence`]. Either way it is no longer current: correcting
+    /// an utterance does not leave a summary of that utterance standing.
     pub is_corrected: bool,
 }
 

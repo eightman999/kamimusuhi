@@ -10,10 +10,12 @@
 
 mod common;
 
+use std::sync::Arc;
+
 use common::*;
 use kamimusuhi_core::audit::AuditKind;
 use kamimusuhi_core::continuity::{
-    ActivationOutcome, ContinuityStore, ExpectedHead, WriterIdentity,
+    ActivationOutcome, ContinuityError, ContinuityStore, ExpectedHead, WriterIdentity,
 };
 use kamimusuhi_core::evidence::{
     EvidenceKind, EvidenceRelation, EvidenceSource, EvidenceStore, NewEvidence, NewEvidenceLink,
@@ -22,9 +24,11 @@ use kamimusuhi_core::evidence::{
 use kamimusuhi_core::ids::{EvidenceId, MemoryId, ProposalId};
 use kamimusuhi_core::memory::{LifecycleState, MemoryQuery, MemoryRepository};
 use kamimusuhi_core::mutation::{
-    MutationDomain, MutationOperation, MutationPolicyV0, MutationProposal, OriginClass,
+    MutationDecision, MutationDomain, MutationOperation, MutationPolicyV0, MutationProposal,
+    OriginClass, ReasonCode,
 };
 use kamimusuhi_core::time::UtcTimestamp;
+use kamimusuhi_store_sqlite::failpoints::{Failpoint, FailpointHook, FailpointTriggered};
 use kamimusuhi_testkit::FixedClock;
 
 const SUMMARY_1: EvidenceId = EvidenceId::from_u128(0xE10);
@@ -344,4 +348,296 @@ fn correction_supersedes_its_target_and_invalidates_other_active_facts_on_the_co
         .map(|e| e.kind)
         .collect();
     assert!(kinds.contains(&AuditKind::StateSuperseded));
+}
+
+const REDELIVERED: EvidenceId = EvidenceId::from_u128(0xE20);
+const CHAIN_SUMMARY: EvidenceId = EvidenceId::from_u128(0xE21);
+const CHAIN_REFLECTION: EvidenceId = EvidenceId::from_u128(0xE22);
+const CHAIN_CORRECTION: EvidenceId = EvidenceId::from_u128(0xE23);
+const CHAIN_FRESH: EvidenceId = EvidenceId::from_u128(0xE24);
+const FAILED_CORRECTION: EvidenceId = EvidenceId::from_u128(0xE25);
+const FAILED_FRESH: EvidenceId = EvidenceId::from_u128(0xE26);
+
+/// Fires after the derived-state writes of the activation transaction, so a
+/// correction is interrupted with its supersession already staged.
+#[derive(Debug)]
+struct FailAfterStateInsert;
+
+impl FailpointHook for FailAfterStateInsert {
+    fn hit(&self, point: Failpoint) -> Result<(), FailpointTriggered> {
+        if point == Failpoint::AfterStateInsert {
+            Err(FailpointTriggered(point))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Correcting a root must reach state that only ever cited derivations of it.
+///
+/// The dependency chain here is two steps deep on both paths: the fact for
+/// SUBJECT_2 cites a re-delivery of the utterance and a reflection on a
+/// summary of it, and never names the corrected record itself. Matching only
+/// direct citations would leave that fact standing as an independent current
+/// fact after its source was corrected (audit A03).
+#[test]
+fn correcting_a_root_invalidates_state_two_derivations_downstream() {
+    let db = TempDb::new();
+    let store = open(&db.path, 1);
+    let boot = bootstrap(&store, BOOT_A);
+
+    // EVIDENCE ← summary ← reflection, and EVIDENCE ← re-delivery.
+    derived(&store, CHAIN_SUMMARY, EvidenceKind::Summary);
+    derived(&store, CHAIN_REFLECTION, EvidenceKind::Reflection);
+    store
+        .append(user_utterance(
+            REDELIVERED,
+            "私はほうじ茶が好き。覚えておいて",
+        ))
+        .unwrap();
+    link(
+        &store,
+        CHAIN_SUMMARY,
+        EVIDENCE,
+        EvidenceRelation::DerivedFrom,
+    );
+    link(
+        &store,
+        CHAIN_REFLECTION,
+        CHAIN_SUMMARY,
+        EvidenceRelation::DerivedFrom,
+    );
+    link(&store, REDELIVERED, EVIDENCE, EvidenceRelation::Duplicates);
+
+    let kernel = kernel(store);
+
+    // Directly evidenced fact: what the correction will target.
+    let direct = proposal_with(
+        200,
+        MutationOperation::Fact,
+        SUBJECT_1,
+        serde_json::json!({ "preference": "ほうじ茶" }),
+        vec![EVIDENCE],
+        None,
+        boot.head.expected(),
+        boot.writer,
+    );
+    assert!(matches!(
+        kernel.submit(&direct).unwrap(),
+        ActivationOutcome::Activated(_)
+    ));
+    let target = current_record(kernel.store(), SUBJECT_1)
+        .record
+        .state_record_id;
+
+    // Downstream fact: cites only derivations, never EVIDENCE itself.
+    let head = kernel.store().load_head(INDIVIDUAL).unwrap();
+    let downstream = proposal_with(
+        201,
+        MutationOperation::Fact,
+        SUBJECT_2,
+        serde_json::json!({ "preference": "玄米茶" }),
+        vec![REDELIVERED, CHAIN_REFLECTION],
+        None,
+        head.expected(),
+        boot.writer,
+    );
+    assert!(matches!(
+        kernel.submit(&downstream).unwrap(),
+        ActivationOutcome::Activated(_)
+    ));
+    let downstream_record = current_record(kernel.store(), SUBJECT_2);
+    assert!(
+        !downstream_record.record.evidence_refs.contains(&EVIDENCE),
+        "the downstream fact must not cite the corrected record directly"
+    );
+    // Everything it cites still resolves to the one root conversation.
+    assert_eq!(downstream_record.independent_evidence_count, 1);
+    assert_eq!(downstream_record.root_evidence, vec![EVIDENCE]);
+    let downstream_id = downstream_record.record.state_record_id;
+
+    // Correct the root.
+    kernel
+        .store()
+        .append(NewEvidence {
+            evidence_id: CHAIN_CORRECTION,
+            individual_id: INDIVIDUAL,
+            session_id: None,
+            turn_id: None,
+            kind: EvidenceKind::Correction,
+            origin_class: OriginClass::Reported,
+            payload: serde_json::json!({ "text": "訂正: 別の話だった" }),
+            source: EvidenceSource::default(),
+            retention_class: RetentionClass::Standard,
+        })
+        .unwrap();
+    link(
+        kernel.store(),
+        CHAIN_CORRECTION,
+        EVIDENCE,
+        EvidenceRelation::Corrects,
+    );
+    kernel
+        .store()
+        .append(user_utterance(CHAIN_FRESH, "訂正: 抹茶が好き"))
+        .unwrap();
+
+    let head = kernel.store().load_head(INDIVIDUAL).unwrap();
+    let correction = proposal_with(
+        202,
+        MutationOperation::Correction,
+        SUBJECT_1,
+        serde_json::json!({ "preference": "抹茶" }),
+        vec![CHAIN_CORRECTION, CHAIN_FRESH],
+        Some(target),
+        head.expected(),
+        boot.writer,
+    );
+    assert!(matches!(
+        kernel.submit(&correction).unwrap(),
+        ActivationOutcome::Activated(_)
+    ));
+
+    // The two-step-downstream fact is out of the current view.
+    assert!(
+        kernel
+            .store()
+            .retrieve(&MemoryQuery::current(INDIVIDUAL).about(SUBJECT_2))
+            .unwrap()
+            .is_empty(),
+        "a fact resting on corrected evidence must not stay current"
+    );
+
+    // History and provenance are kept, not deleted.
+    let history = kernel
+        .store()
+        .retrieve(
+            &MemoryQuery::current(INDIVIDUAL)
+                .about(SUBJECT_2)
+                .including_history(),
+        )
+        .unwrap();
+    let kept = history
+        .iter()
+        .find(|m| m.record.state_record_id == downstream_id)
+        .expect("the invalidated record must remain inspectable");
+    assert_eq!(kept.record.lifecycle_state, LifecycleState::Invalidated);
+    assert_eq!(
+        kept.record.evidence_refs, downstream_record.record.evidence_refs,
+        "invalidation must not rewrite the dependency chain"
+    );
+    assert_eq!(kept.root_evidence, vec![EVIDENCE]);
+
+    // The corrected root cannot re-establish a current fact through one of
+    // its derivations either.
+    let head = kernel.store().load_head(INDIVIDUAL).unwrap();
+    let retry = proposal_with(
+        203,
+        MutationOperation::Fact,
+        SUBJECT_2,
+        serde_json::json!({ "preference": "玄米茶" }),
+        vec![REDELIVERED],
+        None,
+        head.expected(),
+        boot.writer,
+    );
+    let ActivationOutcome::Rejected(decision) = kernel.submit(&retry).unwrap() else {
+        panic!("expected rejection");
+    };
+    assert_eq!(decision.reason_code, ReasonCode::EvidenceCorrected);
+}
+
+/// A correction that fails mid-transaction leaves nothing behind: the target
+/// stays active, no replacement exists, and the head does not move. The
+/// supersession and the invalidation share the activation transaction with
+/// the commit, so there is no window in which memory is half-corrected.
+#[test]
+fn a_correction_that_fails_mid_transaction_leaves_no_partial_state() {
+    let db = TempDb::new();
+    let store = open(&db.path, 1);
+    let boot = bootstrap(&store, BOOT_A);
+    let kernel = kernel(store);
+
+    let fact = proposal_with(
+        300,
+        MutationOperation::Fact,
+        SUBJECT_1,
+        serde_json::json!({ "preference": "ほうじ茶" }),
+        vec![EVIDENCE],
+        None,
+        boot.head.expected(),
+        boot.writer,
+    );
+    assert!(matches!(
+        kernel.submit(&fact).unwrap(),
+        ActivationOutcome::Activated(_)
+    ));
+    let target = current_record(kernel.store(), SUBJECT_1)
+        .record
+        .state_record_id;
+
+    kernel
+        .store()
+        .append(NewEvidence {
+            evidence_id: FAILED_CORRECTION,
+            individual_id: INDIVIDUAL,
+            session_id: None,
+            turn_id: None,
+            kind: EvidenceKind::Correction,
+            origin_class: OriginClass::Reported,
+            payload: serde_json::json!({ "text": "訂正" }),
+            source: EvidenceSource::default(),
+            retention_class: RetentionClass::Standard,
+        })
+        .unwrap();
+    link(
+        kernel.store(),
+        FAILED_CORRECTION,
+        EVIDENCE,
+        EvidenceRelation::Corrects,
+    );
+    kernel
+        .store()
+        .append(user_utterance(FAILED_FRESH, "訂正: 抹茶が好き"))
+        .unwrap();
+
+    let head_before = kernel.store().load_head(INDIVIDUAL).unwrap();
+    let correction = proposal_with(
+        301,
+        MutationOperation::Correction,
+        SUBJECT_1,
+        serde_json::json!({ "preference": "抹茶" }),
+        vec![FAILED_CORRECTION, FAILED_FRESH],
+        Some(target),
+        head_before.expected(),
+        boot.writer,
+    );
+
+    // Reopen with the failpoint that fires after all derived-state writes.
+    drop(kernel);
+    let store = open(&db.path, 2).with_failpoint_hook(Arc::new(FailAfterStateInsert));
+    let decision = MutationDecision::accept(
+        &correction,
+        correction.policy_version,
+        correction.created_at,
+    );
+    assert!(matches!(
+        store.activate(&correction, &decision),
+        Err(ContinuityError::Backend { .. })
+    ));
+
+    assert_eq!(store.load_head(INDIVIDUAL).unwrap(), head_before);
+    let current = store
+        .retrieve(&MemoryQuery::current(INDIVIDUAL).about(SUBJECT_1))
+        .unwrap();
+    assert_eq!(current.len(), 1);
+    assert_eq!(current[0].record.state_record_id, target);
+    assert_eq!(current[0].record.lifecycle_state, LifecycleState::Active);
+    assert_eq!(current[0].record.superseded_by_state_record_id, None);
+    assert!(
+        store
+            .find_receipt(correction.proposal_id)
+            .unwrap()
+            .is_none()
+    );
 }

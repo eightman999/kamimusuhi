@@ -216,7 +216,9 @@ fn links_in(
 /// derivation) and a bounded recursive query buys nothing yet. If the edge set
 /// ever stops fitting, this becomes a recursive CTE without changing the
 /// contract.
-fn all_links(conn: &Connection) -> Result<HashMap<EvidenceId, Vec<EvidenceLink>>, EvidenceError> {
+pub(crate) fn link_graph(
+    conn: &Connection,
+) -> Result<HashMap<EvidenceId, Vec<EvidenceLink>>, EvidenceError> {
     let mut stmt = conn
         .prepare(
             "SELECT from_evidence_id, to_evidence_id, relation, created_at FROM evidence_links",
@@ -257,7 +259,7 @@ pub(crate) fn facts_in(
     if evidence_ids.is_empty() {
         return Ok(EvidenceSnapshot::default());
     }
-    let links = all_links(conn)?;
+    let links = link_graph(conn)?;
     let corrected_by: HashMap<EvidenceId, Vec<EvidenceId>> =
         links.values().flatten().fold(HashMap::new(), |mut acc, l| {
             if l.relation == EvidenceRelation::Corrects {
@@ -282,21 +284,25 @@ pub(crate) fn facts_in(
                     .collect()
             })
             .unwrap_or_default();
+        // A record whose *source* was corrected is no longer current either:
+        // correcting the original does not leave a summary of it standing.
+        let root_evidence = resolve_roots(*evidence_id, &links);
+        let is_corrected = corrected_by.contains_key(evidence_id)
+            || root_evidence.iter().any(|r| corrected_by.contains_key(r));
         facts.push(EvidenceFacts {
             evidence_id: *evidence_id,
             individual_id: record.individual_id,
             kind: record.kind,
             origin_class: record.origin_class,
-            root_evidence: resolve_roots(*evidence_id, &links),
+            root_evidence,
             corrects,
-            is_corrected: corrected_by.contains_key(evidence_id),
+            is_corrected,
         });
     }
     Ok(EvidenceSnapshot::new(facts))
 }
 
-/// Evidence corrected by any of `evidence_ids`, transitively through the
-/// records those corrections were derived from.
+/// Evidence corrected by any of `evidence_ids`.
 pub(crate) fn corrected_by(
     conn: &Connection,
     evidence_ids: &[EvidenceId],

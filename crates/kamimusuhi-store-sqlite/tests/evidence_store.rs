@@ -268,3 +268,107 @@ fn a_turn_in_another_individuals_session_is_rejected() {
         .unwrap_err();
     assert!(matches!(err, EvidenceError::Invalid { .. }));
 }
+
+/// Event identity is the `EvidenceId`, never the content.
+///
+/// Two people can say 「はい」 twice, and a re-delivered event can carry the
+/// same digest as the one it repeats. Collapsing either of those into one
+/// record would silently lose an event, so only an explicit identity match
+/// makes an append a no-op.
+#[test]
+fn identical_payloads_in_different_turns_are_different_evidence() {
+    let db = TempDb::new();
+    let store = open(&db.path, 1);
+    bootstrap(&store, BOOT_A);
+
+    let second_turn = TurnId::from_u128(0x73);
+    store
+        .record_turn(NewTurn {
+            turn_id: second_turn,
+            session_id: SESSION,
+            individual_id: INDIVIDUAL,
+            sequence: 1,
+        })
+        .unwrap();
+
+    let same_text = "はい";
+    let same_digest = Some("digest-identical".to_owned());
+
+    let mut first = user_utterance(EvidenceId::from_u128(0xE4), same_text);
+    first.turn_id = Some(TURN);
+    first.source.source_sequence = Some(0);
+    first.source.content_digest = same_digest.clone();
+
+    let mut second = user_utterance(EvidenceId::from_u128(0xE5), same_text);
+    second.turn_id = Some(second_turn);
+    second.source.source_sequence = Some(1);
+    second.source.content_digest = same_digest;
+
+    let a = store.append(first).unwrap();
+    let b = store.append(second).unwrap();
+
+    assert_ne!(a.evidence_id, b.evidence_id);
+    assert_eq!(a.payload, b.payload);
+    assert_eq!(a.source.content_digest, b.source.content_digest);
+    assert_eq!(a.turn_id, Some(TURN));
+    assert_eq!(b.turn_id, Some(second_turn));
+    // Both survive: an equal digest is an integrity aid, not an identity.
+    assert!(store.get(a.evidence_id).unwrap().is_some());
+    assert!(store.get(b.evidence_id).unwrap().is_some());
+}
+
+/// A retry of the same event is a no-op even when the wall clock moved on:
+/// `created_at` is assigned by the store and is not part of the identity.
+#[test]
+fn retrying_one_event_stores_it_once() {
+    let db = TempDb::new();
+    let store = open(&db.path, 1);
+    bootstrap(&store, BOOT_A);
+
+    let evidence_id = EvidenceId::from_u128(0xE6);
+    let record = user_utterance(evidence_id, "はい");
+    let first = store.append(record.clone()).unwrap();
+    for _ in 0..3 {
+        assert_eq!(store.append(record.clone()).unwrap(), first);
+    }
+
+    let conn = rusqlite::Connection::open(&db.path).unwrap();
+    let stored: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM evidence_records WHERE evidence_id = ?1",
+            rusqlite::params![evidence_id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored, 1);
+}
+
+/// A retry that claims the same identity but carries different content is a
+/// conflict, not an overwrite: the stored record is left exactly as it was.
+#[test]
+fn same_identity_with_different_content_fails_closed() {
+    let db = TempDb::new();
+    let store = open(&db.path, 1);
+    bootstrap(&store, BOOT_A);
+
+    let evidence_id = EvidenceId::from_u128(0xE7);
+    let original = store.append(user_utterance(evidence_id, "はい")).unwrap();
+
+    for conflicting in [
+        user_utterance(evidence_id, "いいえ"),
+        NewEvidence {
+            kind: EvidenceKind::AgentUtterance,
+            ..user_utterance(evidence_id, "はい")
+        },
+        NewEvidence {
+            turn_id: None,
+            ..user_utterance(evidence_id, "はい")
+        },
+    ] {
+        assert_eq!(
+            store.append(conflicting),
+            Err(EvidenceError::AlreadyExists(evidence_id))
+        );
+    }
+    assert_eq!(store.get(evidence_id).unwrap(), Some(original));
+}

@@ -327,6 +327,10 @@ pub enum ReasonCode {
     SelfDomainContamination,
     /// A correction named no target, or a target that cannot be superseded.
     SupersedeTargetInvalid,
+    /// The cited evidence, or something it rests on, has been corrected. It
+    /// cannot support a new current fact until fresh evidence re-establishes
+    /// one.
+    EvidenceCorrected,
     UnsupportedOperation,
     PolicyVersionMismatch,
     IndividualMismatch,
@@ -348,6 +352,7 @@ impl ReasonCode {
             Self::EvidenceDomainMismatch => "EVIDENCE_DOMAIN_MISMATCH",
             Self::SelfDomainContamination => "SELF_DOMAIN_CONTAMINATION",
             Self::SupersedeTargetInvalid => "SUPERSEDE_TARGET_INVALID",
+            Self::EvidenceCorrected => "EVIDENCE_CORRECTED",
             Self::UnsupportedOperation => "UNSUPPORTED_OPERATION",
             Self::PolicyVersionMismatch => "POLICY_VERSION_MISMATCH",
             Self::IndividualMismatch => "INDIVIDUAL_MISMATCH",
@@ -378,6 +383,7 @@ impl FromStr for ReasonCode {
             "EVIDENCE_DOMAIN_MISMATCH" => Self::EvidenceDomainMismatch,
             "SELF_DOMAIN_CONTAMINATION" => Self::SelfDomainContamination,
             "SUPERSEDE_TARGET_INVALID" => Self::SupersedeTargetInvalid,
+            "EVIDENCE_CORRECTED" => Self::EvidenceCorrected,
             "UNSUPPORTED_OPERATION" => Self::UnsupportedOperation,
             "POLICY_VERSION_MISMATCH" => Self::PolicyVersionMismatch,
             "INDIVIDUAL_MISMATCH" => Self::IndividualMismatch,
@@ -915,6 +921,7 @@ mod tests {
             ReasonCode::EvidenceDomainMismatch,
             ReasonCode::SelfDomainContamination,
             ReasonCode::SupersedeTargetInvalid,
+            ReasonCode::EvidenceCorrected,
             ReasonCode::UnsupportedOperation,
             ReasonCode::PolicyVersionMismatch,
             ReasonCode::IndividualMismatch,

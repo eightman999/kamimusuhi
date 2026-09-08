@@ -22,8 +22,7 @@ use crate::error::map_sqlite;
 use crate::evidence::{corrected_by, facts_in};
 use crate::failpoints::Failpoint;
 use crate::memory::{
-    insert_state_record, invalidate_records_supported_by, mark_superseded, state_facts_in,
-    state_kind,
+    insert_state_record, invalidate_records_rooted_in, mark_superseded, state_facts_in, state_kind,
 };
 use crate::store::SqliteStore;
 
@@ -761,7 +760,7 @@ impl ContinuityStore for SqliteStore {
         // instead of leaving it standing as an independent fact (audit A03).
         let corrected = corrected_by(&tx, &proposal.evidence_refs)?;
         if !corrected.is_empty() {
-            let invalidated = invalidate_records_supported_by(
+            let invalidated = invalidate_records_rooted_in(
                 &tx,
                 proposal.individual_id,
                 &corrected,

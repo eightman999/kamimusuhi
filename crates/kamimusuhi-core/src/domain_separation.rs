@@ -17,6 +17,8 @@
 //!   capture (`EVIDENCE_DOMAIN_MISMATCH`);
 //! - nothing a user, a library or a resource said can support the self domain
 //!   (`SELF_DOMAIN_CONTAMINATION`);
+//! - corrected evidence cannot support a new current fact, whether it was
+//!   cited directly or through a derivation of it (`EVIDENCE_CORRECTED`);
 //! - a correction must name a live target in the same domain and about the
 //!   same subject (`SUPERSEDE_TARGET_INVALID`);
 //! - only a correction may name a supersession target (`MALFORMED_PROPOSAL`).
@@ -70,6 +72,18 @@ pub fn check_domain_separation(
                 format!(
                     "evidence {evidence_id} belongs to {} but the proposal targets {}",
                     facts.individual_id, proposal.individual_id
+                ),
+            ));
+        }
+        // Invalidating the derived state at correction time is not enough on
+        // its own: the same corrected source must not be able to re-establish
+        // a current fact through a later proposal.
+        if facts.is_corrected {
+            return Err(SeparationViolation::new(
+                ReasonCode::EvidenceCorrected,
+                format!(
+                    "evidence {evidence_id} rests on corrected evidence and cannot \
+                     support a new current fact"
                 ),
             ));
         }
@@ -273,6 +287,15 @@ mod tests {
         let ctx = context(vec![facts(EvidenceKind::UserUtterance, OTHER_INDIVIDUAL)]);
         let violation = check_domain_separation(&proposal(), &ctx).expect_err("must reject");
         assert_eq!(violation.reason_code, ReasonCode::EvidenceOwnerMismatch);
+    }
+
+    #[test]
+    fn corrected_evidence_cannot_support_a_new_current_fact() {
+        let mut corrected = facts(EvidenceKind::UserUtterance, INDIVIDUAL);
+        corrected.is_corrected = true;
+        let violation = check_domain_separation(&proposal(), &context(vec![corrected]))
+            .expect_err("must reject");
+        assert_eq!(violation.reason_code, ReasonCode::EvidenceCorrected);
     }
 
     #[test]
