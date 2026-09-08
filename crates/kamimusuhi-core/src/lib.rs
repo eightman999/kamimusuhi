@@ -15,6 +15,7 @@ pub mod library;
 pub mod memory;
 pub mod mutation;
 pub mod persona;
+pub mod policy;
 pub mod resources;
 pub mod runtime;
 pub mod time;
