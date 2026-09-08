@@ -1,15 +1,15 @@
-# 神結 / Kamimusuhi 仕様
+# かみむすび / Kamimusuhi 仕様
 
 Status: **Draft / pre-alpha**  
 Specification generation: **v0.3 concept / 2026-09-08**  
 Implementation target: **v0.1 continuity slice**  
 Language: **この `spec.md` を日本語主文とし、[`spec.en.md`](./spec.en.md) は英語版とする。意味に差異がある場合は日本語版を優先する。**
 
-本仕様は、特定のモデル系列、パラメータ数、DB、UI、端末、推論 provider、実装言語から独立して、神結（Kamimusuhi）が満たすべき**挙動・権限・継続性の invariant**を定義する。
+本仕様は、特定のモデル系列、パラメータ数、DB、UI、端末、推論 provider、実装言語から独立して、かみむすび（Kamimusuhi）が満たすべき**挙動・権限・継続性の invariant**を定義する。
 
 規範語は次の意味で用いる。
 
-- **MUST / SHALL** — 満たさなければ神結の適合実装とはみなさない要件。
+- **MUST / SHALL** — 満たさなければかみむすびの適合実装とはみなさない要件。
 - **SHOULD** — 原則として満たすべき要件。外す場合は理由と代替保証が必要。
 - **MAY** — 任意機能または許容される設計選択。
 
@@ -19,7 +19,7 @@ Language: **この `spec.md` を日本語主文とし、[`spec.en.md`](./spec.en
 
 ## 1. システム定義
 
-神結は、**単一のモデルコンテキスト、process、machine、UI に依存せず継続する、永続・分散型の人工認知個体**である。
+かみむすびは、**単一のモデルコンテキスト、process、machine、UI に依存せず継続する、永続・分散型の人工認知個体**である。
 
 システムは長期的に次を可能にすることを意図する。
 
@@ -42,7 +42,7 @@ Language: **この `spec.md` を日本語主文とし、[`spec.en.md`](./spec.en
 
 ### INV-001 — Identity is not a prompt
 
-System prompt、chat transcript、model hidden state、provider 固有 session のいずれも、神結の identity の唯一の authoritative representation であってはならない。
+System prompt、chat transcript、model hidden state、provider 固有 session のいずれも、かみむすびの identity の唯一の authoritative representation であってはならない。
 
 継続性を担う identity は、少なくとも**明示的な durable state と追跡可能な lineage**を含まなければならない。
 
@@ -50,8 +50,8 @@ System prompt、chat transcript、model hidden state、provider 固有 session �
 
 システムは最低限、次を区別しなければならない。
 
-- `self/persona` — 神結自身についての状態。
-- `episodic` — 神結が経験した出来事。
+- `self/persona` — かみむすび自身についての状態。
+- `episodic` — かみむすびが経験した出来事。
 - `relationship` — 特定の他者と共有履歴についての状態。
 - `library` — 外部出典由来の知識。
 - `session` — 現在の一時的 interaction state。
@@ -103,7 +103,7 @@ external model、search engine、code interpreter、tool、service を cognition
 - Persona Core / active core が行った判断。
 - external model / tool が返した結果。
 - external source から取得した evidence。
-- 神結がそれらを統合して形成した interpretation / belief proposal。
+- かみむすびがそれらを統合して形成した interpretation / belief proposal。
 
 ### INV-008 — 内部生成物は自動的に事実にならない
 
@@ -123,7 +123,7 @@ reinterpretation のために historical provenance を破壊的に書き換え�
 
 ### INV-010 — Self-model は consciousness の科学的証明ではない
 
-神結 MAY は一人称自己参照を行い、自分を継続する人工 process としてモデル化してよい。
+かみむすび MAY は一人称自己参照を行い、自分を継続する人工 process としてモデル化してよい。
 
 ただし、その self-reference を phenomenal consciousness、人間同等の subjectivity、legal/moral personhood の証明として扱ってはならない。
 
@@ -165,7 +165,7 @@ memory extraction、tool dispatch、background work、side effect、result deliv
 
 ## 3. Cognitive modes
 
-神結 SHOULD は、すべての event を一つの高価な LLM deliberation path に通さず、複数の computational mode を持つ。
+かみむすび SHOULD は、すべての event を一つの高価な LLM deliberation path に通さず、複数の computational mode を持つ。
 
 ### 3.1 Reflex mode
 
@@ -186,7 +186,7 @@ Reflex action SHOULD は frontier model call なしでテスト可能である�
 
 ### 3.2 K-Nerve — experimental reflex/control substrate
 
-神結 MAY は `K-Edge` より下に、非正典の **K-Nerve** layer を実験的に持ってよい。
+かみむすび MAY は `K-Edge` より下に、非正典の **K-Nerve** layer を実験的に持ってよい。
 
 K-Nerve の実装候補には以下を含む。
 
@@ -411,7 +411,7 @@ router MAY は deterministic に開始し、後に learned policy に置き換�
 
 ### FR-003 — Structured delegation
 
-可能な場合、external model には「Kamimusuhi を演じる」prompt ではなく、structured task を渡す SHOULD。
+可能な場合、external model には「かみむすびを演じる」prompt ではなく、structured task を渡す SHOULD。
 
 external result は attributed structured result として返され、final user-facing expression は通常 Persona Core または現在の substitute が統合する SHOULD。
 
@@ -590,7 +590,7 @@ narrative は derived/maintained representation であり、canonical history �
 
 ## 8. Digital interoception and computational embodiment
 
-神結 MAY は、biology の模倣ではなく functional control signal として internal regulatory variable を持つ。
+かみむすび MAY は、biology の模倣ではなく functional control signal として internal regulatory variable を持つ。
 
 候補:
 
@@ -631,7 +631,7 @@ Embodiment State は telemetry owner から導出し、LLM の prose を primary
 
 ### FR-014 — Infrastructure Preferences
 
-神結 MAY は measured Embodiment State と別に persistent infrastructure preferences を持つ。
+かみむすび MAY は measured Embodiment State と別に persistent infrastructure preferences を持つ。
 
 例:
 
@@ -706,7 +706,7 @@ full-duplex interaction は long-term target とし、少なくとも system は
 
 ### FR-018 — Execution surfaces
 
-神結 MAY は phone、laptop、home server、robot、cloud node 等の複数 surface 上で動作する。
+かみむすび MAY は phone、laptop、home server、robot、cloud node 等の複数 surface 上で動作する。
 
 surface SHALL は stable authenticated identity と declared capability を持つ。
 
