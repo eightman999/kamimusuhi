@@ -34,6 +34,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 
 - [`research/README.md`](./research/README.md) — research-map index and promotion flow from daily survey to durable research/design knowledge.
 - [`research/landscape.md`](./research/landscape.md) — cross-disciplinary landscape mapping prior art to Kamimusuhi subsystems, differences, research gaps, core research questions, and prioritized experiments.
+- [`daily-surveys/README.md`](./daily-surveys/README.md) — dated cross-domain research intake and index; new papers/projects enter here before promotion into durable research or architecture notes.
 - [`research-foundations.md`](./research-foundations.md) — ALife, cognitive architectures, neuroscience/psychology, memory, extended cognition, persistent identity, tools, sleep, interoception.
 
 ### Native cognition / model training
