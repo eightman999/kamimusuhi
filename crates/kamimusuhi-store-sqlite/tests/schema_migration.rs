@@ -32,8 +32,11 @@ const EXPECTED_TABLES: &[&str] = &[
     "evidence_links",
     "evidence_records",
     "individuals",
+    "library_artifacts",
+    "library_chunks",
     "mutation_decisions",
     "mutation_proposals",
+    "resource_calls",
     "schema_meta",
     "sessions",
     "state_record_evidence",
@@ -46,8 +49,8 @@ const EXPECTED_TABLES: &[&str] = &[
 fn migrates_empty_database_to_the_supported_version_deterministically() {
     let (_dir, path) = temp_db();
     let store = open(&path).unwrap();
-    assert_eq!(store.schema_version(), SchemaVersion(2));
-    assert_eq!(SUPPORTED_SCHEMA_VERSION, SchemaVersion(2));
+    assert_eq!(store.schema_version(), SchemaVersion(3));
+    assert_eq!(SUPPORTED_SCHEMA_VERSION, SchemaVersion(3));
     assert_eq!(store.table_names().unwrap(), EXPECTED_TABLES);
 }
 
@@ -64,7 +67,7 @@ fn reopening_is_idempotent_and_keeps_version() {
     drop(raw);
 
     let store = open(&path).unwrap();
-    assert_eq!(store.schema_version(), SchemaVersion(2));
+    assert_eq!(store.schema_version(), SchemaVersion(3));
     assert_eq!(store.table_names().unwrap(), EXPECTED_TABLES);
 
     let raw = Connection::open(&path).unwrap();
@@ -96,7 +99,7 @@ fn refuses_database_from_a_newer_schema() {
         err,
         ContinuityError::SchemaVersionMismatch {
             found: SchemaVersion(99),
-            supported: SchemaVersion(2),
+            supported: SchemaVersion(3),
         }
     );
 }

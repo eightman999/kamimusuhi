@@ -13,8 +13,10 @@ mod continuity;
 mod error;
 mod evidence;
 pub mod failpoints;
+mod library;
 mod memory;
 pub mod migrations;
+mod resources;
 mod store;
 
 pub use store::{SqliteStore, StoreConfig};

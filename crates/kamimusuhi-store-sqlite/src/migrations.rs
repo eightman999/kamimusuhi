@@ -28,10 +28,15 @@ const MIGRATIONS: &[Migration] = &[
         name: "evidence_memory",
         sql: include_str!("../migrations/0002_evidence_memory.sql"),
     },
+    Migration {
+        version: SchemaVersion(3),
+        name: "library_resources",
+        sql: include_str!("../migrations/0003_library_resources.sql"),
+    },
 ];
 
 /// Newest schema this build can read and write.
-pub const SUPPORTED_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
+pub const SUPPORTED_SCHEMA_VERSION: SchemaVersion = SchemaVersion(3);
 
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 
