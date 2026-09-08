@@ -52,6 +52,10 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 - [`latency-architecture.md`](./latency-architecture.md) — immediate-response architecture, K-Edge/K-Core escalation, prompt/KV caching, progressive retrieval, speculative decoding, latency metrics.
 - [`native-runtime-stratification.md`](./native-runtime-stratification.md) — polyglot runtime strategy: native K-Edge/runtime hot path, Python research/control plane, long-lived executables, FFI/IPC, SIMD/assembly policy, and profiler-driven migration.
 
+### Failure modes / implementation lessons
+
+- [`persistent-agent-implementation-pitfalls.md`](./persistent-agent-implementation-pitfalls.md) — cross-cutting failure-mode catalogue distilled from Yui/FIO and mapped to Kamimusuhi: memory/compaction, provisional state, task delivery, tool grounding, confirmation vs execution, crash ambiguity, transactional jobs/outbox, scheduler ownership, relationship-state boundaries, source-of-truth, and 12 end-to-end experiments.
+
 ### External projects / technologies
 
 - [`technology-watchlist.md`](./technology-watchlist.md) — OpenLife, Tebasaki_lab/MagicDelta, artificial nervous systems, llama.cpp, MLX-LM, continuity research, social-cognition benchmarks.
