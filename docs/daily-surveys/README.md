@@ -1,0 +1,60 @@
+# Kamimusuhi Daily Research Surveys
+
+This directory contains dated, cross-domain research intake for Kamimusuhi.
+
+Daily surveys are **non-normative**. They record newly surfaced papers, projects, implementations, talks, technical reports, design proposals, and relevant speculative work before those findings are promoted into longer-lived research or architecture documents.
+
+## Survey scope
+
+The recurring survey spans:
+
+- artificial life and digital organisms;
+- cognitive architectures and workspace/modular cognition;
+- persistent AI agents and long-term memory;
+- self-models, autobiographical/narrative identity, Theory of Mind, and social cognition;
+- neuroscience, psychology, cybernetics, homeostasis, and active inference;
+- open-ended learning/evolution and self-improving systems;
+- tool/model orchestration and agent harnesses;
+- distributed systems, identity continuity, provenance, and authorization;
+- multimodal perception, robotics, neuromorphic and low-latency cognition;
+- HCI, lifelong companions, design fiction, and related SF concepts.
+
+## Evidence discipline
+
+Each promoted item should distinguish:
+
+1. what was actually demonstrated;
+2. what remains proposed or speculative;
+3. the relevant Kamimusuhi subsystem;
+4. the design/implementation idea worth borrowing;
+5. the important difference from Kamimusuhi;
+6. a concrete falsifiable next experiment;
+7. importance (`S` / `A` / `B` / `C`).
+
+Prefer primary papers, official project pages, and released artifacts. Social-media or promotional claims should be treated as leads until independently supported.
+
+## Promotion flow
+
+```text
+daily survey
+    |
+    +--> no durable significance -> remains dated intake only
+    |
+    +--> recurring/important technology -> ../technology-watchlist.md
+    |
+    +--> established conceptual foundation -> ../research-foundations.md
+    |
+    +--> comparative positioning -> ../research/landscape.md
+    |
+    +--> implementation failure mode -> subsystem/pitfall note
+    |
+    +--> validated design decision -> architecture.md / spec.md via explicit review
+```
+
+A daily survey should not silently turn a preprint, analogy, or benchmark result into a normative architecture requirement.
+
+## Index
+
+| Date | Highlights |
+|---|---|
+| [2026-09-08](./2026-09-08.md) | epistemic assertion guardrails, authorization laundering, security-context consequence integrity, continuous cognitive coverage, identity-centric multimodal memory, drift-vs-poisoning, adaptive routing, KV workspace virtualization |
