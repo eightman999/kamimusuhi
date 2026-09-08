@@ -1,0 +1,6 @@
+/target
+.local/
+*.sqlite
+*.sqlite-*
+*.db
+Cargo.lock.bak
