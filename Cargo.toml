@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/kamimusuhi-core",
+    "crates/kamimusuhi-store-sqlite",
+    "crates/kamimusuhi-resource-http",
+    "crates/kamimusuhi-testkit",
+    "crates/kamimusuhi-runtime",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT"
+repository = "https://github.com/eightman999/kamimusuhi"
+publish = false
+
+[workspace.dependencies]
+kamimusuhi-core = { path = "crates/kamimusuhi-core" }
+kamimusuhi-store-sqlite = { path = "crates/kamimusuhi-store-sqlite" }
+kamimusuhi-resource-http = { path = "crates/kamimusuhi-resource-http" }
+kamimusuhi-testkit = { path = "crates/kamimusuhi-testkit" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+uuid = { version = "1.26", features = ["v4"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+tempfile = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

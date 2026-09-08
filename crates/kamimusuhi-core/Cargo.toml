@@ -1,0 +1,21 @@
+[package]
+name = "kamimusuhi-core"
+description = "Provider-neutral continuity, mutation and cognition contracts for Kamimusuhi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# Dependency rule (phase-1 plan §3.1): this crate MUST NOT depend on SQLite,
+# HTTP clients, provider SDKs, accelerator backends, vector databases or
+# speech libraries. `scripts/ci-local.sh` enforces this against `cargo tree`.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

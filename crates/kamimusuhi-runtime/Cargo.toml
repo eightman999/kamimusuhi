@@ -1,0 +1,21 @@
+[package]
+name = "kamimusuhi-runtime"
+description = "Kamimusuhi runtime binary: init / inspect / demo-continuity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "kamimusuhi-runtime"
+path = "src/main.rs"
+
+[dependencies]
+kamimusuhi-core = { workspace = true }
+kamimusuhi-store-sqlite = { workspace = true }
+kamimusuhi-testkit = { workspace = true }
+
+[lints]
+workspace = true
