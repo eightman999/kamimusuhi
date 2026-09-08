@@ -1,4 +1,4 @@
-# Kamimusuhi / 神結 Specification
+# Kamimusuhi / かみむすび Specification
 
 Status: **Draft / pre-alpha**  
 Specification generation: **v0.3 concept / 2026-09-08**  
