@@ -1,0 +1,127 @@
+name: Integrate verified spec audit
+
+on:
+  push:
+    branches: [fix/spec-implementation-audit-20260910]
+    paths: ['.audit/update-docs.py', '.github/workflows/audit-docs.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integrate-spec-audit-20260910
+  cancel-in-progress: true
+
+jobs:
+  integrate:
+    if: github.ref == 'refs/heads/fix/spec-implementation-audit-20260910'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Apply checked documentation updates and remove temporary files
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/final-audit"
+          python3 .audit/update-docs.py
+          rm .audit/update-docs.py .audit/docs-patch.b64 .github/workflows/audit-docs.yml
+          cargo fmt --all
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'docs: align README and specification with verified provider boundaries'
+          git rev-parse HEAD > "$RUNNER_TEMP/final-audit/audit-branch-revision.txt"
+      - name: Replay only reviewed changes on current master as two clean commits
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          root = pathlib.Path.cwd()
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'final-audit'
+          work = pathlib.Path(os.environ['RUNNER_TEMP']) / 'integrated-kamimusuhi'
+          baseline = '5e8817f176729f251fd309da88d932ddb88f4576'
+          tested = '89eb75bb8a1352899ae5df296a215be109f9b26f'
+          docs = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          master = subprocess.check_output(['git', 'rev-parse', 'origin/master'], text=True).strip()
+          subprocess.run(['git', 'merge-base', '--is-ancestor', baseline, master], check=True)
+          (out / 'master-base.txt').write_text(master + '\n')
+          subprocess.run(['git', 'worktree', 'add', '--detach', str(work), master], check=True)
+          docs_allowed = {
+              'README.md', 'README.en.md', 'spec.md', 'spec.en.md', 'docs/README.md',
+              'docs/implementation/w7-persona-core-plan.md',
+              'docs/implementation/phase-2-implementation-plan.md',
+              'docs/implementation/2026-09-10-spec-implementation-audit.md',
+              'crates/kamimusuhi-resource-http/src/http.rs',
+          }
+          changes = [
+              (baseline, tested, 'code', 'fix: enforce Persona privacy and bounded attributed provider responses'),
+              (tested, docs, 'docs', 'docs: align specification and README with verified W0-W7 behavior'),
+          ]
+          for before, after, label, message in changes:
+              names = subprocess.check_output(['git', 'diff', '--name-only', before, after], text=True).splitlines()
+              if label == 'code':
+                  assert all(n.startswith('crates/') or n == '.github/workflows/ci.yml' for n in names), names
+              else:
+                  assert set(names) == docs_allowed, names
+              patch = subprocess.check_output(['git', 'diff', '--binary', '--full-index', before, after])
+              (out / f'{label}.patch').write_bytes(patch)
+              subprocess.run(['git', 'apply', '--check', '-'], input=patch, cwd=work, check=True)
+              subprocess.run(['git', 'apply', '-'], input=patch, cwd=work, check=True)
+              subprocess.run(['git', 'add', '-A'], cwd=work, check=True)
+              subprocess.run(['git', 'commit', '-m', message], cwd=work, check=True)
+              revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=work, text=True)
+              (out / f'{label}-revision.txt').write_text(revision)
+          # Concurrent research additions must survive without alteration.
+          upstream = subprocess.check_output(['git', 'diff', '--name-only', baseline, master], text=True).splitlines()
+          ours = set(subprocess.check_output(['git', 'diff', '--name-only', baseline, docs], text=True).splitlines())
+          for name in set(upstream) - ours:
+              old = subprocess.check_output(['git', 'rev-parse', f'{master}:{name}'], text=True)
+              new = subprocess.check_output(['git', 'rev-parse', f'HEAD:{name}'], cwd=work, text=True)
+              assert old == new, name
+          assert not subprocess.check_output(['git', 'status', '--porcelain'], cwd=work)
+          assert not (work / '.audit').exists()
+          assert not (work / '.github/workflows/audit-apply.yml').exists()
+          assert not (work / '.github/workflows/audit-docs.yml').exists()
+          print('Two clean commits prepared; concurrent master files preserved')
+          PY
+      - name: Run all checks on the exact integrated source
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/integrated-kamimusuhi"
+          git diff --check HEAD~2 HEAD
+          bash scripts/ci-local.sh 2>&1 | tee "$RUNNER_TEMP/final-audit/ci.log"
+          test -z "$(git status --porcelain)"
+      - name: Fast-forward master and the cleaned audit branch atomically
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$RUNNER_TEMP/integrated-kamimusuhi"
+          audit_revision="$(cat "$RUNNER_TEMP/final-audit/audit-branch-revision.txt")"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" git push --atomic origin HEAD:refs/heads/master "$audit_revision":refs/heads/fix/spec-implementation-audit-20260910
+      - name: Preserve final source and validation evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/final-audit"
+          if test -d "$RUNNER_TEMP/integrated-kamimusuhi"; then
+            cd "$RUNNER_TEMP/integrated-kamimusuhi"
+          fi
+          git rev-parse HEAD > "$RUNNER_TEMP/final-audit/revision.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final-audit/tree.txt"
+          git ls-tree -r HEAD > "$RUNNER_TEMP/final-audit/manifest.txt"
+          git archive --format=tar.gz --output="$RUNNER_TEMP/final-audit/source.tar.gz" HEAD
+          rustup show active-toolchain > "$RUNNER_TEMP/final-audit/toolchain.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: final-audit-${{ github.run_id }}
+          path: ${{ runner.temp }}/final-audit/
+          retention-days: 7
