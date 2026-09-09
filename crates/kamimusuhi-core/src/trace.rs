@@ -69,6 +69,10 @@ pub enum TraceEventKind {
     LibraryImported,
     #[serde(rename = "library.retrieved")]
     LibraryRetrieved,
+    /// The router chose a resource, or refused to. Operational only: a
+    /// routing decision is not something the individual believes.
+    #[serde(rename = "routing.decided")]
+    RoutingDecided,
     #[serde(rename = "resource.selected")]
     ResourceSelected,
     #[serde(rename = "resource.completed")]
@@ -98,6 +102,7 @@ impl TraceEventKind {
             Self::MemoryRetrieved => "memory.retrieved",
             Self::LibraryImported => "library.imported",
             Self::LibraryRetrieved => "library.retrieved",
+            Self::RoutingDecided => "routing.decided",
             Self::ResourceSelected => "resource.selected",
             Self::ResourceCompleted => "resource.completed",
             Self::WorkspaceAssembled => "workspace.assembled",
@@ -130,6 +135,7 @@ impl FromStr for TraceEventKind {
             "memory.retrieved" => Self::MemoryRetrieved,
             "library.imported" => Self::LibraryImported,
             "library.retrieved" => Self::LibraryRetrieved,
+            "routing.decided" => Self::RoutingDecided,
             "resource.selected" => Self::ResourceSelected,
             "resource.completed" => Self::ResourceCompleted,
             "workspace.assembled" => Self::WorkspaceAssembled,
@@ -280,6 +286,7 @@ mod tests {
             TraceEventKind::MemoryRetrieved,
             TraceEventKind::LibraryImported,
             TraceEventKind::LibraryRetrieved,
+            TraceEventKind::RoutingDecided,
             TraceEventKind::ResourceSelected,
             TraceEventKind::ResourceCompleted,
             TraceEventKind::WorkspaceAssembled,

@@ -6,15 +6,13 @@
 //! classify — connect refused, header timeout, body timeout, truncated body —
 //! are exactly the ones a wrapper would flatten into one error type.
 //!
-//! Deliberate limits, because pretending otherwise would be worse than saying
-//! so:
+//! `https://` is supported through [`crate::tls`], which delegates the
+//! handshake and every certificate and hostname check to `rustls`. Nothing in
+//! this crate implements TLS.
 //!
-//! - **Plain HTTP only.** There is no TLS here, so this reaches local and
-//!   in-cluster endpoints (llama.cpp, Ollama, LM Studio, a fixture server) and
-//!   not `https://` providers. TLS is a real gap and is noted as such rather
-//!   than half-implemented.
-//! - HTTP/1.1, `Content-Length` or `identity` chunked responses, no keep-alive
-//!   reuse: one connection per attempt, closed after.
+//! Deliberate limits, because pretending otherwise would be worse than saying
+//! so: HTTP/1.1, `Content-Length` or chunked responses, no keep-alive reuse —
+//! one connection per attempt, closed after.
 //!
 //! Every read and write is bounded by a deadline derived from one overall
 //! timeout, so a server that accepts a connection and then says nothing is a
@@ -24,6 +22,8 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
+use crate::tls::{TlsFailureKind, Transport, TrustAnchors};
+
 /// Where a request is going. Parsed once from a base URL so a malformed
 /// endpoint fails at configuration time, not on the first call.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,20 +32,24 @@ pub struct Endpoint {
     pub port: u16,
     /// Path with a leading slash, query included.
     pub path: String,
+    /// Whether this endpoint is reached over TLS. Derived from the scheme, so
+    /// an `http://` URL can never be silently upgraded, nor an `https://` one
+    /// silently downgraded.
+    pub tls: bool,
 }
 
 impl Endpoint {
-    /// Parse `http://host[:port][/path]`, appending `suffix` to the path.
+    /// Parse `http(s)://host[:port][/path]`, appending `suffix` to the path.
     pub fn parse(base_url: &str, suffix: &str) -> Result<Self, String> {
-        let rest = base_url.strip_prefix("http://").ok_or_else(|| {
-            match base_url.strip_prefix("https://") {
-                // Say the actual reason rather than "invalid URL".
-                Some(_) => {
-                    "https is not supported by this adapter (no TLS); use http://".to_owned()
-                }
-                None => format!("base url {base_url:?} must start with http://"),
-            }
-        })?;
+        let (rest, tls) = match base_url.strip_prefix("https://") {
+            Some(rest) => (rest, true),
+            None => (
+                base_url.strip_prefix("http://").ok_or_else(|| {
+                    format!("base url {base_url:?} must start with http:// or https://")
+                })?,
+                false,
+            ),
+        };
         let (authority, base_path) = match rest.find('/') {
             Some(index) => (&rest[..index], rest[index..].trim_end_matches('/')),
             None => (rest, ""),
@@ -59,7 +63,7 @@ impl Endpoint {
                 port.parse::<u16>()
                     .map_err(|_| format!("base url {base_url:?} has a non-numeric port"))?,
             ),
-            None => (authority, 80),
+            None => (authority, if tls { 443 } else { 80 }),
         };
         if host.is_empty() {
             return Err(format!("base url {base_url:?} has no host"));
@@ -68,6 +72,7 @@ impl Endpoint {
             host: host.to_owned(),
             port,
             path: format!("{base_path}{suffix}"),
+            tls,
         })
     }
 
@@ -92,6 +97,12 @@ pub enum HttpError {
     Transport(String),
     /// A reply arrived but is not HTTP the client can parse.
     Malformed(String),
+    /// TLS could not be established. Classified by `rustls`, not by us.
+    Tls {
+        kind: TlsFailureKind,
+        /// `rustls`'s own message. No certificate content is added.
+        detail: String,
+    },
 }
 
 /// One HTTP response, already read into memory.
@@ -128,6 +139,7 @@ pub fn post_json(
     body: &str,
     headers: &[Header],
     timeout: Duration,
+    anchors: &TrustAnchors,
 ) -> Result<HttpResponse, HttpError> {
     let started = Instant::now();
     let remaining = |phase: &'static str| -> Result<Duration, HttpError> {
@@ -143,18 +155,72 @@ pub fn post_json(
         Ok(left)
     };
 
-    let address = endpoint
+    let addresses: Vec<_> = endpoint
         .authority()
         .to_socket_addrs()
         .map_err(|source| HttpError::Transport(format!("resolve {}: {source}", endpoint.host)))?
-        .next()
-        .ok_or_else(|| HttpError::Transport(format!("{} resolved to nothing", endpoint.host)))?;
+        .collect();
+    if addresses.is_empty() {
+        return Err(HttpError::Transport(format!(
+            "{} resolved to nothing",
+            endpoint.host
+        )));
+    }
 
-    let mut stream = TcpStream::connect_timeout(&address, remaining("connect")?)
-        .map_err(|source| classify_io(&source, started, "connect"))?;
-    stream
+    // Try every resolved address, not just the first. A dual-stack name
+    // routinely resolves to an AAAA the local host cannot reach and an A it
+    // can; taking the first would make reachability depend on resolver order.
+    let mut last = None;
+    let mut connected = None;
+    for address in &addresses {
+        match TcpStream::connect_timeout(address, remaining("connect")?) {
+            Ok(socket) => {
+                connected = Some(socket);
+                break;
+            }
+            Err(source) => last = Some(classify_io(&source, started, "connect")),
+        }
+    }
+    let socket = match connected {
+        Some(socket) => socket,
+        None => {
+            return Err(last.unwrap_or_else(|| {
+                HttpError::Transport(format!("{} could not be reached", endpoint.host))
+            }));
+        }
+    };
+    socket
         .set_nodelay(true)
         .map_err(|source| HttpError::Transport(format!("set_nodelay: {source}")))?;
+    // Deadlines are armed before the handshake: a TLS server that accepts a
+    // connection and then stalls has to time out like any other.
+    socket
+        .set_write_timeout(Some(remaining("handshake")?))
+        .map_err(|source| HttpError::Transport(format!("set_write_timeout: {source}")))?;
+    socket
+        .set_read_timeout(Some(remaining("handshake")?))
+        .map_err(|source| HttpError::Transport(format!("set_read_timeout: {source}")))?;
+
+    let mut stream = if endpoint.tls {
+        let config = crate::tls::client_config(anchors)
+            .map_err(|(kind, detail)| HttpError::Tls { kind, detail })?;
+        match crate::tls::connect(config, &endpoint.host, socket) {
+            Ok(tls) => Transport::Tls(Box::new(tls)),
+            Err((kind, detail)) => {
+                // A stalled handshake surfaces from rustls as an IO error;
+                // report it as the timeout it is rather than as a TLS fault.
+                if remaining("handshake").is_err() {
+                    return Err(HttpError::Timeout {
+                        elapsed_ms: elapsed_ms(started),
+                        phase: "handshake",
+                    });
+                }
+                return Err(HttpError::Tls { kind, detail });
+            }
+        }
+    } else {
+        Transport::Plain(socket)
+    };
 
     let mut request = format!(
         "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\n\
@@ -170,6 +236,7 @@ pub fn post_json(
     request.push_str(body);
 
     stream
+        .socket()
         .set_write_timeout(Some(remaining("write")?))
         .map_err(|source| HttpError::Transport(format!("set_write_timeout: {source}")))?;
     stream
@@ -185,11 +252,19 @@ pub fn post_json(
     let mut chunk = [0_u8; 4096];
     loop {
         stream
+            .socket()
             .set_read_timeout(Some(remaining("read")?))
             .map_err(|source| HttpError::Transport(format!("set_read_timeout: {source}")))?;
         match stream.read(&mut chunk) {
             Ok(0) => break,
             Ok(read) => raw.extend_from_slice(&chunk[..read]),
+            // A TLS peer that closes without `close_notify` is common enough
+            // in the wild that refusing to read such a response would fail
+            // against real servers. The cost is that an unclean EOF cannot be
+            // told from a clean one here — a truncated body therefore surfaces
+            // as a malformed response when it fails to parse, rather than
+            // being quietly accepted as complete.
+            Err(ref source) if source.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(source) => return Err(classify_io(&source, started, "read")),
         }
     }
@@ -201,14 +276,18 @@ fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
-/// A read/write that expired is a timeout; anything else is transport.
+/// A read/write that expired is a timeout; a wrapped `rustls` error is a TLS
+/// failure; anything else is transport.
 fn classify_io(source: &std::io::Error, started: Instant, phase: &'static str) -> HttpError {
     match source.kind() {
         std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => HttpError::Timeout {
             elapsed_ms: elapsed_ms(started),
             phase,
         },
-        _ => HttpError::Transport(format!("{phase}: {source}")),
+        _ => match crate::tls::classify_io(source) {
+            Some((kind, detail)) => HttpError::Tls { kind, detail },
+            None => HttpError::Transport(format!("{phase}: {source}")),
+        },
     }
 }
 
@@ -299,9 +378,24 @@ mod tests {
     }
 
     #[test]
-    fn https_is_refused_with_the_actual_reason() {
-        let error = Endpoint::parse("https://api.example.test/v1", "/chat").unwrap_err();
-        assert!(error.contains("TLS"), "{error}");
+    fn https_is_parsed_with_its_own_default_port() {
+        let endpoint = Endpoint::parse("https://api.example.test/v1", "/chat").unwrap();
+        assert!(endpoint.tls);
+        assert_eq!(endpoint.port, 443);
+        assert_eq!(endpoint.host, "api.example.test");
+
+        // A scheme is never silently changed in either direction.
+        assert!(
+            !Endpoint::parse("http://api.example.test/v1", "/chat")
+                .unwrap()
+                .tls
+        );
+        assert_eq!(
+            Endpoint::parse("https://api.example.test:8443/v1", "/chat")
+                .unwrap()
+                .port,
+            8443
+        );
     }
 
     #[test]
@@ -355,7 +449,14 @@ mod tests {
     fn an_expired_deadline_is_a_timeout_rather_than_an_unbounded_wait() {
         // Zero left must never reach the kernel as "no timeout".
         let endpoint = Endpoint::parse("http://127.0.0.1:1/v1", "/chat").unwrap();
-        let error = post_json(&endpoint, "{}", &[], Duration::ZERO).unwrap_err();
+        let error = post_json(
+            &endpoint,
+            "{}",
+            &[],
+            Duration::ZERO,
+            &TrustAnchors::default(),
+        )
+        .unwrap_err();
         assert!(
             matches!(error, HttpError::Timeout { .. }),
             "expected a timeout, got {error:?}"
@@ -367,7 +468,14 @@ mod tests {
         // Port 1 on loopback refuses fast; the distinction matters because a
         // refusal is not worth waiting out and a timeout is.
         let endpoint = Endpoint::parse("http://127.0.0.1:1/v1", "/chat").unwrap();
-        let error = post_json(&endpoint, "{}", &[], Duration::from_millis(500)).unwrap_err();
+        let error = post_json(
+            &endpoint,
+            "{}",
+            &[],
+            Duration::from_millis(500),
+            &TrustAnchors::default(),
+        )
+        .unwrap_err();
         assert!(
             matches!(error, HttpError::Transport(_)),
             "expected transport, got {error:?}"

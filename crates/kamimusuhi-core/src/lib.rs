@@ -25,6 +25,7 @@ pub mod memory;
 pub mod mutation;
 pub mod persona;
 pub mod resources;
+pub mod routing;
 pub mod time;
 pub mod trace;
 pub mod workspace;

@@ -94,39 +94,39 @@ does not change the self or memory schema.
 
 ### Acceptance criteria
 
-- [ ] Resources declare capability metadata: locality/privacy, modality, context
+- [x] Resources declare capability metadata: locality/privacy, modality, context
       capacity, latency/cost, availability/health, quality.
-- [ ] A routing request carries task class, privacy constraint, urgency,
+- [x] A routing request carries task class, privacy constraint, urgency,
       required depth, context size and cost budget.
-- [ ] The router is deterministic: identical inputs yield an identical decision,
+- [x] The router is deterministic: identical inputs yield an identical decision,
       asserted by test.
-- [ ] Every decision carries a stable reason code, including refusals.
-- [ ] A `LocalOnly` privacy constraint never selects an external resource, and
+- [x] Every decision carries a stable reason code, including refusals.
+- [x] A `LocalOnly` privacy constraint never selects an external resource, and
       refuses when no local candidate qualifies.
-- [ ] A candidate that fails a hard constraint (context capacity, cost budget,
+- [x] A candidate that fails a hard constraint (context capacity, cost budget,
       health) is excluded with a reason, not silently ranked last.
-- [ ] The Persona Core delegation path runs through the router end to end, and
+- [x] The Persona Core delegation path runs through the router end to end, and
       the result still arrives as `EXTERNAL_RESOURCE_RESULT` with resource and
       call attribution.
-- [ ] Routing decision, reason, requirement and considered candidates appear in
+- [x] Routing decision, reason, requirement and considered candidates appear in
       the JSONL trace, correlated by turn and resource IDs.
-- [ ] The trace still contains no secret, no prompt and no response body.
-- [ ] TLS is provided by `rustls`; no certificate or hostname verification is
+- [x] The trace still contains no secret, no prompt and no response body.
+- [x] TLS is provided by `rustls`; no certificate or hostname verification is
       hand-written anywhere in this repository.
-- [ ] `https://` endpoints work; `http://` local endpoints keep working.
-- [ ] Tested against a local TLS fixture server: valid certificate, invalid
+- [x] `https://` endpoints work; `http://` local endpoints keep working.
+- [x] Tested against a local TLS fixture server: valid certificate, invalid
       certificate, hostname mismatch, handshake failure, timeout.
-- [ ] TLS failures classify distinctly and carry no certificate or response
+- [x] TLS failures classify distinctly and carry no certificate or response
       content into logs or errors.
-- [ ] Retry and error attribution behave for TLS exactly as for plain HTTP: one
+- [x] Retry and error attribution behave for TLS exactly as for plain HTTP: one
       logical call, attempts counted, `resource_calls` correlated to its turn.
-- [ ] Provider failure leaves `IndividualId`, root commit, head and durable
+- [x] Provider failure leaves `IndividualId`, root commit, head and durable
       memory unchanged — re-asserted with a router in the path.
-- [ ] Provider or config replacement changes no self/memory schema.
-- [ ] W1–W5 tests all still pass, unweakened.
-- [ ] Mutation testing confirms the new tests fail when the behaviour they
+- [x] Provider or config replacement changes no self/memory schema.
+- [x] W1–W5 tests all still pass, unweakened.
+- [x] Mutation testing confirms the new tests fail when the behaviour they
       describe is broken.
-- [ ] `scripts/ci-local.sh` green from a clean checkout.
+- [x] `scripts/ci-local.sh` green from a clean checkout.
 
 ### Explicit non-goals — do not proceed past W6
 
@@ -177,3 +177,96 @@ Not to be fixed opportunistically in W6:
 
 Each needs its own plan document and its own acceptance criteria before any
 code is written for it.
+
+---
+
+## W6 implementation result
+
+Implemented at the commit that added this section. Measured, not planned.
+
+### Router
+
+`kamimusuhi-core::routing`. Capability metadata is `ResourceCapabilities`
+(locality, modalities, context capacity, latency, cost, quality, health);
+a requirement is `RoutingRequest` (task class, privacy, urgency, required
+depth, context size, cost budget, modality).
+
+`RuleRouter` applies hard constraints in a fixed order — privacy first, so a
+privacy refusal is never masked by a cheaper complaint about cost — then picks
+among survivors by cheapest, then healthy-before-degraded, then highest
+declared quality, then fastest, then slot name. The last tie-break makes the
+order total, so there is always exactly one answer.
+
+Refusal is an error, not a fallback: `LocalOnly` with no local candidate
+returns `NoEligibleResource` carrying a verdict per candidate. The integration
+test asserts the fixture server received **zero** requests in that case — the
+refusal happens before anything leaves the process.
+
+Every decision carries `considered`: one verdict per candidate, in slot order,
+with a stable reason code. `SELECTED`, `NOT_PREFERRED`, `PRIVACY_EXCLUDED`,
+`MODALITY_UNSUPPORTED`, `CONTEXT_TOO_LARGE`, `COST_OVER_BUDGET`,
+`TOO_SLOW_FOR_URGENCY`, `QUALITY_BELOW_DEPTH`, `UNHEALTHY`,
+`NO_ELIGIBLE_RESOURCE`.
+
+### TLS
+
+`rustls` with the `ring` provider. **No certificate or hostname verification
+is written in this repository** — `crates/kamimusuhi-resource-http/src/tls.rs`
+chooses trust anchors and classifies `rustls`'s errors, and contains no
+verification logic. There is no option to disable verification.
+
+Trust anchors are the bundled `webpki-roots` set, or a PEM file for a private
+CA; a private-CA setting *replaces* the public set rather than adding to it, so
+pointing at an internal CA does not silently keep trusting the public web. A
+missing or unusable PEM is an error rather than a fallback to the defaults.
+
+Failures classify as `certificate`, `hostname_mismatch`, `handshake` or
+`trust_anchors`, and are **not retried** — a certificate that does not validate
+will not validate on the next attempt, and retrying would blunt a security
+signal. `http://` endpoints keep working; the scheme decides the transport, so
+neither direction is ever silently changed.
+
+Three real bugs surfaced while building this, all found by tests rather than
+by reading:
+
+- socket deadlines were being set on a socket obtained through `StreamOwned`'s
+  `Deref`, so they never reached the real connection;
+- only the first resolved address was tried, which breaks any dual-stack name
+  whose AAAA is unreachable — `localhost` on this machine;
+- accepted sockets inherit the listener's non-blocking flag on macOS, which
+  made fixture reads return `EAGAIN` and looked like a client that sent
+  nothing. That one was latent in the W5 plain-HTTP fixture too.
+
+A fourth behaviour was deliberate rather than a bug: a peer that closes without
+`close_notify` is tolerated, because real servers do it constantly. The cost is
+stated in the code — with `Connection: close` framing a truncated body cannot
+be told from a complete one, so truncation surfaces as a parse failure rather
+than being silently accepted.
+
+### Acceptance
+
+Every criterion in the W6 list above is met. Tests: **246 passing, 0 failed,
+0 ignored** (from 215 at v0.1 closeout). New suites:
+`crates/kamimusuhi-resource-http/tests/tls_provider.rs` (7, against a real
+`rustls` server with per-test `rcgen` certificates) and
+`crates/kamimusuhi-runtime/tests/routing_delegation.rs` (7, across real process
+boundaries).
+
+Mutation testing confirmed the tests bite: removing the privacy constraint
+failed exactly the three routing tests and the local-only integration test;
+misclassifying a hostname mismatch failed exactly the classification unit test
+and the wrong-host integration test. Both reverted, CI green after.
+
+### Still not done
+
+The W6 non-goals above are all still non-goals. In addition, from this
+implementation specifically:
+
+- capability metadata is declared, never observed. Health does not change
+  because a provider started failing; nothing measures latency, cost or
+  quality, and a provider that lies about being local is believed;
+- there is exactly one slot in the runtime configuration, so routing currently
+  chooses among one candidate in the demo path. The router is exercised with
+  several candidates in unit tests;
+- `context_size` is the utterance length in bytes, which is not tokens;
+- TLS client certificates, SNI overrides, and proxy support are absent.

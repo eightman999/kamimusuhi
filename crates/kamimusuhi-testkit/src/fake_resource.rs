@@ -13,6 +13,7 @@ use kamimusuhi_core::resources::{
     CognitiveResource, ResourceDescriptor, ResourceError, ResourceKind, ResourceRequest,
     ResourceResult,
 };
+use kamimusuhi_core::routing::ResourceCapabilities;
 
 /// Fixed IDs so a stored `resource_calls` row is recognisable across runs.
 pub const FAKE_A_RESOURCE_ID: ResourceId = ResourceId::from_u128(0x0FAA);
@@ -61,6 +62,10 @@ impl CognitiveResource for FakeResource {
             adapter: "fake".to_owned(),
             version: "1".to_owned(),
             read_only: true,
+            // A fixture never leaves the process, costs nothing and returns
+            // immediately. It is also honestly declared as `Basic`: it is not
+            // a model, and routing must not be able to mistake it for one.
+            capabilities: ResourceCapabilities::in_process_fixture(),
         }
     }
 
@@ -94,6 +99,12 @@ impl CognitiveResource for UnavailableResource {
             adapter: "fake".to_owned(),
             version: "1".to_owned(),
             read_only: true,
+            // Declared unavailable, so a router excludes it before calling it.
+            // Its `invoke` still fails, for callers that reach it anyway.
+            capabilities: ResourceCapabilities {
+                health: kamimusuhi_core::routing::HealthState::Unavailable,
+                ..ResourceCapabilities::in_process_fixture()
+            },
         }
     }
 

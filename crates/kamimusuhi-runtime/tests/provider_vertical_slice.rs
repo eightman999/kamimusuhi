@@ -77,7 +77,27 @@ fn provider(server: &FixtureServer, resource_id: ResourceId, max_attempts: u32) 
         max_attempts,
         retry_backoff_ms: 1,
         resource_id,
+        tls_root_ca_path: None,
+        capabilities: kamimusuhi_core::routing::ResourceCapabilities {
+            locality: kamimusuhi_core::routing::LocalityClass::External,
+            modalities: [kamimusuhi_core::routing::Modality::Text]
+                .into_iter()
+                .collect(),
+            context_capacity: 8_192,
+            latency: kamimusuhi_core::routing::LatencyClass::Fast,
+            cost: kamimusuhi_core::routing::CostClass::Low,
+            quality: kamimusuhi_core::routing::QualityTier::Standard,
+            health: kamimusuhi_core::routing::HealthState::Healthy,
+        },
     }
+}
+
+/// A provider entry with everything but the endpoint filled in.
+fn provider_template() -> ProviderConfig {
+    let server = FixtureServer::always(FixtureResponse::ok("unused")).unwrap();
+    let mut template = provider(&server, PROVIDER_A, 2);
+    template.timeout_ms = 2_000;
+    template
 }
 
 /// Point the general slot at an HTTP provider by rewriting the config on disk.
@@ -415,12 +435,7 @@ fn every_provider_failure_leaves_the_individual_and_the_head_alone() {
             Some(server) => provider(server, PROVIDER_A, 2),
             None => ProviderConfig {
                 base_url: refused_base_url(),
-                model: "fixture-model".to_owned(),
-                auth_env: None,
-                timeout_ms: 2_000,
-                max_attempts: 2,
-                retry_backoff_ms: 1,
-                resource_id: PROVIDER_A,
+                ..provider_template()
             },
         };
         entry.timeout_ms = 300;

@@ -47,7 +47,11 @@ use kamimusuhi_core::mutation::{
     MutationDomain, MutationPolicyV0, MutationProposal, OriginClass, ProposalAttribution,
 };
 use kamimusuhi_core::persona::{CurrentInput, PersonaCore, PersonaTurnInput, TurnContext};
-use kamimusuhi_core::resources::{ResourceRequest, ResourceSlot};
+use kamimusuhi_core::resources::ResourceRequest;
+use kamimusuhi_core::routing::{
+    PrivacyConstraint, Router, RoutingCandidate, RoutingDecision, RoutingRequest, RuleRouter,
+    TaskClass,
+};
 use kamimusuhi_core::trace::{TraceCorrelation, TraceEventKind};
 use kamimusuhi_core::workspace::{
     SourceRef, Workspace, WorkspaceBuilder, WorkspaceDomain, WorkspaceItem,
@@ -55,7 +59,6 @@ use kamimusuhi_core::workspace::{
 use kamimusuhi_testkit::FakePersonaCore;
 use serde::{Deserialize, Serialize};
 
-use crate::config::GENERAL_SLOT;
 use crate::error::RuntimeError;
 use crate::runtime::Runtime;
 
@@ -155,6 +158,9 @@ pub struct LibraryReport {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceReport {
+    /// What the task needed, and what the router made of it.
+    pub routing_request: RoutingRequest,
+    pub routing_decision: RoutingDecision,
     pub slot: String,
     pub implementation: String,
     /// The resource that actually answered, from its own descriptor.
@@ -235,8 +241,21 @@ pub struct PhaseReport {
     pub persona_response: String,
 }
 
+/// How this run of the scenario is constrained.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ScenarioOptions {
+    /// How far the turn's material may travel. The demo's default is
+    /// unconstrained; `LocalOnly` is what makes the refusal path reachable
+    /// from the command line.
+    pub privacy: PrivacyConstraint,
+}
+
 /// Run one phase of the scenario against an opened runtime.
-pub fn run(runtime: &mut Runtime, phase: DemoPhase) -> Result<PhaseReport, RuntimeError> {
+pub fn run(
+    runtime: &mut Runtime,
+    phase: DemoPhase,
+    options: ScenarioOptions,
+) -> Result<PhaseReport, RuntimeError> {
     let individual_id = runtime.individual_id();
 
     // Session and turn. Fresh in both phases: resuming an individual is not
@@ -353,7 +372,7 @@ pub fn run(runtime: &mut Runtime, phase: DemoPhase) -> Result<PhaseReport, Runti
 
     // The external resource, whichever implementation the config currently
     // names for the slot.
-    let resource = resource_step(runtime, &current_input, turn_id)?;
+    let resource = resource_step(runtime, &current_input, turn_id, options)?;
 
     // Durable memory, retrieved from disk. In phase B this is the only place
     // the earlier conversation can come from.
@@ -621,6 +640,7 @@ fn resource_step(
     runtime: &Runtime,
     input: &CurrentInput,
     turn_id: TurnId,
+    options: ScenarioOptions,
 ) -> Result<
     (
         ResourceReport,
@@ -628,18 +648,60 @@ fn resource_step(
     ),
     RuntimeError,
 > {
+    let registry = runtime.config().build_registry()?;
+
+    // The router picks which resource answers. It is handed what the task
+    // needs and what each candidate declares itself to be, and nothing else —
+    // no history, no measurement, no preference of its own.
+    let candidates: Vec<RoutingCandidate> = registry
+        .descriptors()
+        .into_iter()
+        .map(|(slot, descriptor)| RoutingCandidate { slot, descriptor })
+        .collect();
+    let routing_request = routing_request_for(input, options);
+    let decision = RuleRouter
+        .route(&routing_request, &candidates)
+        .map_err(|source| {
+            // A refusal is recorded before it is returned: "nothing qualified" is
+            // an outcome an operator has to be able to see, especially when the
+            // reason was a privacy constraint.
+            runtime.trace().record_with(
+                TraceEventKind::RoutingDecided,
+                TraceCorrelation::default(),
+                serde_json::json!({
+                    "request": routing_request,
+                    "outcome": "refused",
+                    "considered": source.verdicts(),
+                }),
+            );
+            RuntimeError::Routing(source)
+        })?;
+    runtime.trace().record_with(
+        TraceEventKind::RoutingDecided,
+        TraceCorrelation {
+            resource_id: Some(decision.resource_id),
+            ..TraceCorrelation::default()
+        },
+        serde_json::json!({
+            "request": routing_request,
+            "outcome": "selected",
+            "slot": decision.slot.as_str(),
+            "reason": decision.reason,
+            "considered": decision.considered,
+        }),
+    );
+
+    let slot = decision.slot.clone();
     let implementation = runtime
         .config()
-        .implementation(GENERAL_SLOT)
+        .implementation(slot.as_str())
         .ok_or_else(|| RuntimeError::SlotNotConfigured {
-            slot: GENERAL_SLOT.to_owned(),
+            slot: slot.as_str().to_owned(),
         })?;
-    let registry = runtime.config().build_registry()?;
-    let slot = ResourceSlot::new(GENERAL_SLOT);
     let descriptor = registry
         .descriptor(&slot)
         .ok_or_else(|| RuntimeError::SlotNotConfigured {
-            slot: GENERAL_SLOT.to_owned(),
+            slot: slot.as_str().to_owned(),
         })?;
     runtime.trace().record_with(
         TraceEventKind::ResourceSelected,
@@ -652,6 +714,7 @@ fn resource_step(
             "implementation": implementation.as_str(),
             "adapter": descriptor.adapter,
             "read_only": descriptor.read_only,
+            "capabilities": descriptor.capabilities,
         }),
     );
 
@@ -695,6 +758,8 @@ fn resource_step(
         .unwrap_or_default()
         .to_owned();
     let report = ResourceReport {
+        routing_request,
+        routing_decision: decision,
         slot: slot.as_str().to_owned(),
         implementation: implementation.as_str().to_owned(),
         resource_id: attributed.result.resource_id,
@@ -705,6 +770,21 @@ fn resource_step(
         answer,
     };
     Ok((report, vec![attributed]))
+}
+
+/// What this turn's delegation needs.
+///
+/// The demo fixture asks for a shallow interactive summary with no privacy
+/// constraint, which every configured implementation can serve — the point of
+/// the scenario is continuity, not routing pressure. `context_size` is the
+/// utterance length, so a resource that declares a small capacity is excluded
+/// on a measured number rather than a guess.
+fn routing_request_for(input: &CurrentInput, options: ScenarioOptions) -> RoutingRequest {
+    RoutingRequest::interactive(
+        TaskClass::Summarize,
+        u32::try_from(input.text.len()).unwrap_or(u32::MAX),
+    )
+    .with_privacy(options.privacy)
 }
 
 /// Assemble the four domains W4 has to keep apart.

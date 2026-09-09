@@ -102,6 +102,10 @@ pub struct ResourceDescriptor {
     /// world would need an Executor and an authorization path that phase 1
     /// does not have.
     pub read_only: bool,
+    /// What this resource is declared to be, for routing. Operator-asserted
+    /// configuration, not something measured or believed from the provider.
+    #[serde(default = "crate::routing::ResourceCapabilities::in_process_fixture")]
+    pub capabilities: crate::routing::ResourceCapabilities,
 }
 
 /// One read-only request to a resource.
@@ -256,6 +260,18 @@ pub enum ResourceError {
         code: String,
         attempts: u32,
     },
+    /// TLS could not be established. `kind` is the class of check that
+    /// failed, classified by the TLS library, never by reading a certificate.
+    #[error("resource {resource_id} TLS failure ({kind}) after {attempts} attempt(s): {detail}")]
+    Tls {
+        resource_id: ResourceId,
+        kind: String,
+        /// The TLS library's own diagnostic — which cipher suite, which check.
+        /// Never certificate contents: rustls does not put them here and
+        /// nothing adds them.
+        detail: String,
+        attempts: u32,
+    },
     #[error("resource {resource_id} failed: {message}")]
     Backend {
         resource_id: ResourceId,
@@ -276,6 +292,7 @@ impl ResourceError {
             Self::HttpStatus { .. } => "HTTP_STATUS",
             Self::MalformedResponse { .. } => "MALFORMED_RESPONSE",
             Self::ProviderError { .. } => "PROVIDER_ERROR",
+            Self::Tls { .. } => "TLS",
             Self::Backend { .. } => "BACKEND",
         }
     }
@@ -288,7 +305,8 @@ impl ResourceError {
             | Self::RateLimited { attempts, .. }
             | Self::HttpStatus { attempts, .. }
             | Self::MalformedResponse { attempts, .. }
-            | Self::ProviderError { attempts, .. } => *attempts,
+            | Self::ProviderError { attempts, .. }
+            | Self::Tls { attempts, .. } => *attempts,
             Self::InvalidRequest { .. }
             | Self::Unavailable(_)
             | Self::Authentication { .. }
@@ -674,6 +692,7 @@ mod tests {
                     adapter: "stub".to_owned(),
                     version: "1".to_owned(),
                     read_only: true,
+                    capabilities: crate::routing::ResourceCapabilities::in_process_fixture(),
                 },
                 answer,
                 fail: false,
@@ -709,6 +728,7 @@ mod tests {
                 adapter: "stub".to_owned(),
                 version: "1".to_owned(),
                 read_only: true,
+                capabilities: crate::routing::ResourceCapabilities::in_process_fixture(),
             }
         }
 
@@ -844,6 +864,7 @@ mod tests {
                 adapter: "stub".to_owned(),
                 version: "1".to_owned(),
                 read_only: true,
+                capabilities: crate::routing::ResourceCapabilities::in_process_fixture(),
             }
         }
 

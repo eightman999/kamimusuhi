@@ -60,6 +60,11 @@ pub enum RuntimeError {
     ResourceRegistry { message: String },
     #[error("cognitive resource call failed: {0}")]
     Resource(#[from] RegistryError),
+    /// The router refused. Deliberately not recoverable by picking something
+    /// else: a `LocalOnly` request with no local candidate must fail, not be
+    /// satisfied remotely.
+    #[error("routing refused: {0}")]
+    Routing(#[from] kamimusuhi_core::routing::RoutingError),
     #[error(transparent)]
     ResourceCallLog(#[from] ResourceCallLogError),
     #[error(transparent)]

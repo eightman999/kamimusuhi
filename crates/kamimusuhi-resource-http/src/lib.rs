@@ -19,12 +19,16 @@
 //! written to the database, the config file or the trace — the bearer token is
 //! read from the environment at call time and dropped with the request.
 //!
-//! **Scope:** plain HTTP/1.1 only. There is no TLS in this crate, so it reaches
-//! local and in-cluster OpenAI-compatible servers but not `https://` endpoints.
-//! See [`http`] for the rest of the transport's limits.
+//! **TLS comes from `rustls`.** Certificate validation, hostname verification
+//! and the handshake are the library's job; this crate chooses trust anchors
+//! and classifies failures, and contains no verification logic of its own.
+//! Plain `http://` endpoints keep working unchanged. See [`http`] and [`tls`]
+//! for the transport's remaining limits.
 
 pub mod http;
 pub mod openai;
+pub mod tls;
 
 pub use http::{Endpoint, Header, HttpError, HttpResponse};
 pub use openai::{OpenAiCompatibleConfig, OpenAiCompatibleResource};
+pub use tls::{TlsFailureKind, TrustAnchors};

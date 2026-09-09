@@ -222,6 +222,12 @@ fn serve(listener: &TcpListener, shared: &Arc<Shared>) {
 }
 
 fn handle_connection(mut stream: TcpStream, shared: &Arc<Shared>) {
+    // An accepted socket inherits the listener's non-blocking flag on some
+    // platforms, and a non-blocking read returns EAGAIN instead of waiting —
+    // which looks exactly like a client that sent nothing.
+    stream
+        .set_nonblocking(false)
+        .expect("fixture blocking mode");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("fixture read timeout");

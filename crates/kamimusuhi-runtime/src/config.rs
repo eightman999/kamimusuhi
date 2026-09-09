@@ -21,7 +21,11 @@ use std::sync::Arc;
 use kamimusuhi_core::ids::{NodeId, ResourceId};
 use kamimusuhi_core::mutation::UnknownVocabulary;
 use kamimusuhi_core::resources::{CognitiveResource, ResourceRegistry, ResourceSlot};
-use kamimusuhi_resource_http::{OpenAiCompatibleConfig, OpenAiCompatibleResource};
+use kamimusuhi_core::routing::{
+    CostClass, HealthState, LatencyClass, LocalityClass, Modality, QualityTier,
+    ResourceCapabilities,
+};
+use kamimusuhi_resource_http::{OpenAiCompatibleConfig, OpenAiCompatibleResource, TrustAnchors};
 use kamimusuhi_testkit::{FakeResource, UnavailableResource};
 use serde::{Deserialize, Serialize};
 
@@ -104,6 +108,29 @@ pub struct ProviderConfig {
     /// Distinguishes two configured providers from each other in
     /// `resource_calls`. Stable per configured provider, not per request.
     pub resource_id: ResourceId,
+    /// A PEM file of root certificates, for an endpoint served by a private
+    /// CA. Absent means the bundled public root set. There is deliberately no
+    /// setting that disables verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_root_ca_path: Option<std::path::PathBuf>,
+    /// What the operator declares this provider to be, for routing. Asserted,
+    /// not measured: a provider does not get to describe itself.
+    #[serde(default = "default_provider_capabilities")]
+    pub capabilities: ResourceCapabilities,
+}
+
+/// An external, cheap-but-not-free, interactive-speed, standard-quality
+/// provider: the conservative reading of an endpoint an operator pointed us at.
+fn default_provider_capabilities() -> ResourceCapabilities {
+    ResourceCapabilities {
+        locality: LocalityClass::External,
+        modalities: [Modality::Text].into_iter().collect(),
+        context_capacity: 8_192,
+        latency: LatencyClass::Fast,
+        cost: CostClass::Low,
+        quality: QualityTier::Standard,
+        health: HealthState::Healthy,
+    }
 }
 
 impl ProviderConfig {
@@ -116,7 +143,12 @@ impl ProviderConfig {
         .with_timeout_ms(self.timeout_ms)
         .with_max_attempts(self.max_attempts)
         .with_retry_backoff_ms(self.retry_backoff_ms)
-        .with_auth_env(self.auth_env.clone());
+        .with_auth_env(self.auth_env.clone())
+        .with_capabilities(self.capabilities.clone())
+        .with_trust_anchors(match &self.tls_root_ca_path {
+            Some(path) => TrustAnchors::PemFile(path.clone()),
+            None => TrustAnchors::Webpki,
+        });
         config
             .validate()
             .map_err(|message| RuntimeError::ProviderConfig {
@@ -271,6 +303,8 @@ mod tests {
             max_attempts: 2,
             retry_backoff_ms: 1,
             resource_id: ResourceId::from_u128(0x0B01),
+            tls_root_ca_path: None,
+            capabilities: default_provider_capabilities(),
         }
     }
 

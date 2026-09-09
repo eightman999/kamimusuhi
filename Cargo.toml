@@ -28,6 +28,12 @@ thiserror = "2.0"
 uuid = { version = "1.26", features = ["v4"] }
 sha2 = "0.11"
 rusqlite = { version = "0.40", features = ["bundled"] }
+# TLS comes from an audited stack. Certificate and hostname verification are
+# rustls's job and are never reimplemented in this repository.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-pki-types = { version = "1", features = ["std"] }
+webpki-roots = "1"
+rcgen = "0.14"
 tempfile = "3"
 
 [workspace.lints.rust]

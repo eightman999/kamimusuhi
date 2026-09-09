@@ -29,8 +29,13 @@ use kamimusuhi_core::resources::{
     CognitiveResource, ResourceDescriptor, ResourceError, ResourceKind, ResourceRequest,
     ResourceResult,
 };
+use kamimusuhi_core::routing::{
+    CostClass, HealthState, LatencyClass, LocalityClass, Modality, QualityTier,
+    ResourceCapabilities,
+};
 
 use crate::http::{Endpoint, Header, HttpError, HttpResponse, post_json};
+use crate::tls::TrustAnchors;
 
 /// Non-secret configuration of one provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +50,13 @@ pub struct OpenAiCompatibleConfig {
     pub timeout_ms: u64,
     pub max_attempts: u32,
     pub retry_backoff_ms: u64,
+    /// Which trust anchors verify an `https://` endpoint. Ignored for plain
+    /// HTTP. There is no variant that disables verification.
+    pub trust_anchors: TrustAnchors,
+    /// Declared capabilities, for routing. Operator-asserted configuration:
+    /// nothing here is measured, and a provider does not get to describe
+    /// itself.
+    pub capabilities: ResourceCapabilities,
 }
 
 impl OpenAiCompatibleConfig {
@@ -61,7 +73,29 @@ impl OpenAiCompatibleConfig {
             timeout_ms: 30_000,
             max_attempts: 1,
             retry_backoff_ms: 200,
+            trust_anchors: TrustAnchors::default(),
+            capabilities: ResourceCapabilities {
+                locality: LocalityClass::External,
+                modalities: [Modality::Text].into_iter().collect(),
+                context_capacity: 8_192,
+                latency: LatencyClass::Fast,
+                cost: CostClass::Low,
+                quality: QualityTier::Standard,
+                health: HealthState::Healthy,
+            },
         }
+    }
+
+    #[must_use]
+    pub fn with_trust_anchors(mut self, trust_anchors: TrustAnchors) -> Self {
+        self.trust_anchors = trust_anchors;
+        self
+    }
+
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: ResourceCapabilities) -> Self {
+        self.capabilities = capabilities;
+        self
     }
 
     #[must_use]
@@ -166,6 +200,9 @@ impl OpenAiCompatibleResource {
     /// Retrying a rejected credential or a malformed request just repeats the
     /// rejection; retrying congestion or a broken connection might not.
     const fn is_retryable(error: &ResourceError) -> bool {
+        // TLS failures are absent on purpose: a certificate that does not
+        // validate will not validate on the next attempt either, and retrying
+        // would turn a clear security signal into a slow one.
         matches!(
             error,
             ResourceError::Timeout { .. }
@@ -187,6 +224,7 @@ impl CognitiveResource for OpenAiCompatibleResource {
             // Phase 1 resources only produce material. Acting on the world
             // needs an Executor and an authorization path that does not exist.
             read_only: true,
+            capabilities: self.config.capabilities.clone(),
         }
     }
 
@@ -202,9 +240,15 @@ impl CognitiveResource for OpenAiCompatibleResource {
         let mut attempt = 0_u32;
         loop {
             attempt += 1;
-            let outcome = post_json(&endpoint, &body, &headers, timeout)
-                .map_err(|error| self.map_transport(error, attempt))
-                .and_then(|response| self.map_response(response, attempt));
+            let outcome = post_json(
+                &endpoint,
+                &body,
+                &headers,
+                timeout,
+                &self.config.trust_anchors,
+            )
+            .map_err(|error| self.map_transport(error, attempt))
+            .and_then(|response| self.map_response(response, attempt));
 
             match outcome {
                 Ok(content) => {
@@ -242,6 +286,12 @@ impl OpenAiCompatibleResource {
             },
             HttpError::Malformed(detail) => ResourceError::MalformedResponse {
                 resource_id,
+                detail,
+                attempts,
+            },
+            HttpError::Tls { kind, detail } => ResourceError::Tls {
+                resource_id,
+                kind: kind.as_str().to_owned(),
                 detail,
                 attempts,
             },
@@ -544,8 +594,15 @@ mod tests {
     #[test]
     fn configuration_is_validated_before_any_call() {
         assert!(config().validate().is_ok());
+        // https is now a supported scheme, verified by rustls at call time.
         assert!(
             OpenAiCompatibleConfig::new(RESOURCE, "https://api.example.test/v1", "m")
+                .validate()
+                .is_ok()
+        );
+        // A scheme that is neither is still refused at configuration time.
+        assert!(
+            OpenAiCompatibleConfig::new(RESOURCE, "ftp://api.example.test/v1", "m")
                 .validate()
                 .is_err()
         );

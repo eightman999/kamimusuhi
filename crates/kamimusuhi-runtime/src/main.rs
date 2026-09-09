@@ -21,8 +21,10 @@
 
 use std::process::ExitCode;
 
+use kamimusuhi_core::routing::PrivacyConstraint;
 use kamimusuhi_runtime::config::GENERAL_SLOT;
 use kamimusuhi_runtime::runtime::ClockMode;
+use kamimusuhi_runtime::scenario::ScenarioOptions;
 use kamimusuhi_runtime::{
     DemoPhase, ResourceImplementation, Runtime, RuntimeError, RuntimeOptions, inspect, scenario,
 };
@@ -45,6 +47,8 @@ options:
   --id-seed <n>     deterministic ID sequence
   --clock <c>       system | fixed
   --seed <n>        shorthand for --id-seed <n> --clock fixed
+  --privacy <p>     how far this turn's material may travel:
+                    local-only | no-external-service | unconstrained
 ";
 
 fn main() -> ExitCode {
@@ -102,7 +106,13 @@ fn run() -> Result<String, RuntimeError> {
                 config.set_implementation(GENERAL_SLOT, resource);
                 runtime.save_config(config)?;
             }
-            let report = scenario::run(&mut runtime, phase)?;
+            let report = scenario::run(
+                &mut runtime,
+                phase,
+                ScenarioOptions {
+                    privacy: options.privacy.unwrap_or_default(),
+                },
+            )?;
             runtime.stopping();
             encode(&report)
         }
@@ -125,6 +135,7 @@ struct Options {
     resource: Option<ResourceImplementation>,
     id_seed: Option<u64>,
     clock: Option<ClockMode>,
+    privacy: Option<PrivacyConstraint>,
 }
 
 impl Options {
@@ -162,6 +173,16 @@ impl Options {
                     })?);
                 }
                 "--clock" => options.clock = Some(value()?.parse()?),
+                "--privacy" => {
+                    let raw = value()?;
+                    // Hyphens on the command line, underscores on the wire.
+                    options.privacy = Some(raw.replace('-', "_").parse().map_err(|_| {
+                        RuntimeError::Usage(format!(
+                            "unknown --privacy {raw:?}; expected local-only, \
+                             no-external-service or unconstrained"
+                        ))
+                    })?);
+                }
                 other => {
                     return Err(RuntimeError::Usage(format!(
                         "unknown option {other:?}\n\n{USAGE}"

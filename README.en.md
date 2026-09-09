@@ -400,8 +400,9 @@ Tests and lints:
 - W3: provenance-preserving Library; typed workspace; cognitive-resource registry with deterministic fakes
 - W4: runtime `init` / `inspect` / `demo-continuity`; restart across real processes; JSONL operational trace
 - W5: a real HTTP OpenAI-compatible adapter; timeout/retry/error classification; no stored secrets
+- W6: a deterministic cognitive-resource router (capability metadata, privacy constraints, reasoned decisions) and TLS via `rustls`
 
-Everything else remains design: Persona Core training, K-Nerve, persistent background cognition, sleep/dream, voice, multi-device embodiment, self-domain mutation, retention/deletion, K-Edge/K-Core. See [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md) for exactly what was demonstrated and what the known limits are.
+Everything else remains design: Persona Core training, K-Nerve, persistent background cognition, sleep/dream, voice, multi-device embodiment, self-domain mutation, retention/deletion, K-Edge/K-Core. See [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md) (v0.1) and [`docs/implementation/phase-2-implementation-plan.md`](./docs/implementation/phase-2-implementation-plan.md) (W6) for exactly what was demonstrated and what the known limits are.
 
 Recent design and research are continuously captured under `docs/`. External results, Kamimusuhi interpretations, design hypotheses, and future experiments are deliberately kept distinct.
 

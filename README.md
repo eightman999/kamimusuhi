@@ -404,8 +404,9 @@ cargo run -p kamimusuhi-runtime -- inspect         --dir .local/demo
 - W3: provenance を保つ Library、typed workspace、cognitive resource registry と deterministic fake
 - W4: runtime `init` / `inspect` / `demo-continuity`、別プロセス restart、JSONL operational trace
 - W5: 実 HTTP の OpenAI-compatible adapter、timeout/retry/error 分類、secret 非保存
+- W6: 決定的な cognitive resource router（capability metadata / privacy 制約 / 理由付き決定）と、`rustls` による TLS
 
-未実装のもの（Persona Core の学習、K-Nerve、常時背景認知、sleep/dream、voice、multi-device embodiment、self domain の mutation、retention/deletion、K-Edge/K-Core など）は依然として設計段階です。詳細な達成範囲と既知の制約は [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md) を参照してください。
+未実装のもの（Persona Core の学習、K-Nerve、常時背景認知、sleep/dream、voice、multi-device embodiment、self domain の mutation、retention/deletion、K-Edge/K-Core など）は依然として設計段階です。詳細な達成範囲と既知の制約は [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md)（v0.1）と [`docs/implementation/phase-2-implementation-plan.md`](./docs/implementation/phase-2-implementation-plan.md)（W6）を参照してください。
 
 最近の設計・調査は `docs/` に継続的に蓄積しています。外部研究の結果、かみむすび側の解釈、設計仮説、将来実験を混同しないことをルールにしています。
 
