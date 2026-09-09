@@ -2,6 +2,7 @@ use kamimusuhi_core::mutation::{MutationDomain, MutationOperation, OriginClass};
 use kamimusuhi_core::persona::{
     PersonaCore, PersonaError, PersonaTurnInput, PersonaTurnResult, ProposalDraft,
 };
+use kamimusuhi_core::workspace::{Workspace, WorkspaceDomain};
 
 /// Subject key used for the fixture user in all deterministic scenarios.
 pub const FIXTURE_USER_SUBJECT: &str = "user-fixture";
@@ -13,10 +14,35 @@ pub const FIXTURE_USER_SUBJECT: &str = "user-fixture";
 /// `{ "preference": "<X>" }` for [`FIXTURE_USER_SUBJECT`], citing exactly the
 /// input evidence ID. Every other utterance yields an acknowledgement with no
 /// drafts. The fake never touches storage and never fabricates evidence.
+///
+/// When a workspace is supplied, the response also states what it was thinking
+/// with, counted **by domain** rather than by reading any item's text. That is
+/// the point: attribution survives all the way to the cognitive boundary, and a
+/// core that had to parse strings to tell memory from Library material would
+/// have lost it.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct FakePersonaCore;
 
 impl FakePersonaCore {
+    /// Domain counts in a fixed order, derived from item types alone.
+    fn attribution_summary(workspace: &Workspace) -> String {
+        let mut summary = String::from(" | workspace:");
+        for domain in [
+            WorkspaceDomain::CurrentContinuityState,
+            WorkspaceDomain::CurrentInput,
+            WorkspaceDomain::RelationshipMemory,
+            WorkspaceDomain::EpisodicMemory,
+            WorkspaceDomain::LibraryEvidence,
+            WorkspaceDomain::ExternalResourceResult,
+        ] {
+            let count = workspace.items_in(domain).len();
+            if count > 0 {
+                summary.push_str(&format!(" {domain}={count}"));
+            }
+        }
+        summary
+    }
+
     fn extract_preference(text: &str) -> Option<&str> {
         if !text.contains("覚えておいて") {
             return None;
@@ -42,7 +68,7 @@ impl PersonaCore for FakePersonaCore {
             });
         }
 
-        let (response_intent, proposals) = match Self::extract_preference(&input.input.text) {
+        let (mut response_intent, proposals) = match Self::extract_preference(&input.input.text) {
             Some(preference) => (
                 format!("fixture-ack: remembered preference for {preference}"),
                 vec![ProposalDraft {
@@ -57,6 +83,9 @@ impl PersonaCore for FakePersonaCore {
             ),
             None => ("fixture-ack: noted".to_owned(), Vec::new()),
         };
+        if let Some(workspace) = &input.workspace {
+            response_intent.push_str(&Self::attribution_summary(workspace));
+        }
 
         Ok(PersonaTurnResult {
             context: input.context,
@@ -84,6 +113,7 @@ mod tests {
                 evidence_id: EvidenceId::from_u128(4),
                 text: text.to_owned(),
             },
+            workspace: None,
         }
     }
 

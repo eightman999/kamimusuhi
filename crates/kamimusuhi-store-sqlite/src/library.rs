@@ -255,6 +255,24 @@ impl LibraryRepository for SqliteStore {
         get_artifact_in(&conn, artifact_id)
     }
 
+    fn artifacts(&self) -> Result<Vec<LibraryArtifact>, LibraryError> {
+        let conn = self.conn().map_err(|e| LibraryError::Backend {
+            message: e.to_string(),
+        })?;
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {ARTIFACT_COLUMNS} FROM library_artifacts
+                 ORDER BY imported_at, artifact_id"
+            ))
+            .map_err(map_sqlite)?;
+        let rows = stmt
+            .query_map([], read_artifact_row)
+            .map_err(map_sqlite)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_sqlite)?;
+        rows.into_iter().map(build_artifact).collect()
+    }
+
     fn chunks(&self, artifact_id: LibraryArtifactId) -> Result<Vec<LibraryChunk>, LibraryError> {
         let conn = self.conn().map_err(|e| LibraryError::Backend {
             message: e.to_string(),

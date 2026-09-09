@@ -72,6 +72,14 @@ pub trait Clock: Send + Sync {
     fn now_utc(&self) -> UtcTimestamp;
 }
 
+/// Shared clocks are clocks. One `Arc<dyn Clock>` can then be handed to the
+/// store and to the kernel instead of constructing two that could disagree.
+impl<T: Clock + ?Sized> Clock for std::sync::Arc<T> {
+    fn now_utc(&self) -> UtcTimestamp {
+        (**self).now_utc()
+    }
+}
+
 /// Monotonic instant relative to a process-local anchor. Only differences
 /// between instants from the same clock are meaningful.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

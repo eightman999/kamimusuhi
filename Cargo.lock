@@ -227,6 +227,11 @@ dependencies = [
  "kamimusuhi-core",
  "kamimusuhi-store-sqlite",
  "kamimusuhi-testkit",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]

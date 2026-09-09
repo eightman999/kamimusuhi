@@ -253,6 +253,12 @@ pub trait ContinuityStore: Send + Sync {
         decision: &MutationDecision,
     ) -> Result<(), ContinuityError>;
 
+    /// Every individual this store holds, oldest first.
+    ///
+    /// A restarted runtime has no ID in hand: identity has to come back from
+    /// disk, not from a config file or a caller's memory.
+    fn individuals(&self) -> Result<Vec<Individual>, ContinuityError>;
+
     fn commits(&self, individual_id: IndividualId)
     -> Result<Vec<CanonicalCommit>, ContinuityError>;
 
@@ -447,6 +453,20 @@ mod tests {
         ) -> Result<(), ContinuityError> {
             self.decisions.lock().unwrap().push(decision.clone());
             Ok(())
+        }
+
+        fn individuals(&self) -> Result<Vec<Individual>, ContinuityError> {
+            Ok(self
+                .head
+                .lock()
+                .unwrap()
+                .map(|head| Individual {
+                    individual_id: head.individual_id,
+                    root_commit_id: head.commit_id,
+                    created_at: head.updated_at,
+                })
+                .into_iter()
+                .collect())
         }
 
         fn commits(&self, _: IndividualId) -> Result<Vec<CanonicalCommit>, ContinuityError> {

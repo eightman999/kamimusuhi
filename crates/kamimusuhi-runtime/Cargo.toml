@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[lib]
+name = "kamimusuhi_runtime"
+path = "src/lib.rs"
+
 [[bin]]
 name = "kamimusuhi-runtime"
 path = "src/main.rs"
@@ -15,7 +19,17 @@ path = "src/main.rs"
 [dependencies]
 kamimusuhi-core = { workspace = true }
 kamimusuhi-store-sqlite = { workspace = true }
+# The deterministic fakes are the runtime's only cognitive resources in W4.
 kamimusuhi-testkit = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Raw row counts, read through an independent connection so the runtime's own
+# view cannot mask what is on disk.
+rusqlite = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

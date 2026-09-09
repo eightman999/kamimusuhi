@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::digest::json_digest;
 use crate::ids::{IndividualId, ResourceCallId, ResourceId};
 use crate::mutation::UnknownVocabulary;
-use crate::time::UtcTimestamp;
+use crate::time::{Clock, UtcTimestamp};
 
 /// The role a resource fills. Stable across replacement of the backing
 /// implementation.
@@ -402,6 +402,25 @@ impl ResourceRegistry {
             .collect()
     }
 
+    /// Invoke through `clock`, timing the call rather than being told how long
+    /// it took.
+    ///
+    /// Timestamps a caller invents cannot disagree with reality; timestamps
+    /// read around the call can, which is the point. W4 only needs honest
+    /// durations for the trace — timeout, retry and latency policy are a
+    /// later wave and deliberately live nowhere in this module.
+    pub fn invoke_with_clock(
+        &self,
+        slot: &ResourceSlot,
+        request: &ResourceRequest,
+        log: &dyn ResourceCallLog,
+        call_id: ResourceCallId,
+        clock: &dyn Clock,
+    ) -> Result<AttributedResult, RegistryError> {
+        let started_at = clock.now_utc();
+        self.invoke_at(slot, request, log, call_id, started_at, || clock.now_utc())
+    }
+
     /// Invoke the resource currently filling `slot` and record the call.
     ///
     /// The returned result is re-tagged with the descriptor of the resource
@@ -416,11 +435,24 @@ impl ResourceRegistry {
         started_at: UtcTimestamp,
         completed_at: UtcTimestamp,
     ) -> Result<AttributedResult, RegistryError> {
+        self.invoke_at(slot, request, log, call_id, started_at, || completed_at)
+    }
+
+    fn invoke_at(
+        &self,
+        slot: &ResourceSlot,
+        request: &ResourceRequest,
+        log: &dyn ResourceCallLog,
+        call_id: ResourceCallId,
+        started_at: UtcTimestamp,
+        completed_at: impl FnOnce() -> UtcTimestamp,
+    ) -> Result<AttributedResult, RegistryError> {
         let resource = self
             .resolve(slot)
             .ok_or_else(|| RegistryError::SlotEmpty(slot.clone()))?;
         let descriptor = resource.descriptor();
         let outcome = resource.invoke(request);
+        let completed_at = completed_at();
 
         let mut record = NewResourceCall {
             resource_call_id: call_id,

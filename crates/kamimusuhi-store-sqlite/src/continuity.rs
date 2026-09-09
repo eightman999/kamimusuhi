@@ -921,6 +921,36 @@ impl ContinuityStore for SqliteStore {
         tx.commit().map_err(map_sqlite)
     }
 
+    fn individuals(&self) -> Result<Vec<Individual>, ContinuityError> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT individual_id, root_commit_id, created_at
+                 FROM individuals ORDER BY created_at, individual_id",
+            )
+            .map_err(map_sqlite)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(map_sqlite)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_sqlite)?;
+        rows.into_iter()
+            .map(|(individual_id, root_commit_id, created_at)| {
+                Ok(Individual {
+                    individual_id: parse("individuals.individual_id", &individual_id)?,
+                    root_commit_id: parse("individuals.root_commit_id", &root_commit_id)?,
+                    created_at: ts(created_at),
+                })
+            })
+            .collect()
+    }
+
     fn commits(
         &self,
         individual_id: IndividualId,

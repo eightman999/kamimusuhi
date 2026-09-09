@@ -21,6 +21,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::continuity::ContinuityHead;
+use crate::digest::json_digest;
 use crate::ids::{
     CommitId, EvidenceId, IndividualId, LibraryArtifactId, LibraryChunkId, MemoryId,
     ResourceCallId, ResourceId,
@@ -273,6 +274,15 @@ impl Workspace {
 
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
+    }
+
+    /// Stable digest of the assembled workspace.
+    ///
+    /// Lets a trace or a test say "the same workspace was built" without
+    /// copying its contents anywhere. Two assemblies from identical inputs
+    /// have identical digests, because assembly is a pure function.
+    pub fn digest(&self) -> String {
+        json_digest(&serde_json::to_value(self).unwrap_or(serde_json::Value::Null))
     }
 
     /// Domains present, in assembled order.

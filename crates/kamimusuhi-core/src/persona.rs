@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{EvidenceId, IndividualId, MemoryId, SessionId, TurnId};
 use crate::mutation::{MutationDomain, MutationOperation, OriginClass};
+use crate::workspace::Workspace;
 
 /// Correlation IDs for one cognitive turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,6 +34,13 @@ pub struct CurrentInput {
 pub struct PersonaTurnInput {
     pub context: TurnContext,
     pub input: CurrentInput,
+    /// Everything else the runtime brought to this turn, still typed and
+    /// attributed. The Persona Core reads domains and source refs from it; it
+    /// must never have to parse text to learn where something came from, and
+    /// nothing in it grants authority to propose (see
+    /// [`crate::workspace::AuthorityClass`]).
+    #[serde(default)]
+    pub workspace: Option<Workspace>,
 }
 
 /// A candidate canonical change drafted by the Persona Core.

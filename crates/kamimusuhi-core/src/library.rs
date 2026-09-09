@@ -317,6 +317,9 @@ pub trait LibraryRepository: Send + Sync {
         artifact_id: LibraryArtifactId,
     ) -> Result<Option<LibraryArtifact>, LibraryError>;
 
+    /// Every imported artifact, oldest first. Read-only; for inspection.
+    fn artifacts(&self) -> Result<Vec<LibraryArtifact>, LibraryError>;
+
     /// All chunks of an artifact, in ordinal order.
     fn chunks(&self, artifact_id: LibraryArtifactId) -> Result<Vec<LibraryChunk>, LibraryError>;
 
