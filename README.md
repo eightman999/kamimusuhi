@@ -400,9 +400,23 @@ cargo run -p kamimusuhi-runtime -- inspect         --dir .local/demo
 
 Persona Core は「個体として喋るもの」、cognitive resource は「一つの subtask を委譲する先」で、別の名前空間です。runtime.json では `persona` と `resources` に分かれており、Persona backend が router の候補になることはありません。
 
-モデルに渡される prompt は section 付きです。`CURRENT_INPUT` / `RELATIONSHIP_MEMORY` / `LIBRARY_EVIDENCE` / `EXTERNAL_RESOURCE_RESULT` がそれぞれ何であるかを明示して渡すので、Library の文章や外部 resource の出力が「自分の記憶」や「事実」として混ざりません。token が必要な endpoint では、runtime.json の `persona.provider.auth_env` に**環境変数名**を書きます（値は書きません）。
+モデルへは、section と JSON record で domain・authority・source/evidence refs・freshness を保った入力を渡します。`CURRENT_INPUT`、記憶、Library、外部結果に加え、`CONTINUITY_STATE` / `SESSION_WORKING_STATE` と turn/input の識別子も渡します。payload 内の改行や偽の見出しは JSON string に閉じ込めますが、これだけで **LLM の意味的な prompt injection や誤解釈を防げるとは主張しません**。永続状態への書込みは別の Mutation Policy / Continuity Kernel 境界です。
 
-テストと lint は次で回します。
+token が必要な endpoint では、runtime.json の `persona.provider.auth_env` に**環境変数名**を書きます（値は書きません）。Persona の外部送信にも `--privacy` が適用されます。locality 未指定の既存設定は `external` とみなし、`local-only` での暗黙の許可はしません。
+
+```bash
+# 上の demo で作った .local/demo を使用。ローカルで実際に管理する endpoint のみ宣言する。
+cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase resume \
+  --id-seed 30 --persona openai-compatible \
+  --persona-url http://127.0.0.1:11434/v1 --persona-model llama3.2 \
+  --persona-locality local-host --privacy local-only
+```
+
+`--persona-locality` は `local-host` / `local-network` / `external` の **operator 宣言**であり、実測・attestation ではありません。永続設定は `persona.provider.locality`（`local_host` 等）です。Persona の URL を交換すると旧 endpoint の認証・private CA・locality は自動継承しません。必要な設定は新しい送信先に対して明示してください。
+
+**検証範囲:** 自動テストは scripted HTTP/TLS endpoint と別プロセスでの境界検証です。実 LLM server に対する smoke test と能力・人格評価の実測は未記録です。transport のサイズ上限、対応範囲、DNS の制約は [監査結果](./docs/implementation/2026-09-10-spec-implementation-audit.md) を参照してください。
+
+テストと lint は次で回します。GitHub Actions も同じ script を実行します。
 
 ```bash
 ./scripts/ci-local.sh
@@ -410,7 +424,7 @@ Persona Core は「個体として喋るもの」、cognitive resource は「一
 
 ## 現在の状態
 
-**Alpha / v0.1 continuity slice 実装済み。** 上記 10 項目の continuity slice は Rust + SQLite で実装され、テストで検証されています。実装範囲は W0–W5:
+**Alpha / v0.1 continuity slice 実装済み。** 上記 10 項目の continuity slice は Rust + SQLite で実装され、テストで検証されています。実装範囲は W0–W7:
 
 - W0–W1: Cargo workspace、canonical continuity（single-writer、atomic activation、writer fencing、restart 復元、failpoint 検証）
 - W2: canonical evidence と durable episodic/relationship memory、correction/supersession、domain separation
@@ -418,9 +432,9 @@ Persona Core は「個体として喋るもの」、cognitive resource は「一
 - W4: runtime `init` / `inspect` / `demo-continuity`、別プロセス restart、JSONL operational trace
 - W5: 実 HTTP の OpenAI-compatible adapter、timeout/retry/error 分類、secret 非保存
 - W6: 決定的な cognitive resource router（capability metadata / privacy 制約 / 理由付き決定）と、`rustls` による TLS
-- W7: Persona Core 境界の強化。実モデル backend、typed input envelope、外部 material と最終応答の分離
+- W7: Persona Core 境界の強化。OpenAI-compatible backend、typed input envelope、外部 material と最終応答の分離。2026-09-10 に privacy / transport / attribution 境界を追加修正
 
-未実装のもの（Persona Core の学習、K-Nerve、常時背景認知、sleep/dream、voice、multi-device embodiment、self domain の mutation、retention/deletion、K-Edge/K-Core など）は依然として設計段階です。詳細な達成範囲と既知の制約は [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md)（v0.1）と [`docs/implementation/phase-2-implementation-plan.md`](./docs/implementation/phase-2-implementation-plan.md)（W6）を参照してください。
+未実装のもの（Persona Core の学習、K-Nerve、常時背景認知、sleep/dream、voice、multi-device embodiment、self domain の mutation、retention/deletion、K-Edge/K-Core など）は依然として設計段階です。詳細な達成範囲と既知の制約は [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md)（v0.1）と [`docs/implementation/phase-2-implementation-plan.md`](./docs/implementation/phase-2-implementation-plan.md)（W6）、[W7 実装結果](./docs/implementation/w7-persona-core-plan.md)、[2026-09-10 監査結果](./docs/implementation/2026-09-10-spec-implementation-audit.md) を参照してください。
 
 最近の設計・調査は `docs/` に継続的に蓄積しています。外部研究の結果、かみむすび側の解釈、設計仮説、将来実験を混同しないことをルールにしています。
 

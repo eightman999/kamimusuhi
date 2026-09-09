@@ -3,6 +3,7 @@
 Status: **Draft / pre-alpha**  
 Specification generation: **v0.3 concept / 2026-09-08**  
 Implementation target: **v0.1 continuity slice**  
+Implementation-boundary clarification: **2026-09-10 / W5–W7 hardening**\
 Language: **[`spec.md`](./spec.md) is the primary Japanese specification and this file is its English version. If the two differ materially, the Japanese version takes precedence.**
 
 This specification defines the **behavioral, authority, and continuity invariants** that Kamimusuhi must preserve independently of any specific model family, parameter count, database, UI, device, inference provider, or implementation language.
@@ -904,6 +905,14 @@ Surfaces, writers, mutation authority, and privileged actions SHALL be authentic
 
 External untrusted content MUST NOT gain privileged instruction authority merely by being retrieved or observed.
 
+#### NFR-008A — Provider-boundary clarification (2026-09-10)
+
+- A turn's privacy/locality constraint MUST apply to Persona dispatch receiving input, memory, and Library material, not only to delegated resources. A separate namespace grants no export exception. Undeclared locality MUST fail conservatively; a URL alone is not measured locality evidence.
+- Persona input serialization MUST retain the used workspace items' domain, authority, source/evidence references, freshness, and continuity/session context. Newlines or headings inside a payload MUST NOT acquire structural authority. This requirement does not establish semantic prompt-injection resistance in the model.
+- Provider responses MUST pass transport-framing and configured size checks. Incomplete, malformed, or oversized responses MUST NOT produce a final expression or canonical activation.
+- Arbitrary provider error fields, credentials, and reflected input MUST NOT be copied directly into diagnostics. Classification MUST use bounded metadata such as fixed codes. Intentional canonical-evidence storage is a separate boundary.
+- Retries and backoff MUST share one logical-call timeout budget rather than receiving a fresh budget per attempt. Implementations MUST disclose remaining non-interruptible waits such as synchronous DNS.
+
 ### NFR-009 — Source-of-truth discipline
 
 The same present-state fact SHOULD NOT be maintained as separate authoritative copies by unrelated subsystems.
@@ -937,6 +946,12 @@ A reproducible test SHALL demonstrate:
 Passing v0.1 establishes durable continuity, domain separation, and proposal-only mutation. It does not establish autonomous development, K-Nerve, distributed embodiment, or consciousness.
 
 ---
+
+### Current implementation and verification scope (2026-09-10)
+
+W0–W7 implement the v0.1 continuity slice plus router/TLS/Persona-backend foundations. This is not a claim of conformance to every future functional requirement. Dedicated Persona training, self-domain mutation, belief graphs, persistent background cognition, and distributed embodiment remain unimplemented.
+
+See the [implementation audit](./docs/implementation/2026-09-10-spec-implementation-audit.md) for W5–W7 hardening, regression tests, and transport limits. HTTP-fixture contract tests are distinct from real-LLM capability/persona evaluation; the latter is not claimed complete.
 
 ## 16. Planned milestones
 

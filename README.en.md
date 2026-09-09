@@ -399,14 +399,38 @@ something a turn delegates a subtask to. They are separate namespaces —
 `persona` and `resources` in `runtime.json` — and the Persona backend is never
 offered to the router as a candidate.
 
-The prompt the model receives is sectioned: `CURRENT_INPUT`,
-`RELATIONSHIP_MEMORY`, `LIBRARY_EVIDENCE` and `EXTERNAL_RESOURCE_RESULT` are
-labelled for what they are, so Library text and resource output cannot arrive
-as the individual's own memory or as fact. For an endpoint that needs a token,
-put the *name* of the environment variable in `persona.provider.auth_env`; the
-value is never written to the config, the database or the trace.
+Sections and JSON records preserve domain, authority, source/evidence references,
+and freshness. The backend receives `CONTINUITY_STATE`, `SESSION_WORKING_STATE`,
+and turn/input identifiers as well as current input, memory, Library, and
+external results. Payload newlines and forged headings stay inside JSON strings.
+This is **not a claim of semantic prompt-injection resistance in an LLM**;
+durable writes still require the separate Mutation Policy / Continuity Kernel.
 
-Tests and lints:
+For authentication, put the environment variable's *name*, not its value, in
+`persona.provider.auth_env`. `--privacy` applies to Persona dispatch too.
+Legacy configurations without locality default to `external`, not an implicit
+permission to export under `local-only`.
+
+```bash
+# Reuse .local/demo from the demo above. Declare only an endpoint you control locally.
+cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase resume \
+  --id-seed 30 --persona openai-compatible \
+  --persona-url http://127.0.0.1:11434/v1 --persona-model llama3.2 \
+  --persona-locality local-host --privacy local-only
+```
+
+`--persona-locality` accepts `local-host`, `local-network`, or `external`.
+It is an **operator declaration**, not measurement or attestation. Persist it
+as `persona.provider.locality` (`local_host`, etc.). Changing the Persona URL
+no longer inherits the old endpoint's credentials, private CA, or locality;
+configure these explicitly for the new destination.
+
+**Verification scope:** automated tests exercise scripted HTTP/TLS endpoints
+and real process boundaries, not an actual LLM server. Real-model smoke runs
+and capability/persona evaluations remain unrecorded. See the [audit](./docs/implementation/2026-09-10-spec-implementation-audit.md)
+for transport limits and the synchronous-DNS caveat.
+
+Tests and lints (GitHub Actions runs this same script):
 
 ```bash
 ./scripts/ci-local.sh
@@ -414,7 +438,7 @@ Tests and lints:
 
 ## Status
 
-**Alpha — the v0.1 continuity slice is implemented.** The ten steps above are implemented in Rust + SQLite and covered by tests. Waves W0–W5:
+**Alpha — the v0.1 continuity slice is implemented.** The ten steps above are implemented in Rust + SQLite and covered by tests. Waves W0–W7:
 
 - W0–W1: Cargo workspace; canonical continuity (single writer, atomic activation, writer fencing, restart recovery, failpoint coverage)
 - W2: canonical evidence and durable episodic/relationship memory; correction/supersession; domain separation
@@ -422,9 +446,9 @@ Tests and lints:
 - W4: runtime `init` / `inspect` / `demo-continuity`; restart across real processes; JSONL operational trace
 - W5: a real HTTP OpenAI-compatible adapter; timeout/retry/error classification; no stored secrets
 - W6: a deterministic cognitive-resource router (capability metadata, privacy constraints, reasoned decisions) and TLS via `rustls`
-- W7: Persona Core boundary hardening — a real model backend, a typed input envelope, and external material kept separate from the final expression
+- W7: Persona Core boundary hardening — an OpenAI-compatible backend, a typed input envelope, and external material kept separate from the final expression; privacy, transport, and attribution hardened on 2026-09-10
 
-Everything else remains design: Persona Core training, K-Nerve, persistent background cognition, sleep/dream, voice, multi-device embodiment, self-domain mutation, retention/deletion, K-Edge/K-Core. See [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md) (v0.1) and [`docs/implementation/phase-2-implementation-plan.md`](./docs/implementation/phase-2-implementation-plan.md) (W6) for exactly what was demonstrated and what the known limits are.
+Everything else remains design: Persona Core training, K-Nerve, persistent background cognition, sleep/dream, voice, multi-device embodiment, self-domain mutation, retention/deletion, K-Edge/K-Core. See [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md) (v0.1) and [`docs/implementation/phase-2-implementation-plan.md`](./docs/implementation/phase-2-implementation-plan.md) (W6), the [W7 result](./docs/implementation/w7-persona-core-plan.md), and the [2026-09-10 audit](./docs/implementation/2026-09-10-spec-implementation-audit.md) for demonstrated behavior and known limits.
 
 Recent design and research are continuously captured under `docs/`. External results, Kamimusuhi interpretations, design hypotheses, and future experiments are deliberately kept distinct.
 

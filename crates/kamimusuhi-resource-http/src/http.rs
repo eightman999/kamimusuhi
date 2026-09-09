@@ -32,7 +32,7 @@ use crate::tls::{TlsFailureKind, Transport, TrustAnchors};
 pub struct Endpoint {
     pub host: String,
     pub port: u16,
-    /// Path with a leading slash, query included.
+    /// Path with a leading slash. Query strings and fragments are rejected.
     pub path: String,
     /// Whether this endpoint is reached over TLS. Derived from the scheme, so
     /// an `http://` URL can never be silently upgraded, nor an `https://` one
@@ -214,7 +214,8 @@ pub const MAX_HEADER_BYTES: usize = 64 * 1024;
 /// so a deadline with less than this left is already expired.
 const MIN_SOCKET_TIMEOUT: Duration = Duration::from_millis(1);
 
-/// POST a JSON body and read the response, all within `timeout`.
+/// POST a JSON body with socket work bounded by a shared `timeout` deadline.
+/// OS name resolution is synchronous and cannot be interrupted by this client.
 pub fn post_json(
     endpoint: &Endpoint,
     body: &str,
@@ -375,12 +376,9 @@ pub fn post_json(
                     }
                 }
             }
-            // A TLS peer that closes without `close_notify` is common enough
-            // in the wild that refusing to read such a response would fail
-            // against real servers. The cost is that an unclean EOF cannot be
-            // told from a clean one here — a truncated body therefore surfaces
-            // as a malformed response when it fails to parse, rather than
-            // being quietly accepted as complete.
+            // Tolerate missing TLS close_notify only when HTTP framing proves
+            // the response is complete. parse_response requires exact length
+            // or a complete chunked terminator; valid JSON alone is not enough.
             Err(ref source) if source.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(source) => return Err(classify_io(&source, started, "read")),
         }
