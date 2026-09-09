@@ -17,4 +17,5 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 
 | Date / time (JST) | Survey | Main blind spots |
 |---|---|---|
+| 2026-09-10 06:58:43 | [2026-09-10-06-58-43.md](./2026-09-10-06-58-43.md) | effect acceptance / accountability roles / presentation identity / OpenTelemetry / trajectory databases |
 | 2026-09-10 00:57:57 | [2026-09-10-00-57-57.md](./2026-09-10-00-57-57.md) | object capabilities / runtime assurance / privacy-aware memory / PROV-O / CRDT state classification |
