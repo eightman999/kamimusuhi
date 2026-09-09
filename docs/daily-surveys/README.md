@@ -57,4 +57,5 @@ A daily survey should not silently turn a preprint, analogy, or benchmark result
 
 | Date | Highlights |
 |---|---|
+| [2026-09-09](./2026-09-09.md) | cross-substrate authority enforcement, full-duplex Cerebellum/Brain interaction, stable skill evolution, harness-mediated model self-improvement, biometric memory isolation, minimal-sufficient personalization |
 | [2026-09-08](./2026-09-08.md) | epistemic assertion guardrails, authorization laundering, security-context consequence integrity, continuous cognitive coverage, identity-centric multimodal memory, drift-vs-poisoning, adaptive routing, KV workspace virtualization |
