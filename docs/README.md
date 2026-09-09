@@ -51,6 +51,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 
 - [`persona-core-training-taxonomy.md`](./persona-core-training-taxonomy.md) — what a Kamimusuhi Persona Core should learn: self/other, human/social cognition, epistemology, delegation, persona priors, long-horizon relationship competence, evaluation.
 - [`model-ecology-and-lineage.md`](./model-ecology-and-lineage.md) — model ecology across two scales: a medium `novllm`-derived Persona Core plus small specialist-model organs inside each individual, and a multi-user population of distinct individual lineages with privacy-gated population-level inheritance.
+- [`optional-p2p-population-learning.md`](./optional-p2p-population-learning.md) — **optional / non-normative** long-horizon note for privacy-preserving P2P population learning: signed artifacts and evaluation receipts, E2EE plus secure aggregation/privacy controls, Sybil resistance, heterogeneous distributed evaluation, federated/volunteer compute, and species-level inheritance without merging individual identity or private lived experience.
 
 ### Reflex / control substrate
 
