@@ -23,7 +23,7 @@ use std::process::ExitCode;
 
 use kamimusuhi_core::digest::content_digest;
 use kamimusuhi_core::ids::PersonaBackendId;
-use kamimusuhi_core::routing::PrivacyConstraint;
+use kamimusuhi_core::routing::{LocalityClass, PrivacyConstraint};
 use kamimusuhi_runtime::config::GENERAL_SLOT;
 use kamimusuhi_runtime::runtime::ClockMode;
 use kamimusuhi_runtime::scenario::ScenarioOptions;
@@ -78,6 +78,7 @@ options:
   --persona-url <u> base URL of the persona endpoint, e.g.
                     http://127.0.0.1:11434/v1
   --persona-model <m>  model name to ask the persona endpoint for
+  --persona-locality <l>  local-host | local-network | external (default: external)
 ";
 
 fn main() -> ExitCode {
@@ -177,6 +178,7 @@ struct Options {
     persona: Option<PersonaBackendKind>,
     persona_url: Option<String>,
     persona_model: Option<String>,
+    persona_locality: Option<LocalityClass>,
 }
 
 impl Options {
@@ -224,6 +226,12 @@ impl Options {
                 }
                 "--persona-url" => options.persona_url = Some(value()?),
                 "--persona-model" => options.persona_model = Some(value()?),
+                "--persona-locality" => {
+                    let raw = value()?;
+                    options.persona_locality = Some(raw.replace('-', "_").parse().map_err(|_| {
+                        RuntimeError::Usage("invalid --persona-locality; expected local-host, local-network or external".to_owned())
+                    })?);
+                }
                 "--privacy" => {
                     let raw = value()?;
                     // Hyphens on the command line, underscores on the wire.
@@ -284,23 +292,29 @@ impl Options {
                                 .to_owned(),
                         )
                     })?;
+                // A new endpoint is a new data destination: do not inherit
+                // the previous endpoint's locality declaration implicitly.
+                let same_endpoint = existing.as_ref().filter(|p| p.base_url == base_url);
+                let same_backend = same_endpoint.filter(|p| p.model == model);
                 Ok(PersonaSetting {
                     backend,
                     provider: Some(PersonaProviderConfig {
                         // A stable ID per configured endpoint, derived from
                         // what identifies it, so the same endpoint keeps the
                         // same attribution across runs.
-                        backend_id: existing
-                            .as_ref()
+                        backend_id: same_backend
                             .map(|p| p.backend_id)
                             .unwrap_or_else(|| persona_backend_id_for(&base_url, &model)),
+                        locality: self.persona_locality.unwrap_or_else(|| {
+                            same_endpoint.map_or(LocalityClass::External, |p| p.locality)
+                        }),
                         base_url,
                         model,
-                        auth_env: existing.as_ref().and_then(|p| p.auth_env.clone()),
+                        // Never forward an old endpoint's credential to a
+                        // new destination just because --persona-url changed.
+                        auth_env: same_endpoint.and_then(|p| p.auth_env.clone()),
                         timeout_ms: existing.as_ref().map_or(60_000, |p| p.timeout_ms),
-                        tls_root_ca_path: existing
-                            .as_ref()
-                            .and_then(|p| p.tls_root_ca_path.clone()),
+                        tls_root_ca_path: same_endpoint.and_then(|p| p.tls_root_ca_path.clone()),
                         system_instruction: existing
                             .as_ref()
                             .and_then(|p| p.system_instruction.clone()),

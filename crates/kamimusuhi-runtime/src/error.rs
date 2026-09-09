@@ -58,6 +58,11 @@ pub enum RuntimeError {
     ProviderConfig { slot: String, message: String },
     #[error("persona configuration is invalid: {message}")]
     PersonaConfig { message: String },
+    #[error("persona dispatch refused [PRIVACY]: {privacy} does not admit {locality}")]
+    PersonaPrivacy {
+        privacy: kamimusuhi_core::routing::PrivacyConstraint,
+        locality: kamimusuhi_core::routing::LocalityClass,
+    },
     #[error("resource registry could not be built: {message}")]
     ResourceRegistry { message: String },
     #[error("cognitive resource call failed: {0}")]

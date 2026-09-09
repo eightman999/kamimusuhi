@@ -14,12 +14,14 @@
 //! so: HTTP/1.1, `Content-Length` or chunked responses, no keep-alive reuse —
 //! one connection per attempt, closed after.
 //!
-//! Every read and write is bounded by a deadline derived from one overall
-//! timeout, so a server that accepts a connection and then says nothing is a
-//! timeout rather than a hang.
+//! Socket operations are bounded by one attempt deadline. OS DNS resolution
+//! is synchronous and cannot be interrupted by this deadline. Responses are
+//! buffered with explicit wire/header limits and must have complete framing;
+//! an EOF alone is not proof that a response is complete.
 
+use std::fmt;
 use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{Ipv6Addr, TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
 use crate::tls::{TlsFailureKind, Transport, TrustAnchors};
@@ -39,14 +41,18 @@ pub struct Endpoint {
 }
 
 impl Endpoint {
-    /// Parse `http(s)://host[:port][/path]`, appending `suffix` to the path.
+    /// Parse the supported URL subset. Credentials, queries, fragments and
+    /// control characters are rejected without reflecting the URL in errors.
     pub fn parse(base_url: &str, suffix: &str) -> Result<Self, String> {
+        if !safe_url_text(base_url) || !safe_path(suffix) {
+            return Err("endpoint contains unsupported URL syntax".to_owned());
+        }
         let (rest, tls) = match base_url.strip_prefix("https://") {
             Some(rest) => (rest, true),
             None => (
-                base_url.strip_prefix("http://").ok_or_else(|| {
-                    format!("base url {base_url:?} must start with http:// or https://")
-                })?,
+                base_url
+                    .strip_prefix("http://")
+                    .ok_or_else(|| "base URL must start with http:// or https://".to_owned())?,
                 false,
             ),
         };
@@ -54,31 +60,90 @@ impl Endpoint {
             Some(index) => (&rest[..index], rest[index..].trim_end_matches('/')),
             None => (rest, ""),
         };
-        if authority.is_empty() {
-            return Err(format!("base url {base_url:?} has no host"));
-        }
-        let (host, port) = match authority.rsplit_once(':') {
-            Some((host, port)) => (
-                host,
-                port.parse::<u16>()
-                    .map_err(|_| format!("base url {base_url:?} has a non-numeric port"))?,
-            ),
-            None => (authority, if tls { 443 } else { 80 }),
+        let default_port = if tls { 443 } else { 80 };
+        let (host, port) = if let Some(bracketed) = authority.strip_prefix('[') {
+            let (host, tail) = bracketed
+                .split_once(']')
+                .ok_or_else(|| "IPv6 host is not bracketed correctly".to_owned())?;
+            host.parse::<Ipv6Addr>()
+                .map_err(|_| "IPv6 host is invalid".to_owned())?;
+            let port = if tail.is_empty() {
+                default_port
+            } else {
+                parse_port(
+                    tail.strip_prefix(':')
+                        .ok_or_else(|| "unexpected text after IPv6 host".to_owned())?,
+                )?
+            };
+            (host, port)
+        } else {
+            match authority.split_once(':') {
+                Some((host, port)) => (host, parse_port(port)?),
+                None => (authority, default_port),
+            }
         };
-        if host.is_empty() {
-            return Err(format!("base url {base_url:?} has no host"));
-        }
-        Ok(Self {
+        let endpoint = Self {
             host: host.to_owned(),
             port,
             path: format!("{base_path}{suffix}"),
             tls,
-        })
+        };
+        endpoint.validate()?;
+        Ok(endpoint)
+    }
+
+    /// Fields are public for compatibility, so dispatch validates them again.
+    fn validate(&self) -> Result<(), String> {
+        let valid_host = !self.host.is_empty()
+            && (self.host.parse::<Ipv6Addr>().is_ok()
+                || self
+                    .host
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b)));
+        if !valid_host || self.port == 0 || !safe_path(&self.path) {
+            return Err("endpoint host, port or path is invalid".to_owned());
+        }
+        Ok(())
     }
 
     fn authority(&self) -> String {
-        format!("{}:{}", self.host, self.port)
+        if self.host.contains(':') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
     }
+}
+
+fn parse_port(port: &str) -> Result<u16, String> {
+    if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
+        return Err("endpoint port is invalid".to_owned());
+    }
+    port.parse::<u16>()
+        .map_err(|_| "endpoint port is invalid".to_owned())
+}
+
+fn safe_url_text(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|b| b.is_ascii_graphic() && !b"@?#\\".contains(&b))
+}
+
+fn safe_path(value: &str) -> bool {
+    value.starts_with('/') && safe_url_text(value)
+}
+
+fn token_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+}
+
+fn safe_header_value(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|b| b == b'\t' || (b' '..=b'~').contains(&b))
 }
 
 /// What went wrong at the transport layer.
@@ -87,6 +152,8 @@ impl Endpoint {
 /// worth reporting, and a body may contain the user's own prompt echoed back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpError {
+    /// Rejected before opening a socket. Never contains the supplied value.
+    InvalidRequest(String),
     /// The deadline passed. `elapsed_ms` is measured, not assumed.
     Timeout {
         elapsed_ms: u64,
@@ -119,11 +186,25 @@ impl HttpResponse {
 }
 
 /// One header to send. Values are never logged by this module.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Header {
     pub name: String,
     pub value: String,
 }
+
+impl fmt::Debug for Header {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Header")
+            .field("name", &self.name)
+            .field("value", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Includes status line, headers, framing and body, not just decoded content.
+pub const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+/// Bounds the main response headers and, independently, chunked trailers.
+pub const MAX_HEADER_BYTES: usize = 64 * 1024;
 
 /// Smallest socket timeout worth setting.
 ///
@@ -141,6 +222,25 @@ pub fn post_json(
     timeout: Duration,
     anchors: &TrustAnchors,
 ) -> Result<HttpResponse, HttpError> {
+    endpoint.validate().map_err(HttpError::InvalidRequest)?;
+    for header in headers {
+        if !token_name(&header.name)
+            || !safe_header_value(&header.value)
+            || [
+                "host",
+                "content-length",
+                "transfer-encoding",
+                "connection",
+                "content-type",
+            ]
+            .iter()
+            .any(|name| header.name.eq_ignore_ascii_case(name))
+        {
+            return Err(HttpError::InvalidRequest(
+                "invalid or reserved request header".to_owned(),
+            ));
+        }
+    }
     let started = Instant::now();
     let remaining = |phase: &'static str| -> Result<Duration, HttpError> {
         let left = timeout
@@ -155,6 +255,7 @@ pub fn post_json(
         Ok(left)
     };
 
+    remaining("resolve")?;
     let addresses: Vec<_> = endpoint
         .authority()
         .to_socket_addrs()
@@ -246,10 +347,11 @@ pub fn post_json(
         .flush()
         .map_err(|source| classify_io(&source, started, "write"))?;
 
-    // Read to EOF: `Connection: close` means the server closes when done, so
-    // this doubles as the end-of-body signal for both framings.
+    // Connection: close is requested. EOF ends transport reading, but only
+    // framing validation below can establish that the message is complete.
     let mut raw = Vec::new();
     let mut chunk = [0_u8; 4096];
+    let mut headers_complete = false;
     loop {
         stream
             .socket()
@@ -257,7 +359,22 @@ pub fn post_json(
             .map_err(|source| HttpError::Transport(format!("set_read_timeout: {source}")))?;
         match stream.read(&mut chunk) {
             Ok(0) => break,
-            Ok(read) => raw.extend_from_slice(&chunk[..read]),
+            Ok(read) => {
+                if read > MAX_RESPONSE_BYTES.saturating_sub(raw.len()) {
+                    return Err(malformed("response exceeds wire byte limit"));
+                }
+                raw.extend_from_slice(&chunk[..read]);
+                if !headers_complete {
+                    match raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                        Some(end) if end + 4 <= MAX_HEADER_BYTES => headers_complete = true,
+                        Some(_) => return Err(malformed("response headers exceed byte limit")),
+                        None if raw.len() >= MAX_HEADER_BYTES => {
+                            return Err(malformed("response headers exceed byte limit"));
+                        }
+                        None => {}
+                    }
+                }
+            }
             // A TLS peer that closes without `close_notify` is common enough
             // in the wild that refusing to read such a response would fail
             // against real servers. The cost is that an unclean EOF cannot be
@@ -291,46 +408,92 @@ fn classify_io(source: &std::io::Error, started: Instant, phase: &'static str) -
     }
 }
 
+fn malformed(detail: &str) -> HttpError {
+    HttpError::Malformed(detail.to_owned())
+}
+
 fn parse_response(raw: &[u8]) -> Result<HttpResponse, HttpError> {
+    if raw.len() > MAX_RESPONSE_BYTES {
+        return Err(malformed("response exceeds wire byte limit"));
+    }
     let split = raw
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
-        .ok_or_else(|| HttpError::Malformed("no header terminator in response".to_owned()))?;
-    let head = std::str::from_utf8(&raw[..split])
-        .map_err(|_| HttpError::Malformed("response headers are not UTF-8".to_owned()))?;
-    let body_bytes = &raw[split + 4..];
-
-    let mut lines = head.split("\r\n");
-    let status_line = lines
-        .next()
-        .ok_or_else(|| HttpError::Malformed("empty response".to_owned()))?;
-    let mut parts = status_line.split(' ');
-    let version = parts
-        .next()
-        .ok_or_else(|| HttpError::Malformed("no HTTP version".to_owned()))?;
-    if !version.starts_with("HTTP/1.") {
-        return Err(HttpError::Malformed(format!(
-            "unsupported response version {version:?}"
-        )));
+        .ok_or_else(|| malformed("no header terminator in response"))?;
+    if split + 4 > MAX_HEADER_BYTES {
+        return Err(malformed("response headers exceed byte limit"));
     }
-    let status: u16 = parts
-        .next()
-        .ok_or_else(|| HttpError::Malformed("no status code".to_owned()))?
+    let head = std::str::from_utf8(&raw[..split])
+        .map_err(|_| malformed("response headers are not UTF-8"))?;
+    let body_bytes = &raw[split + 4..];
+    let mut lines = head.split("\r\n");
+    let status_line = lines.next().ok_or_else(|| malformed("empty response"))?;
+    let mut parts = status_line.splitn(3, ' ');
+    let version = parts.next().ok_or_else(|| malformed("no HTTP version"))?;
+    if !matches!(version, "HTTP/1.0" | "HTTP/1.1") {
+        return Err(malformed("unsupported response version"));
+    }
+    let status_text = parts.next().ok_or_else(|| malformed("no status code"))?;
+    if status_text.len() != 3 || !status_text.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(malformed("invalid status code"));
+    }
+    let status: u16 = status_text
         .parse()
-        .map_err(|_| HttpError::Malformed("status code is not a number".to_owned()))?;
-
-    let chunked = lines.any(|line| {
-        line.split_once(':').is_some_and(|(name, value)| {
-            name.eq_ignore_ascii_case("transfer-encoding")
-                && value.trim().eq_ignore_ascii_case("chunked")
-        })
-    });
-    let body = if chunked {
-        decode_chunked(body_bytes)?
-    } else {
-        String::from_utf8_lossy(body_bytes).into_owned()
+        .map_err(|_| malformed("invalid status code"))?;
+    if !(100..=599).contains(&status)
+        || parts
+            .next()
+            .is_some_and(|reason| !safe_header_value(reason))
+    {
+        return Err(malformed("invalid status line"));
+    }
+    let mut length = None;
+    let mut chunked = false;
+    for line in lines {
+        let (name, value) = response_header(line)?;
+        if name.eq_ignore_ascii_case("content-length") {
+            if length.is_some() || value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(malformed("invalid or duplicate content length"));
+            }
+            length = Some(
+                value
+                    .parse::<usize>()
+                    .map_err(|_| malformed("invalid content length"))?,
+            );
+        } else if name.eq_ignore_ascii_case("transfer-encoding") {
+            if chunked || !value.eq_ignore_ascii_case("chunked") {
+                return Err(malformed("unsupported or duplicate transfer encoding"));
+            }
+            chunked = true;
+        }
+    }
+    let body = match (length, chunked) {
+        (Some(_), true) => return Err(malformed("ambiguous response framing")),
+        (Some(length), false) => {
+            if body_bytes.len() != length {
+                return Err(malformed("response length does not match content length"));
+            }
+            String::from_utf8(body_bytes.to_vec())
+                .map_err(|_| malformed("response body is not UTF-8"))?
+        }
+        (None, true) => decode_chunked(body_bytes)?,
+        (None, false) => {
+            return Err(malformed(
+                "response needs explicit content length or chunked framing",
+            ));
+        }
     };
     Ok(HttpResponse { status, body })
+}
+
+fn response_header(line: &str) -> Result<(&str, &str), HttpError> {
+    let (name, value) = line
+        .split_once(':')
+        .ok_or_else(|| malformed("invalid response header"))?;
+    if !token_name(name) || !safe_header_value(value) {
+        return Err(malformed("invalid response header"));
+    }
+    Ok((name, value.trim_matches([' ', '\t'])))
 }
 
 fn decode_chunked(mut body: &[u8]) -> Result<String, HttpError> {
@@ -339,22 +502,61 @@ fn decode_chunked(mut body: &[u8]) -> Result<String, HttpError> {
         let line_end = body
             .windows(2)
             .position(|w| w == b"\r\n")
-            .ok_or_else(|| HttpError::Malformed("truncated chunk header".to_owned()))?;
+            .ok_or_else(|| malformed("truncated chunk header"))?;
+        if line_end > MAX_HEADER_BYTES {
+            return Err(malformed("chunk header exceeds byte limit"));
+        }
         let header = std::str::from_utf8(&body[..line_end])
-            .map_err(|_| HttpError::Malformed("chunk header is not UTF-8".to_owned()))?;
-        let size = usize::from_str_radix(header.split(';').next().unwrap_or("").trim(), 16)
-            .map_err(|_| HttpError::Malformed(format!("bad chunk size {header:?}")))?;
+            .map_err(|_| malformed("chunk header is not UTF-8"))?;
+        let size_text = header.split(';').next().unwrap_or("");
+        if size_text.is_empty()
+            || !size_text.bytes().all(|b| b.is_ascii_hexdigit())
+            || !safe_header_value(header)
+        {
+            return Err(malformed("invalid chunk size"));
+        }
+        let size =
+            usize::from_str_radix(size_text, 16).map_err(|_| malformed("invalid chunk size"))?;
         body = &body[line_end + 2..];
         if size == 0 {
-            break;
+            if body.len() > MAX_HEADER_BYTES {
+                return Err(malformed("chunk trailers exceed byte limit"));
+            }
+            loop {
+                let end = body
+                    .windows(2)
+                    .position(|w| w == b"\r\n")
+                    .ok_or_else(|| malformed("truncated chunk trailer"))?;
+                if end == 0 {
+                    if body.len() != 2 {
+                        return Err(malformed("unexpected bytes after chunked response"));
+                    }
+                    return String::from_utf8(decoded)
+                        .map_err(|_| malformed("response body is not UTF-8"));
+                }
+                let line = std::str::from_utf8(&body[..end])
+                    .map_err(|_| malformed("chunk trailer is not UTF-8"))?;
+                let (name, _) = response_header(line)?;
+                if name.eq_ignore_ascii_case("content-length")
+                    || name.eq_ignore_ascii_case("transfer-encoding")
+                {
+                    return Err(malformed("framing field in chunk trailer"));
+                }
+                body = &body[end + 2..];
+            }
         }
-        if body.len() < size {
-            return Err(HttpError::Malformed("truncated chunk body".to_owned()));
+        let framed_size = size
+            .checked_add(2)
+            .ok_or_else(|| malformed("chunk size overflow"))?;
+        if body.len() < framed_size || &body[size..framed_size] != b"\r\n" {
+            return Err(malformed("truncated chunk body or missing terminator"));
+        }
+        if size > MAX_RESPONSE_BYTES.saturating_sub(decoded.len()) {
+            return Err(malformed("decoded body exceeds byte limit"));
         }
         decoded.extend_from_slice(&body[..size]);
-        body = body.get(size + 2..).unwrap_or(&[]);
+        body = &body[framed_size..];
     }
-    Ok(String::from_utf8_lossy(&decoded).into_owned())
 }
 
 #[cfg(test)]
@@ -480,5 +682,161 @@ mod tests {
             matches!(error, HttpError::Transport(_)),
             "expected transport, got {error:?}"
         );
+    }
+
+    #[test]
+    fn framing_rejects_truncation_even_when_the_body_is_valid_json() {
+        for raw in [
+            &b"HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n{}"[..],
+            &b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n{}"[..],
+            &b"HTTP/1.1 200 OK\r\n\r\n{}"[..],
+            &b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}"[..],
+            &b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+                [..],
+            &b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n"[..],
+        ] {
+            assert!(matches!(parse_response(raw), Err(HttpError::Malformed(_))));
+        }
+    }
+
+    #[test]
+    fn chunks_need_complete_terminators_and_cannot_overflow() {
+        for body in [
+            "2\r\n{}XX0\r\n\r\n",
+            "2\r\n{}\r\n0\r\n",
+            "0\r\n\r\nextra",
+            "ffffffffffffffff\r\n",
+            "fffffffffffffffff\r\n",
+            "0\r\nContent-Length: 9\r\n\r\n",
+        ] {
+            assert!(matches!(
+                decode_chunked(body.as_bytes()),
+                Err(HttpError::Malformed(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn complete_chunks_allow_extensions_and_nonframing_trailers() {
+        assert_eq!(
+            decode_chunked(b"2;fixture=yes\r\n{}\r\n0\r\nX-Receipt: yes\r\n\r\n").unwrap(),
+            "{}"
+        );
+    }
+
+    #[test]
+    fn invalid_utf8_is_not_silently_replaced() {
+        assert!(parse_response(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n\xff").is_err());
+        assert!(decode_chunked(b"1\r\n\xff\r\n0\r\n\r\n").is_err());
+    }
+
+    #[test]
+    fn response_and_header_sizes_are_bounded() {
+        assert!(parse_response(&vec![b'x'; MAX_RESPONSE_BYTES + 1]).is_err());
+        let raw = format!(
+            "HTTP/1.1 200 OK\r\nX-Padding: {}\r\nContent-Length: 2\r\n\r\n{{}}",
+            "x".repeat(MAX_HEADER_BYTES)
+        );
+        assert!(parse_response(raw.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn errors_do_not_reflect_provider_controlled_headers() {
+        let secret = "PRIVATE_PROMPT_OR_TOKEN";
+        for raw in [
+            format!("{secret} 200 OK\r\nContent-Length: 2\r\n\r\n{{}}"),
+            format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{secret}\r\n"),
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {secret}\r\n\r\n{{}}"),
+        ] {
+            assert!(!format!("{:?}", parse_response(raw.as_bytes()).unwrap_err()).contains(secret));
+        }
+    }
+
+    #[test]
+    fn endpoint_validation_never_echoes_credentials_or_allows_injection() {
+        for url in [
+            "http://user:PRIVATE_TOKEN@example.test/v1",
+            "http://example.test/v1?token=PRIVATE_TOKEN",
+            "http://example.test/v1#PRIVATE_TOKEN",
+            "http://example.test/\r\nPRIVATE_TOKEN",
+            "http://example.test:0/v1",
+            "http://[::1]suffix/v1",
+            "http://::1/v1",
+        ] {
+            let error = Endpoint::parse(url, "/chat").unwrap_err();
+            assert!(!error.contains("PRIVATE_TOKEN"));
+        }
+        assert!(Endpoint::parse("http://example.test", "/chat\r\nX: value").is_err());
+    }
+
+    #[test]
+    fn bracketed_ipv6_has_a_valid_authority_and_unbracketed_tls_name() {
+        let endpoint = Endpoint::parse("http://[::1]:8080/v1", "/chat").unwrap();
+        assert_eq!(endpoint.host, "::1");
+        assert_eq!(endpoint.authority(), "[::1]:8080");
+        assert_eq!(
+            Endpoint::parse("https://[::1]/v1", "/chat").unwrap().port,
+            443
+        );
+    }
+
+    #[test]
+    fn invalid_request_headers_are_rejected_before_connecting() {
+        let endpoint = Endpoint::parse("http://127.0.0.1:1", "/chat").unwrap();
+        for header in [
+            Header {
+                name: "Authorization".to_owned(),
+                value: "Bearer PRIVATE_TOKEN\r\nInjected: yes".to_owned(),
+            },
+            Header {
+                name: "Content-Length".to_owned(),
+                value: "100".to_owned(),
+            },
+            Header {
+                name: "X\r\nInjected".to_owned(),
+                value: "value".to_owned(),
+            },
+        ] {
+            let error = post_json(
+                &endpoint,
+                "{}",
+                &[header],
+                Duration::from_millis(100),
+                &TrustAnchors::default(),
+            )
+            .unwrap_err();
+            assert!(matches!(error, HttpError::InvalidRequest(_)));
+            assert!(!format!("{error:?}").contains("PRIVATE_TOKEN"));
+        }
+    }
+
+    #[test]
+    fn public_endpoint_fields_cannot_bypass_validation() {
+        let endpoint = Endpoint {
+            host: "127.0.0.1".to_owned(),
+            port: 1,
+            path: "/x\r\nPRIVATE_TOKEN".to_owned(),
+            tls: false,
+        };
+        assert!(matches!(
+            post_json(
+                &endpoint,
+                "{}",
+                &[],
+                Duration::from_millis(100),
+                &TrustAnchors::default()
+            ),
+            Err(HttpError::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
+    fn header_debug_redacts_values() {
+        let header = Header {
+            name: "Authorization".to_owned(),
+            value: "Bearer PRIVATE_TOKEN".to_owned(),
+        };
+        assert!(!format!("{header:?}").contains("PRIVATE_TOKEN"));
+        assert!(format!("{header:?}").contains("<redacted>"));
     }
 }

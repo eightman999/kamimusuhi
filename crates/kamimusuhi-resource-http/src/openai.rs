@@ -22,7 +22,7 @@
 //! Secrets: the bearer token is read from the environment at call time and
 //! never stored, echoed into an error, or written to any record.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use kamimusuhi_core::ids::ResourceId;
 use kamimusuhi_core::resources::{
@@ -229,6 +229,9 @@ impl CognitiveResource for OpenAiCompatibleResource {
     }
 
     fn invoke(&self, request: &ResourceRequest) -> Result<ResourceResult, ResourceError> {
+        self.config
+            .validate()
+            .map_err(|reason| ResourceError::InvalidRequest { reason })?;
         let endpoint = self
             .config
             .endpoint()
@@ -237,14 +240,24 @@ impl CognitiveResource for OpenAiCompatibleResource {
         let body = self.request_body(request);
         let timeout = Duration::from_millis(self.config.timeout_ms);
 
+        let started = Instant::now();
         let mut attempt = 0_u32;
+        let deadline_error = |attempts| ResourceError::Timeout {
+            resource_id: self.config.resource_id,
+            elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            attempts,
+        };
         loop {
+            let remaining = timeout
+                .checked_sub(started.elapsed())
+                .filter(|left| !left.is_zero())
+                .ok_or_else(|| deadline_error(attempt))?;
             attempt += 1;
             let outcome = post_json(
                 &endpoint,
                 &body,
                 &headers,
-                timeout,
+                remaining,
                 &self.config.trust_anchors,
             )
             .map_err(|error| self.map_transport(error, attempt))
@@ -261,8 +274,15 @@ impl CognitiveResource for OpenAiCompatibleResource {
                     if attempt >= self.config.max_attempts || !Self::is_retryable(&error) {
                         return Err(error);
                     }
-                    if self.config.retry_backoff_ms > 0 {
-                        std::thread::sleep(Duration::from_millis(self.config.retry_backoff_ms));
+                    let backoff = Duration::from_millis(self.config.retry_backoff_ms);
+                    let remaining = timeout
+                        .checked_sub(started.elapsed())
+                        .unwrap_or(Duration::ZERO);
+                    if backoff >= remaining {
+                        return Err(deadline_error(attempt));
+                    }
+                    if !backoff.is_zero() {
+                        std::thread::sleep(backoff);
                     }
                 }
             }
@@ -274,6 +294,7 @@ impl OpenAiCompatibleResource {
     fn map_transport(&self, error: HttpError, attempts: u32) -> ResourceError {
         let resource_id = self.config.resource_id;
         match error {
+            HttpError::InvalidRequest(reason) => ResourceError::InvalidRequest { reason },
             HttpError::Timeout { elapsed_ms, .. } => ResourceError::Timeout {
                 resource_id,
                 elapsed_ms,
@@ -327,25 +348,16 @@ impl OpenAiCompatibleResource {
             });
         }
 
-        let parsed: serde_json::Value = serde_json::from_str(&response.body).map_err(|source| {
-            ResourceError::MalformedResponse {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&response.body).map_err(|_| ResourceError::MalformedResponse {
                 resource_id,
-                detail: format!("response body is not JSON: {source}"),
+                detail: "response body is not valid JSON".to_owned(),
                 attempts,
-            }
-        })?;
+            })?;
 
         // A 200 carrying the provider's own error object is a provider error,
         // not a success with odd content.
-        if let Some(code) = parsed
-            .pointer("/error/code")
-            .and_then(serde_json::Value::as_str)
-            .or_else(|| {
-                parsed
-                    .pointer("/error/type")
-                    .and_then(serde_json::Value::as_str)
-            })
-        {
+        if let Some(code) = crate::openai_response::error_code(&parsed) {
             return Err(ResourceError::ProviderError {
                 resource_id,
                 code: code.to_owned(),
@@ -362,6 +374,13 @@ impl OpenAiCompatibleResource {
                 attempts,
             })?;
 
+        if content.trim().is_empty() {
+            return Err(ResourceError::MalformedResponse {
+                resource_id,
+                detail: "provider returned empty content".to_owned(),
+                attempts,
+            });
+        }
         Ok(serde_json::json!({
             "answer": content,
             "model": parsed

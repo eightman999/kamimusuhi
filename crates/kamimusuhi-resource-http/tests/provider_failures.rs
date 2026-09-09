@@ -286,3 +286,59 @@ fn a_reply_full_of_instructions_is_still_just_material() {
     // could carry standing.
     assert_eq!(result.resource_id, RESOURCE);
 }
+
+#[test]
+fn retry_backoff_cannot_exceed_the_logical_call_budget() {
+    let server = FixtureServer::always(FixtureResponse::Status { code: 503 }).unwrap();
+    let resource = OpenAiCompatibleResource::new(
+        OpenAiCompatibleConfig::new(RESOURCE, server.base_url(), "fixture")
+            .with_timeout_ms(120)
+            .with_max_attempts(3)
+            .with_retry_backoff_ms(600),
+    );
+    let error = resource.invoke(&request()).unwrap_err();
+    assert_eq!(error.code(), "TIMEOUT");
+    assert_eq!(error.attempts(), 1);
+    assert_eq!(server.request_count(), 1);
+}
+
+#[test]
+fn timed_out_attempts_do_not_receive_a_fresh_logical_deadline() {
+    let server = FixtureServer::always(FixtureResponse::Silence { ms: 1_000 }).unwrap();
+    let error = resource(&server.base_url(), 100, 4)
+        .invoke(&request())
+        .unwrap_err();
+    assert_eq!(error.code(), "TIMEOUT");
+    assert_eq!(server.request_count(), 1);
+    assert_eq!(error.attempts(), 1);
+}
+
+#[test]
+fn direct_invocation_validates_config_without_dispatching() {
+    let server = FixtureServer::always(FixtureResponse::ok("unused")).unwrap();
+    let resource = resource(&server.base_url(), 0, 1);
+    assert_eq!(
+        resource.invoke(&request()).unwrap_err().code(),
+        "INVALID_REQUEST"
+    );
+    assert_eq!(server.request_count(), 0);
+}
+
+#[test]
+fn oversized_wire_response_is_rejected_before_success() {
+    let server = FixtureServer::always(FixtureResponse::RawHttp {
+        response: format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+            kamimusuhi_resource_http::http::MAX_RESPONSE_BYTES + 1,
+            "x".repeat(kamimusuhi_resource_http::http::MAX_RESPONSE_BYTES + 1)
+        ),
+    })
+    .unwrap();
+    assert_eq!(
+        resource(&server.base_url(), 2_000, 1)
+            .invoke(&request())
+            .unwrap_err()
+            .code(),
+        "MALFORMED_RESPONSE"
+    );
+}

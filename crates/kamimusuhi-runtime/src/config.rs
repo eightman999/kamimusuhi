@@ -24,7 +24,7 @@ use kamimusuhi_core::mutation::UnknownVocabulary;
 use kamimusuhi_core::persona::PersonaCore;
 use kamimusuhi_core::resources::{CognitiveResource, ResourceRegistry, ResourceSlot};
 use kamimusuhi_core::routing::{
-    CostClass, HealthState, LatencyClass, LocalityClass, Modality, QualityTier,
+    CostClass, HealthState, LatencyClass, LocalityClass, Modality, PrivacyConstraint, QualityTier,
     ResourceCapabilities,
 };
 use kamimusuhi_persona_http::{OpenAiCompatiblePersona, PersonaBackendConfig};
@@ -210,6 +210,10 @@ impl FromStr for PersonaBackendKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersonaProviderConfig {
     pub backend_id: PersonaBackendId,
+    /// Operator-declared data boundary. Missing declarations are external,
+    /// never inferred from a hostname or from the model's own claims.
+    #[serde(default = "default_persona_locality")]
+    pub locality: LocalityClass,
     pub base_url: String,
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -221,6 +225,10 @@ pub struct PersonaProviderConfig {
     /// the individual's own and which are borrowed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<String>,
+}
+
+fn default_persona_locality() -> LocalityClass {
+    LocalityClass::External
 }
 
 /// The Persona namespace of the runtime config.
@@ -241,8 +249,36 @@ impl Default for PersonaSetting {
 }
 
 impl PersonaSetting {
+    /// Apply the turn's privacy constraint before any dispatch or state write.
+    /// Being a Persona rather than a resource is not permission to export
+    /// the workspace. This check does not register the Persona in the router.
+    pub fn check_privacy(&self, privacy: PrivacyConstraint) -> Result<(), RuntimeError> {
+        let locality = match self.backend {
+            PersonaBackendKind::Fake => LocalityClass::InProcess,
+            PersonaBackendKind::OpenaiCompatible => {
+                let provider =
+                    self.provider
+                        .as_ref()
+                        .ok_or_else(|| RuntimeError::PersonaConfig {
+                            message: "openai-compatible needs a persona provider entry".to_owned(),
+                        })?;
+                if provider.locality == LocalityClass::InProcess {
+                    return Err(RuntimeError::PersonaConfig {
+                        message: "HTTP Persona cannot declare in_process locality".to_owned(),
+                    });
+                }
+                provider.locality
+            }
+        };
+        if !privacy.admits(locality) {
+            return Err(RuntimeError::PersonaPrivacy { privacy, locality });
+        }
+        Ok(())
+    }
+
     /// Build the Persona Core this setting describes.
     pub fn build(&self) -> Result<Box<dyn PersonaCore>, RuntimeError> {
+        self.check_privacy(PrivacyConstraint::Unconstrained)?;
         match self.backend {
             PersonaBackendKind::Fake => Ok(Box::new(FakePersonaCore)),
             PersonaBackendKind::OpenaiCompatible => {
