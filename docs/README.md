@@ -56,6 +56,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 
 - [`persona-core-training-taxonomy.md`](./persona-core-training-taxonomy.md) — what a Kamimusuhi Persona Core should learn: self/other, human/social cognition, epistemology, delegation, persona priors, long-horizon relationship competence, evaluation.
 - [`model-ecology-and-lineage.md`](./model-ecology-and-lineage.md) — model ecology across two scales: a medium `novllm`-derived Persona Core plus small specialist-model organs inside each individual, and a multi-user population of distinct individual lineages with privacy-gated population-level inheritance.
+- [`fio-cross-review-and-runtime-countermeasures-2026-09-10.md`](./fio-cross-review-and-runtime-countermeasures-2026-09-10.md) — **FIO RV1/RV2 cross-review を Kamimusuhi の設計要件へ蒸留**。独立実装間の収束点、運用上の不一致、per-turn UUID、応答前 metadata gate、system-owned agent loop、tool/result/observation の分離、full-scratch Persona Core による assistant prior 低減、理由を必須化しない自律性、failure injection / soak test を整理する。
 - [`optional-p2p-population-learning.md`](./optional-p2p-population-learning.md) — **optional / non-normative** long-horizon note for privacy-preserving P2P population learning: signed artifacts and evaluation receipts, E2EE plus secure aggregation/privacy controls, Sybil resistance, heterogeneous distributed evaluation, federated/volunteer compute, and species-level inheritance without merging individual identity or private lived experience.
 
 ### Reflex / control substrate
