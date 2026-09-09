@@ -284,3 +284,178 @@ For any promising external technology, record four things:
 ```
 
 Prefer architecture-neutral contracts so experimental components can be swapped in and out without rewriting identity, memory, or the sensory event model.
+
+## 10. Promoted 2026-09-09 watch targets
+
+The 2026-09-09 daily survey produced a cluster of results that are more useful when tracked together than as isolated papers. Their durable architectural synthesis is [`runtime-authority-learning-boundaries.md`](./runtime-authority-learning-boundaries.md).
+
+### 10.1 Gander / Omni Interaction Agent
+
+References:
+
+- Orantqing et al., *Omni Interaction Agent Technical Report*, arXiv:2609.08977 — https://arxiv.org/abs/2609.08977
+- project summary — https://huggingface.co/papers/2609.08977
+
+Why to watch:
+
+- continuous video/speech/text streaming;
+- full-duplex interruption and backchannels;
+- `Cerebellum-Brain` fast/slow collaboration;
+- agentic reasoning while maintaining conversational timing.
+
+Kamimusuhi use: comparison target for K-Nerve/K-Edge vs K-Core scheduling. Do not import its model-centric identity assumptions.
+
+Watch items:
+
+- actual code/model/data licenses;
+- interrupt and backchannel latency;
+- tool calls while speaking/listening;
+- fast/slow scheduling failure modes;
+- behavior under modality dropout and network delay.
+
+### 10.2 SkillAdam
+
+Reference:
+
+- Gaoyuan Li et al., *SkillAdam: Stable and Efficient Skill Evolution for Agents*, arXiv:2609.08944 — https://arxiv.org/abs/2609.08944
+
+Why to watch:
+
+- optimization memory across skill revisions;
+- volatility-aware edit budgets;
+- lower oscillation than naive local rewrites.
+
+Kamimusuhi use: procedural memory / tool-skill evolution only. Do not generalize the update rule directly to persona, value, or continuity-bearing state.
+
+Watch items:
+
+- code release;
+- long-running revision histories;
+- conflicting feedback;
+- security-sensitive skill mutation;
+- regression behavior over many iterations.
+
+### 10.3 NeoHorse-1 / TokenRhythm
+
+References:
+
+- *NeoHorse-1: Towards Recursive Self-Improvement via Agentic Post-Training with Routing Harness*, arXiv:2609.08183 — https://arxiv.org/abs/2609.08183
+- repository — https://github.com/TokenRhythm/NeoHorse
+- project — https://tokenrhythm.ai/
+
+Why to watch:
+
+- execution/evaluation traces are returned to a post-training mixture;
+- released 4B/9B models provide a concrete harness-mediated development-loop baseline.
+
+Kamimusuhi use: candidate-descendant Persona Core training, not online replacement of the current self.
+
+Watch items:
+
+- second and later improvement iterations;
+- catastrophic regressions;
+- data-governance details;
+- model-family generalization;
+- evidence for genuinely sustained recursive improvement.
+
+### 10.4 Bio-Memory / biometric person binding
+
+Reference:
+
+- Yanhong Qian et al., *Personalizing LLM Agent Memory Using Biometrics*, arXiv:2609.08558 — https://arxiv.org/abs/2609.08558
+
+Why to watch:
+
+- separates person identity gating from downstream semantic retrieval;
+- directly targets shared-agent memory separation.
+
+Kamimusuhi use: one signal in multi-signal relationship-memory person binding. Biometrics are not authorization.
+
+Watch items:
+
+- spoof resistance;
+- privacy/storage architecture;
+- voice/device/account fusion;
+- ambiguous-person handling;
+- long-term sensor drift.
+
+### 10.5 ENOUGH / minimal-sufficient personalization
+
+Reference:
+
+- Minghang Liu et al., *Less Is Personal: Learning Minimal Sufficient User Profiles for Personalized Language Models*, arXiv:2609.08180 — https://arxiv.org/abs/2609.08180
+
+Why to watch:
+
+- reframes retrieval as sequential admission with an explicit `STOP` decision rather than fixed top-k.
+
+Kamimusuhi use: Global Workspace / relationship-memory budgeting under latency and privacy constraints.
+
+Watch items:
+
+- formative-memory misses;
+- long-horizon autobiographical behavior;
+- sensitivity to profile drift;
+- privacy/cost trade-offs;
+- robustness outside benchmark-sized user histories.
+
+### 10.6 ToolLoop
+
+Reference:
+
+- Min Zeng et al., *ToolLoop: Closed-Loop Tool-Use Data Synthesis via Decomposed Generation and Dynamic Self-Feedback*, arXiv:2609.09072 — https://arxiv.org/abs/2609.09072
+
+Why to watch:
+
+- generates tool-use data from function combinations and verifies/refines each stage;
+- useful for rare/error-path action-schema curriculum.
+
+Kamimusuhi use: Persona Core / Cognitive Action Router competence training. Correct tool-call generation remains separate from execution authority.
+
+Watch items:
+
+- transfer to Kamimusuhi typed actions;
+- ambiguous/unsafe examples;
+- rare failure-path coverage;
+- interaction with authority-aware training data.
+
+### 10.7 AgentStateGraph
+
+Reference:
+
+- https://agentstategraph.dev/
+
+Why to watch:
+
+- content-addressed, branchable, provenance-aware agent-state substrate;
+- potential comparison point for continuity storage and inspection.
+
+Kamimusuhi use: storage/reconstruction candidate only. Branchable state does not decide which branch is the authorized continuation of the individual.
+
+Watch items:
+
+- merge semantics;
+- crash recovery;
+- permission model;
+- storage/backend maturity;
+- independent reproduction/adoption;
+- comparison against plain SQLite/event-log implementations.
+
+### 10.8 Preference drift / frozen evaluators
+
+Reference:
+
+- Jiabin Zheng et al., *Do Reviewers Still Reward Lexical Complexity? A Frozen-Rater Study of Preference Drift in 124K ICLR Reviews*, arXiv:2609.08475 — https://arxiv.org/abs/2609.08475
+
+Why to watch:
+
+- demonstrates why a stable aggregate evaluator score can hide changing local preferences.
+
+Kamimusuhi use: version Persona Core continuity evaluators and compare frozen historical vs current evaluators during migration.
+
+Watch items:
+
+- transferability outside review-style judgments;
+- evaluator/version archival discipline;
+- disagreement interpretation;
+- combining historical continuity with current normative requirements.
