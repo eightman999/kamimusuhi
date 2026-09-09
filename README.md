@@ -402,6 +402,18 @@ Persona Core は「個体として喋るもの」、cognitive resource は「一
 
 モデルへは、section と JSON record で domain・authority・source/evidence refs・freshness を保った入力を渡します。`CURRENT_INPUT`、記憶、Library、外部結果に加え、`CONTINUITY_STATE` / `SESSION_WORKING_STATE` と turn/input の識別子も渡します。payload 内の改行や偽の見出しは JSON string に閉じ込めますが、これだけで **LLM の意味的な prompt injection や誤解釈を防げるとは主張しません**。永続状態への書込みは別の Mutation Policy / Continuity Kernel 境界です。
 
+モデルに渡される prompt は section 付きです。`PERSONA_SEED` / `CURRENT_INPUT` / `RELATIONSHIP_MEMORY` / `LIBRARY_EVIDENCE` / `EXTERNAL_RESOURCE_RESULT` がそれぞれ何であるかを明示して渡すので、Library の文章や外部 resource の出力が「自分の記憶」や「事実」として混ざりません。token が必要な endpoint では、runtime.json の `persona.provider.auth_env` に**環境変数名**を書きます（値は書きません）。
+
+### 仮人格 (Persona seed)
+
+汎用モデルには「どう在るか」がありません。`persona.seed` は、operator が書いた傾向（口調、相手との距離、知らないときにどうするか）を明示的・交換可能な形で与える設定です。
+
+```json
+{ "persona": { "seed": { "seed": "v0" } } }
+```
+
+seed は memory でも durable self でも外部 material でもなく、専用の `PERSONA_SEED` section として渡されます。workspace からは生成できないので、Library や resource の出力が人格になることはありません。**モデルが「私はこういう人格だ」と言っても seed は変わりません** — seed の変更は operator による設定編集であって、canonical mutation ではありません。v0 の内容と根拠は [`docs/implementation/persona-seed-v0.md`](./docs/implementation/persona-seed-v0.md) を参照してください。経歴・年齢・好物のような作り話は意図的に入れていません。
+
 token が必要な endpoint では、runtime.json の `persona.provider.auth_env` に**環境変数名**を書きます（値は書きません）。Persona の外部送信にも `--privacy` が適用されます。locality 未指定の既存設定は `external` とみなし、`local-only` での暗黙の許可はしません。
 
 ```bash

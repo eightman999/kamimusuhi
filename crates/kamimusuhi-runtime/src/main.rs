@@ -269,6 +269,10 @@ impl Options {
             PersonaBackendKind::Fake => Ok(PersonaSetting {
                 backend,
                 provider: config.persona.provider.clone(),
+                // Switching backend on the command line must not change the
+                // disposition: the seed belongs to the individual, not to
+                // whatever is currently running it.
+                seed: config.persona.seed.clone(),
             }),
             PersonaBackendKind::OpenaiCompatible => {
                 let existing = config.persona.provider.clone();
@@ -298,6 +302,7 @@ impl Options {
                 let same_backend = same_endpoint.filter(|p| p.model == model);
                 Ok(PersonaSetting {
                     backend,
+                    seed: config.persona.seed.clone(),
                     provider: Some(PersonaProviderConfig {
                         // A stable ID per configured endpoint, derived from
                         // what identifies it, so the same endpoint keeps the

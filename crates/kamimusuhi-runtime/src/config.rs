@@ -22,6 +22,7 @@ use kamimusuhi_core::ids::PersonaBackendId;
 use kamimusuhi_core::ids::{NodeId, ResourceId};
 use kamimusuhi_core::mutation::UnknownVocabulary;
 use kamimusuhi_core::persona::PersonaCore;
+use kamimusuhi_core::persona_seed::{PersonaSeed, V0_SEED_ID, v0_seed};
 use kamimusuhi_core::resources::{CognitiveResource, ResourceRegistry, ResourceSlot};
 use kamimusuhi_core::routing::{
     CostClass, HealthState, LatencyClass, LocalityClass, Modality, PrivacyConstraint, QualityTier,
@@ -231,12 +232,54 @@ fn default_persona_locality() -> LocalityClass {
     LocalityClass::External
 }
 
+/// Which disposition the Persona backend starts from.
+///
+/// Configuration, and only configuration. There is deliberately no variant
+/// that reads a seed from the database, from the Library, or from anything a
+/// model produced: a seed is what an operator wrote, and the only way to
+/// change one is to edit this setting. That is why changing a seed is not a
+/// canonical mutation and cannot be dressed up as one — there is no code path
+/// through which a mutation could reach it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "seed", rename_all = "snake_case")]
+pub enum PersonaSeedSetting {
+    /// The built-in v0 disposition.
+    #[default]
+    V0,
+    /// A disposition the operator wrote out in full.
+    Inline(Box<PersonaSeed>),
+    /// No disposition at all. The backend is given no PERSONA_SEED section.
+    None,
+}
+
+impl PersonaSeedSetting {
+    /// Resolve to the seed itself, refusing one whose digest no longer matches
+    /// its content — an edited seed with a stale digest is an operator
+    /// mistake, and accepting it would make the digest meaningless.
+    pub fn resolve(&self) -> Result<Option<PersonaSeed>, RuntimeError> {
+        let seed = match self {
+            Self::None => return Ok(None),
+            Self::V0 => v0_seed(V0_SEED_ID),
+            Self::Inline(seed) => (**seed).clone(),
+        };
+        seed.validate()
+            .map_err(|message| RuntimeError::PersonaConfig {
+                message: format!("persona seed: {message}"),
+            })?;
+        Ok(Some(seed))
+    }
+}
+
 /// The Persona namespace of the runtime config.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersonaSetting {
     pub backend: PersonaBackendKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<PersonaProviderConfig>,
+    /// The disposition, independent of the backend running it. Replacing the
+    /// backend leaves it untouched, which is the point of having it here.
+    #[serde(default)]
+    pub seed: PersonaSeedSetting,
 }
 
 impl Default for PersonaSetting {
@@ -244,6 +287,7 @@ impl Default for PersonaSetting {
         Self {
             backend: PersonaBackendKind::Fake,
             provider: None,
+            seed: PersonaSeedSetting::default(),
         }
     }
 }
@@ -352,6 +396,12 @@ impl RuntimeConfig {
     /// [`Self::build_registry`]: the two namespaces never mix.
     pub fn build_persona(&self) -> Result<Box<dyn PersonaCore>, RuntimeError> {
         self.persona.build()
+    }
+
+    /// The configured disposition, if any. Separate from
+    /// [`Self::build_persona`]: the seed outlives any particular backend.
+    pub fn persona_seed(&self) -> Result<Option<PersonaSeed>, RuntimeError> {
+        self.persona.seed.resolve()
     }
 
     pub fn load(path: &Path) -> Result<Self, RuntimeError> {

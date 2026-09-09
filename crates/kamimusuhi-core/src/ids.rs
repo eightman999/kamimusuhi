@@ -185,6 +185,13 @@ define_id!(
     /// type system is where that distinction should be impossible to lose.
     PersonaBackendId
 );
+define_id!(
+    /// One operator-authored persona seed. Distinct from
+    /// [`PersonaBackendId`]: the seed is the disposition an operator
+    /// configured, the backend is whatever currently runs it, and either can
+    /// be replaced without the other.
+    PersonaSeedId
+);
 define_id!(ResourceId);
 define_id!(ResourceCallId);
 define_id!(TraceId);

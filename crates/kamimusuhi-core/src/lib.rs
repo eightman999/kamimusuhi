@@ -24,6 +24,7 @@ pub mod library;
 pub mod memory;
 pub mod mutation;
 pub mod persona;
+pub mod persona_seed;
 pub mod resources;
 pub mod routing;
 pub mod time;

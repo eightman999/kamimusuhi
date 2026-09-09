@@ -436,8 +436,14 @@ pub fn run(
         resumed: phase == DemoPhase::Resume,
         delegations: 1,
     };
-    let turn_input =
+    let mut turn_input =
         PersonaTurnInput::with_workspace(context, current_input, &workspace, session_state);
+    // The disposition arrives from configuration, not from the workspace, and
+    // gets its own section rather than being folded into any of the others.
+    let seed = runtime.config().persona_seed()?;
+    if let Some(seed) = seed.clone() {
+        turn_input.envelope = turn_input.envelope.with_seed(seed);
+    }
     runtime.trace().record_with(
         TraceEventKind::PersonaInvoked,
         TraceCorrelation {
@@ -455,6 +461,15 @@ pub fn run(
                 "library": turn_input.envelope.library.len(),
                 "external_results": turn_input.envelope.external_results.len(),
             },
+            // Which disposition was in force, by ID and digest. Never its
+            // text: the seed is prompt material, and prompt material does not
+            // go into the trace.
+            "persona_seed": seed.as_ref().map(|s| serde_json::json!({
+                "seed_id": s.seed_id.to_string(),
+                "version": s.version,
+                "content_digest": s.content_digest,
+                "origin": s.origin.as_str(),
+            })),
             "session_resumed": session_state.resumed,
         }),
     );

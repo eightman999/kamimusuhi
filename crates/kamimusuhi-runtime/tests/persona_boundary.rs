@@ -153,6 +153,9 @@ fn configure(dir: &Path, persona: Option<PersonaProviderConfig>, resource: Optio
         config.persona = PersonaSetting {
             backend: PersonaBackendKind::OpenaiCompatible,
             provider: Some(persona),
+            // The disposition survives a backend swap: it belongs to the
+            // individual, not to whatever is currently running it.
+            seed: config.persona.seed.clone(),
         };
     }
     if let Some(resource) = resource {

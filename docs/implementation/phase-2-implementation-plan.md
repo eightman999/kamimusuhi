@@ -169,14 +169,60 @@ Not to be fixed opportunistically in W6:
 
 ## Later waves (orientation only, not authorized here)
 
-- **W7** — Persona Core boundary hardening and a real model behind it.
-- **W8** — belief/claim layer: state→state dependency, re-evaluation on
-  retraction.
+- **W7** — Persona Core boundary hardening and a real model behind it. *Done;
+  see [`w7-persona-core-plan.md`](./w7-persona-core-plan.md).*
+- **W8A** — the Persona-originated draft contract.
+- **W8B** — the claim/belief layer.
 - **W9** — retention and deletion closure, including derived artifacts.
 - **W10** — background/default cognition under an explicit budget.
 
 Each needs its own plan document and its own acceptance criteria before any
 code is written for it.
+
+### Why W8 became W8A and W8B
+
+W8 was "belief/claim layer: state→state dependency, re-evaluation on
+retraction". Building W7 made it clear that this is two waves, and that doing
+them as one would get the order wrong.
+
+W7 ends with a model-backed Persona that drafts **nothing**: `proposals` is
+always empty, because phase 1 has no path from generated text to durable state
+and inventing one inside W7 would have put self-modification outside the
+guarded mutation contract. So the first missing piece is not a belief graph. It
+is the far smaller question of what a Persona-originated draft even *is* — how
+generated text becomes a candidate for canonical change without the generating
+being the authority for it.
+
+That question is answerable on its own, and answering it first means the belief
+layer is built on top of a draft path that already exists rather than being
+designed alongside it.
+
+**W8A — Persona-originated draft contract.** A typed `PersonaDraft` carrying:
+a draft ID; the proposed domain and operation; a candidate *structured* value,
+not prose; supporting `EvidenceId`s; supporting `MemoryId`s; Library and
+resource attribution for anything the draft leaned on; `origin =
+PersonaInference`; and turn/session correlation.
+
+The load-bearing rule: **the model's output is not evidence.** A draft points
+at evidence that already exists; it does not create any by being produced. A
+draft whose support does not hold up is rejected, and rejection is the normal
+case rather than a failure. The draft joins the existing path —
+draft → validation → proposal → `MutationPolicy` → Continuity Kernel →
+activation — at the point where a draft already enters it today, so W8A adds an
+origin, not a second route into canonical state.
+
+No belief graph, no state→state dependency, no re-evaluation: W8A is the
+contract only.
+
+**W8B — claim/belief layer.** Only after W8A. State that depends on other
+state, dependency recorded rather than inferred, and re-evaluation when
+something underneath is retracted or corrected. This is where "the individual
+concluded X, and X rested on Y, and Y is now withdrawn" becomes a thing the
+system can act on — and it needs W8A's draft contract to have a well-defined
+way for a conclusion to arise at all.
+
+Neither is authorized by this document. W8A needs its own plan before any code
+is written for it.
 
 ---
 
