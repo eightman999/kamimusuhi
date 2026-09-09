@@ -250,6 +250,69 @@ Mutation testing: returning external material as the response failed 5 of the 8
 boundary tests; leaking the Persona backend into the router's candidate set
 failed all 8. Both reverted, CI green after.
 
+### Real model smoke
+
+Run against an actual local model server, not a scripted endpoint.
+
+```text
+host        macOS 15 (Darwin 25.6.0), Apple Silicon
+runtime     ollama serve, OpenAI-compatible API at http://127.0.0.1:11434/v1
+model       qwen2.5:0.5b (397 MB, a8b0c5157701)
+command     kamimusuhi-runtime demo-continuity --dir <d> --phase resume
+              --id-seed 777 --clock system
+              --persona openai-compatible
+              --persona-url http://127.0.0.1:11434/v1
+              --persona-model qwen2.5:0.5b
+```
+
+llama.cpp was the first choice and is installed, but every request to
+huggingface.co from this environment returns 401, so `-hf` cannot fetch
+weights here. `registry.ollama.ai` is reachable, so Ollama was used instead.
+Both serve the same OpenAI-compatible wire format the adapter targets.
+
+Result:
+
+```text
+backend        openai-compatible / qwen2.5:0.5b
+backend_id     58f78e6c1046d9ec2079d0669e6b5a52
+expression     前の話が覚えた。                      (model-generated)
+individual     …00010000000000000003                 unchanged
+head           generation 1 → 1, same commit         unchanged
+memory read    {"preference":"ほうじ茶"}             from the database
+resource       result-a                              not the expression
+```
+
+The exact prompt the model received was captured through a transparent logging
+proxy in front of Ollama, so "the stored memory reached the input" is observed
+rather than inferred:
+
+```text
+[CURRENT_INPUT]
+さっきの話、覚えてる?
+
+[RELATIONSHIP_MEMORY]
+- (record 000000000000000a000000000000000a about user-fixture) {"preference":"ほうじ茶"}
+
+[LIBRARY_EVIDENCE]
+- (library 000000000000000a…000e#000000000000000a…000f) ほうじ茶は高温で淹れる。
+
+[EXTERNAL_RESOURCE_RESULT]
+- (resource …0faa call …0308) {"answer":"result-a",…}
+```
+
+Checks on that run: sections labelled and distinct; the system message states
+which are borrowed; `persona_response != resource answer` (no passthrough);
+trace carries `persona.invoked` / `persona.completed` /
+`persona.final_expression` with the backend ID and an expression digest whose
+value matches the report; and the trace file contains none of the expression,
+the memory text, the prompt markers, or `Bearer`.
+
+One observation worth recording: in a second run the model referenced
+`result-a` inside its own prose. That is the model *using* material it was
+given, which is what material is for — the response is still the model's
+sentence and not the resource's string, which is the property under test. A
+model that quotes its input has not bypassed the Persona boundary.
+
 ### Still not done
 
 The W7 non-goals remain non-goals. Additionally, from this implementation:
@@ -262,9 +325,8 @@ The W7 non-goals remain non-goals. Additionally, from this implementation:
   should sound has been designed;
 - one turn, no conversation history within a session. `SessionWorkingState`
   carries counters, not messages;
-- the smoke test has been run against a scripted local endpoint, not against a
-  real model server. The wire format is what llama.cpp, Ollama and LM Studio
-  serve, and `scripts/persona-smoke.sh` points at them, but no run against an
-  actual model is recorded here;
+- the model used for the smoke is a 0.5B parameter model, chosen because
+  quality is irrelevant to what is being tested. Its Japanese is shaky. That is
+  fine and is not a finding about the boundary;
 - `PersonaBackendId` derived from a `--persona-url` is a digest of endpoint and
   model. Two different models behind one URL and name would collide.
