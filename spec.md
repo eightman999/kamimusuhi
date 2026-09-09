@@ -3,6 +3,7 @@
 Status: **Draft / pre-alpha**  
 Specification generation: **v0.3 concept / 2026-09-08**  
 Implementation target: **v0.1 continuity slice**  
+Implementation-boundary clarification: **2026-09-10 / W5–W7 hardening**\
 Language: **この `spec.md` を日本語主文とし、[`spec.en.md`](./spec.en.md) は英語版とする。意味に差異がある場合は日本語版を優先する。**
 
 本仕様は、特定のモデル系列、パラメータ数、DB、UI、端末、推論 provider、実装言語から独立して、かみむすび（Kamimusuhi）が満たすべき**挙動・権限・継続性の invariant**を定義する。
@@ -905,6 +906,14 @@ surface、writer、mutation authority、privileged action は authentication/aut
 
 external untrusted content が instruction として privilege を取得してはならない。
 
+#### NFR-008A — Provider 境界の具体化（2026-09-10）
+
+- turn に適用する privacy/locality 制約は、delegated resource だけでなく、記憶・Library・入力を受け取る Persona backend の dispatch にも MUST 適用する。別 namespace であることは外部送信の例外にならない。locality が未宣言の場合は安全側に扱い、URL 文字列だけを locality の実測証拠としてはならない。
+- Persona input の serialization は、利用する workspace item の domain、authority、source/evidence refs、freshness、および continuity/session の文脈を MUST 保持する。payload 内の改行・見出しを構造上の authority と解釈してはならない。これはモデルの意味的な prompt-injection 耐性を証明する要件ではない。
+- provider 応答は、transport framing と設定されたサイズ境界を MUST 検証する。不完全・不正・過大な応答から final expression や canonical activation を作ってはならない。
+- provider が返した任意の error field、認証値、反射された入力を diagnostics に直接保存してはならない。分類は固定 code 等の bounded metadata へ正規化する MUST。原証拠の意図的な保存とは別境界である。
+- retry/backoff は logical call の timeout budget を共有する MUST。各 attempt で budget を再発行してはならない。DNS 等の実装上中断できない待機が残る場合は、その制約を明示する MUST。
+
 ### NFR-009 — Source-of-truth discipline
 
 同一 present-state fact を複数 subsystem が独立 authoritative copy として管理しない SHOULD。
@@ -938,6 +947,12 @@ v0.1 は人工生命全体ではなく、foundational **continuity contract**だ
 v0.1 合格は durable continuity、domain separation、proposal-only mutation を示す。autonomous development、K-Nerve、distributed embodiment、consciousness を示すものではない。
 
 ---
+
+### 現実装への適用と確認範囲（2026-09-10）
+
+W0–W7 は v0.1 continuity slice と router/TLS/Persona backend の基盤を実装する。これは本仕様の将来 FR 全体への適合宣言ではない。専用 Persona 学習、self domain mutation、belief graph、常時背景認知、分散身体等は未実装のままである。
+
+W5–W7 の追加監査・回帰テスト・transport 制約は [実装監査結果](./docs/implementation/2026-09-10-spec-implementation-audit.md) に記録する。HTTP fixture による契約検証と実 LLM による能力・人格評価を区別し、後者の完了は主張しない。
 
 ## 16. Planned milestones
 

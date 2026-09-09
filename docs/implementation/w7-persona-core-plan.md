@@ -1,4 +1,9 @@
-# W7 — Persona Core boundary hardening and a real Persona model
+# W7 — Persona Core boundary hardening and a model-capable Persona backend
+
+> Verification correction (2026-09-10): transport and process-boundary tests use
+> scripted endpoints. No actual LLM-server smoke run is recorded. Historical
+> counts below describe the W7 baseline; subsequent fixes are documented in the
+> [spec/implementation audit](./2026-09-10-spec-implementation-audit.md).
 
 W6 gave the runtime a router and secure transport, so a task can now reach a
 real model. What it did not settle is *who speaks*. Today every user-facing
@@ -137,10 +142,14 @@ New for W7:
 
 ## Acceptance criteria
 
-- [x] Fake and real Persona Cores go through the same `PersonaCore` boundary.
-- [x] One turn succeeds against a real local OpenAI-compatible endpoint.
+- [x] Fake and HTTP-backed Persona Cores go through the same `PersonaCore` boundary.
+- [x] One turn succeeds through a local scripted OpenAI-compatible HTTP endpoint.
+- [ ] One turn succeeds against an actual local LLM server, with model/version and
+      run evidence recorded. This is not established by an HTTP fixture.
 - [x] The typed envelope reaches the backend with each section's provenance and
-      domain intact, and is only flattened at serialization.
+      domain intact, and is only flattened at serialization. Complete continuity,
+      session, authority, freshness, and source fields were repaired on 2026-09-10;
+      the original W7 renderer did not preserve all of them.
 - [x] Persona → delegation → router → external resource → workspace → Persona →
       final expression runs in a real process boundary test.
 - [x] No code path returns external material as the user-facing response.
@@ -156,7 +165,10 @@ New for W7:
 - [x] Persona backend replacement across a restart changes no canonical state.
 - [x] Persona backend and routable resources live in separate config
       namespaces, and the Persona backend never appears as a router candidate.
-- [x] No secret, prompt or response body in database, trace or error.
+- [x] Credentials and raw provider-error/prompt bodies are not copied into
+      diagnostics. Canonical user evidence and attributed successful resource
+      material are intentionally stored through their own evidence paths;
+      this is not a claim that the whole database contains no text.
 - [x] W1–W6 tests all pass, unweakened.
 - [x] At least two mutation tests confirm the new tests bite.
 - [x] `scripts/ci-local.sh` green from a clean clone.
@@ -191,7 +203,8 @@ Implemented at the commit that added this section. Measured, not planned.
 ### What was built
 
 `kamimusuhi-persona-http` — a separate crate from the resource adapter, sharing
-only HTTP and TLS transport. `OpenAiCompatiblePersona` implements `PersonaCore`
+HTTP/TLS transport and, since 2026-09-10, bounded provider-error classification.
+`OpenAiCompatiblePersona` implements `PersonaCore`
 and is addressed by `PersonaBackendId`, a different type from `ResourceId`, so
 a Persona backend cannot be handed anywhere a resource is expected.
 
@@ -199,7 +212,8 @@ a Persona backend cannot be handed anywhere a resource is expected.
 continuity, durable self, relationship, episodic, library, external results —
 plus `SessionWorkingState`. Grouping is by `WorkspaceDomain` alone; no item's
 content is read. The one place sections become text is `render_envelope`, which
-labels each section and each item by the ID it can be traced back to. `durable_self`
+now preserves complete item metadata as JSON records (2026-09-10 correction).
+`durable_self`
 is always empty in phase 1: the self domain is reserved and nothing can write
 it, and the section exists so a backend never has to infer self-state from
 relationship state.
@@ -210,19 +224,19 @@ appear as a router candidate.
 
 ### Measured
 
-A real turn against a local OpenAI-compatible endpoint, driven by the CLI:
+A CLI turn against a scripted local OpenAI-compatible endpoint (not an actual LLM):
 
 ```text
 persona backend    openai-compatible / local / 0bb9ce41…
 prompt sections    [CURRENT_INPUT] [RELATIONSHIP_MEMORY] [LIBRARY_EVIDENCE]
                    [EXTERNAL_RESOURCE_RESULT]
-expression         model-generated, in Japanese, citing the stored preference
+expression         scripted Japanese reply mentioning the stored preference
 individual         …0003, unchanged
 head               generation 1 before and after
 memory             {"preference":"ほうじ茶"}, read from the database
 ```
 
-Tests: **266 passing, 0 failed, 0 ignored** (from 246 at W6, +20). New:
+Historical W7 baseline tests: **266 passing, 0 failed, 0 ignored** (from 246 at W6, +20). New:
 `crates/kamimusuhi-persona-http` (12 unit) and
 `crates/kamimusuhi-runtime/tests/persona_boundary.rs` (8, across real process
 boundaries with two distinct HTTP endpoints — one Persona, one resource).

@@ -237,11 +237,12 @@ by reading:
   made fixture reads return `EAGAIN` and looked like a client that sent
   nothing. That one was latent in the W5 plain-HTTP fixture too.
 
-A fourth behaviour was deliberate rather than a bug: a peer that closes without
-`close_notify` is tolerated, because real servers do it constantly. The cost is
-stated in the code — with `Connection: close` framing a truncated body cannot
-be told from a complete one, so truncation surfaces as a parse failure rather
-than being silently accepted.
+A peer closing without TLS `close_notify` is tolerated. **Correction, 2026-09-10:**
+the original claim that truncation necessarily surfaced as a parse failure was
+incorrect: a truncated body could still be valid JSON, and Content-Length was
+not checked. The hardened transport now requires exact Content-Length or a
+complete chunked message; EOF alone is not a completeness signal. See the
+[regression audit](./2026-09-10-spec-implementation-audit.md).
 
 ### Acceptance
 
