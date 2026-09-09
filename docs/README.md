@@ -72,6 +72,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 
 ### Performance
 
+- [`heterogeneous-cognitive-compute-substrate.md`](./heterogeneous-cognitive-compute-substrate.md) — non-normative design note for heterogeneous cognition: Boolean/LUT routing, mixed precision, attention as a scarce capability, hardware-aware native-model search, and role-specialized deployment across modern/legacy GPUs, CPU, and FPGA; includes RTX 3060/P100 limit-GPU-rack implications and benchmark hypotheses.
 - [`latency-architecture.md`](./latency-architecture.md) — immediate-response architecture, K-Edge/K-Core escalation, prompt/KV caching, progressive retrieval, speculative decoding, latency metrics.
 - [`native-runtime-stratification.md`](./native-runtime-stratification.md) — polyglot runtime strategy: native K-Edge/runtime hot path, Python research/control plane, long-lived executables, FFI/IPC, SIMD/assembly policy, and profiler-driven migration.
 - [`runtime-language-and-hardware-compatibility.md`](./runtime-language-and-hardware-compatibility.md) / [`EN`](./runtime-language-and-hardware-compatibility.en.md) — current preferred implementation policy: Rust always-resident Core, Python research/training plane, bounded WASM/script/DSL behavior layer, conservative baseline binaries, optional ISA/GPU accelerator organs, capability discovery, and graceful degradation across old or heterogeneous hardware.
