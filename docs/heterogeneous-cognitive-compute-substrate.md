@@ -442,3 +442,160 @@ Promote parts of this note into normative architecture only when:
 6. deployment remains replaceable across hardware generations.
 
 Until then this remains a research direction, not a required implementation.
+
+---
+
+## 12. LLM resources need phase-specific capability profiles
+
+For autoregressive LLM organs, `prefill` and `decode` should not share one undifferentiated throughput score.
+
+A practical batch-1 split is:
+
+```text
+prefill
+  -> larger matrix work
+  -> variable sequence shape
+  -> compute / attention-I/O often important
+
+decode
+  -> q_len = 1
+  -> GEMV-like projections
+  -> repeated weight streaming
+  -> memory bandwidth + launch overhead often important
+```
+
+Therefore an accelerator with impressive peak FLOPS can still be a mediocre decode resource, while another device/backend with strong memory bandwidth, low launch overhead, and a specialized decode kernel may be more useful for K-Edge.
+
+Extend the research-level `ResourceProfile` with fields such as:
+
+```text
+memory_bandwidth
+host_link_bandwidth
+kernel_launch_overhead
+compiler_backend
+cuda_graph_or_equivalent_support
+graph_safe_shape_classes
+static_kv_supported
+paged_or_rotating_kv_supported
+attention_backend_variants
+native_int8_int4_paths
+tensor_core_or_matrix_acceleration_modes
+supported_quant_formats
+prefill_throughput_curve
+decode_throughput_curve
+speculative_modes
+```
+
+Routing decisions can then depend on **phase + shape + context + precision + deadline**, rather than GPU model name alone.
+
+Evidence trail:
+
+- [`llm-runtime-compiler-foundations.md`](./llm-runtime-compiler-foundations.md)
+- https://pytorch.org/blog/accelerating-generative-ai-2/
+- https://zenn.dev/jame443/articles/2445290e2a5040
+
+---
+
+## 13. VRAM overflow and hybrid offload
+
+If weights + KV cache + workspace do not fit on one accelerator, capacity can be extended with CPU/GPU or multi-device placement. This must be treated as a **capacity strategy first**, not assumed to be a speed strategy.
+
+Candidate order:
+
+```text
+A. all-resident single accelerator baseline
+B. reduce precision / context footprint if quality permits
+C. CPU-resident layer/block offload
+D. overlap transfer of upcoming weights with current compute
+E. task-level split across heterogeneous devices
+F. remote stronger-node escalation
+```
+
+For old/mixed GPUs, task-level decomposition remains the preferred default. Do not introduce tightly coupled tensor-parallel assumptions merely because multiple cards are installed.
+
+Required measurements for any offload path:
+
+```yaml
+resident_weight_bytes: ...
+kv_bytes: ...
+host_to_device_gbps: ...
+device_to_host_gbps: ...
+transfer_overlap_percent: ...
+compute_waiting_for_transfer_ms: ...
+prefill_tok_s: ...
+decode_tok_s: ...
+ttft_ms: ...
+```
+
+If PCIe/host transfer dominates, a smaller fully resident model may be the better cognitive organ despite lower nominal model quality.
+
+---
+
+## 14. Compiler/backend portability rule
+
+The supplied direct-PTX and MLIR experiments expose a useful design boundary.
+
+### Direct PTX / CUDA
+
+Owning a direct PTX/CUDA leaf path can be justified for a measured stable NVIDIA bottleneck. It offers close control over memory movement, fusion, and specialized kernels, but increases vendor-specific ABI/runtime and maintenance burden.
+
+### MLIR / staged lowering
+
+MLIR offers reusable multi-level compiler infrastructure and a dialect/lowering model suitable for domain-specific kernels that may need to target different lower-level representations over time.
+
+Kamimusuhi should therefore follow this rule:
+
+> **Keep cognitive/resource contracts backend-neutral; allow accelerator-specific kernels at the leaves; create a custom IR/compiler layer only when a recurring measured optimization problem justifies it.**
+
+Do not make PTX, CUDA, MLIR, or any one compiler stack part of individual identity or continuity semantics.
+
+Possible future compiler-specialized leaves include:
+
+- fused quantize + projection + rescale kernels;
+- phase-specialized Persona decode kernels;
+- K-Fast / discrete-organ lowering;
+- stable bounded sensor transforms.
+
+References:
+
+- https://zenn.dev/spica314/articles/3e44764ec17433
+- https://github.com/spica314/felis-lang
+- https://zenn.dev/lemolatoon3/articles/self-made-lang-run-on-gpu
+- https://mlir.llvm.org/
+
+---
+
+## 15. Heterogeneous inference benchmark gate
+
+Before assigning an LLM role to an accelerator, benchmark at least:
+
+```yaml
+hardware: ...
+runtime_backend: ...
+model: ...
+quantization: ...
+phase:
+  prefill_tok_s: ...
+  decode_tok_s: ...
+context:
+  prompt_tokens: ...
+  kv_tokens: ...
+latency:
+  ttft_ms: ...
+  p50_token_ms: ...
+  p95_token_ms: ...
+runtime:
+  graph_replay: true|false
+  static_kv: true|false
+  kernel_count_per_decode_step: optional
+memory:
+  peak_vram: ...
+  reserved_kv_bytes: ...
+transport:
+  host_device_gbps: optional
+energy_or_power: optional
+```
+
+A card earns a cognitive role from measured end-to-end usefulness, not from theoretical FLOPS, VRAM capacity, age, vendor, or novelty.
+
+The deeper runtime/compiler evidence and experiments are maintained in [`llm-runtime-compiler-foundations.md`](./llm-runtime-compiler-foundations.md).

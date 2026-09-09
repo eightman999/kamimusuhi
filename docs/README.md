@@ -76,6 +76,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 
 ### Performance
 
+- [`llm-runtime-compiler-foundations.md`](./llm-runtime-compiler-foundations.md) — **2026-09-10 の LLM 実装・高速化記事群を一次ソースまで追って蒸留した durable note**。tokenizer、autoregressive/KV、prefill と decode の別プログラム化、static KV + CUDA Graph、quantization fusion、FlashAttention-2、canonical speculative decoding の exactness、same-lineage draft 仮説、DDTree/DSpark、VRAM offload、PTX と MLIR の境界、ResourceProfile 拡張、RTX 3060/P100 等での再現実験 gate を統合する。
 - [`heterogeneous-cognitive-compute-substrate.md`](./heterogeneous-cognitive-compute-substrate.md) — non-normative design note for heterogeneous cognition: Boolean/LUT routing, mixed precision, attention as a scarce capability, hardware-aware native-model search, and role-specialized deployment across modern/legacy GPUs, CPU, and FPGA; includes RTX 3060/P100 limit-GPU-rack implications and benchmark hypotheses.
 - [`latency-architecture.md`](./latency-architecture.md) — immediate-response architecture, K-Edge/K-Core escalation, prompt/KV caching, progressive retrieval, speculative decoding, latency metrics.
 - [`native-runtime-stratification.md`](./native-runtime-stratification.md) — polyglot runtime strategy: native K-Edge/runtime hot path, Python research/control plane, long-lived executables, FFI/IPC, SIMD/assembly policy, and profiler-driven migration.

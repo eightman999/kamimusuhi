@@ -294,3 +294,143 @@ Benchmark at least:
 ## 15. Design rule
 
 > The system should spend deep intelligence where deep intelligence matters, not where a fast reflex or already-warm local mind is sufficient.
+
+## 16. Prefill and decode are different latency programs
+
+The inference backend should expose prefill and decode as distinct measured phases rather than one `generate` black box.
+
+For ordinary batch-1 autoregressive inference:
+
+```text
+PREFILL
+  many query positions
+  large GEMMs / attention
+  variable prompt length
+  often compute or attention-I/O heavy
+
+DECODE
+  q_len = 1
+  GEMV-like projections
+  weights repeatedly streamed per token
+  often memory-bandwidth and launch-overhead heavy
+```
+
+This distinction is supported both by custom-engine experience and PyTorch's GPT Fast work. It explains why separate generated/compiled paths are rational even when both phases execute the same model weights.
+
+Kamimusuhi should therefore allow phase-specific:
+
+- kernels;
+- compile flags / graphs;
+- sequence-length buckets;
+- attention implementations;
+- quantization choices where a backend supports them;
+- device routing.
+
+See [`llm-runtime-compiler-foundations.md`](./llm-runtime-compiler-foundations.md) for the evidence trail.
+
+## 17. Static KV cache and graph-replay contract
+
+A growing **logical** context does not require a growing physical allocation. A backend may reserve a fixed KV-capacity buffer and track the valid logical length separately.
+
+This can trade VRAM for lower orchestration cost:
+
+```text
+static physical KV addresses
+        +
+stable decode shapes/control
+        ->
+CUDA Graph / compiled replay eligibility
+        ->
+lower CPU/driver launch overhead
+```
+
+CUDA Graph replay uses the same recorded kernels and arguments, including stable pointer addresses. Therefore graph capture is an execution contract, not a magical global switch.
+
+Benchmark both the benefit and cost:
+
+- graph capture/warmup time;
+- steps needed to amortize capture;
+- CPU submission gaps;
+- GPU idle gaps;
+- reserved KV memory;
+- eager vs replay TTFT/decode latency;
+- correctness and invalidation behavior.
+
+Variable-length prefill should be allowed to use a separate dynamic/chunked compilation strategy rather than forcing decode's static assumptions onto it.
+
+References:
+
+- https://pytorch.org/blog/accelerating-pytorch-with-cuda-graphs/
+- https://pytorch.org/blog/accelerating-generative-ai-2/
+
+## 18. Optimize bytes and launches, not just arithmetic
+
+Batch-1 decode can be limited by how many bytes are moved and how many kernels are launched, not by peak FLOPS.
+
+Consequences:
+
+1. Weight-only or low-bit quantization can be especially useful when it genuinely reduces memory traffic.
+2. Quantize / GEMM-GEMV / dequantize implemented as separate kernels may reintroduce memory traffic and launch overhead.
+3. Kernel fusion is part of the quantization design, not a later cosmetic optimization.
+4. A general-purpose GEMM/attention implementation that wins at prefill may lose at `q_len=1` decode.
+5. CPU launch overhead should be visible in traces before rewriting unrelated high-level code.
+
+Add to inference benchmark records where practical:
+
+```yaml
+kernel_count_per_decode_step: ...
+cpu_submission_ms: ...
+gpu_idle_gap_ms: ...
+quant_dequant_fused: true|false
+estimated_or_measured_memory_bandwidth: ...
+```
+
+## 19. Speculative decoding benchmark contract
+
+Canonical speculative decoding/sampling can preserve the target distribution when the defined acceptance/rejection algorithm is used. That exactness guarantee must not be automatically attributed to every MTP, tree, diffusion, or heuristic speculative method.
+
+Performance is controlled by at least:
+
+```text
+draft cost
+acceptance rate
+accepted/emitted tokens per verification
+verification cost
+memory footprint
+```
+
+The speculative branch length is therefore a tunable parameter, not a monotonic “higher is faster” setting. ELYZA's published vLLM experiment is one concrete example where an intermediate speculative-token count outperformed longer tested values.
+
+Kamimusuhi's same-lineage small/large Persona Core checkpoints are a particularly relevant hypothesis: shared tokenizer/data/persona lineage may improve draft alignment, but this must be demonstrated by acceptance rate and end-to-end latency.
+
+Required record:
+
+```yaml
+target_model: ...
+draft_method: ...
+draft_model: ...
+speculative_length_or_node_budget: ...
+draft_ms: ...
+verify_ms: ...
+acceptance_rate: ...
+accepted_tokens_per_verify: ...
+decode_tok_s: ...
+peak_vram: ...
+distribution_contract: exact_target | heuristic | unknown
+```
+
+References:
+
+- https://arxiv.org/abs/2211.17192
+- https://arxiv.org/abs/2302.01318
+- https://zenn.dev/elyza/articles/4e0b45a8c11220
+
+Newer 2026 methods such as DDTree and DSpark belong on the research watchlist; their reported gains are workload-specific until reproduced locally.
+
+## 20. Runtime evidence note
+
+The broader source trail, including tokenizer foundations, FlashAttention-2, PyTorch GPT Fast, CUDA Graphs, quantization/fusion, speculative decoding, DDTree/DSpark, direct PTX generation, and MLIR lowering, is maintained in:
+
+- [`llm-runtime-compiler-foundations.md`](./llm-runtime-compiler-foundations.md)
+
+Performance changes should be promoted from that research note into this design only when they improve an end-to-end Kamimusuhi latency objective on a stated hardware/model/backend configuration.
