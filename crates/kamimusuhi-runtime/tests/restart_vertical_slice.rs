@@ -490,6 +490,38 @@ fn the_trace_reconstructs_the_scenario_from_correlation_ids_alone() {
         "different resources produced different material"
     );
 
+    // Self state and external material are separate steps in the trace, not
+    // one "retrieval": after a restart, the memory event is what shows the
+    // individual came back, and it names records the Library event cannot.
+    let memory_events = of_kind("memory.retrieved");
+    assert_eq!(memory_events.len(), 2, "one retrieval per phase");
+    let resume_memory = &memory_events[1];
+    assert_ne!(
+        as_str(resume_memory, "/correlation/boot_id"),
+        activation_boot,
+        "the restored self was read by a later process"
+    );
+    assert_eq!(as_u64(resume_memory, "/detail/record_count"), 1);
+    assert_eq!(
+        as_str(
+            &resume_memory.pointer("/detail/state_record_ids").unwrap()[0],
+            ""
+        ),
+        as_str(
+            s.resume.pointer("/relationship").unwrap().get(0).unwrap(),
+            "/state_record_id"
+        ),
+        "the trace names the durable record that was restored"
+    );
+    // The two are distinct events with distinct correlation: a Library hit
+    // names an artifact and chunk, durable state names a state record.
+    assert!(resume_memory.pointer("/correlation/artifact_id").is_none());
+    assert!(
+        resume_retrieval
+            .pointer("/detail/state_record_ids")
+            .is_none()
+    );
+
     // Workspace assembly and the persona turn close the chain.
     let assembled = of_kind("workspace.assembled");
     assert_eq!(assembled.len(), 2);

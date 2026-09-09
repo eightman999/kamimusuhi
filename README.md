@@ -368,14 +368,50 @@ v0.1 の狙いは **continuity slice** です。
 
 これに合格して初めて、Persona Core、K-Nerve、常時背景認知、sleep/dream、voice、multi-device embodiment を積み上げます。
 
+## v0.1 demo を動かす
+
+上の continuity slice は実装済みで、clean checkout から再現できます。
+
+```bash
+./scripts/demo-v0.1.sh
+```
+
+これは **別プロセス2つ** を1つの runtime directory に対して走らせます。process B に渡すのはディレクトリのパスだけで、会話ログも prompt buffer も共有メモリも渡しません。それでも同じ individual を canonical state から復元し、認知資源を差し替えたうえで応答します。
+
+個別に実行する場合:
+
+```bash
+cargo run -p kamimusuhi-runtime -- init            --dir .local/demo --resource fake-a --seed 1
+cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase first  --resource fake-a --seed 10
+cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase resume --resource fake-b --seed 20
+cargo run -p kamimusuhi-runtime -- inspect         --dir .local/demo
+```
+
+`inspect` は read-only で、writer epoch を取得せず canonical row を一切変更しません。operational trace は `.local/demo/trace.jsonl` に JSONL で出力され、canonical audit（DB 内）とは別物です。
+
+テストと lint は次で回します。
+
+```bash
+./scripts/ci-local.sh
+```
+
 ## 現在の状態
 
-**Pre-alpha / research architecture.** 実装より先に、モデルやハードウェアが変わっても守るべき invariant を定義している段階です。
+**Alpha / v0.1 continuity slice 実装済み。** 上記 10 項目の continuity slice は Rust + SQLite で実装され、テストで検証されています。実装範囲は W0–W5:
+
+- W0–W1: Cargo workspace、canonical continuity（single-writer、atomic activation、writer fencing、restart 復元、failpoint 検証）
+- W2: canonical evidence と durable episodic/relationship memory、correction/supersession、domain separation
+- W3: provenance を保つ Library、typed workspace、cognitive resource registry と deterministic fake
+- W4: runtime `init` / `inspect` / `demo-continuity`、別プロセス restart、JSONL operational trace
+- W5: 実 HTTP の OpenAI-compatible adapter、timeout/retry/error 分類、secret 非保存
+
+未実装のもの（Persona Core の学習、K-Nerve、常時背景認知、sleep/dream、voice、multi-device embodiment、self domain の mutation、retention/deletion、K-Edge/K-Core など）は依然として設計段階です。詳細な達成範囲と既知の制約は [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md) を参照してください。
 
 最近の設計・調査は `docs/` に継続的に蓄積しています。外部研究の結果、かみむすび側の解釈、設計仮説、将来実験を混同しないことをルールにしています。
 
 主要文書:
 
+- [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md) — **v0.1 で何を証明し、何を実装していないか**（実測ベース）
 - [`spec.md`](./spec.md) — **日本語の規範仕様**
 - [`spec.en.md`](./spec.en.md) — English specification
 - [`architecture.md`](./architecture.md) — 詳細アーキテクチャ（現状英語）

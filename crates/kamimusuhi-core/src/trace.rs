@@ -59,6 +59,12 @@ pub enum TraceEventKind {
     /// record of the activation is the audit event, not this.
     #[serde(rename = "continuity.receipt_observed")]
     ContinuityReceiptObserved,
+    /// Durable episodic/relationship state was read back. A different act
+    /// from [`Self::LibraryRetrieved`]: one is the individual's own state,
+    /// the other is external material, and the trace keeps them apart for the
+    /// same reason the workspace does.
+    #[serde(rename = "memory.retrieved")]
+    MemoryRetrieved,
     #[serde(rename = "library.imported")]
     LibraryImported,
     #[serde(rename = "library.retrieved")]
@@ -89,6 +95,7 @@ impl TraceEventKind {
             Self::MutationProposed => "mutation.proposed",
             Self::MutationDecided => "mutation.decided",
             Self::ContinuityReceiptObserved => "continuity.receipt_observed",
+            Self::MemoryRetrieved => "memory.retrieved",
             Self::LibraryImported => "library.imported",
             Self::LibraryRetrieved => "library.retrieved",
             Self::ResourceSelected => "resource.selected",
@@ -120,6 +127,7 @@ impl FromStr for TraceEventKind {
             "mutation.proposed" => Self::MutationProposed,
             "mutation.decided" => Self::MutationDecided,
             "continuity.receipt_observed" => Self::ContinuityReceiptObserved,
+            "memory.retrieved" => Self::MemoryRetrieved,
             "library.imported" => Self::LibraryImported,
             "library.retrieved" => Self::LibraryRetrieved,
             "resource.selected" => Self::ResourceSelected,
@@ -269,6 +277,7 @@ mod tests {
             TraceEventKind::MutationProposed,
             TraceEventKind::MutationDecided,
             TraceEventKind::ContinuityReceiptObserved,
+            TraceEventKind::MemoryRetrieved,
             TraceEventKind::LibraryImported,
             TraceEventKind::LibraryRetrieved,
             TraceEventKind::ResourceSelected,

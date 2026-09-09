@@ -364,14 +364,50 @@ v0.1 is a **continuity slice**:
 
 Only after this works do Persona Core, K-Nerve, persistent background cognition, sleep/dream, voice, and multi-device embodiment become safe to layer on top.
 
+## Running the v0.1 demo
+
+The continuity slice above is implemented and reproducible from a clean checkout.
+
+```bash
+./scripts/demo-v0.1.sh
+```
+
+This runs **two separate processes** against one runtime directory. Process B is handed nothing but the directory path — no transcript, no prompt buffer, no shared memory — and still restores the same individual from canonical state, then answers with a different cognitive resource.
+
+Step by step:
+
+```bash
+cargo run -p kamimusuhi-runtime -- init            --dir .local/demo --resource fake-a --seed 1
+cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase first  --resource fake-a --seed 10
+cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase resume --resource fake-b --seed 20
+cargo run -p kamimusuhi-runtime -- inspect         --dir .local/demo
+```
+
+`inspect` is read-only: it claims no writer epoch and changes no canonical row. The operational trace is written as JSONL to `.local/demo/trace.jsonl` and is a separate thing from the canonical audit inside the database.
+
+Tests and lints:
+
+```bash
+./scripts/ci-local.sh
+```
+
 ## Status
 
-**Pre-alpha / research architecture.** The repository is currently defining invariants that should survive changes in implementation, models, and hardware.
+**Alpha — the v0.1 continuity slice is implemented.** The ten steps above are implemented in Rust + SQLite and covered by tests. Waves W0–W5:
+
+- W0–W1: Cargo workspace; canonical continuity (single writer, atomic activation, writer fencing, restart recovery, failpoint coverage)
+- W2: canonical evidence and durable episodic/relationship memory; correction/supersession; domain separation
+- W3: provenance-preserving Library; typed workspace; cognitive-resource registry with deterministic fakes
+- W4: runtime `init` / `inspect` / `demo-continuity`; restart across real processes; JSONL operational trace
+- W5: a real HTTP OpenAI-compatible adapter; timeout/retry/error classification; no stored secrets
+
+Everything else remains design: Persona Core training, K-Nerve, persistent background cognition, sleep/dream, voice, multi-device embodiment, self-domain mutation, retention/deletion, K-Edge/K-Core. See [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md) for exactly what was demonstrated and what the known limits are.
 
 Recent design and research are continuously captured under `docs/`. External results, Kamimusuhi interpretations, design hypotheses, and future experiments are deliberately kept distinct.
 
 Key documents:
 
+- [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md) — **what v0.1 proved and what it did not** (measured)
 - [`spec.md`](./spec.md) — **primary Japanese normative specification**
 - [`spec.en.md`](./spec.en.md) — English specification
 - [`architecture.md`](./architecture.md) — detailed architecture (currently English)

@@ -361,6 +361,24 @@ pub fn run(runtime: &mut Runtime, phase: DemoPhase) -> Result<PhaseReport, Runti
         runtime.store(),
         &MemoryQuery::current(individual_id).in_domain(MutationDomain::Relationship),
     )?;
+    // The individual's own state, traced separately from Library material:
+    // after a restart this is the step that shows the self came back.
+    runtime.trace().record_with(
+        TraceEventKind::MemoryRetrieved,
+        TraceCorrelation::default(),
+        serde_json::json!({
+            "domain": MutationDomain::Relationship,
+            "record_count": memories.len(),
+            "state_record_ids": memories
+                .iter()
+                .map(|m| m.record.state_record_id)
+                .collect::<Vec<_>>(),
+            "independent_evidence": memories
+                .iter()
+                .map(|m| m.independent_evidence_count)
+                .sum::<usize>(),
+        }),
+    );
 
     let workspace = build_workspace(runtime, &current_input, &memories, &library.1, &resource.1)?;
     runtime.trace().record_with(
