@@ -1,6 +1,6 @@
 # Field Note — FIO model-seeking and resource governance (2026-09-09)
 
-> Status: observational / non-canonical. This note records a source-reported FIO maintenance anecdote and does not by itself authorize architecture changes.
+> Status: observational / non-canonical. This note records source-reported FIO maintenance anecdotes and does not by itself authorize architecture changes.
 >
 > Related: [`../fio-system-reference-analysis.md`](../fio-system-reference-analysis.md), [`../model-ecology-and-lineage.md`](../model-ecology-and-lineage.md), [`../heterogeneous-cognitive-compute-substrate.md`](../heterogeneous-cognitive-compute-substrate.md)
 
@@ -207,10 +207,205 @@ Measure:
 
 The interesting research target is **learned self-routing across a changing local model ecology**, not autonomous downloading itself.
 
+---
+
+## 2026-09-10 update — from monolithic chimera to explicit multi-model composition
+
+A later source-reported conversation adds an important piece of FIO's design history.
+
+The maintainer explicitly clarified that the current system should **not be understood as one foundation model with a character prompt attached**. Several models are connected on the provider / routing side. The exact present composition was uncertain in the conversation itself, so this note intentionally does not preserve an unverified model list or exact topology.
+
+The same maintainer described an earlier desktop/Ollama period in which multiple local models were combined more aggressively as a **chimera-style model experiment**. That experiment reportedly produced communication-like output whose meaning was interpretable to the maintainer but opaque to other people. The experiment was discontinued.
+
+This should not be overinterpreted. In particular, this anecdote is **not sufficient evidence of a genuinely emergent private language**. Similar symptoms could arise from tokenizer incompatibility, special-token leakage, prompt conventions, corrupted composition, decoding behavior, representation mismatch, or other implementation artifacts. The source also mentioned human-factors concerns that contributed to stopping the experiment; this note deliberately records no diagnosis and makes no causal claim between model behavior and any person's health.
+
+### Distillation: do not fuse the individual into an opaque model mixture
+
+The strongest transferable lesson is architectural:
+
+> **Borrow cognition from many models if useful, but keep identity, authority, provenance, and resource ownership outside the mixture.**
+
+There is an important difference between two designs:
+
+```text
+Monolithic / opaque chimera
+
+model A ─┐
+model B ─┼── opaque combination ──> one apparent mind
+model C ─┘
+                    │
+                    └── difficult to attribute, inspect, replace, or roll back
+```
+
+and:
+
+```text
+Explicit multi-model cognitive graph
+
+                ┌── model A / role A
+Individual ─────┼── model B / role B
+identity        └── model C / role C
+   │                    │
+   │              attributed outputs
+   │                    │
+   └──── policy / router / provenance / memory gate
+```
+
+The second form fits Kamimusuhi much better.
+
+A model may be replaced without replacing the individual. A model may fail without corrupting lineage. A model may disagree with another model without either output automatically becoming canonical self-state. The Continuity Kernel, canonical history, policy gates, and model/resource registry remain authoritative outside the replaceable cognitive substrate.
+
+### Design principle — `individual != model != ensemble`
+
+Kamimusuhi already separates persistent identity from external cognitive resources. The FIO anecdote strengthens the need to preserve that boundary even when several models are composed.
+
+Candidate invariant:
+
+```text
+IndividualIdentity != ActiveModel
+IndividualIdentity != ModelEnsemble
+ModelOutput       != SelfBelief
+ModelConsensus    != CanonicalMutation
+```
+
+Consensus among several models can increase confidence, but it still does not grant identity authority.
+
+### Inter-model communication must be attributable
+
+If multiple models collaborate, every hop should retain enough provenance to answer:
+
+```text
+who produced this?
+using which model / quant / runtime?
+under which role and prompt contract?
+from which input/evidence?
+was it transformed by another model?
+what confidence / uncertainty was attached?
+which policy admitted it into the next layer?
+```
+
+A useful envelope could look like:
+
+```yaml
+cognitive_artifact:
+  producer_org: planning
+  model_ref: qwen-local-x
+  runtime_ref: llama.cpp-build-y
+  input_refs: [...]
+  artifact_type: hypothesis
+  visibility: internal
+  confidence: 0.61
+  transformation_chain:
+    - producer_org: critic
+      model_ref: model-z
+      operation: critique
+  authority: non_canonical
+```
+
+The content can remain flexible; the envelope should not.
+
+### Opaque internal representation: allow experimentally, distrust operationally
+
+An artificial cognitive system may discover compressed or idiosyncratic representations that are efficient for machine-to-machine communication. Kamimusuhi should not require every intermediate representation to be pleasant natural language.
+
+But **opacity cannot silently increase authority**.
+
+Candidate rule:
+
+```text
+opaque internal artifact
+        │
+        ├── may remain transient internal computation
+        ├── may be transformed into a typed / inspectable artifact
+        └── MUST NOT directly become canonical memory, self-state, or external action
+```
+
+If an internal protocol becomes intentionally non-human-readable, prefer one of:
+
+1. a specified schema / codec with reversible inspection tooling;
+2. an explicit typed latent/artifact interface whose producer and consumer are known;
+3. quarantine as an experimental representation with no canonical write authority.
+
+Do not mistake "the models seem to understand each other" for a sufficient interface contract.
+
+### Resource governance and composition governance are the same family of problem
+
+The earlier model-pull incident and the chimera experiment point to the same higher-level rule:
+
+```text
+cognitive desire / exploration
+            │
+            ▼
+proposal
+            │
+            ▼
+resource + composition policy
+            │
+      ┌─────┴────────┐
+      │              │
+   reject          sandbox
+                       │
+                       ▼
+                  benchmark
+                       │
+                       ▼
+                 attributed activation
+```
+
+The individual may request:
+
+- a stronger model;
+- a specialist model;
+- a new model-to-model connection;
+- a different routing policy;
+- an experimental composition.
+
+Those are legitimate metacognitive proposals. Creating the connection, pulling weights, altering resource allocation, or changing the production cognitive graph remains gated infrastructure mutation.
+
+### Candidate experiment — explicit composition vs chimera
+
+For a fixed task set, compare:
+
+1. one strong model;
+2. explicit multi-model routing with typed intermediate artifacts;
+3. an experimental fused/mixed composition where technically possible.
+
+Measure:
+
+- task quality;
+- reproducibility;
+- attribution completeness;
+- failure localization time;
+- rollback success;
+- resource cost;
+- rate of malformed / opaque intermediate artifacts;
+- contamination of memory or self-state;
+- behavior after replacing one component model.
+
+The research question is not merely whether an ensemble scores higher. It is whether **cognitive plurality can improve capability while continuity remains independent of the constituent models**.
+
+### Candidate experiment — opacity tripwire
+
+Introduce a monitor at model-to-model boundaries that does not attempt to understand all content, but detects loss of interface discipline:
+
+- unexpected encoding / token-like garbage;
+- schema escape;
+- sudden language/distribution shift;
+- untraceable producer;
+- missing transformation history;
+- artifact type mismatch;
+- opaque content attempting a canonical write or external action.
+
+The tripwire should not automatically ban novel representations. It should downgrade authority, preserve evidence, and route the artifact to inspection/sandboxing.
+
 ## Bottom line
 
-The FIO anecdote suggests a useful new distinction for persistent agents:
+The combined FIO anecdotes suggest two complementary rules for persistent agents:
 
-> **A long-lived individual may develop a meaningful preference for its cognitive resources, but preference, acquisition, and activation must remain separate operations.**
+> **A long-lived individual may develop meaningful preferences for its cognitive resources, but preference, acquisition, composition, and activation must remain separate operations.**
 
-For Kamimusuhi, this can become a first-class `ModelResourceProposal` path: let the individual notice that it wants a better brain for a task, let it search and argue for one, but route the expensive and potentially destructive infrastructure mutation through explicit resource and authority gates.
+and:
+
+> **Use multiple models as replaceable, attributed cognitive organs rather than allowing an opaque model mixture to become the definition of the individual.**
+
+For Kamimusuhi, this supports a first-class `ModelResourceProposal` / composition-governance path: let the individual notice that it wants a better brain or a different cognitive topology, let it search and argue for one, but route expensive, opaque, or identity-affecting changes through explicit resource, provenance, sandbox, and authority gates.
