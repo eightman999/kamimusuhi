@@ -11,6 +11,7 @@ Related Kamimusuhi notes:
 - `latency-architecture.md`
 - `native-runtime-stratification.md`
 - `research-foundations.md`
+- `multiscale-brain-architecture.md`
 
 Primary implementation examined:
 
@@ -471,53 +472,189 @@ Persona / canonical memory / identity
     = versioned continuity substrate
 ```
 
-A K-Nerve checkpoint may influence temperament-like regulation, but it must not silently become an untracked second identity store.
+A K-Nerve checkpoint may influence temperament-like regulation, but it must not silently become an authoritative source of identity.
 
 ---
 
-## 12. Adoption decision
+## 12. Extension: from reflex substrate to multi-timescale nervous system
 
-### Adopt now
+The fly-inspired substrate should not be restricted to the very lowest reflex layer. Kamimusuhi can use the same design principles to build a **high-update-rate intermediate nervous system** between local peripheral reflexes and slow semantic cognition.
 
-- add LIF/SNN recurrent controllers to the reflex-layer benchmark family;
-- treat temporal sparse recurrence as a serious candidate for always-on low-level cognition;
-- design low-dimensional control handles between fast substrate and semantic cognition;
-- evaluate controllers in closed loop, not only as classifiers;
-- add internal-state tracing, ablation, and cross-backend parity tests;
-- keep semantic cognition and canonical identity outside the replaceable reflex substrate.
+The key idea is not that biological nervous systems have one literal clock per region. Rather, useful neural computation occurs across multiple characteristic timescales. Kamimusuhi should therefore avoid a single synchronous global update loop and instead define distinct runtime domains with explicit event crossings.
 
-### Do not adopt yet
+Provisional organization:
 
-- copying the Drosophila connectome topology;
-- calling the reflex layer a brain emulation;
-- assuming biological resemblance implies better agent behavior;
-- treating outwardly plausible behavior as sufficient validation;
-- moving the normative architecture around SNN/LIF before benchmarks exist;
-- copying GPL implementation code into Kamimusuhi without license review.
+```text
+fast / reactive
 
-### Research hypothesis
+raw sensors / body telemetry
+        |
+        v
+PNL / local reflex arcs
+hundreds of Hz to kHz-class implementation target
+        |
+        v
+K-Fast / fly-inspired recurrent nervous system
+roughly tens to hundreds of Hz-class implementation target
+        |
+        v
+Global Workspace / salience integration
+roughly single-digit to tens of Hz-class implementation target
+        |
+        v
+Persona Core / semantic cognition
+asynchronous, variable-depth, model-latency-limited
 
-The highest-value hypothesis to test is:
+slow / semantic
+```
 
-> A small, sparse, stateful temporal substrate can provide more organism-like continuous regulation and lower model-wakeup cost than stateless heuristics, while remaining cheap enough to run continuously beneath K-Edge.
+These rates are **engineering target classes, not claims about fly or human biological clock rates**.
 
-That hypothesis is measurable and does not depend on claims about consciousness or mind uploading.
+### 12.1 Proposed K-Fast role
 
----
+`K-Fast` is a provisional name for an intermediate high-update-rate control substrate. It should sit above raw peripheral reflexes and below semantic cognition.
 
-## 13. References
+Candidate responsibilities:
 
-1. Dorkenwald, S. et al. (2024). **Neuronal wiring diagram of an adult brain.** Nature 634, 124–138. https://doi.org/10.1038/s41586-024-07558-y
-2. Shiu, P. K. et al. (2024). **A Drosophila computational brain model reveals sensorimotor processing.** Nature 634, 210–219. https://doi.org/10.1038/s41586-024-07763-9
-3. FlyWire. **Whole-Brain Connectome of an adult female Drosophila.** https://flywire.ai/
-4. Eon Systems PBC. **fly-brain: Emulation of the Drosophila Fly Brain.** https://github.com/eonsystemspbc/fly-brain
-5. Eon Systems PBC (2026-03-10). **How the Eon Team Produced a Virtual Embodied Fly.** https://eon.systems/updates/embodied-brain-emulation
-6. Lappalainen, J. K. et al. (2024). **Connectome-constrained networks predict neural activity across the fly visual system.** Nature 634, 1132–1140. DOI link available from the Eon technical note / Nature.
-7. Wang-Chen, S. et al. (2024). **NeuroMechFly v2: Simulating embodied sensorimotor control in adult Drosophila.** Nature Methods 21, 2353–2362.
-8. The Transmitter (2026). **Digital sphinx raises questions about connectome models.** https://www.thetransmitter.org/systems-neuroscience/digital-sphinx-raises-questions-about-connectome-models/
+- salience accumulation and decay;
+- novelty and habituation;
+- orienting responses;
+- interruption and backchannel timing;
+- competition between action tendencies;
+- affect-like regulatory state;
+- memory pre-activation / prefetch hints;
+- wake/escalation thresholds for K-Edge or Persona Core;
+- short-timescale prediction error;
+- conversational turn-taking cues;
+- rapid gaze/posture/audio-response coordination.
 
----
+The important behavioral property is that Kamimusuhi can begin reacting **before** Persona Core completes semantic reasoning.
 
-## 14. One-line takeaway
+Example:
 
-**Do not copy the fly brain; copy the experimental lesson: simple local dynamics + sparse recurrent structure + closed sensorimotor loops can do useful fast control, and the right way to validate such a substrate is with mechanistic ablations and backend-parity traces, not vibes.**
+```text
+speech onset
+    -> K-Fast inhibits current output
+    -> listening/orienting state rises
+    -> Persona Core receives an attributed interruption event
+
+name called
+    -> salience rises immediately
+    -> memory/person prefetch may begin
+    -> Persona Core is woken only if the threshold is crossed
+```
+
+### 12.2 Clock-domain crossing as an architectural contract
+
+Fast layers MUST NOT forward every internal update to slower layers.
+
+Instead, boundaries should exchange timestamped events or aggregated state transitions such as:
+
+```text
+timestamp
+source
+signal_type
+strength
+confidence
+duration
+state_version
+```
+
+For example, a 1 kHz local pathway may update an anomaly accumulator many times, while the next layer receives only a transition such as:
+
+```text
+ANOMALY_RISE
+strength: 0.76
+window: 18ms
+source: robot_1.audio.front
+```
+
+This is analogous to an engineered clock-domain crossing: each subsystem retains its natural update rate while interfaces remain sparse, explicit, and auditable.
+
+### 12.3 Regulatory state as modulation, not decorative emotion tags
+
+Affect-like variables should preferably modify circuit behavior rather than exist only as labels inserted into a language-model prompt.
+
+Candidate regulatory signals include:
+
+```text
+arousal
+novelty
+threat
+curiosity
+fatigue
+certainty
+social_affinity
+goal_pressure
+resource_pressure
+```
+
+Their primary effect should be modulation of other mechanisms, for example:
+
+```text
+threat increases
+    -> sensory gain increases
+    -> interrupt threshold decreases
+    -> exploration decreases
+    -> semantic wake threshold decreases
+
+fatigue increases
+    -> low-value event promotion decreases
+    -> expensive cognition threshold increases
+    -> consolidation/sleep pressure increases
+```
+
+Persona Core may later interpret these states semantically, but the control effect should exist without requiring language generation.
+
+### 12.4 Suggested first prototype size
+
+Do not begin by copying the full fly connectome. A first Kamimusuhi-specific recurrent substrate can be intentionally small, for example **1k-10k simple stateful nodes**, with explicit sparse modules for:
+
+- sensory novelty;
+- social presence;
+- memory activation;
+- goal/action competition;
+- regulatory state;
+- orienting/reflex coordination;
+- integrator/broadcast pathways.
+
+Candidate per-node state can remain minimal:
+
+```text
+potential
+threshold
+decay
+refractory
+gain
+connections[]
+```
+
+The goal of the first prototype is not biological fidelity. It is to test whether a sparse temporal substrate can improve reaction timing, reduce unnecessary model wakeups, and provide useful continuously evolving internal state.
+
+### 12.5 Architecture consequence
+
+The resulting Kamimusuhi brain should be understood as a **multi-timescale organism**, not a stack where all cognition is performed by an LLM:
+
+```text
+Persona Core
+  semantic / self / social / deliberative cognition
+        ^
+        |
+Global Workspace
+  bounded integration and conscious-like access surface
+        ^
+        |
+K-Fast
+  fly-inspired sparse recurrent control and regulation
+        ^
+        |
+PNL
+  local sensorimotor and machine reflexes
+        ^
+        |
+sensors / body / runtime
+```
+
+This preserves Persona Core as the high-level first-person semantic organ while allowing a much faster, cheaper nervous system to remain continuously active.
+
+A dedicated normative design note is maintained in `multiscale-brain-architecture.md`; this section records why the FlyWire/fly-brain line motivates that direction.
