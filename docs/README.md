@@ -49,6 +49,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 - [`research/landscape.md`](./research/landscape.md) — cross-disciplinary landscape mapping prior art to Kamimusuhi subsystems, differences, research gaps, core research questions, and prioritized experiments.
 - [`daily-surveys/README.md`](./daily-surveys/README.md) — dated cross-domain research intake and index; new papers/projects enter here before promotion into durable research or architecture notes.
 - [`research-foundations.md`](./research-foundations.md) — ALife, cognitive architectures, neuroscience/psychology, memory, extended cognition, persistent identity, tools, sleep, interoception.
+- [`runtime-authority-learning-boundaries.md`](./runtime-authority-learning-boundaries.md) — **2026-09-09 daily survey から昇格した横断設計ノート**。K-Nerve/K-Edge の高速 interaction、person-bound / minimal-sufficient memory、tool competence、deterministic authority boundary、SkillAdam-like procedural evolution、NeoHorse-like candidate-descendant training を一つの contract map に統合し、7つの検証 benchmark と normative promotion gate を定義する。
 
 ### Native cognition / model training
 
