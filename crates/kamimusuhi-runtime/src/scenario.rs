@@ -46,7 +46,10 @@ use kamimusuhi_core::memory::{AttributedMemory, MemoryQuery, MemoryRepository};
 use kamimusuhi_core::mutation::{
     MutationDomain, MutationPolicyV0, MutationProposal, OriginClass, ProposalAttribution,
 };
-use kamimusuhi_core::persona::{CurrentInput, PersonaCore, PersonaTurnInput, TurnContext};
+use kamimusuhi_core::persona::{
+    CurrentInput, PersonaBackendDescriptor, PersonaCore, PersonaTurnInput, SessionWorkingState,
+    TurnContext,
+};
 use kamimusuhi_core::resources::ResourceRequest;
 use kamimusuhi_core::routing::{
     PrivacyConstraint, Router, RoutingCandidate, RoutingDecision, RoutingRequest, RuleRouter,
@@ -239,6 +242,11 @@ pub struct PhaseReport {
     pub relationship: Vec<MemoryReport>,
     pub workspace: WorkspaceReport,
     pub persona_response: String,
+    /// Which Persona Core produced `persona_response`.
+    pub persona_backend: PersonaBackendDescriptor,
+    /// Digest of the expression, so a test can prove the response the runtime
+    /// emitted is the one the Persona produced without transcribing it.
+    pub final_expression_digest: String,
 }
 
 /// How this run of the scenario is constrained.
@@ -412,18 +420,67 @@ pub fn run(
         }),
     );
 
-    let turn = FakePersonaCore.turn(PersonaTurnInput {
-        context,
-        input: current_input,
-        workspace: Some(workspace.clone()),
-    })?;
+    // The Persona Core produces the expression. Everything gathered above —
+    // memory, Library text, whatever a resource returned — reaches it as
+    // *input*. There is no branch here that returns any of it to the user:
+    // that shortcut would make the Persona Core decoration and the
+    // individual's voice whatever endpoint was configured last.
+    let persona = runtime.config().build_persona()?;
+    let backend = persona.descriptor();
+    let session_state = SessionWorkingState {
+        turn_sequence: 0,
+        resumed: phase == DemoPhase::Resume,
+        delegations: 1,
+    };
+    let turn_input =
+        PersonaTurnInput::with_workspace(context, current_input, &workspace, session_state);
     runtime.trace().record_with(
-        TraceEventKind::PersonaCompleted,
+        TraceEventKind::PersonaInvoked,
         TraceCorrelation {
+            persona_backend_id: Some(backend.backend_id),
             workspace_digest: Some(workspace.digest()),
             ..TraceCorrelation::default()
         },
-        serde_json::json!({ "draft_count": turn.proposals.len() }),
+        serde_json::json!({
+            "backend_kind": backend.kind,
+            "sections": {
+                "continuity": turn_input.envelope.continuity.len(),
+                "durable_self": turn_input.envelope.durable_self.len(),
+                "relationship": turn_input.envelope.relationship.len(),
+                "episodic": turn_input.envelope.episodic.len(),
+                "library": turn_input.envelope.library.len(),
+                "external_results": turn_input.envelope.external_results.len(),
+            },
+            "session_resumed": session_state.resumed,
+        }),
+    );
+    let turn = persona.turn(turn_input)?;
+    runtime.trace().record_with(
+        TraceEventKind::PersonaCompleted,
+        TraceCorrelation {
+            persona_backend_id: Some(turn.backend.backend_id),
+            workspace_digest: Some(workspace.digest()),
+            ..TraceCorrelation::default()
+        },
+        serde_json::json!({
+            "backend_kind": turn.backend.kind,
+            "draft_count": turn.proposals.len(),
+        }),
+    );
+
+    // The expression is recorded by digest, never by text: it is derived from
+    // the individual's own memory and is no more loggable than the memory is.
+    let expression_digest = expression_digest(&turn.response_intent);
+    runtime.trace().record_with(
+        TraceEventKind::FinalExpression,
+        TraceCorrelation {
+            persona_backend_id: Some(turn.backend.backend_id),
+            ..TraceCorrelation::default()
+        },
+        serde_json::json!({
+            "expression_digest": expression_digest,
+            "produced_by": turn.backend.kind,
+        }),
     );
     runtime
         .trace()
@@ -460,6 +517,8 @@ pub fn run(
                 .collect(),
         },
         persona_response: turn.response_intent,
+        persona_backend: turn.backend,
+        final_expression_digest: expression_digest,
     })
 }
 
@@ -473,11 +532,7 @@ fn propose_and_activate(
 ) -> Result<ProposalReport, RuntimeError> {
     // The draft carries evidence refs and content; it carries no authority.
     // Head, writer and policy version are the runtime's to attach.
-    let drafted = FakePersonaCore.turn(PersonaTurnInput {
-        context: *context,
-        input: input.clone(),
-        workspace: None,
-    })?;
+    let drafted = FakePersonaCore.turn(PersonaTurnInput::bare(*context, input.clone()))?;
     let draft =
         drafted
             .proposals
@@ -770,6 +825,11 @@ fn resource_step(
         answer,
     };
     Ok((report, vec![attributed]))
+}
+
+/// Digest of a user-facing expression, for correlation without transcription.
+fn expression_digest(expression: &str) -> String {
+    kamimusuhi_core::digest::content_digest(expression.as_bytes())
 }
 
 /// What this turn's delegation needs.

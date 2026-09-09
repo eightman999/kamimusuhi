@@ -322,6 +322,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kamimusuhi-persona-http"
+version = "0.1.0"
+dependencies = [
+ "kamimusuhi-core",
+ "kamimusuhi-resource-http",
+ "kamimusuhi-testkit",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "kamimusuhi-resource-http"
 version = "0.1.0"
 dependencies = [
@@ -340,6 +351,7 @@ name = "kamimusuhi-runtime"
 version = "0.1.0"
 dependencies = [
  "kamimusuhi-core",
+ "kamimusuhi-persona-http",
  "kamimusuhi-resource-http",
  "kamimusuhi-store-sqlite",
  "kamimusuhi-testkit",

@@ -18,6 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 kamimusuhi-core = { workspace = true }
+kamimusuhi-persona-http = { workspace = true }
 kamimusuhi-resource-http = { workspace = true }
 kamimusuhi-store-sqlite = { workspace = true }
 # The deterministic fakes are the runtime's only cognitive resources in W4.

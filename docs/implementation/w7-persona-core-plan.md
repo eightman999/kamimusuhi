@@ -137,30 +137,30 @@ New for W7:
 
 ## Acceptance criteria
 
-- [ ] Fake and real Persona Cores go through the same `PersonaCore` boundary.
-- [ ] One turn succeeds against a real local OpenAI-compatible endpoint.
-- [ ] The typed envelope reaches the backend with each section's provenance and
+- [x] Fake and real Persona Cores go through the same `PersonaCore` boundary.
+- [x] One turn succeeds against a real local OpenAI-compatible endpoint.
+- [x] The typed envelope reaches the backend with each section's provenance and
       domain intact, and is only flattened at serialization.
-- [ ] Persona → delegation → router → external resource → workspace → Persona →
+- [x] Persona → delegation → router → external resource → workspace → Persona →
       final expression runs in a real process boundary test.
-- [ ] No code path returns external material as the user-facing response.
-- [ ] The final expression is demonstrably the output of a Persona invocation.
-- [ ] Trace distinguishes external material from final expression.
-- [ ] Trace distinguishes the Persona backend from resource backends.
-- [ ] Persona invocation, routing decision, selected resource, resource call,
+- [x] No code path returns external material as the user-facing response.
+- [x] The final expression is demonstrably the output of a Persona invocation.
+- [x] Trace distinguishes external material from final expression.
+- [x] Trace distinguishes the Persona backend from resource backends.
+- [x] Persona invocation, routing decision, selected resource, resource call,
       workspace material and final expression correlate within one turn.
-- [ ] Persona failures — timeout, connection, TLS, malformed, provider error,
+- [x] Persona failures — timeout, connection, TLS, malformed, provider error,
       authentication — are controlled, classified, and leave `IndividualId`,
       head, durable memory and Library untouched.
-- [ ] External resource replacement changes only resource attribution.
-- [ ] Persona backend replacement across a restart changes no canonical state.
-- [ ] Persona backend and routable resources live in separate config
+- [x] External resource replacement changes only resource attribution.
+- [x] Persona backend replacement across a restart changes no canonical state.
+- [x] Persona backend and routable resources live in separate config
       namespaces, and the Persona backend never appears as a router candidate.
-- [ ] No secret, prompt or response body in database, trace or error.
-- [ ] W1–W6 tests all pass, unweakened.
-- [ ] At least two mutation tests confirm the new tests bite.
-- [ ] `scripts/ci-local.sh` green from a clean clone.
-- [ ] README documents how to run the real Persona smoke test.
+- [x] No secret, prompt or response body in database, trace or error.
+- [x] W1–W6 tests all pass, unweakened.
+- [x] At least two mutation tests confirm the new tests bite.
+- [x] `scripts/ci-local.sh` green from a clean clone.
+- [x] README documents how to run the real Persona smoke test.
 
 ---
 
@@ -180,3 +180,77 @@ New for W7:
 - optimising for personality or answer quality on any benchmark.
 
 W7 ends when the acceptance criteria are met. W8 needs its own plan.
+
+
+---
+
+## W7 implementation result
+
+Implemented at the commit that added this section. Measured, not planned.
+
+### What was built
+
+`kamimusuhi-persona-http` — a separate crate from the resource adapter, sharing
+only HTTP and TLS transport. `OpenAiCompatiblePersona` implements `PersonaCore`
+and is addressed by `PersonaBackendId`, a different type from `ResourceId`, so
+a Persona backend cannot be handed anywhere a resource is expected.
+
+`PersonaEnvelope` in core groups an assembled workspace into sections —
+continuity, durable self, relationship, episodic, library, external results —
+plus `SessionWorkingState`. Grouping is by `WorkspaceDomain` alone; no item's
+content is read. The one place sections become text is `render_envelope`, which
+labels each section and each item by the ID it can be traced back to. `durable_self`
+is always empty in phase 1: the self domain is reserved and nothing can write
+it, and the section exists so a backend never has to infer self-state from
+relationship state.
+
+Configuration has two namespaces, `persona` and `resources`. The registry is
+built only from `resources`, so the Persona backend is structurally unable to
+appear as a router candidate.
+
+### Measured
+
+A real turn against a local OpenAI-compatible endpoint, driven by the CLI:
+
+```text
+persona backend    openai-compatible / local / 0bb9ce41…
+prompt sections    [CURRENT_INPUT] [RELATIONSHIP_MEMORY] [LIBRARY_EVIDENCE]
+                   [EXTERNAL_RESOURCE_RESULT]
+expression         model-generated, in Japanese, citing the stored preference
+individual         …0003, unchanged
+head               generation 1 before and after
+memory             {"preference":"ほうじ茶"}, read from the database
+```
+
+Tests: **266 passing, 0 failed, 0 ignored** (from 246 at W6, +20). New:
+`crates/kamimusuhi-persona-http` (12 unit) and
+`crates/kamimusuhi-runtime/tests/persona_boundary.rs` (8, across real process
+boundaries with two distinct HTTP endpoints — one Persona, one resource).
+
+The passthrough test uses a Persona reply the resource never returns and a
+resource reply the Persona never produces, so a shortcut is immediately
+visible. It asserts the resource's text reaches the Persona *as input*, under
+its own section heading, and is not what the user was told.
+
+Mutation testing: returning external material as the response failed 5 of the 8
+boundary tests; leaking the Persona backend into the router's candidate set
+failed all 8. Both reverted, CI green after.
+
+### Still not done
+
+The W7 non-goals remain non-goals. Additionally, from this implementation:
+
+- the model-backed Persona drafts nothing. `proposals` is always empty, because
+  phase 1 has no path from generated text to durable state and building one
+  here would put self-modification outside the guarded mutation contract. What
+  a Persona-originated draft should even look like is a W8 question;
+- the system instruction is fixed configuration. Nothing about how Kamimusuhi
+  should sound has been designed;
+- one turn, no conversation history within a session. `SessionWorkingState`
+  carries counters, not messages;
+- the smoke test has been run against a scripted local endpoint, not against a
+  real model server. The wire format is what llama.cpp, Ollama and LM Studio
+  serve, and `scripts/persona-smoke.sh` points at them, but no run against an
+  actual model is recorded here;
+- `PersonaBackendId` derived from a `--persona-url` is a digest of endpoint and
+  model. Two different models behind one URL and name would collide.

@@ -385,6 +385,27 @@ cargo run -p kamimusuhi-runtime -- inspect         --dir .local/demo
 
 `inspect` is read-only: it claims no writer epoch and changes no canonical row. The operational trace is written as JSONL to `.local/demo/trace.jsonl` and is a separate thing from the canonical audit inside the database.
 
+### Trying a real Persona Core
+
+The demo above runs on deterministic fixtures. To have an actual model speak:
+
+```bash
+# start any OpenAI-compatible endpoint (llama.cpp, Ollama, LM Studio), then
+./scripts/persona-smoke.sh http://127.0.0.1:11434/v1 llama3.2
+```
+
+A Persona Core is what speaks as the individual; a cognitive resource is
+something a turn delegates a subtask to. They are separate namespaces —
+`persona` and `resources` in `runtime.json` — and the Persona backend is never
+offered to the router as a candidate.
+
+The prompt the model receives is sectioned: `CURRENT_INPUT`,
+`RELATIONSHIP_MEMORY`, `LIBRARY_EVIDENCE` and `EXTERNAL_RESOURCE_RESULT` are
+labelled for what they are, so Library text and resource output cannot arrive
+as the individual's own memory or as fact. For an endpoint that needs a token,
+put the *name* of the environment variable in `persona.provider.auth_env`; the
+value is never written to the config, the database or the trace.
+
 Tests and lints:
 
 ```bash
@@ -401,6 +422,7 @@ Tests and lints:
 - W4: runtime `init` / `inspect` / `demo-continuity`; restart across real processes; JSONL operational trace
 - W5: a real HTTP OpenAI-compatible adapter; timeout/retry/error classification; no stored secrets
 - W6: a deterministic cognitive-resource router (capability metadata, privacy constraints, reasoned decisions) and TLS via `rustls`
+- W7: Persona Core boundary hardening — a real model backend, a typed input envelope, and external material kept separate from the final expression
 
 Everything else remains design: Persona Core training, K-Nerve, persistent background cognition, sleep/dream, voice, multi-device embodiment, self-domain mutation, retention/deletion, K-Edge/K-Core. See [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md) (v0.1) and [`docs/implementation/phase-2-implementation-plan.md`](./docs/implementation/phase-2-implementation-plan.md) (W6) for exactly what was demonstrated and what the known limits are.
 

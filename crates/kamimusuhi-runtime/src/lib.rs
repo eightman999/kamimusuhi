@@ -26,7 +26,10 @@ pub mod runtime;
 pub mod scenario;
 pub mod trace;
 
-pub use config::{ProviderConfig, ResourceImplementation, RuntimeConfig};
+pub use config::{
+    PersonaBackendKind, PersonaProviderConfig, PersonaSetting, ProviderConfig,
+    ResourceImplementation, RuntimeConfig,
+};
 pub use error::RuntimeError;
 pub use inspect::{InspectReport, inspect};
 pub use runtime::{ClockMode, Runtime, RuntimeOptions, RuntimePaths};

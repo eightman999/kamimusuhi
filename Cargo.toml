@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/kamimusuhi-core",
     "crates/kamimusuhi-store-sqlite",
+    "crates/kamimusuhi-persona-http",
     "crates/kamimusuhi-resource-http",
     "crates/kamimusuhi-testkit",
     "crates/kamimusuhi-runtime",
@@ -19,6 +20,7 @@ publish = false
 [workspace.dependencies]
 kamimusuhi-core = { path = "crates/kamimusuhi-core" }
 kamimusuhi-store-sqlite = { path = "crates/kamimusuhi-store-sqlite" }
+kamimusuhi-persona-http = { path = "crates/kamimusuhi-persona-http" }
 kamimusuhi-resource-http = { path = "crates/kamimusuhi-resource-http" }
 kamimusuhi-testkit = { path = "crates/kamimusuhi-testkit" }
 

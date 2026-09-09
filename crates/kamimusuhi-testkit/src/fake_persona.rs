@@ -1,11 +1,16 @@
+use kamimusuhi_core::ids::PersonaBackendId;
 use kamimusuhi_core::mutation::{MutationDomain, MutationOperation, OriginClass};
 use kamimusuhi_core::persona::{
-    PersonaCore, PersonaError, PersonaTurnInput, PersonaTurnResult, ProposalDraft,
+    PersonaBackendDescriptor, PersonaCore, PersonaEnvelope, PersonaError, PersonaTurnInput,
+    PersonaTurnResult, ProposalDraft,
 };
-use kamimusuhi_core::workspace::{Workspace, WorkspaceDomain};
 
 /// Subject key used for the fixture user in all deterministic scenarios.
 pub const FIXTURE_USER_SUBJECT: &str = "user-fixture";
+
+/// Identity of the fixture backend. Fixed so a trace or a report can say which
+/// Persona produced an expression without guessing from its wording.
+pub const FIXTURE_PERSONA_BACKEND_ID: PersonaBackendId = PersonaBackendId::from_u128(0x0FE1);
 
 /// Deterministic Persona Core fixture.
 ///
@@ -24,20 +29,27 @@ pub const FIXTURE_USER_SUBJECT: &str = "user-fixture";
 pub struct FakePersonaCore;
 
 impl FakePersonaCore {
-    /// Domain counts in a fixed order, derived from item types alone.
-    fn attribution_summary(workspace: &Workspace) -> String {
-        let mut summary = String::from(" | workspace:");
-        for domain in [
-            WorkspaceDomain::CurrentContinuityState,
-            WorkspaceDomain::CurrentInput,
-            WorkspaceDomain::RelationshipMemory,
-            WorkspaceDomain::EpisodicMemory,
-            WorkspaceDomain::LibraryEvidence,
-            WorkspaceDomain::ExternalResourceResult,
+    /// Section counts in a fixed order, derived from the envelope's shape.
+    ///
+    /// Never from any item's text: a fixture that had to read content to know
+    /// what it was looking at would be modelling the wrong thing, and would
+    /// stop proving that attribution survived the trip.
+    fn attribution_summary(envelope: &PersonaEnvelope) -> String {
+        let mut summary = String::from(" | envelope:");
+        for (label, count) in [
+            // The current input is its own field rather than a section, but it
+            // is still part of what the turn was given, and a summary that
+            // omitted it would understate what the Persona saw.
+            ("CURRENT_INPUT", 1),
+            ("CURRENT_CONTINUITY_STATE", envelope.continuity.len()),
+            ("DURABLE_SELF", envelope.durable_self.len()),
+            ("RELATIONSHIP_MEMORY", envelope.relationship.len()),
+            ("EPISODIC_MEMORY", envelope.episodic.len()),
+            ("LIBRARY_EVIDENCE", envelope.library.len()),
+            ("EXTERNAL_RESOURCE_RESULT", envelope.external_results.len()),
         ] {
-            let count = workspace.items_in(domain).len();
             if count > 0 {
-                summary.push_str(&format!(" {domain}={count}"));
+                summary.push_str(&format!(" {label}={count}"));
             }
         }
         summary
@@ -56,6 +68,15 @@ impl FakePersonaCore {
 }
 
 impl PersonaCore for FakePersonaCore {
+    fn descriptor(&self) -> PersonaBackendDescriptor {
+        PersonaBackendDescriptor {
+            backend_id: FIXTURE_PERSONA_BACKEND_ID,
+            kind: "fixture".to_owned(),
+            name: "fake-persona".to_owned(),
+            version: "1".to_owned(),
+        }
+    }
+
     fn turn(&self, input: PersonaTurnInput) -> Result<PersonaTurnResult, PersonaError> {
         if input.input.text.trim().is_empty() {
             return Err(PersonaError::InvalidInput {
@@ -83,12 +104,16 @@ impl PersonaCore for FakePersonaCore {
             ),
             None => ("fixture-ack: noted".to_owned(), Vec::new()),
         };
-        if let Some(workspace) = &input.workspace {
-            response_intent.push_str(&Self::attribution_summary(workspace));
+        // The fixture answers from its own rule and the envelope's shape. It
+        // never copies external material into the response — a passthrough
+        // here would make the whole delegation path untestable.
+        if !input.envelope.is_empty() {
+            response_intent.push_str(&Self::attribution_summary(&input.envelope));
         }
 
         Ok(PersonaTurnResult {
             context: input.context,
+            backend: self.descriptor(),
             response_intent,
             proposals,
         })
@@ -113,7 +138,7 @@ mod tests {
                 evidence_id: EvidenceId::from_u128(4),
                 text: text.to_owned(),
             },
-            workspace: None,
+            envelope: PersonaEnvelope::default(),
         }
     }
 

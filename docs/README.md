@@ -32,7 +32,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 
 ### Implementation plans
 
-- [`implementation/w7-persona-core-plan.md`](./implementation/w7-persona-core-plan.md) — **W7 計画**。Persona Core 境界の強化と実モデル backend。external material と user-facing expression の分離、typed input envelope、Persona backend と cognitive resource の役割分離、失敗時の canonical state 不変性。W8 以降へ進まない境界を明記する。
+- [`implementation/w7-persona-core-plan.md`](./implementation/w7-persona-core-plan.md) — **W7 計画と実装結果**。Persona Core 境界の強化と実モデル backend。external material と user-facing expression の分離、typed input envelope、Persona backend と cognitive resource の役割分離、失敗時の canonical state 不変性。W8 以降へ進まない境界を明記する。
 - [`implementation/phase-2-implementation-plan.md`](./implementation/phase-2-implementation-plan.md) — **第二次実装計画**。W6（Cognitive Resource Router と TLS）の acceptance criteria と、W7 以降へ進まない境界を明記する。計画であり実装済みではない。
 - [`implementation/phase-1-implementation-result.md`](./implementation/phase-1-implementation-result.md) — **第一次実装 (W0–W5) の結果記録**。Issue #8 の acceptance を1項目ずつ実測で照合し、v0.1 が証明したこと・していないこと・既知の制約を事実ベースで記述する。計画ではない。
 - [`implementation/w5-external-resources.md`](./implementation/w5-external-resources.md) — **W5 実装記録**。external cognitive resource を実 HTTP 経由で呼ぶ際の境界: adapter responsibility、logical call と physical attempt の区別、timeout/retry の所有者、error 分類、OpenAI-compatible adapter とその TLS 制約、secret を保存しない設計、provider 交換の identity 不変性、`resource_calls` の turn correlation、ID seed と clock の分離。計画ではなく実装済みの内容のみを記述する。

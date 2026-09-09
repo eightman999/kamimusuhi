@@ -27,8 +27,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{
     BootId, CognitiveEpisodeId, CommitId, EvidenceId, IndividualId, LibraryArtifactId,
-    LibraryChunkId, NodeId, ProposalId, ReceiptId, ResourceCallId, ResourceId, SessionId, TraceId,
-    TurnId,
+    LibraryChunkId, NodeId, PersonaBackendId, ProposalId, ReceiptId, ResourceCallId, ResourceId,
+    SessionId, TraceId, TurnId,
 };
 use crate::mutation::UnknownVocabulary;
 use crate::time::UtcTimestamp;
@@ -49,8 +49,17 @@ pub enum TraceEventKind {
     /// A raw utterance was appended to the evidence store.
     #[serde(rename = "evidence.recorded")]
     EvidenceRecorded,
+    /// A Persona Core was asked for an expression. Distinct from
+    /// [`Self::ResourceCompleted`]: one is the individual speaking, the other
+    /// is material it was handed.
+    #[serde(rename = "persona.invoked")]
+    PersonaInvoked,
     #[serde(rename = "persona.completed")]
     PersonaCompleted,
+    /// The expression that reached the user. Always the output of a Persona
+    /// invocation — there is no path that emits external material here.
+    #[serde(rename = "persona.final_expression")]
+    FinalExpression,
     #[serde(rename = "mutation.proposed")]
     MutationProposed,
     #[serde(rename = "mutation.decided")]
@@ -95,7 +104,9 @@ impl TraceEventKind {
             Self::SessionStarted => "session.started",
             Self::TurnStarted => "turn.started",
             Self::EvidenceRecorded => "evidence.recorded",
+            Self::PersonaInvoked => "persona.invoked",
             Self::PersonaCompleted => "persona.completed",
+            Self::FinalExpression => "persona.final_expression",
             Self::MutationProposed => "mutation.proposed",
             Self::MutationDecided => "mutation.decided",
             Self::ContinuityReceiptObserved => "continuity.receipt_observed",
@@ -128,7 +139,9 @@ impl FromStr for TraceEventKind {
             "session.started" => Self::SessionStarted,
             "turn.started" => Self::TurnStarted,
             "evidence.recorded" => Self::EvidenceRecorded,
+            "persona.invoked" => Self::PersonaInvoked,
             "persona.completed" => Self::PersonaCompleted,
+            "persona.final_expression" => Self::FinalExpression,
             "mutation.proposed" => Self::MutationProposed,
             "mutation.decided" => Self::MutationDecided,
             "continuity.receipt_observed" => Self::ContinuityReceiptObserved,
@@ -180,6 +193,11 @@ pub struct TraceCorrelation {
     pub artifact_id: Option<LibraryArtifactId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunk_id: Option<LibraryChunkId>,
+    /// Which Persona Core produced an expression. A separate field from
+    /// `resource_id` so the trace can never blur what spoke with what was
+    /// consulted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persona_backend_id: Option<PersonaBackendId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_id: Option<ResourceId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -279,7 +297,9 @@ mod tests {
             TraceEventKind::SessionStarted,
             TraceEventKind::TurnStarted,
             TraceEventKind::EvidenceRecorded,
+            TraceEventKind::PersonaInvoked,
             TraceEventKind::PersonaCompleted,
+            TraceEventKind::FinalExpression,
             TraceEventKind::MutationProposed,
             TraceEventKind::MutationDecided,
             TraceEventKind::ContinuityReceiptObserved,

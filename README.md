@@ -389,6 +389,19 @@ cargo run -p kamimusuhi-runtime -- inspect         --dir .local/demo
 
 `inspect` は read-only で、writer epoch を取得せず canonical row を一切変更しません。operational trace は `.local/demo/trace.jsonl` に JSONL で出力され、canonical audit（DB 内）とは別物です。
 
+### 実モデルの Persona Core を試す
+
+上の demo は決定的な fixture で動きます。実際のモデルに喋らせる場合:
+
+```bash
+# llama.cpp / Ollama / LM Studio など OpenAI-compatible endpoint を起動してから
+./scripts/persona-smoke.sh http://127.0.0.1:11434/v1 llama3.2
+```
+
+Persona Core は「個体として喋るもの」、cognitive resource は「一つの subtask を委譲する先」で、別の名前空間です。runtime.json では `persona` と `resources` に分かれており、Persona backend が router の候補になることはありません。
+
+モデルに渡される prompt は section 付きです。`CURRENT_INPUT` / `RELATIONSHIP_MEMORY` / `LIBRARY_EVIDENCE` / `EXTERNAL_RESOURCE_RESULT` がそれぞれ何であるかを明示して渡すので、Library の文章や外部 resource の出力が「自分の記憶」や「事実」として混ざりません。token が必要な endpoint では、runtime.json の `persona.provider.auth_env` に**環境変数名**を書きます（値は書きません）。
+
 テストと lint は次で回します。
 
 ```bash
@@ -405,6 +418,7 @@ cargo run -p kamimusuhi-runtime -- inspect         --dir .local/demo
 - W4: runtime `init` / `inspect` / `demo-continuity`、別プロセス restart、JSONL operational trace
 - W5: 実 HTTP の OpenAI-compatible adapter、timeout/retry/error 分類、secret 非保存
 - W6: 決定的な cognitive resource router（capability metadata / privacy 制約 / 理由付き決定）と、`rustls` による TLS
+- W7: Persona Core 境界の強化。実モデル backend、typed input envelope、外部 material と最終応答の分離
 
 未実装のもの（Persona Core の学習、K-Nerve、常時背景認知、sleep/dream、voice、multi-device embodiment、self domain の mutation、retention/deletion、K-Edge/K-Core など）は依然として設計段階です。詳細な達成範囲と既知の制約は [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md)（v0.1）と [`docs/implementation/phase-2-implementation-plan.md`](./docs/implementation/phase-2-implementation-plan.md)（W6）を参照してください。
 

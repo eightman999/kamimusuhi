@@ -233,6 +233,7 @@ fn merge(base: &TraceCorrelation, event: TraceCorrelation) -> TraceCorrelation {
         receipt_id: event.receipt_id,
         artifact_id: event.artifact_id,
         chunk_id: event.chunk_id,
+        persona_backend_id: event.persona_backend_id,
         resource_id: event.resource_id,
         resource_call_id: event.resource_call_id,
         workspace_digest: event.workspace_digest,

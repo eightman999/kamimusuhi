@@ -56,6 +56,8 @@ pub enum RuntimeError {
     SlotNotConfigured { slot: String },
     #[error("provider configuration for slot {slot} is invalid: {message}")]
     ProviderConfig { slot: String, message: String },
+    #[error("persona configuration is invalid: {message}")]
+    PersonaConfig { message: String },
     #[error("resource registry could not be built: {message}")]
     ResourceRegistry { message: String },
     #[error("cognitive resource call failed: {0}")]
@@ -75,7 +77,9 @@ pub enum RuntimeError {
     Memory(#[from] MemoryError),
     #[error(transparent)]
     Library(#[from] LibraryError),
-    #[error(transparent)]
+    /// Carries the stable code alongside the description, so an operator
+    /// reading stderr sees the same classification the trace records.
+    #[error("persona turn failed [{code}]: {0}", code = .0.code())]
     Persona(#[from] PersonaError),
     #[error("mutation was not activated: {reason}")]
     MutationNotActivated { reason: String },

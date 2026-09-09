@@ -21,13 +21,35 @@
 
 use std::process::ExitCode;
 
+use kamimusuhi_core::digest::content_digest;
+use kamimusuhi_core::ids::PersonaBackendId;
 use kamimusuhi_core::routing::PrivacyConstraint;
 use kamimusuhi_runtime::config::GENERAL_SLOT;
 use kamimusuhi_runtime::runtime::ClockMode;
 use kamimusuhi_runtime::scenario::ScenarioOptions;
 use kamimusuhi_runtime::{
-    DemoPhase, ResourceImplementation, Runtime, RuntimeError, RuntimeOptions, inspect, scenario,
+    DemoPhase, PersonaBackendKind, PersonaProviderConfig, PersonaSetting, ResourceImplementation,
+    Runtime, RuntimeError, RuntimeOptions, inspect, scenario,
 };
+
+/// A stable backend ID for an endpoint the operator named on the command line.
+///
+/// Derived from the endpoint and model rather than minted, so restarting
+/// against the same endpoint keeps the same attribution in the trace.
+fn persona_backend_id_for(base_url: &str, model: &str) -> PersonaBackendId {
+    let digest = content_digest(format!("{base_url}|{model}").as_bytes());
+    let bytes: Vec<u8> = digest
+        .trim_start_matches("sha256:")
+        .as_bytes()
+        .chunks(2)
+        .take(16)
+        .filter_map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+        .collect();
+    let mut raw = [0_u8; 16];
+    raw[..bytes.len().min(16)].copy_from_slice(&bytes[..bytes.len().min(16)]);
+    let value = u128::from_be_bytes(raw);
+    PersonaBackendId::from_u128(if value == 0 { 1 } else { value })
+}
 
 const USAGE: &str = "\
 kamimusuhi-runtime <command> [options]
@@ -49,6 +71,13 @@ options:
   --seed <n>        shorthand for --id-seed <n> --clock fixed
   --privacy <p>     how far this turn's material may travel:
                     local-only | no-external-service | unconstrained
+  --persona <p>     Persona Core backend: fake | openai-compatible.
+                    A model-backed persona needs a `persona.provider` entry in
+                    runtime.json; the Persona namespace is separate from
+                    `resources` and is never offered to the router.
+  --persona-url <u> base URL of the persona endpoint, e.g.
+                    http://127.0.0.1:11434/v1
+  --persona-model <m>  model name to ask the persona endpoint for
 ";
 
 fn main() -> ExitCode {
@@ -99,11 +128,20 @@ fn run() -> Result<String, RuntimeError> {
                 RuntimeError::Usage("demo-continuity requires --phase first|resume".to_owned())
             })?;
             let mut runtime = Runtime::open(options.dir()?, options.runtime_options())?;
-            // Replacing the resource is a config rewrite and nothing else: no
-            // canonical write, no new individual, no lineage event.
+            // Replacing the resource or the persona is a config rewrite and
+            // nothing else: no canonical write, no new individual, no lineage
+            // event. The two namespaces are rewritten independently.
+            let mut config = runtime.config().clone();
+            let mut changed = false;
             if let Some(resource) = options.resource {
-                let mut config = runtime.config().clone();
                 config.set_implementation(GENERAL_SLOT, resource);
+                changed = true;
+            }
+            if let Some(persona) = options.persona {
+                config.persona = options.persona_setting(persona, &config)?;
+                changed = true;
+            }
+            if changed {
                 runtime.save_config(config)?;
             }
             let report = scenario::run(
@@ -136,6 +174,9 @@ struct Options {
     id_seed: Option<u64>,
     clock: Option<ClockMode>,
     privacy: Option<PrivacyConstraint>,
+    persona: Option<PersonaBackendKind>,
+    persona_url: Option<String>,
+    persona_model: Option<String>,
 }
 
 impl Options {
@@ -173,6 +214,16 @@ impl Options {
                     })?);
                 }
                 "--clock" => options.clock = Some(value()?.parse()?),
+                "--persona" => {
+                    let raw = value()?;
+                    options.persona = Some(raw.parse().map_err(|_| {
+                        RuntimeError::Usage(format!(
+                            "unknown --persona {raw:?}; expected fake or openai-compatible"
+                        ))
+                    })?);
+                }
+                "--persona-url" => options.persona_url = Some(value()?),
+                "--persona-model" => options.persona_model = Some(value()?),
                 "--privacy" => {
                     let raw = value()?;
                     // Hyphens on the command line, underscores on the wire.
@@ -197,6 +248,66 @@ impl Options {
         self.dir
             .as_deref()
             .ok_or_else(|| RuntimeError::Usage(format!("--dir is required\n\n{USAGE}")))
+    }
+
+    /// Build the persona namespace from the flags, keeping whatever the file
+    /// already declared for anything not given on the command line.
+    fn persona_setting(
+        &self,
+        backend: PersonaBackendKind,
+        config: &kamimusuhi_runtime::RuntimeConfig,
+    ) -> Result<PersonaSetting, RuntimeError> {
+        match backend {
+            PersonaBackendKind::Fake => Ok(PersonaSetting {
+                backend,
+                provider: config.persona.provider.clone(),
+            }),
+            PersonaBackendKind::OpenaiCompatible => {
+                let existing = config.persona.provider.clone();
+                let base_url = self
+                    .persona_url
+                    .clone()
+                    .or_else(|| existing.as_ref().map(|p| p.base_url.clone()))
+                    .ok_or_else(|| {
+                        RuntimeError::Usage(
+                            "--persona openai-compatible needs --persona-url, or a                              persona.provider entry in runtime.json"
+                                .to_owned(),
+                        )
+                    })?;
+                let model = self
+                    .persona_model
+                    .clone()
+                    .or_else(|| existing.as_ref().map(|p| p.model.clone()))
+                    .ok_or_else(|| {
+                        RuntimeError::Usage(
+                            "--persona openai-compatible needs --persona-model, or a                              persona.provider entry in runtime.json"
+                                .to_owned(),
+                        )
+                    })?;
+                Ok(PersonaSetting {
+                    backend,
+                    provider: Some(PersonaProviderConfig {
+                        // A stable ID per configured endpoint, derived from
+                        // what identifies it, so the same endpoint keeps the
+                        // same attribution across runs.
+                        backend_id: existing
+                            .as_ref()
+                            .map(|p| p.backend_id)
+                            .unwrap_or_else(|| persona_backend_id_for(&base_url, &model)),
+                        base_url,
+                        model,
+                        auth_env: existing.as_ref().and_then(|p| p.auth_env.clone()),
+                        timeout_ms: existing.as_ref().map_or(60_000, |p| p.timeout_ms),
+                        tls_root_ca_path: existing
+                            .as_ref()
+                            .and_then(|p| p.tls_root_ca_path.clone()),
+                        system_instruction: existing
+                            .as_ref()
+                            .and_then(|p| p.system_instruction.clone()),
+                    }),
+                })
+            }
+        }
     }
 
     fn runtime_options(&self) -> RuntimeOptions {

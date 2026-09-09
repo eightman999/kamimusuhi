@@ -178,6 +178,13 @@ define_id!(ReceiptId);
 define_id!(MemoryId);
 define_id!(LibraryArtifactId);
 define_id!(LibraryChunkId);
+define_id!(
+    /// One Persona Core backend. Deliberately a different type from
+    /// [`ResourceId`]: a Persona backend is what speaks as the individual, a
+    /// resource is something the individual delegates a subtask to, and the
+    /// type system is where that distinction should be impossible to lose.
+    PersonaBackendId
+);
 define_id!(ResourceId);
 define_id!(ResourceCallId);
 define_id!(TraceId);

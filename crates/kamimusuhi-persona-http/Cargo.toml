@@ -1,0 +1,24 @@
+[package]
+name = "kamimusuhi-persona-http"
+description = "Model-backed Persona Core for Kamimusuhi over an OpenAI-compatible endpoint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+kamimusuhi-core = { workspace = true }
+# Transport only. The Persona Core contract and the cognitive-resource
+# contract are separate things that happen to speak the same wire protocol;
+# this dependency is for HTTP and TLS, not for resource semantics.
+kamimusuhi-resource-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+kamimusuhi-testkit = { workspace = true }
+
+[lints]
+workspace = true

@@ -18,14 +18,18 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use kamimusuhi_core::ids::PersonaBackendId;
 use kamimusuhi_core::ids::{NodeId, ResourceId};
 use kamimusuhi_core::mutation::UnknownVocabulary;
+use kamimusuhi_core::persona::PersonaCore;
 use kamimusuhi_core::resources::{CognitiveResource, ResourceRegistry, ResourceSlot};
 use kamimusuhi_core::routing::{
     CostClass, HealthState, LatencyClass, LocalityClass, Modality, QualityTier,
     ResourceCapabilities,
 };
+use kamimusuhi_persona_http::{OpenAiCompatiblePersona, PersonaBackendConfig};
 use kamimusuhi_resource_http::{OpenAiCompatibleConfig, OpenAiCompatibleResource, TrustAnchors};
+use kamimusuhi_testkit::FakePersonaCore;
 use kamimusuhi_testkit::{FakeResource, UnavailableResource};
 use serde::{Deserialize, Serialize};
 
@@ -159,6 +163,118 @@ impl ProviderConfig {
     }
 }
 
+/// Which Persona Core speaks as the individual.
+///
+/// A separate namespace from [`RuntimeConfig::resources`] on purpose: a
+/// Persona backend is what expresses, a resource is something a turn delegates
+/// to. Nothing here is ever offered to the router, and a resource slot is
+/// never used as the Persona execution backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PersonaBackendKind {
+    /// The deterministic fixture. Not a model.
+    Fake,
+    /// A model behind an OpenAI-compatible endpoint.
+    OpenaiCompatible,
+}
+
+impl PersonaBackendKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fake => "fake",
+            Self::OpenaiCompatible => "openai-compatible",
+        }
+    }
+}
+
+impl fmt::Display for PersonaBackendKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for PersonaBackendKind {
+    type Err = UnknownVocabulary;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "fake" => Self::Fake,
+            "openai-compatible" => Self::OpenaiCompatible,
+            other => return Err(UnknownVocabulary::new("persona_backend", other)),
+        })
+    }
+}
+
+/// How to reach a model-backed Persona Core. Non-secret, like
+/// [`ProviderConfig`]: `auth_env` names a variable, never a token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonaProviderConfig {
+    pub backend_id: PersonaBackendId,
+    pub base_url: String,
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_env: Option<String>,
+    pub timeout_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_root_ca_path: Option<std::path::PathBuf>,
+    /// Overrides the default framing that tells the model which sections are
+    /// the individual's own and which are borrowed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_instruction: Option<String>,
+}
+
+/// The Persona namespace of the runtime config.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonaSetting {
+    pub backend: PersonaBackendKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<PersonaProviderConfig>,
+}
+
+impl Default for PersonaSetting {
+    fn default() -> Self {
+        Self {
+            backend: PersonaBackendKind::Fake,
+            provider: None,
+        }
+    }
+}
+
+impl PersonaSetting {
+    /// Build the Persona Core this setting describes.
+    pub fn build(&self) -> Result<Box<dyn PersonaCore>, RuntimeError> {
+        match self.backend {
+            PersonaBackendKind::Fake => Ok(Box::new(FakePersonaCore)),
+            PersonaBackendKind::OpenaiCompatible => {
+                let provider =
+                    self.provider
+                        .as_ref()
+                        .ok_or_else(|| RuntimeError::PersonaConfig {
+                            message: "openai-compatible needs a persona provider entry".to_owned(),
+                        })?;
+                let mut config = PersonaBackendConfig::new(
+                    provider.backend_id,
+                    provider.base_url.clone(),
+                    provider.model.clone(),
+                )
+                .with_timeout_ms(provider.timeout_ms)
+                .with_auth_env(provider.auth_env.clone())
+                .with_trust_anchors(match &provider.tls_root_ca_path {
+                    Some(path) => TrustAnchors::PemFile(path.clone()),
+                    None => TrustAnchors::Webpki,
+                });
+                if let Some(instruction) = &provider.system_instruction {
+                    config = config.with_system_instruction(instruction.clone());
+                }
+                config
+                    .validate()
+                    .map_err(|message| RuntimeError::PersonaConfig { message })?;
+                Ok(Box::new(OpenAiCompatiblePersona::new(config)))
+            }
+        }
+    }
+}
+
 /// On-disk runtime configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeConfig {
@@ -168,7 +284,12 @@ pub struct RuntimeConfig {
     /// This host. Stable across restarts on the same machine, and part of the
     /// writer identity — but not the identity of the individual.
     pub node_id: NodeId,
-    /// slot → implementation. The whole point of the file.
+    /// Who speaks as the individual. Its own namespace: never a router
+    /// candidate, never confused with a delegated resource.
+    #[serde(default)]
+    pub persona: PersonaSetting,
+    /// slot → implementation, for delegation. The router chooses among these
+    /// and only these.
     pub resources: BTreeMap<String, ResourceImplementation>,
     /// slot → how to reach its provider, when the implementation is networked.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -185,9 +306,16 @@ impl RuntimeConfig {
         Self {
             config_version: Self::VERSION,
             node_id,
+            persona: PersonaSetting::default(),
             resources,
             providers: BTreeMap::new(),
         }
+    }
+
+    /// Build the Persona Core. Deliberately separate from
+    /// [`Self::build_registry`]: the two namespaces never mix.
+    pub fn build_persona(&self) -> Result<Box<dyn PersonaCore>, RuntimeError> {
+        self.persona.build()
     }
 
     pub fn load(path: &Path) -> Result<Self, RuntimeError> {
