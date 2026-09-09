@@ -264,6 +264,10 @@ pub fn run(
     phase: DemoPhase,
     options: ScenarioOptions,
 ) -> Result<PhaseReport, RuntimeError> {
+    // Reject a disallowed Persona destination before recording a turn or
+    // invoking any resource. A separate backend namespace is not an exemption
+    // from the turn-wide data boundary.
+    runtime.config().persona.check_privacy(options.privacy)?;
     let individual_id = runtime.individual_id();
 
     // Session and turn. Fresh in both phases: resuming an individual is not

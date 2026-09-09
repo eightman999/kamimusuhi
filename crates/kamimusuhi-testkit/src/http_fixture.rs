@@ -20,6 +20,8 @@ use std::time::Duration;
 /// What the server should do with one request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FixtureResponse {
+    /// Exact wire bytes, for framing and boundary regression tests.
+    RawHttp { response: String },
     /// A well-formed chat completion carrying `content`.
     Ok { content: String },
     /// A non-success status with a short JSON body.
@@ -49,6 +51,7 @@ impl FixtureResponse {
 
     fn render(&self) -> Option<String> {
         let body = match self {
+            Self::RawHttp { response } => return Some(response.clone()),
             Self::Ok { content } | Self::Delayed { content, .. } => completion_body(content),
             Self::Status { code } => {
                 let body =

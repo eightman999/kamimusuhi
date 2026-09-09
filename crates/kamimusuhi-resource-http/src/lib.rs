@@ -27,6 +27,7 @@
 
 pub mod http;
 pub mod openai;
+pub mod openai_response;
 pub mod tls;
 
 pub use http::{Endpoint, Header, HttpError, HttpResponse};
