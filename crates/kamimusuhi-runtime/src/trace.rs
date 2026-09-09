@@ -8,6 +8,15 @@
 //! back as evidence or authority, and a failure to write it is reported as a
 //! lost observation — never as a failed or successful canonical transition
 //! (see [`kamimusuhi_core::trace`]).
+//!
+//! **Rotation.** Once the runtime makes network calls it emits events for as
+//! long as it runs, so an unbounded file is a disk-full waiting to happen. At
+//! [`JsonlTraceSink::DEFAULT_MAX_BYTES`] the current file is renamed to
+//! `trace.jsonl.1` and a fresh one started, keeping one previous generation.
+//! Rotation happens between whole lines, never inside one. This is a size cap,
+//! not a log subsystem: it is deliberately the smallest thing that stops the
+//! file growing forever, and it is exactly why nothing may treat the trace as
+//! a durable record — anything that must survive belongs in the database.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -26,6 +35,7 @@ pub struct JsonlTraceSink {
     /// Correlates every event from this one runtime invocation.
     trace_id: TraceId,
     sequence: AtomicU64,
+    max_bytes: u64,
 }
 
 impl std::fmt::Debug for JsonlTraceSink {
@@ -39,23 +49,34 @@ impl std::fmt::Debug for JsonlTraceSink {
 
 impl JsonlTraceSink {
     pub const FILE_NAME: &'static str = "trace.jsonl";
+    /// Rotate at 8 MiB. Big enough that a normal session is one file, small
+    /// enough that a long-running runtime cannot fill a disk unnoticed.
+    pub const DEFAULT_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
     /// Open (creating if needed) the trace file in append mode.
     pub fn open(path: impl AsRef<Path>, ids: &dyn IdGenerator) -> Result<Self, TraceError> {
+        Self::open_with_limit(path, ids, Self::DEFAULT_MAX_BYTES)
+    }
+
+    pub fn open_with_limit(
+        path: impl AsRef<Path>,
+        ids: &dyn IdGenerator,
+        max_bytes: u64,
+    ) -> Result<Self, TraceError> {
         let path = path.as_ref().to_path_buf();
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|source| TraceError::Backend {
-                message: format!("open {}: {source}", path.display()),
-            })?;
+        let file = open_append(&path)?;
         Ok(Self {
             path,
             file: Mutex::new(file),
             trace_id: TraceId::generate(ids),
             sequence: AtomicU64::new(0),
+            max_bytes,
         })
+    }
+
+    /// Path of the one retained previous generation.
+    pub fn rotated_path(&self) -> PathBuf {
+        rotated_path(&self.path)
     }
 
     pub const fn trace_id(&self) -> TraceId {
@@ -82,6 +103,19 @@ impl TraceSink for JsonlTraceSink {
         let mut file = self.file.lock().map_err(|_| TraceError::Backend {
             message: "trace file mutex poisoned by an earlier panic".to_owned(),
         })?;
+        // Rotate between lines, never inside one.
+        if self.max_bytes > 0
+            && file
+                .metadata()
+                .map(|meta| meta.len() >= self.max_bytes)
+                .unwrap_or(false)
+        {
+            // A rename the OS refuses is not worth failing the call over; the
+            // next event will try again and the file keeps its properties.
+            if std::fs::rename(&self.path, rotated_path(&self.path)).is_ok() {
+                *file = open_append(&self.path)?;
+            }
+        }
         // One write for the whole line: a partial line would be a corrupt
         // record, and two appending processes must not interleave mid-event.
         file.write_all(line.as_bytes())
@@ -166,6 +200,22 @@ impl TraceRecorder {
             eprintln!("kamimusuhi-runtime: trace event {kind} was not recorded: {error}");
         }
     }
+}
+
+fn open_append(path: &Path) -> Result<File, TraceError> {
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|source| TraceError::Backend {
+            message: format!("open {}: {source}", path.display()),
+        })
+}
+
+fn rotated_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".1");
+    PathBuf::from(name)
 }
 
 /// Overlay per-event IDs on the invocation's ambient correlation.
@@ -260,6 +310,33 @@ mod tests {
         );
         // Per-event IDs do not leak onto later events.
         assert_eq!(events[0].correlation.evidence_id, None);
+    }
+
+    #[test]
+    fn the_trace_rotates_instead_of_growing_without_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(JsonlTraceSink::FILE_NAME);
+        // A cap small enough that the second event triggers rotation.
+        let sink = JsonlTraceSink::open_with_limit(&path, &FixedIdGenerator::new(1), 64).unwrap();
+        let recorder = TraceRecorder::new(
+            sink,
+            Arc::new(FixedClock::baseline()),
+            TraceCorrelation::default(),
+        );
+        for _ in 0..6 {
+            recorder.record(TraceEventKind::RuntimeBoot, TraceCorrelation::default());
+        }
+
+        let rotated = rotated_path(&path);
+        assert!(rotated.exists(), "the previous generation is kept");
+        assert!(std::fs::metadata(&path).unwrap().len() < 6 * 64);
+        // Whole lines on both sides: rotation never splits an event.
+        for file in [&path, &rotated] {
+            for line in std::fs::read_to_string(file).unwrap().lines() {
+                serde_json::from_str::<TraceEvent>(line)
+                    .unwrap_or_else(|e| panic!("rotation split a line: {line:?}: {e}"));
+            }
+        }
     }
 
     #[test]

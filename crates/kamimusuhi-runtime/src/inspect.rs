@@ -31,11 +31,24 @@ pub struct LibrarySummary {
     pub chunks: u32,
 }
 
+/// What the durable call log says, summarized.
+///
+/// `total` counts *logical* calls — one row per question asked. `attempts`
+/// counts the physical tries behind them, so a gap between the two is retry,
+/// not duplicated attribution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceCallSummary {
     pub total: usize,
     pub ok: usize,
     pub errors: usize,
+    pub attempts: u32,
+    pub retried_calls: usize,
+    pub timeouts: usize,
+    /// error code → how many logical calls ended that way.
+    pub error_codes: std::collections::BTreeMap<String, usize>,
+    pub max_latency_ms: u64,
+    /// Logical calls correlated to a turn in the database.
+    pub correlated_to_turn: usize,
     pub resources_used: Vec<String>,
 }
 
@@ -93,6 +106,11 @@ pub fn inspect(runtime: &Runtime) -> Result<InspectReport, RuntimeError> {
         .collect();
     resources_used.sort_unstable();
     resources_used.dedup();
+    let mut error_codes: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for code in calls.iter().filter_map(|c| c.error_code.as_deref()) {
+        *error_codes.entry(code.to_owned()).or_default() += 1;
+    }
     let resource_calls = ResourceCallSummary {
         total: calls.len(),
         ok: calls
@@ -103,6 +121,15 @@ pub fn inspect(runtime: &Runtime) -> Result<InspectReport, RuntimeError> {
             .iter()
             .filter(|c| c.outcome == ResourceOutcome::Error)
             .count(),
+        attempts: calls.iter().map(|c| c.attempts).sum(),
+        retried_calls: calls.iter().filter(|c| c.attempts > 1).count(),
+        timeouts: calls
+            .iter()
+            .filter(|c| c.error_code.as_deref() == Some("TIMEOUT"))
+            .count(),
+        error_codes,
+        max_latency_ms: calls.iter().map(|c| c.latency_ms).max().unwrap_or(0),
+        correlated_to_turn: calls.iter().filter(|c| c.turn_id.is_some()).count(),
         resources_used,
     };
 

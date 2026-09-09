@@ -24,9 +24,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::digest::json_digest;
-use crate::ids::{IndividualId, ResourceCallId, ResourceId};
+use crate::ids::{IndividualId, ResourceCallId, ResourceId, TurnId};
 use crate::mutation::UnknownVocabulary;
-use crate::time::{Clock, UtcTimestamp};
+use crate::time::{Clocks, UtcTimestamp};
 
 /// The role a resource fills. Stable across replacement of the backing
 /// implementation.
@@ -111,6 +111,11 @@ pub struct ResourceDescriptor {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceRequest {
     pub individual_id: IndividualId,
+    /// The turn this call belongs to, so the durable call record can be tied
+    /// back to a turn without going through the operational trace.
+    /// Correlation only — it confers nothing.
+    #[serde(default)]
+    pub turn_id: Option<TurnId>,
     /// Why the runtime is asking. Used for attribution, not for routing.
     pub purpose: String,
     pub input: serde_json::Value,
@@ -124,13 +129,23 @@ impl ResourceRequest {
     ) -> Self {
         Self {
             individual_id,
+            turn_id: None,
             purpose: purpose.into(),
             input,
         }
     }
 
+    pub fn in_turn(mut self, turn_id: TurnId) -> Self {
+        self.turn_id = Some(turn_id);
+        self
+    }
+
     /// Non-secret correlation digest of the request, stable across retries of
     /// the same request and independent of JSON key order.
+    ///
+    /// Deliberately excludes `turn_id`: the digest answers "was the same thing
+    /// asked", and asking the same question in a later turn is the same
+    /// question. Where it was asked from is a separate column.
     pub fn digest(&self) -> String {
         json_digest(&serde_json::json!({
             "individual_id": self.individual_id,
@@ -149,6 +164,14 @@ impl ResourceRequest {
 pub struct ResourceResult {
     pub resource_id: ResourceId,
     pub content: serde_json::Value,
+    /// Physical attempts the adapter made to produce this one logical result.
+    /// Retrying is the adapter's business; the call above it stays single.
+    #[serde(default = "one")]
+    pub attempts: u32,
+}
+
+fn one() -> u32 {
+    1
 }
 
 impl ResourceResult {
@@ -156,7 +179,13 @@ impl ResourceResult {
         Self {
             resource_id,
             content,
+            attempts: 1,
         }
+    }
+
+    pub const fn with_attempts(mut self, attempts: u32) -> Self {
+        self.attempts = attempts;
+        self
     }
 
     pub fn digest(&self) -> String {
@@ -164,16 +193,68 @@ impl ResourceResult {
     }
 }
 
+/// How a resource call failed.
+///
+/// The variants are a *classification*, not a transcript. A provider's
+/// response body, its headers and any credential are deliberately absent:
+/// what a caller and an operator need is which kind of failure happened, how
+/// many attempts it took, and enough to find the call record. `message`
+/// fields carry adapter-side descriptions, never provider payloads.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ResourceError {
     #[error("resource request is invalid: {reason}")]
     InvalidRequest { reason: String },
     #[error("resource {0} is unavailable")]
     Unavailable(ResourceId),
-    #[error("resource {resource_id} timed out after {elapsed_ms}ms")]
+    #[error("resource {resource_id} timed out after {elapsed_ms}ms ({attempts} attempt(s))")]
     Timeout {
         resource_id: ResourceId,
         elapsed_ms: u64,
+        attempts: u32,
+    },
+    /// Could not connect, or the connection failed mid-exchange. Distinct
+    /// from a timeout: nothing was waiting, something broke.
+    #[error("resource {resource_id} transport failure after {attempts} attempt(s): {message}")]
+    Transport {
+        resource_id: ResourceId,
+        attempts: u32,
+        message: String,
+    },
+    /// The provider rejected our credentials. Never retried: repeating a
+    /// rejected credential is not a transient condition.
+    #[error("resource {resource_id} rejected authentication (status {status})")]
+    Authentication {
+        resource_id: ResourceId,
+        status: u16,
+    },
+    #[error("resource {resource_id} rate limited (status {status}) after {attempts} attempt(s)")]
+    RateLimited {
+        resource_id: ResourceId,
+        status: u16,
+        attempts: u32,
+    },
+    /// Any other non-success HTTP status.
+    #[error("resource {resource_id} returned status {status} after {attempts} attempt(s)")]
+    HttpStatus {
+        resource_id: ResourceId,
+        status: u16,
+        attempts: u32,
+    },
+    /// The response was not something this adapter can read. `detail` says
+    /// what was structurally wrong, not what the body said.
+    #[error("resource {resource_id} returned an unreadable response: {detail}")]
+    MalformedResponse {
+        resource_id: ResourceId,
+        detail: String,
+        attempts: u32,
+    },
+    /// The provider answered successfully with its own error object. `code`
+    /// is the provider's error code, which is a classification, not content.
+    #[error("resource {resource_id} reported error {code}")]
+    ProviderError {
+        resource_id: ResourceId,
+        code: String,
+        attempts: u32,
     },
     #[error("resource {resource_id} failed: {message}")]
     Backend {
@@ -189,7 +270,39 @@ impl ResourceError {
             Self::InvalidRequest { .. } => "INVALID_REQUEST",
             Self::Unavailable(_) => "UNAVAILABLE",
             Self::Timeout { .. } => "TIMEOUT",
+            Self::Transport { .. } => "TRANSPORT",
+            Self::Authentication { .. } => "AUTHENTICATION",
+            Self::RateLimited { .. } => "RATE_LIMITED",
+            Self::HttpStatus { .. } => "HTTP_STATUS",
+            Self::MalformedResponse { .. } => "MALFORMED_RESPONSE",
+            Self::ProviderError { .. } => "PROVIDER_ERROR",
             Self::Backend { .. } => "BACKEND",
+        }
+    }
+
+    /// Physical attempts made before giving up. One unless the adapter retried.
+    pub const fn attempts(&self) -> u32 {
+        match self {
+            Self::Timeout { attempts, .. }
+            | Self::Transport { attempts, .. }
+            | Self::RateLimited { attempts, .. }
+            | Self::HttpStatus { attempts, .. }
+            | Self::MalformedResponse { attempts, .. }
+            | Self::ProviderError { attempts, .. } => *attempts,
+            Self::InvalidRequest { .. }
+            | Self::Unavailable(_)
+            | Self::Authentication { .. }
+            | Self::Backend { .. } => 1,
+        }
+    }
+
+    /// The HTTP status behind the failure, where there was one.
+    pub const fn status(&self) -> Option<u16> {
+        match self {
+            Self::Authentication { status, .. }
+            | Self::RateLimited { status, .. }
+            | Self::HttpStatus { status, .. } => Some(*status),
+            _ => None,
         }
     }
 }
@@ -247,6 +360,9 @@ pub struct ResourceCall {
     pub resource_id: ResourceId,
     pub slot: ResourceSlot,
     pub individual_id: IndividualId,
+    /// The turn this call was made from, correlatable straight from the
+    /// database rather than only through the operational trace.
+    pub turn_id: Option<TurnId>,
     pub adapter: String,
     pub purpose: String,
     pub request_digest: String,
@@ -254,6 +370,12 @@ pub struct ResourceCall {
     /// Digest of the result, or the error code when the call failed.
     pub result_digest: Option<String>,
     pub error_code: Option<String>,
+    /// Physical attempts behind this one logical call. Retrying does not
+    /// create a second call: the row counts the tries instead.
+    pub attempts: u32,
+    /// Monotonically measured duration of the whole logical call, retries
+    /// included. Not `completed_at - started_at`: wall time can jump.
+    pub latency_ms: u64,
     pub started_at: UtcTimestamp,
     pub completed_at: UtcTimestamp,
 }
@@ -264,12 +386,15 @@ pub struct NewResourceCall {
     pub resource_id: ResourceId,
     pub slot: ResourceSlot,
     pub individual_id: IndividualId,
+    pub turn_id: Option<TurnId>,
     pub adapter: String,
     pub purpose: String,
     pub request_digest: String,
     pub outcome: ResourceOutcome,
     pub result_digest: Option<String>,
     pub error_code: Option<String>,
+    pub attempts: u32,
+    pub latency_ms: u64,
     pub started_at: UtcTimestamp,
     pub completed_at: UtcTimestamp,
 }
@@ -324,7 +449,9 @@ pub enum RegistryError {
     },
     #[error("resource descriptor is invalid: {reason}")]
     InvalidDescriptor { reason: String },
-    #[error("resource call failed: {0}")]
+    /// Carries the stable code alongside the description, so an operator
+    /// reading stderr sees the same classification the call record stores.
+    #[error("[{code}] {0}", code = .0.code())]
     Call(#[from] ResourceError),
     #[error("resource call could not be recorded: {0}")]
     Log(#[from] ResourceCallLogError),
@@ -402,23 +529,29 @@ impl ResourceRegistry {
             .collect()
     }
 
-    /// Invoke through `clock`, timing the call rather than being told how long
-    /// it took.
+    /// Invoke, timing the call rather than being told how long it took.
     ///
-    /// Timestamps a caller invents cannot disagree with reality; timestamps
-    /// read around the call can, which is the point. W4 only needs honest
-    /// durations for the trace — timeout, retry and latency policy are a
-    /// later wave and deliberately live nowhere in this module.
-    pub fn invoke_with_clock(
+    /// Wall timestamps place the call in calendar time; the duration comes
+    /// from the monotonic clock, because a wall clock that steps backwards
+    /// mid-call would otherwise report a negative or absurd latency.
+    ///
+    /// Retry is emphatically *not* here. A resource that retries does so
+    /// inside its own adapter, where its policy belongs: if the registry
+    /// retried, one logical call would become several records and the
+    /// attribution of a result would stop being a single fact.
+    pub fn invoke_timed(
         &self,
         slot: &ResourceSlot,
         request: &ResourceRequest,
         log: &dyn ResourceCallLog,
         call_id: ResourceCallId,
-        clock: &dyn Clock,
+        clocks: &Clocks,
     ) -> Result<AttributedResult, RegistryError> {
-        let started_at = clock.now_utc();
-        self.invoke_at(slot, request, log, call_id, started_at, || clock.now_utc())
+        let started_at = clocks.now_utc();
+        let started = clocks.now_monotonic();
+        self.invoke_at(slot, request, log, call_id, started_at, || {
+            (clocks.now_utc(), clocks.elapsed_ms_since(started))
+        })
     }
 
     /// Invoke the resource currently filling `slot` and record the call.
@@ -435,7 +568,12 @@ impl ResourceRegistry {
         started_at: UtcTimestamp,
         completed_at: UtcTimestamp,
     ) -> Result<AttributedResult, RegistryError> {
-        self.invoke_at(slot, request, log, call_id, started_at, || completed_at)
+        let latency_ms =
+            u64::try_from((completed_at.unix_millis() - started_at.unix_millis()).max(0))
+                .unwrap_or(0);
+        self.invoke_at(slot, request, log, call_id, started_at, || {
+            (completed_at, latency_ms)
+        })
     }
 
     fn invoke_at(
@@ -445,43 +583,51 @@ impl ResourceRegistry {
         log: &dyn ResourceCallLog,
         call_id: ResourceCallId,
         started_at: UtcTimestamp,
-        completed_at: impl FnOnce() -> UtcTimestamp,
+        finish: impl FnOnce() -> (UtcTimestamp, u64),
     ) -> Result<AttributedResult, RegistryError> {
         let resource = self
             .resolve(slot)
             .ok_or_else(|| RegistryError::SlotEmpty(slot.clone()))?;
         let descriptor = resource.descriptor();
         let outcome = resource.invoke(request);
-        let completed_at = completed_at();
+        let (completed_at, latency_ms) = finish();
 
         let mut record = NewResourceCall {
             resource_call_id: call_id,
             resource_id: descriptor.resource_id,
             slot: slot.clone(),
             individual_id: request.individual_id,
+            turn_id: request.turn_id,
             adapter: descriptor.adapter.clone(),
             purpose: request.purpose.clone(),
             request_digest: request.digest(),
             outcome: ResourceOutcome::Error,
             result_digest: None,
             error_code: None,
+            attempts: 1,
+            latency_ms,
             started_at,
             completed_at,
         };
 
         match outcome {
             Ok(result) => {
+                // Re-tagged from the descriptor of the resource that actually
+                // ran, so a resource cannot claim to be another one.
                 let result = ResourceResult {
                     resource_id: descriptor.resource_id,
                     content: result.content,
+                    attempts: result.attempts.max(1),
                 };
                 record.outcome = ResourceOutcome::Ok;
                 record.result_digest = Some(result.digest());
+                record.attempts = result.attempts;
                 let call = log.record(record)?;
                 Ok(AttributedResult { result, call })
             }
             Err(error) => {
                 record.error_code = Some(error.code().to_owned());
+                record.attempts = error.attempts();
                 // The failed call is durable before the error is returned: a
                 // call that happened must remain visible in attribution.
                 log.record(record)?;
@@ -584,12 +730,15 @@ mod tests {
                 resource_id: call.resource_id,
                 slot: call.slot,
                 individual_id: call.individual_id,
+                turn_id: call.turn_id,
                 adapter: call.adapter,
                 purpose: call.purpose,
                 request_digest: call.request_digest,
                 outcome: call.outcome,
                 result_digest: call.result_digest,
                 error_code: call.error_code,
+                attempts: call.attempts,
+                latency_ms: call.latency_ms,
                 started_at: call.started_at,
                 completed_at: call.completed_at,
             };
@@ -681,6 +830,79 @@ mod tests {
         assert_eq!(attributed.call.resource_id, ResourceId::from_u128(0x9));
     }
 
+    /// A resource that retries inside itself, the way a real adapter does.
+    struct RetryingResource {
+        succeed_after: u32,
+    }
+
+    impl CognitiveResource for RetryingResource {
+        fn descriptor(&self) -> ResourceDescriptor {
+            ResourceDescriptor {
+                resource_id: ResourceId::from_u128(0xC),
+                name: "retrying".to_owned(),
+                kind: ResourceKind::Generation,
+                adapter: "stub".to_owned(),
+                version: "1".to_owned(),
+                read_only: true,
+            }
+        }
+
+        fn invoke(&self, _: &ResourceRequest) -> Result<ResourceResult, ResourceError> {
+            Ok(ResourceResult::new(
+                ResourceId::from_u128(0xC),
+                serde_json::json!({ "ok": true }),
+            )
+            .with_attempts(self.succeed_after))
+        }
+    }
+
+    #[test]
+    fn retrying_inside_an_adapter_stays_one_logical_call() {
+        let mut registry = ResourceRegistry::new();
+        registry
+            .register(
+                ResourceSlot::new("reasoning"),
+                Arc::new(RetryingResource { succeed_after: 3 }),
+            )
+            .unwrap();
+        let log = MemoryLog::default();
+
+        let attributed = invoke(&registry, &log, 1).unwrap();
+        // Three physical tries, one record: attribution stays a single fact.
+        assert_eq!(attributed.call.attempts, 3);
+        assert_eq!(attributed.result.attempts, 3);
+        assert_eq!(log.calls(IndividualId::from_u128(1)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_call_records_the_turn_it_was_made_from() {
+        let mut registry = ResourceRegistry::new();
+        registry
+            .register(
+                ResourceSlot::new("reasoning"),
+                Arc::new(StubResource::new(0xA, "a", "answer-a")),
+            )
+            .unwrap();
+        let log = MemoryLog::default();
+        let turn = crate::ids::TurnId::from_u128(0x71);
+        let in_turn = request().in_turn(turn);
+
+        let attributed = registry
+            .invoke(
+                &ResourceSlot::new("reasoning"),
+                &in_turn,
+                &log,
+                ResourceCallId::from_u128(1),
+                UtcTimestamp::from_unix_millis(10),
+                UtcTimestamp::from_unix_millis(20),
+            )
+            .unwrap();
+        assert_eq!(attributed.call.turn_id, Some(turn));
+        // Turn is correlation, not content: the same question asked in another
+        // turn has the same digest.
+        assert_eq!(in_turn.digest(), request().digest());
+    }
+
     #[test]
     fn a_failed_call_is_still_recorded() {
         let mut registry = ResourceRegistry::new();
@@ -701,6 +923,7 @@ mod tests {
         assert_eq!(calls[0].outcome, ResourceOutcome::Error);
         assert_eq!(calls[0].error_code.as_deref(), Some("UNAVAILABLE"));
         assert_eq!(calls[0].result_digest, None);
+        assert_eq!(calls[0].attempts, 1);
     }
 
     #[test]

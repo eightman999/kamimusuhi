@@ -33,10 +33,15 @@ const MIGRATIONS: &[Migration] = &[
         name: "library_resources",
         sql: include_str!("../migrations/0003_library_resources.sql"),
     },
+    Migration {
+        version: SchemaVersion(4),
+        name: "resource_call_correlation",
+        sql: include_str!("../migrations/0004_resource_call_correlation.sql"),
+    },
 ];
 
 /// Newest schema this build can read and write.
-pub const SUPPORTED_SCHEMA_VERSION: SchemaVersion = SchemaVersion(3);
+pub const SUPPORTED_SCHEMA_VERSION: SchemaVersion = SchemaVersion(4);
 
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 

@@ -100,6 +100,67 @@ pub trait MonotonicClock: Send + Sync {
     fn now_monotonic(&self) -> MonotonicInstant;
 }
 
+/// The two clocks a runtime needs, kept apart on purpose.
+///
+/// `wall` timestamps durable records, because a record has to be placed in
+/// calendar time that survives a restart. `monotonic` measures how long
+/// something took, because wall time can jump backwards and a duration
+/// measured across an NTP correction is not a duration.
+///
+/// They are separate fields rather than one clock so that a deterministic
+/// fixture can pin the wall clock without also claiming every operation took
+/// zero time.
+#[derive(Clone)]
+pub struct Clocks {
+    pub wall: std::sync::Arc<dyn Clock>,
+    pub monotonic: std::sync::Arc<dyn MonotonicClock>,
+}
+
+impl fmt::Debug for Clocks {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Clocks").finish_non_exhaustive()
+    }
+}
+
+impl Clocks {
+    pub fn new(
+        wall: std::sync::Arc<dyn Clock>,
+        monotonic: std::sync::Arc<dyn MonotonicClock>,
+    ) -> Self {
+        Self { wall, monotonic }
+    }
+
+    /// Both clocks from one real system clock.
+    pub fn system() -> Self {
+        let clock = std::sync::Arc::new(SystemClock::new());
+        Self {
+            wall: clock.clone(),
+            monotonic: clock,
+        }
+    }
+
+    pub fn now_utc(&self) -> UtcTimestamp {
+        self.wall.now_utc()
+    }
+
+    pub fn now_monotonic(&self) -> MonotonicInstant {
+        self.monotonic.now_monotonic()
+    }
+
+    /// Milliseconds elapsed since `earlier`, measured monotonically.
+    pub fn elapsed_ms_since(&self, earlier: MonotonicInstant) -> u64 {
+        u64::try_from(self.now_monotonic().duration_since(earlier).as_millis()).unwrap_or(u64::MAX)
+    }
+}
+
+/// Shared monotonic clocks are monotonic clocks, for the same reason as
+/// [`Clock`].
+impl<T: MonotonicClock + ?Sized> MonotonicClock for std::sync::Arc<T> {
+    fn now_monotonic(&self) -> MonotonicInstant {
+        (**self).now_monotonic()
+    }
+}
+
 /// Real system clocks.
 #[derive(Debug, Clone)]
 pub struct SystemClock {

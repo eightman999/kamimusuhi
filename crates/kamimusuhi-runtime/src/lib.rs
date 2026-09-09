@@ -26,9 +26,9 @@ pub mod runtime;
 pub mod scenario;
 pub mod trace;
 
-pub use config::{FakeImplementation, RuntimeConfig};
+pub use config::{ProviderConfig, ResourceImplementation, RuntimeConfig};
 pub use error::RuntimeError;
 pub use inspect::{InspectReport, inspect};
-pub use runtime::{Runtime, RuntimeOptions, RuntimePaths};
+pub use runtime::{ClockMode, Runtime, RuntimeOptions, RuntimePaths};
 pub use scenario::{DemoPhase, PhaseReport};
 pub use trace::{JsonlTraceSink, TraceRecorder, read_trace};

@@ -9,7 +9,7 @@
 
 use std::str::FromStr;
 
-use kamimusuhi_core::ids::{IndividualId, ResourceCallId};
+use kamimusuhi_core::ids::{IndividualId, ResourceCallId, TurnId};
 use kamimusuhi_core::resources::{
     NewResourceCall, ResourceCall, ResourceCallLog, ResourceCallLogError, ResourceOutcome,
     ResourceSlot,
@@ -57,20 +57,24 @@ where
         .map_err(|e| corrupt(format!("column {field} holds {text:?}: {e}")))
 }
 
-const CALL_COLUMNS: &str = "resource_call_id, resource_id, slot, individual_id, adapter, purpose, \
-     request_digest, outcome, result_digest, error_code, started_at, completed_at";
+const CALL_COLUMNS: &str = "resource_call_id, resource_id, slot, individual_id, turn_id, adapter, \
+     purpose, request_digest, outcome, result_digest, error_code, attempts, latency_ms, \
+     started_at, completed_at";
 
 type CallRow = (
     String,
     String,
     String,
     String,
+    Option<String>,
     String,
     String,
     String,
     String,
     Option<String>,
     Option<String>,
+    i64,
+    i64,
     i64,
     i64,
 );
@@ -89,6 +93,9 @@ fn read_call_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CallRow> {
         row.get(9)?,
         row.get(10)?,
         row.get(11)?,
+        row.get(12)?,
+        row.get(13)?,
+        row.get(14)?,
     ))
 }
 
@@ -98,12 +105,15 @@ fn build_call(row: CallRow) -> Result<ResourceCall, ResourceCallLogError> {
         resource_id,
         slot,
         individual_id,
+        turn_id,
         adapter,
         purpose,
         request_digest,
         outcome,
         result_digest,
         error_code,
+        attempts,
+        latency_ms,
         started_at,
         completed_at,
     ) = row;
@@ -112,12 +122,19 @@ fn build_call(row: CallRow) -> Result<ResourceCall, ResourceCallLogError> {
         resource_id: parse("resource_calls.resource_id", &resource_id)?,
         slot: ResourceSlot::new(slot),
         individual_id: parse("resource_calls.individual_id", &individual_id)?,
+        turn_id: turn_id
+            .map(|id| parse::<TurnId>("resource_calls.turn_id", &id))
+            .transpose()?,
         adapter,
         purpose,
         request_digest,
         outcome: parse::<ResourceOutcome>("resource_calls.outcome", &outcome)?,
         result_digest,
         error_code,
+        attempts: u32::try_from(attempts)
+            .map_err(|_| corrupt(format!("resource_calls.attempts holds {attempts}")))?,
+        latency_ms: u64::try_from(latency_ms)
+            .map_err(|_| corrupt(format!("resource_calls.latency_ms holds {latency_ms}")))?,
         started_at: UtcTimestamp::from_unix_millis(started_at),
         completed_at: UtcTimestamp::from_unix_millis(completed_at),
     })
@@ -155,6 +172,9 @@ impl ResourceCallLog for SqliteStore {
         if call.resource_call_id.is_nil() || call.resource_id.is_nil() {
             return Err(invalid("resource call has a nil id"));
         }
+        if call.attempts == 0 {
+            return Err(invalid("a recorded call must have at least one attempt"));
+        }
         match (call.outcome, &call.result_digest, &call.error_code) {
             (ResourceOutcome::Ok, Some(_), None) | (ResourceOutcome::Error, None, Some(_)) => {}
             _ => {
@@ -183,19 +203,22 @@ impl ResourceCallLog for SqliteStore {
         tx.execute(
             &format!(
                 "INSERT INTO resource_calls({CALL_COLUMNS})
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
             ),
             params![
                 call.resource_call_id.to_string(),
                 call.resource_id.to_string(),
                 call.slot.as_str(),
                 call.individual_id.to_string(),
+                call.turn_id.map(|id| id.to_string()),
                 call.adapter,
                 call.purpose,
                 call.request_digest,
                 call.outcome.as_str(),
                 call.result_digest,
                 call.error_code,
+                i64::from(call.attempts),
+                i64::try_from(call.latency_ms).unwrap_or(i64::MAX),
                 call.started_at.unix_millis(),
                 call.completed_at.unix_millis(),
             ],

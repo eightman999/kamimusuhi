@@ -39,8 +39,23 @@ pub enum RuntimeError {
     AmbiguousIndividual { path: String, count: usize },
     #[error("individual {0} could not be restored from the canonical store")]
     UnrestorableIndividual(IndividualId),
+    /// A freshly minted ID already exists on disk.
+    ///
+    /// The runtime only ever mints new IDs, so this means the ID source is
+    /// replaying a sequence some other process already used — almost always
+    /// two processes started with the same deterministic seed. Continuing
+    /// would silently write one process's turn over another's, so the runtime
+    /// stops. It does not "recover" by re-seeding and it never re-issues the
+    /// individual: the fix is a different seed, not a different identity.
+    #[error(
+        "id collision: {kind} {id} already exists in this runtime; \
+         another process is using the same deterministic id seed"
+    )]
+    IdCollision { kind: &'static str, id: String },
     #[error("resource slot {slot} is not configured")]
     SlotNotConfigured { slot: String },
+    #[error("provider configuration for slot {slot} is invalid: {message}")]
+    ProviderConfig { slot: String, message: String },
     #[error("resource registry could not be built: {message}")]
     ResourceRegistry { message: String },
     #[error("cognitive resource call failed: {0}")]

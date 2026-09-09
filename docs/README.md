@@ -32,6 +32,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 
 ### Implementation plans
 
+- [`implementation/w5-external-resources.md`](./implementation/w5-external-resources.md) — **W5 実装記録**。external cognitive resource を実 HTTP 経由で呼ぶ際の境界: adapter responsibility、logical call と physical attempt の区別、timeout/retry の所有者、error 分類、OpenAI-compatible adapter とその TLS 制約、secret を保存しない設計、provider 交換の identity 不変性、`resource_calls` の turn correlation、ID seed と clock の分離。計画ではなく実装済みの内容のみを記述する。
 - [`implementation/phase-1-implementation-plan.md`](./implementation/phase-1-implementation-plan.md) — **第一次実装計画書**。v0.1 continuity vertical slice を実コードへ落とすため、Rust + SQLite single-writer、Cargo workspace、schema v1、atomic activation、Fake Persona Core / resource A・B、restart demo、failpoint test、local CI、Wave W0–W5、Definition of Done を具体化。現時点では計画であり実装済みではない。
 
 ### 器官設計監査 / Organ design audit

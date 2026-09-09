@@ -384,6 +384,29 @@ impl EvidenceStore for SqliteStore {
         })
     }
 
+    fn session(&self, session_id: SessionId) -> Result<Option<Session>, EvidenceError> {
+        let conn = self.conn().map_err(|e| EvidenceError::Backend {
+            message: e.to_string(),
+        })?;
+        let row: Option<(String, i64, Option<i64>)> = conn
+            .query_row(
+                "SELECT individual_id, started_at, ended_at FROM sessions WHERE session_id = ?1",
+                params![session_id.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(map_sqlite)?;
+        row.map(|(individual_id, started_at, ended_at)| {
+            Ok(Session {
+                session_id,
+                individual_id: parse("sessions.individual_id", &individual_id)?,
+                started_at: UtcTimestamp::from_unix_millis(started_at),
+                ended_at: ended_at.map(UtcTimestamp::from_unix_millis),
+            })
+        })
+        .transpose()
+    }
+
     fn record_turn(&self, turn: NewTurn) -> Result<Turn, EvidenceError> {
         if turn.turn_id.is_nil() || turn.session_id.is_nil() || turn.individual_id.is_nil() {
             return Err(invalid("turn has a nil id"));

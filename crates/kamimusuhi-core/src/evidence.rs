@@ -464,6 +464,13 @@ pub trait EvidenceLookup: Send + Sync {
 pub trait EvidenceStore: EvidenceLookup {
     fn open_session(&self, session: NewSession) -> Result<Session, EvidenceError>;
 
+    /// Look up a session without creating one.
+    ///
+    /// Lets a caller that just minted an ID discover that the ID is already
+    /// taken — which means its ID source is colliding with someone else's,
+    /// not that it is retrying.
+    fn session(&self, session_id: SessionId) -> Result<Option<Session>, EvidenceError>;
+
     fn record_turn(&self, turn: NewTurn) -> Result<Turn, EvidenceError>;
 
     /// Append a record. Re-appending the identical record is a no-op that

@@ -11,15 +11,20 @@
 //! process reports to the outside world this way rather than by handing
 //! anything to the next process.
 //!
-//! `--seed` fixes the ID sequence and the clock so the fixture is reproducible
-//! from a clean checkout. Two processes sharing a runtime directory must use
-//! different seeds or they would mint colliding IDs.
+//! `--id-seed` fixes the ID sequence; `--clock` chooses real or pinned time.
+//! They are separate because a reproducible fixture usually wants stable IDs
+//! *and* real durations once network calls are involved. `--seed` remains as
+//! shorthand for both being deterministic.
+//!
+//! Two processes sharing a runtime directory must use different ID seeds. The
+//! same seed replays the same IDs, which the runtime detects and refuses.
 
 use std::process::ExitCode;
 
 use kamimusuhi_runtime::config::GENERAL_SLOT;
+use kamimusuhi_runtime::runtime::ClockMode;
 use kamimusuhi_runtime::{
-    DemoPhase, FakeImplementation, Runtime, RuntimeError, RuntimeOptions, inspect, scenario,
+    DemoPhase, ResourceImplementation, Runtime, RuntimeError, RuntimeOptions, inspect, scenario,
 };
 
 const USAGE: &str = "\
@@ -35,9 +40,11 @@ commands:
 options:
   --dir <path>      runtime directory (required)
   --phase <p>       demo-continuity only: first | resume
-  --resource <i>    fake filling the general slot: fake-a | fake-b |
-                    fake-unavailable
-  --seed <n>        deterministic ID/clock seed
+  --resource <i>    implementation filling the general slot: fake-a |
+                    fake-b | fake-unavailable | openai-compatible
+  --id-seed <n>     deterministic ID sequence
+  --clock <c>       system | fixed
+  --seed <n>        shorthand for --id-seed <n> --clock fixed
 ";
 
 fn main() -> ExitCode {
@@ -70,7 +77,7 @@ fn run() -> Result<String, RuntimeError> {
             let runtime = Runtime::init(
                 options.dir()?,
                 options.runtime_options(),
-                options.resource.unwrap_or(FakeImplementation::FakeA),
+                options.resource.unwrap_or(ResourceImplementation::FakeA),
             )?;
             let report = inspect::inspect(&runtime)?;
             runtime.stopping();
@@ -115,8 +122,9 @@ fn encode<T: serde::Serialize>(value: &T) -> Result<String, RuntimeError> {
 struct Options {
     dir: Option<String>,
     phase: Option<DemoPhase>,
-    resource: Option<FakeImplementation>,
-    seed: Option<u64>,
+    resource: Option<ResourceImplementation>,
+    id_seed: Option<u64>,
+    clock: Option<ClockMode>,
 }
 
 impl Options {
@@ -142,10 +150,18 @@ impl Options {
                 }
                 "--seed" => {
                     let raw = value()?;
-                    options.seed = Some(raw.parse().map_err(|_| {
+                    options.id_seed = Some(raw.parse().map_err(|_| {
                         RuntimeError::Usage(format!("--seed {raw:?} is not a number"))
                     })?);
+                    options.clock = Some(ClockMode::Fixed);
                 }
+                "--id-seed" => {
+                    let raw = value()?;
+                    options.id_seed = Some(raw.parse().map_err(|_| {
+                        RuntimeError::Usage(format!("--id-seed {raw:?} is not a number"))
+                    })?);
+                }
+                "--clock" => options.clock = Some(value()?.parse()?),
                 other => {
                     return Err(RuntimeError::Usage(format!(
                         "unknown option {other:?}\n\n{USAGE}"
@@ -163,6 +179,9 @@ impl Options {
     }
 
     fn runtime_options(&self) -> RuntimeOptions {
-        RuntimeOptions { seed: self.seed }
+        RuntimeOptions {
+            id_seed: self.id_seed,
+            clock: self.clock.unwrap_or_default(),
+        }
     }
 }

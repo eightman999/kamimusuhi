@@ -160,6 +160,11 @@ pub struct ResourceReport {
     /// The resource that actually answered, from its own descriptor.
     pub resource_id: ResourceId,
     pub resource_call_id: ResourceCallId,
+    /// The turn the call is correlated to in the database.
+    pub turn_id: Option<TurnId>,
+    /// Physical tries behind this one logical call.
+    pub attempts: u32,
+    pub latency_ms: u64,
     pub answer: String,
 }
 
@@ -232,15 +237,30 @@ pub struct PhaseReport {
 
 /// Run one phase of the scenario against an opened runtime.
 pub fn run(runtime: &mut Runtime, phase: DemoPhase) -> Result<PhaseReport, RuntimeError> {
-    let writer = runtime.claim_writer()?;
-    let head_before = runtime.head()?;
     let individual_id = runtime.individual_id();
 
     // Session and turn. Fresh in both phases: resuming an individual is not
     // resuming a conversation.
+    //
+    // Minted before the writer epoch is claimed, because the first of them is
+    // how an id-source collision is detected — and detection has to happen
+    // before the first write, not after one has already been attempted.
     let session_id = SessionId::generate(runtime.ids().as_ref());
     let turn_id = TurnId::generate(runtime.ids().as_ref());
     let episode_id = CognitiveEpisodeId::generate(runtime.ids().as_ref());
+
+    // The runtime only ever mints fresh IDs, so an ID that already exists is
+    // not a retry — it is another process replaying the same seed. Refuse
+    // before writing anything rather than quietly reusing its records.
+    if runtime.store().session(session_id)?.is_some() {
+        return Err(RuntimeError::IdCollision {
+            kind: "session",
+            id: session_id.to_string(),
+        });
+    }
+
+    let writer = runtime.claim_writer()?;
+    let head_before = runtime.head()?;
     runtime.set_trace_base(TraceCorrelation {
         session_id: Some(session_id),
         turn_id: Some(turn_id),
@@ -333,7 +353,7 @@ pub fn run(runtime: &mut Runtime, phase: DemoPhase) -> Result<PhaseReport, Runti
 
     // The external resource, whichever implementation the config currently
     // names for the slot.
-    let resource = resource_step(runtime, &current_input)?;
+    let resource = resource_step(runtime, &current_input, turn_id)?;
 
     // Durable memory, retrieved from disk. In phase B this is the only place
     // the earlier conversation can come from.
@@ -442,7 +462,7 @@ fn propose_and_activate(
             // Deterministic and unique per turn, so a retry of this turn is
             // recognised as the same logical mutation.
             idempotency_key: format!("{}/{}/draft-0", context.session_id, context.turn_id),
-            created_at: runtime.clock().now_utc(),
+            created_at: runtime.now(),
         },
     );
     runtime.trace().record_with(
@@ -582,6 +602,7 @@ fn library_step(
 fn resource_step(
     runtime: &Runtime,
     input: &CurrentInput,
+    turn_id: TurnId,
 ) -> Result<
     (
         ResourceReport,
@@ -622,17 +643,16 @@ fn resource_step(
         runtime.individual_id(),
         "summarize-turn",
         serde_json::json!({ "evidence_id": input.evidence_id }),
-    );
+    )
+    // Correlates the durable call row with the turn, so the relationship
+    // survives even if the operational trace is rotated away.
+    .in_turn(turn_id);
     let call_id = ResourceCallId::generate(runtime.ids().as_ref());
-    // Timed by the runtime clock around the call rather than by a caller
-    // deciding after the fact how long it took.
-    let attributed = registry.invoke_with_clock(
-        &slot,
-        &request,
-        runtime.store(),
-        call_id,
-        runtime.clock().as_ref(),
-    )?;
+    // Wall time places the call; the monotonic clock measures it. Retry, if
+    // the configured implementation does any, happens inside the adapter and
+    // stays inside this one logical call.
+    let attributed =
+        registry.invoke_timed(&slot, &request, runtime.store(), call_id, runtime.clocks())?;
     runtime.trace().record_with(
         TraceEventKind::ResourceCompleted,
         TraceCorrelation {
@@ -644,6 +664,8 @@ fn resource_step(
             "outcome": attributed.call.outcome,
             "request_digest": attributed.call.request_digest,
             "result_digest": attributed.call.result_digest,
+            "attempts": attributed.call.attempts,
+            "latency_ms": attributed.call.latency_ms,
         }),
     );
 
@@ -659,6 +681,9 @@ fn resource_step(
         implementation: implementation.as_str().to_owned(),
         resource_id: attributed.result.resource_id,
         resource_call_id: attributed.call.resource_call_id,
+        turn_id: attributed.call.turn_id,
+        attempts: attributed.call.attempts,
+        latency_ms: attributed.call.latency_ms,
         answer,
     };
     Ok((report, vec![attributed]))
@@ -674,7 +699,7 @@ fn build_workspace(
 ) -> Result<Workspace, RuntimeError> {
     let head = runtime.head()?;
     Ok(
-        WorkspaceBuilder::new(runtime.individual_id(), runtime.clock().now_utc())
+        WorkspaceBuilder::new(runtime.individual_id(), runtime.now())
             .with_continuity(&head)
             .with_current_input(input)
             .with_memories(memories)

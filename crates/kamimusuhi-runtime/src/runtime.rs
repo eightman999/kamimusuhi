@@ -25,7 +25,7 @@ use kamimusuhi_core::ids::{
     BootId, CommitId, IdGenerator, IndividualId, NodeId, RandomIdGenerator, SchemaVersion,
 };
 use kamimusuhi_core::mutation::MutationPolicyV0;
-use kamimusuhi_core::time::{Clock, SystemClock};
+use kamimusuhi_core::time::{Clock, Clocks, MonotonicClock};
 use kamimusuhi_core::trace::{TraceCorrelation, TraceEventKind};
 use kamimusuhi_store_sqlite::{SqliteStore, StoreConfig};
 use kamimusuhi_testkit::{FixedClock, FixedIdGenerator};
@@ -38,27 +38,92 @@ use crate::trace::{JsonlTraceSink, TraceRecorder};
 /// storage through [`Runtime::store`].
 pub type RuntimeKernel = ContinuityKernel<SqliteStore, MutationPolicyV0, Arc<dyn Clock>>;
 
+/// Which clock the runtime runs on.
+///
+/// Separate from the ID seed because the two answer different questions. A
+/// reproducible fixture wants the same IDs every run; it does not necessarily
+/// want to claim that every operation took zero time. Once real network calls
+/// exist, a pinned clock would make every latency zero and every timeout
+/// untestable, so determinism of identity and determinism of time have to be
+/// selectable independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ClockMode {
+    /// Real wall and monotonic time.
+    #[default]
+    System,
+    /// Pinned wall clock at the planning baseline, with a monotonic clock that
+    /// only advances when a test advances it.
+    Fixed,
+}
+
+impl ClockMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Fixed => "fixed",
+        }
+    }
+}
+
+impl std::str::FromStr for ClockMode {
+    type Err = RuntimeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "system" => Ok(Self::System),
+            "fixed" => Ok(Self::Fixed),
+            other => Err(RuntimeError::Usage(format!(
+                "unknown clock {other:?}; expected system or fixed"
+            ))),
+        }
+    }
+}
+
 /// Determinism knobs.
 ///
-/// A seed makes IDs and the clock reproducible so the W4 fixture is the same
-/// on every machine. Without one the runtime uses real time and random IDs.
-/// Two processes sharing a runtime directory must use different seeds, or
-/// they would mint colliding IDs.
+/// `id_seed` makes the ID sequence reproducible; `clock` decides whether time
+/// is real. Two processes sharing a runtime directory must use different ID
+/// seeds — the same seed replays the same IDs, which the runtime detects and
+/// refuses rather than writing over someone else's records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RuntimeOptions {
-    pub seed: Option<u64>,
+    pub id_seed: Option<u64>,
+    pub clock: ClockMode,
 }
 
 impl RuntimeOptions {
-    fn clock(self) -> Arc<dyn Clock> {
-        match self.seed {
-            Some(_) => Arc::new(FixedClock::baseline()),
-            None => Arc::new(SystemClock::new()),
+    /// Fully deterministic: fixed IDs and a pinned clock. The W4 fixture.
+    pub const fn deterministic(seed: u64) -> Self {
+        Self {
+            id_seed: Some(seed),
+            clock: ClockMode::Fixed,
+        }
+    }
+
+    /// Reproducible identities on a real clock — what a network call needs, so
+    /// that latency and timeouts are measured rather than asserted.
+    pub const fn deterministic_ids(seed: u64) -> Self {
+        Self {
+            id_seed: Some(seed),
+            clock: ClockMode::System,
+        }
+    }
+
+    fn clocks(self) -> Clocks {
+        match self.clock {
+            ClockMode::System => Clocks::system(),
+            ClockMode::Fixed => {
+                let clock: Arc<FixedClock> = Arc::new(FixedClock::baseline());
+                Clocks::new(
+                    clock.clone() as Arc<dyn Clock>,
+                    clock as Arc<dyn MonotonicClock>,
+                )
+            }
         }
     }
 
     fn ids(self) -> Arc<dyn IdGenerator> {
-        match self.seed {
+        match self.id_seed {
             Some(seed) => Arc::new(FixedIdGenerator::new(seed)),
             None => Arc::new(RandomIdGenerator),
         }
@@ -101,7 +166,7 @@ pub struct Runtime {
     paths: RuntimePaths,
     config: RuntimeConfig,
     kernel: RuntimeKernel,
-    clock: Arc<dyn Clock>,
+    clocks: Clocks,
     ids: Arc<dyn IdGenerator>,
     trace: TraceRecorder,
     boot_id: BootId,
@@ -129,7 +194,7 @@ impl Runtime {
     pub fn init(
         dir: impl AsRef<Path>,
         options: RuntimeOptions,
-        general: crate::config::FakeImplementation,
+        general: crate::config::ResourceImplementation,
     ) -> Result<Self, RuntimeError> {
         let paths = RuntimePaths::new(dir.as_ref());
         std::fs::create_dir_all(&paths.dir).map_err(|source| RuntimeError::DirectoryIo {
@@ -142,9 +207,9 @@ impl Runtime {
             });
         }
 
-        let clock = options.clock();
+        let clocks = options.clocks();
         let ids = options.ids();
-        let store = open_store(&paths, Arc::clone(&clock), Arc::clone(&ids))?;
+        let store = open_store(&paths, Arc::clone(&clocks.wall), Arc::clone(&ids))?;
 
         let node_id = NodeId::generate(ids.as_ref());
         let boot_id = BootId::generate(ids.as_ref());
@@ -176,7 +241,7 @@ impl Runtime {
         let config = RuntimeConfig::new(node_id, general);
         config.save(&paths.config())?;
 
-        Self::assemble(paths, config, store, clock, ids, boot_id, individual)
+        Self::assemble(paths, config, store, clocks, ids, boot_id, individual)
     }
 
     /// Open an initialized runtime and restore its individual from disk.
@@ -192,9 +257,9 @@ impl Runtime {
             });
         }
         let config = RuntimeConfig::load(&paths.config())?;
-        let clock = options.clock();
+        let clocks = options.clocks();
         let ids = options.ids();
-        let store = open_store(&paths, Arc::clone(&clock), Arc::clone(&ids))?;
+        let store = open_store(&paths, Arc::clone(&clocks.wall), Arc::clone(&ids))?;
 
         let existing = store.individuals()?;
         let individual = match existing.len() {
@@ -218,14 +283,14 @@ impl Runtime {
             .map_err(|_| RuntimeError::UnrestorableIndividual(individual.individual_id))?;
 
         let boot_id = BootId::generate(ids.as_ref());
-        Self::assemble(paths, config, store, clock, ids, boot_id, individual)
+        Self::assemble(paths, config, store, clocks, ids, boot_id, individual)
     }
 
     fn assemble(
         paths: RuntimePaths,
         config: RuntimeConfig,
         store: SqliteStore,
-        clock: Arc<dyn Clock>,
+        clocks: Clocks,
         ids: Arc<dyn IdGenerator>,
         boot_id: BootId,
         individual: Individual,
@@ -238,7 +303,7 @@ impl Runtime {
         })?;
         let trace = TraceRecorder::new(
             sink,
-            Arc::clone(&clock),
+            Arc::clone(&clocks.wall),
             TraceCorrelation {
                 individual_id: Some(individual.individual_id),
                 node_id: Some(config.node_id),
@@ -247,13 +312,13 @@ impl Runtime {
                 ..TraceCorrelation::default()
             },
         );
-        let kernel = ContinuityKernel::new(store, MutationPolicyV0, Arc::clone(&clock));
+        let kernel = ContinuityKernel::new(store, MutationPolicyV0, Arc::clone(&clocks.wall));
 
         let runtime = Self {
             paths,
             config,
             kernel,
-            clock,
+            clocks,
             ids,
             trace,
             boot_id,
@@ -315,8 +380,12 @@ impl Runtime {
         self.trace.set_base(base);
     }
 
-    pub fn clock(&self) -> &Arc<dyn Clock> {
-        &self.clock
+    pub const fn clocks(&self) -> &Clocks {
+        &self.clocks
+    }
+
+    pub fn now(&self) -> kamimusuhi_core::time::UtcTimestamp {
+        self.clocks.now_utc()
     }
 
     pub fn ids(&self) -> &Arc<dyn IdGenerator> {
@@ -370,16 +439,16 @@ mod tests {
     use kamimusuhi_core::continuity::Generation;
 
     use super::*;
-    use crate::config::FakeImplementation;
+    use crate::config::ResourceImplementation;
 
     fn options(seed: u64) -> RuntimeOptions {
-        RuntimeOptions { seed: Some(seed) }
+        RuntimeOptions::deterministic(seed)
     }
 
     #[test]
     fn init_creates_one_individual_at_generation_zero() {
         let dir = tempfile::tempdir().unwrap();
-        let runtime = Runtime::init(dir.path(), options(1), FakeImplementation::FakeA).unwrap();
+        let runtime = Runtime::init(dir.path(), options(1), ResourceImplementation::FakeA).unwrap();
         let head = runtime.head().unwrap();
         assert_eq!(head.generation, Generation::ROOT);
         assert_eq!(head.individual_id, runtime.individual_id());
@@ -391,7 +460,7 @@ mod tests {
     #[test]
     fn reopening_restores_the_same_individual_without_minting_one() {
         let dir = tempfile::tempdir().unwrap();
-        let first = Runtime::init(dir.path(), options(1), FakeImplementation::FakeA).unwrap();
+        let first = Runtime::init(dir.path(), options(1), ResourceImplementation::FakeA).unwrap();
         let individual = first.individual_id();
         drop(first);
 
@@ -408,9 +477,9 @@ mod tests {
     #[test]
     fn init_refuses_an_already_initialized_directory() {
         let dir = tempfile::tempdir().unwrap();
-        Runtime::init(dir.path(), options(1), FakeImplementation::FakeA).unwrap();
+        Runtime::init(dir.path(), options(1), ResourceImplementation::FakeA).unwrap();
         assert!(matches!(
-            Runtime::init(dir.path(), options(2), FakeImplementation::FakeA),
+            Runtime::init(dir.path(), options(2), ResourceImplementation::FakeA),
             Err(RuntimeError::AlreadyInitialized { .. })
         ));
     }
@@ -428,7 +497,7 @@ mod tests {
     #[test]
     fn a_database_with_no_individual_is_refused_rather_than_repopulated() {
         let dir = tempfile::tempdir().unwrap();
-        let runtime = Runtime::init(dir.path(), options(1), FakeImplementation::FakeA).unwrap();
+        let runtime = Runtime::init(dir.path(), options(1), ResourceImplementation::FakeA).unwrap();
         let db = runtime.paths().database();
         drop(runtime);
 
@@ -456,7 +525,7 @@ mod tests {
     #[test]
     fn an_individual_whose_head_is_gone_fails_closed() {
         let dir = tempfile::tempdir().unwrap();
-        let runtime = Runtime::init(dir.path(), options(1), FakeImplementation::FakeA).unwrap();
+        let runtime = Runtime::init(dir.path(), options(1), ResourceImplementation::FakeA).unwrap();
         let db = runtime.paths().database();
         let individual = runtime.individual_id();
         drop(runtime);
@@ -475,7 +544,7 @@ mod tests {
     #[test]
     fn claiming_the_writer_epoch_advances_the_epoch_but_not_the_head() {
         let dir = tempfile::tempdir().unwrap();
-        let runtime = Runtime::init(dir.path(), options(1), FakeImplementation::FakeA).unwrap();
+        let runtime = Runtime::init(dir.path(), options(1), ResourceImplementation::FakeA).unwrap();
         let before = runtime.head().unwrap();
         let writer = runtime.claim_writer().unwrap();
         let after = runtime.head().unwrap();

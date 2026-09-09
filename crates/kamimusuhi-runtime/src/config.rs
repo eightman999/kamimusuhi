@@ -1,13 +1,16 @@
 //! Declarative runtime configuration.
 //!
 //! The config says which *implementation* currently fills each cognitive
-//! *slot*. It is runtime infrastructure and nothing else: it holds no
-//! `IndividualId`, so losing or rewriting it cannot lose, fork or migrate the
-//! individual. Identity comes back from the canonical database, which is why
-//! swapping `fake-a` for `fake-b` here is a substitution and not a migration.
+//! *slot*, and how to reach it. It is runtime infrastructure and nothing else:
+//! it holds no `IndividualId`, so losing or rewriting it cannot lose, fork or
+//! migrate the individual. Swapping `fake-a` for `openai-compatible` is a
+//! substitution of thinking capacity, never a migration of who is thinking.
 //!
-//! W4 has no real provider, and this file has no field for an endpoint, a
-//! token or a credential. That is the schema, not a convention.
+//! **No credential is stored here.** A provider entry names the *environment
+//! variable* its bearer token lives in; the token itself is read at call time
+//! and never written to this file, to the database, or to the trace. That is
+//! why swapping providers cannot leak one provider's secret into another's
+//! records, and why this file is safe to keep beside a runtime directory.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -15,57 +18,56 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use kamimusuhi_core::ids::NodeId;
+use kamimusuhi_core::ids::{NodeId, ResourceId};
 use kamimusuhi_core::mutation::UnknownVocabulary;
 use kamimusuhi_core::resources::{CognitiveResource, ResourceRegistry, ResourceSlot};
+use kamimusuhi_resource_http::{OpenAiCompatibleConfig, OpenAiCompatibleResource};
 use kamimusuhi_testkit::{FakeResource, UnavailableResource};
 use serde::{Deserialize, Serialize};
 
 use crate::error::RuntimeError;
 
-/// The cognitive role W4's scenario fills. One slot is enough to prove that a
+/// The cognitive role the scenario fills. One slot is enough to prove that a
 /// role outlives the implementation behind it.
 pub const GENERAL_SLOT: &str = "general";
 
-/// Which deterministic fake fills a slot.
-///
-/// W4 is fake-only by design: the wave proves replacement does not disturb
-/// identity, and a real provider would add failure modes that belong to W5.
+/// Which implementation fills a slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum FakeImplementation {
+pub enum ResourceImplementation {
     FakeA,
     FakeB,
     /// Always fails. Present so the error path is configurable rather than
     /// only reachable from unit tests.
     FakeUnavailable,
+    /// A real HTTP provider speaking the OpenAI chat-completions shape.
+    /// Needs a matching [`ProviderConfig`] for the same slot.
+    OpenaiCompatible,
 }
 
-impl FakeImplementation {
+impl ResourceImplementation {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::FakeA => "fake-a",
             Self::FakeB => "fake-b",
             Self::FakeUnavailable => "fake-unavailable",
+            Self::OpenaiCompatible => "openai-compatible",
         }
     }
 
-    fn build(self) -> Arc<dyn CognitiveResource> {
-        match self {
-            Self::FakeA => Arc::new(FakeResource::a()),
-            Self::FakeB => Arc::new(FakeResource::b()),
-            Self::FakeUnavailable => Arc::new(UnavailableResource),
-        }
+    /// Whether this implementation talks to something outside the process.
+    pub const fn is_networked(self) -> bool {
+        matches!(self, Self::OpenaiCompatible)
     }
 }
 
-impl fmt::Display for FakeImplementation {
+impl fmt::Display for ResourceImplementation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-impl FromStr for FakeImplementation {
+impl FromStr for ResourceImplementation {
     type Err = UnknownVocabulary;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -73,8 +75,55 @@ impl FromStr for FakeImplementation {
             "fake-a" => Self::FakeA,
             "fake-b" => Self::FakeB,
             "fake-unavailable" => Self::FakeUnavailable,
+            "openai-compatible" => Self::OpenaiCompatible,
             other => return Err(UnknownVocabulary::new("resource_implementation", other)),
         })
+    }
+}
+
+/// How to reach one HTTP provider.
+///
+/// Everything here is non-secret configuration. `auth_env` is the *name* of an
+/// environment variable, not its value — that distinction is the whole reason
+/// this struct can be serialized at all.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    /// e.g. `http://127.0.0.1:11434/v1`.
+    pub base_url: String,
+    pub model: String,
+    /// Name of the environment variable holding the bearer token. `None` for a
+    /// local endpoint that needs no credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_env: Option<String>,
+    /// Deadline for one logical call, retries included.
+    pub timeout_ms: u64,
+    /// Physical attempts the adapter may make. 1 disables retry.
+    pub max_attempts: u32,
+    /// Fixed pause between attempts.
+    pub retry_backoff_ms: u64,
+    /// Distinguishes two configured providers from each other in
+    /// `resource_calls`. Stable per configured provider, not per request.
+    pub resource_id: ResourceId,
+}
+
+impl ProviderConfig {
+    fn build(&self, slot: &str) -> Result<Arc<dyn CognitiveResource>, RuntimeError> {
+        let config = OpenAiCompatibleConfig::new(
+            self.resource_id,
+            self.base_url.clone(),
+            self.model.clone(),
+        )
+        .with_timeout_ms(self.timeout_ms)
+        .with_max_attempts(self.max_attempts)
+        .with_retry_backoff_ms(self.retry_backoff_ms)
+        .with_auth_env(self.auth_env.clone());
+        config
+            .validate()
+            .map_err(|message| RuntimeError::ProviderConfig {
+                slot: slot.to_owned(),
+                message,
+            })?;
+        Ok(Arc::new(OpenAiCompatibleResource::new(config)))
     }
 }
 
@@ -88,20 +137,24 @@ pub struct RuntimeConfig {
     /// writer identity — but not the identity of the individual.
     pub node_id: NodeId,
     /// slot → implementation. The whole point of the file.
-    pub resources: BTreeMap<String, FakeImplementation>,
+    pub resources: BTreeMap<String, ResourceImplementation>,
+    /// slot → how to reach its provider, when the implementation is networked.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub providers: BTreeMap<String, ProviderConfig>,
 }
 
 impl RuntimeConfig {
     pub const VERSION: u32 = 1;
     pub const FILE_NAME: &'static str = "runtime.json";
 
-    pub fn new(node_id: NodeId, general: FakeImplementation) -> Self {
+    pub fn new(node_id: NodeId, general: ResourceImplementation) -> Self {
         let mut resources = BTreeMap::new();
         resources.insert(GENERAL_SLOT.to_owned(), general);
         Self {
             config_version: Self::VERSION,
             node_id,
             resources,
+            providers: BTreeMap::new(),
         }
     }
 
@@ -143,7 +196,7 @@ impl RuntimeConfig {
         })
     }
 
-    pub fn implementation(&self, slot: &str) -> Option<FakeImplementation> {
+    pub fn implementation(&self, slot: &str) -> Option<ResourceImplementation> {
         self.resources.get(slot).copied()
     }
 
@@ -155,11 +208,19 @@ impl RuntimeConfig {
     pub fn set_implementation(
         &mut self,
         slot: &str,
-        implementation: FakeImplementation,
-    ) -> Option<FakeImplementation> {
+        implementation: ResourceImplementation,
+    ) -> Option<ResourceImplementation> {
         self.resources
             .insert(slot.to_owned(), implementation)
             .filter(|previous| *previous != implementation)
+    }
+
+    pub fn set_provider(&mut self, slot: &str, provider: ProviderConfig) {
+        self.providers.insert(slot.to_owned(), provider);
+    }
+
+    pub fn provider(&self, slot: &str) -> Option<&ProviderConfig> {
+        self.providers.get(slot)
     }
 
     /// Build the registry this config describes.
@@ -169,8 +230,22 @@ impl RuntimeConfig {
     pub fn build_registry(&self) -> Result<ResourceRegistry, RuntimeError> {
         let mut registry = ResourceRegistry::new();
         for (slot, implementation) in &self.resources {
+            let resource: Arc<dyn CognitiveResource> = match implementation {
+                ResourceImplementation::FakeA => Arc::new(FakeResource::a()),
+                ResourceImplementation::FakeB => Arc::new(FakeResource::b()),
+                ResourceImplementation::FakeUnavailable => Arc::new(UnavailableResource),
+                ResourceImplementation::OpenaiCompatible => self
+                    .providers
+                    .get(slot)
+                    .ok_or_else(|| RuntimeError::ProviderConfig {
+                        slot: slot.clone(),
+                        message: "openai-compatible needs a provider entry for this slot"
+                            .to_owned(),
+                    })?
+                    .build(slot)?,
+            };
             registry
-                .register(ResourceSlot::new(slot.clone()), implementation.build())
+                .register(ResourceSlot::new(slot.clone()), resource)
                 .map_err(|source| RuntimeError::ResourceRegistry {
                     message: source.to_string(),
                 })?;
@@ -184,23 +259,41 @@ mod tests {
     use super::*;
 
     fn config() -> RuntimeConfig {
-        RuntimeConfig::new(NodeId::from_u128(0x0E), FakeImplementation::FakeA)
+        RuntimeConfig::new(NodeId::from_u128(0x0E), ResourceImplementation::FakeA)
+    }
+
+    fn provider() -> ProviderConfig {
+        ProviderConfig {
+            base_url: "http://127.0.0.1:1/v1".to_owned(),
+            model: "test-model".to_owned(),
+            auth_env: Some("KAMIMUSUHI_TEST_TOKEN".to_owned()),
+            timeout_ms: 250,
+            max_attempts: 2,
+            retry_backoff_ms: 1,
+            resource_id: ResourceId::from_u128(0x0B01),
+        }
     }
 
     #[test]
     fn config_round_trips_through_disk() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(RuntimeConfig::FILE_NAME);
-        let written = config();
+        let mut written = config();
+        written.set_implementation(GENERAL_SLOT, ResourceImplementation::OpenaiCompatible);
+        written.set_provider(GENERAL_SLOT, provider());
         written.save(&path).unwrap();
         assert_eq!(RuntimeConfig::load(&path).unwrap(), written);
     }
 
     #[test]
     fn config_holds_no_individual_and_no_credential() {
-        let text = serde_json::to_string(&config()).unwrap();
+        let mut with_provider = config();
+        with_provider.set_provider(GENERAL_SLOT, provider());
+        let text = serde_json::to_string(&with_provider).unwrap();
         assert!(!text.contains("individual"));
-        for forbidden in ["token", "key", "secret", "password", "endpoint", "url"] {
+        // The variable's *name* is configuration; its value never lands here.
+        assert!(text.contains("KAMIMUSUHI_TEST_TOKEN"));
+        for forbidden in ["Bearer", "sk-", "password", "secret_value"] {
             assert!(!text.contains(forbidden), "config mentions {forbidden}");
         }
     }
@@ -225,16 +318,16 @@ mod tests {
     fn replacing_a_slot_reports_what_it_displaced() {
         let mut config = config();
         assert_eq!(
-            config.set_implementation(GENERAL_SLOT, FakeImplementation::FakeB),
-            Some(FakeImplementation::FakeA)
+            config.set_implementation(GENERAL_SLOT, ResourceImplementation::FakeB),
+            Some(ResourceImplementation::FakeA)
         );
         assert_eq!(
             config.implementation(GENERAL_SLOT),
-            Some(FakeImplementation::FakeB)
+            Some(ResourceImplementation::FakeB)
         );
         // Setting the same implementation again displaces nothing.
         assert_eq!(
-            config.set_implementation(GENERAL_SLOT, FakeImplementation::FakeB),
+            config.set_implementation(GENERAL_SLOT, ResourceImplementation::FakeB),
             None
         );
     }
@@ -251,20 +344,47 @@ mod tests {
     }
 
     #[test]
+    fn a_networked_slot_without_a_provider_entry_is_refused() {
+        let mut config = config();
+        config.set_implementation(GENERAL_SLOT, ResourceImplementation::OpenaiCompatible);
+        assert!(matches!(
+            config.build_registry(),
+            Err(RuntimeError::ProviderConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn a_configured_provider_becomes_a_registered_resource() {
+        let mut config = config();
+        config.set_implementation(GENERAL_SLOT, ResourceImplementation::OpenaiCompatible);
+        config.set_provider(GENERAL_SLOT, provider());
+        let registry = config.build_registry().unwrap();
+        let descriptor = registry
+            .descriptor(&ResourceSlot::new(GENERAL_SLOT))
+            .unwrap();
+        assert_eq!(descriptor.adapter, "openai-compatible");
+        assert_eq!(descriptor.resource_id, ResourceId::from_u128(0x0B01));
+        assert!(descriptor.read_only);
+    }
+
+    #[test]
     fn implementation_vocabulary_round_trips() {
         for implementation in [
-            FakeImplementation::FakeA,
-            FakeImplementation::FakeB,
-            FakeImplementation::FakeUnavailable,
+            ResourceImplementation::FakeA,
+            ResourceImplementation::FakeB,
+            ResourceImplementation::FakeUnavailable,
+            ResourceImplementation::OpenaiCompatible,
         ] {
             assert_eq!(
                 implementation
                     .as_str()
-                    .parse::<FakeImplementation>()
+                    .parse::<ResourceImplementation>()
                     .unwrap(),
                 implementation
             );
         }
-        assert!("gpt-4".parse::<FakeImplementation>().is_err());
+        assert!("gpt-4".parse::<ResourceImplementation>().is_err());
+        assert!(ResourceImplementation::OpenaiCompatible.is_networked());
+        assert!(!ResourceImplementation::FakeA.is_networked());
     }
 }

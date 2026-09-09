@@ -10,6 +10,12 @@ publish.workspace = true
 
 [dependencies]
 kamimusuhi-core = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# The fixture HTTP server: a real socket, so these tests exercise the real
+# transport rather than a stubbed function boundary.
+kamimusuhi-testkit = { workspace = true }
 
 [lints]
 workspace = true
