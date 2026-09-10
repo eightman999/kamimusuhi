@@ -488,3 +488,10 @@ MIT. [`LICENSE`](./LICENSE) を参照してください。
 ## K0-E 非言語Core実験
 
 センサー列から6行動と言語起動ゲートを学ぶ独立実験は [K0 brainstem実験](./experiments/k0_brainstem/README.md) を参照してください。正典continuity状態とは分離しています。
+
+## K0-E2 能動的情報取得実験
+
+[K0-E2](./experiments/k0_e2_active_info/README.md) では、常時動作する小型非言語制御器
+（continuous non-language controller）が、必要な場合に言語器官へアクセスします。
+INVOKE_LANGUAGEは情報取得操作であり、返答を数値インターフェースでCoreへ戻して次の行動を評価します。
+正典runtimeへの統合やK1への移行は、この独立実験の完了とは別です。

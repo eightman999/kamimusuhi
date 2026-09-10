@@ -187,6 +187,11 @@ Reflex action SHOULD は frontier model call なしでテスト可能である�
 
 ### 3.2 K-Nerve — experimental reflex/control substrate
 
+非正典の[K0-E2実験](./experiments/k0_e2_active_info/README.md)では、continuous non-language controllerが
+条件付きで言語器官へ情報を要求し、数値化した応答を受けて行動を更新する。
+`INVOKE_LANGUAGE`は言語出力そのものではなく情報取得操作である。
+この実験は正典runtimeへの統合完了を意味しない。
+
 かみむすび MAY は `K-Edge` より下に、非正典の **K-Nerve** layer を実験的に持ってよい。
 
 K-Nerve の実装候補には以下を含む。
