@@ -2,10 +2,19 @@
 # Two borrowed brains, one router.
 #
 # Registers both cognitive resources at once and shows the router choosing
-# between them on the only ground that separates them: who owns the machine.
+# between them.
 #
-#   j72       llm-machine, the operator's own box   local_network
-#   grokbot   a third-party VM                      external
+# As deployed today both run on the same VM, which the operator does not
+# control, so both are external:
+#
+#   j72       cursor VM, custom PyTorch, CPU   external
+#   grokbot   cursor VM, llama.cpp             external
+#
+# J72 was originally on `llm-machine`, hardware the operator controls, which
+# made it local_network and gave a no-external-service turn exactly one place
+# to go. It moved, so the declaration moved with it. A boundary that does not
+# follow the machine is worse than no boundary: it reads as enforced and is
+# not. Set J72_LOCALITY=local_network again when it is back on owned hardware.
 #
 # Neither is a Persona Core, and neither is asked which of them should answer.
 # The runtime states what the task needs; the router decides.
@@ -14,7 +23,7 @@
 #
 # e.g.
 #   ./scripts/multi-resource-smoke.sh \
-#     http://llm-machine:8081/v1 http://<GROKBOT_HOST>:8080/v1
+#     http://cursor:8081/v1 http://cursor:8080/v1
 #
 # Both endpoints take a bearer token here; export it and name the variable:
 #
@@ -32,12 +41,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-J72_URL="${1:-http://llm-machine:8081/v1}"
-GROKBOT_URL="${2:-http://127.0.0.1:8080/v1}"
+J72_URL="${1:-http://cursor:8081/v1}"
+GROKBOT_URL="${2:-http://cursor:8080/v1}"
 DIR="${3:-.local/multi-resource-smoke}"
 J72_MODEL="${J72_MODEL:-j72-30m}"
 GROKBOT_MODEL="${GROKBOT_MODEL:-qwen2.5-3b-instruct}"
 J72_LATENCY="${J72_LATENCY:-slow}"
+J72_LOCALITY="${J72_LOCALITY:-external}"
 AUTH_ENV="${AUTH_ENV:-}"
 RUNTIME="cargo run --quiet --release -p kamimusuhi-runtime --"
 
@@ -61,19 +71,15 @@ if [ -n "$AUTH_ENV" ]; then
   AUTH_LINE="        \"auth_env\": \"$AUTH_ENV\","
 fi
 
-# Declared, not discovered — for both, and the difference between them is the
-# whole experiment:
-#
-#   j72       local_network   llm-machine is the operator's own machine
-#   grokbot   external        the VM is not
-#
-# Not a statement about the network. Both are reached over Tailscale.
+# Declared, not discovered — for both. Locality follows whose machine it is,
+# not how the packets get there; both are reached over Tailscale, and that is
+# not what makes either of them anything.
 #
 # j72 context_capacity 4096 comes from the checkpoint config the server loads
 # (novllm phase55_probe.json, primary: hidden 768 / 12 layers / 4096), which
 # /health corroborates by reporting the matching parameter count.
 echo "==> registering both resources"
-echo "    j72      $J72_URL ($J72_MODEL)   local_network / $J72_LATENCY"
+echo "    j72      $J72_URL ($J72_MODEL)   $J72_LOCALITY / $J72_LATENCY"
 echo "    grokbot  $GROKBOT_URL ($GROKBOT_MODEL)   external / slow / last_resort"
 cat > "$DIR/runtime.json" <<EOF
 {
@@ -99,7 +105,7 @@ $AUTH_LINE
       "retry_backoff_ms": 0,
       "resource_id": "00000000000000000000000000000472",
       "capabilities": {
-        "locality": "local_network",
+        "locality": "$J72_LOCALITY",
         "modalities": ["text"],
         "context_capacity": 4096,
         "latency": "$J72_LATENCY",
@@ -133,15 +139,32 @@ EOF
 
 echo
 echo "==> 1. privacy = no-external-service"
-echo "    the material may use the operator's own infrastructure, no third party."
-echo "    exactly one machine qualifies."
-$RUNTIME demo-continuity \
-  --dir "$DIR" \
-  --phase resume \
-  --privacy no-external-service \
-  --urgency background \
-  --id-seed "$RANDOM" \
-  --clock system
+if [ "$J72_LOCALITY" = "external" ]; then
+  echo "    both models are on a machine the operator does not control, so both"
+  echo "    are excluded and this turn must fail. That is a real loss of"
+  echo "    capability, reported rather than papered over."
+  if $RUNTIME demo-continuity \
+       --dir "$DIR" \
+       --phase resume \
+       --privacy no-external-service \
+       --urgency background \
+       --id-seed "$RANDOM" \
+       --clock system > /dev/null 2>&1; then
+    echo "FAIL: a no-external-service turn reached an external resource" >&2
+    exit 1
+  fi
+  echo "    refused, as it must be."
+else
+  echo "    the material may use the operator's own infrastructure, no third party."
+  echo "    exactly one machine qualifies."
+  $RUNTIME demo-continuity \
+    --dir "$DIR" \
+    --phase resume \
+    --privacy no-external-service \
+    --urgency background \
+    --id-seed "$RANDOM" \
+    --clock system
+fi
 
 echo
 echo "==> 2. privacy = local-only"
@@ -172,9 +195,15 @@ $RUNTIME demo-continuity \
 
 echo
 echo "==> what this shows"
-echo "    the same individual sent the same kind of turn to two physically"
-echo "    different machines, and the thing that decided which one was a"
-echo "    declared data boundary — not a model's opinion, and not a benchmark."
+echo "    one individual, two interchangeable models, and a router that decided"
+echo "    between them from declared capabilities alone — not from a model's"
+echo "    opinion and not from a benchmark."
+if [ "$J72_LOCALITY" = "external" ]; then
+  echo
+  echo "    what it does NOT show, while both models live on the same borrowed"
+  echo "    VM: a turn choosing its machine by data boundary. That needs J72"
+  echo "    back on owned hardware and J72_LOCALITY=local_network."
+fi
 echo
 echo "    head_before == head_after in every case above: borrowing thought from"
 echo "    either machine moves no canonical state, and neither model's output"

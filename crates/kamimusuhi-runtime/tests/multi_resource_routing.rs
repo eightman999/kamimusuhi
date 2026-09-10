@@ -1,26 +1,34 @@
-//! Two borrowed brains, one router: J72 on the operator's own machine and the
-//! Qwen on someone else's VM.
+//! Two borrowed brains, one router: a 150M custom-runtime model and a 3B
+//! llama.cpp model, both cognitive resources behind the same
+//! OpenAI-compatible adapter, and neither a Persona Core.
 //!
-//! Both are cognitive resources behind the same OpenAI-compatible adapter, and
-//! neither is a Persona Core. What separates them is not size — it is who owns
-//! the machine:
+//! **As deployed today, both run on the same third-party VM**, so both are
+//! `external`:
 //!
 //! ```text
-//! j72       llm-machine, operator-controlled   local_network
-//! grokbot   third-party VM                     external
+//! j72       cursor VM, custom PyTorch, CPU   external
+//! grokbot   cursor VM, llama.cpp             external
 //! ```
 //!
-//! That single difference is what the privacy constraints act on, and it is
-//! the whole point of this file. A turn whose material may use the operator's
-//! own infrastructure but no third party has exactly one place to go, and the
-//! router sends it there — not because J72 is better, and not because anything
-//! measured it, but because the operator declared where each machine sits.
+//! J72 was originally to sit on `llm-machine`, a box the operator controls,
+//! which would have made it `local_network` and given a
+//! `no_external_service` turn exactly one place to go. It moved. The
+//! declaration moved with it, because a declaration that does not follow the
+//! machine is worse than no declaration: it is a data boundary that reads as
+//! enforced and is not.
+//!
+//! So this file tests two different things, and keeps them apart:
+//!
+//! - what the **router** does when two resources sit at different localities.
+//!   Declared capabilities, no endpoint, no deployment — a property of the
+//!   policy, and the shape the deployment is meant to return to;
+//! - what happens **as deployed**, where both are external and a
+//!   `no_external_service` turn therefore has nowhere to go at all.
 //!
 //! Three things are deliberately *not* true here:
 //!
-//! - being on the operator's machine does not make J72's output true. It is
-//!   `external_material` exactly like the Qwen's. `local_network` is a
-//!   statement about where data goes, never about truth authority;
+//! - locality never confers truth. Wherever either model runs, its output is
+//!   `external_material`. Locality says where data goes, never who is right;
 //! - being reachable over Tailscale does not make either of them `LocalOnly`
 //!   material. A `local_only` turn excludes both, and there is no special case
 //!   that says otherwise;
@@ -48,24 +56,34 @@ const J72_SLOT: &str = "j72";
 const GROKBOT_SLOT: &str = "grokbot";
 
 const J72_RESOURCE: ResourceId = ResourceId::from_u128(0x0472);
+
+/// Where the J72 endpoint actually runs today: the same VM as the Qwen, which
+/// the operator does not control. Kept as a named constant so that moving it
+/// back to owned hardware is one edit, and so that no test can quietly assume
+/// a boundary the deployment does not have.
+const DEPLOYED_J72_LOCALITY: LocalityClass = LocalityClass::External;
 const GROKBOT_RESOURCE: ResourceId = ResourceId::from_u128(0x6B04B);
 
 /// What the operator declares the J72 endpoint to be.
 ///
-/// `local_network` because `llm-machine` is the operator's own box. Not
-/// because Tailscale reaches it — the Qwen is reached the same way and stays
-/// `external`. Locality describes who controls the compute.
+/// `locality` is a parameter here because J72's has actually changed: it was
+/// to run on `llm-machine` (`local_network`); it currently runs on the same
+/// third-party VM as the Qwen (`external`). Tests that exercise the router's
+/// locality policy pass `LocalNetwork`; tests about the deployment pass
+/// [`DEPLOYED_J72_LOCALITY`]. Nothing here decides which is true — the
+/// operator does, by knowing whose machine it is.
 ///
 /// `context_capacity` is 4096, taken from the checkpoint config the server
 /// loads (novllm `phase55_probe.json`, primary: hidden 768, 12 layers,
 /// `context_length` 4096), corroborated by `/health` reporting 150,001,152
-/// parameters — the same configuration. Not guessed from the model's name.
+/// parameters — the same configuration, on CUDA or on CPU. Not guessed from
+/// the model's name, which says "30M" and is not a parameter count.
 ///
 /// `quality` starts at `basic`. A 150M-parameter model does not get a better
 /// tier for free, and the comparison harness is what would change it.
-fn j72_capabilities(latency: LatencyClass) -> ResourceCapabilities {
+fn j72_capabilities(locality: LocalityClass, latency: LatencyClass) -> ResourceCapabilities {
     ResourceCapabilities {
-        locality: LocalityClass::LocalNetwork,
+        locality,
         // No declared standing. It does not need one to outrank a resource
         // that declared itself a last resort.
         precedence: Precedence::Ordinary,
@@ -113,7 +131,13 @@ fn provider(
 
 /// Register both resources and nothing else, so every verdict in this file is
 /// about these two and the fixture slots cannot mask a result.
-fn configure_both(dir: &Path, j72_url: String, grokbot_url: String, j72_latency: LatencyClass) {
+fn configure_both(
+    dir: &Path,
+    j72_url: String,
+    grokbot_url: String,
+    j72_locality: LocalityClass,
+    j72_latency: LatencyClass,
+) {
     let path = dir.join(RuntimeConfig::FILE_NAME);
     let mut config = RuntimeConfig::load(&path).expect("an initialized runtime");
     let mut resources = BTreeMap::new();
@@ -133,7 +157,7 @@ fn configure_both(dir: &Path, j72_url: String, grokbot_url: String, j72_latency:
             j72_url,
             "j72-30m",
             J72_RESOURCE,
-            j72_capabilities(j72_latency),
+            j72_capabilities(j72_locality, j72_latency),
         ),
     );
     config.set_provider(
@@ -281,12 +305,13 @@ fn verdict(result: &Result<RoutingDecision, RoutingError>, slot: &str) -> Routin
 
 /// A runtime with both resources registered and neither endpoint live. Every
 /// routing-only test uses this: no call is made, so no server is needed.
-fn routed(latency: LatencyClass) -> (Prepared, Vec<RoutingCandidate>) {
+fn routed(locality: LocalityClass, latency: LatencyClass) -> (Prepared, Vec<RoutingCandidate>) {
     let prepared = prepared();
     configure_both(
         &prepared.dir,
         "http://127.0.0.1:1/v1".to_owned(),
         "http://127.0.0.1:2/v1".to_owned(),
+        locality,
         latency,
     );
     let candidates = candidates(&prepared.dir);
@@ -294,14 +319,16 @@ fn routed(latency: LatencyClass) -> (Prepared, Vec<RoutingCandidate>) {
     (prepared, candidates)
 }
 
-/// Case A, and the result this whole experiment exists to produce.
+/// Case A as a claim about the **router**: when one model sits on hardware the
+/// operator controls and the other does not, a turn that may use the former
+/// and not the latter has exactly one place to go, and goes there — because of
+/// *where it is*, not because anyone decided it was the better model.
 ///
-/// The material may use the operator's own infrastructure and no third party.
-/// One machine qualifies. It is chosen because of *where it is*, not because
-/// anyone decided it was the better model.
+/// This is the shape the deployment is meant to have. It does not have it
+/// today; see [`a_no_external_service_turn_has_nowhere_to_go_as_deployed`].
 #[test]
 fn a_no_external_service_turn_lands_on_the_operators_own_machine() {
-    let (_prepared, candidates) = routed(LatencyClass::Slow);
+    let (_prepared, candidates) = routed(LocalityClass::LocalNetwork, LatencyClass::Slow);
 
     let decision = RuleRouter.route(
         &request(
@@ -321,10 +348,46 @@ fn a_no_external_service_turn_lands_on_the_operators_own_machine() {
     assert_eq!(decision.resource_id, J72_RESOURCE);
 }
 
+/// Case A as deployed, which is the uncomfortable half.
+///
+/// Both models currently run on the same VM the operator does not control, so
+/// `no_external_service` excludes *both* and the turn fails. That is the
+/// correct outcome and a real loss of capability: there is presently no model
+/// this runtime can use for material that must not reach a third party.
+///
+/// Recording it as a passing test rather than deleting Case A is deliberate.
+/// The alternative — leaving J72 declared `local_network` because the
+/// experiment reads better that way — would mean the constraint silently
+/// stops constraining, which is the exact failure the type exists to prevent.
+#[test]
+fn a_no_external_service_turn_has_nowhere_to_go_as_deployed() {
+    let (_prepared, candidates) = routed(DEPLOYED_J72_LOCALITY, LatencyClass::Slow);
+
+    let decision = RuleRouter.route(
+        &request(
+            512,
+            PrivacyConstraint::NoExternalService,
+            Urgency::Background,
+        ),
+        &candidates,
+    );
+    for slot in [J72_SLOT, GROKBOT_SLOT] {
+        assert_eq!(
+            verdict(&decision, slot),
+            RoutingReason::PrivacyExcluded,
+            "{slot} is on a third-party VM today, whatever it was going to be"
+        );
+    }
+    assert!(
+        decision.is_err(),
+        "the turn must fail rather than be served by a machine the constraint excluded"
+    );
+}
+
 /// Case B. Tailscale reaches both machines; neither is on this one.
 #[test]
 fn a_local_only_turn_excludes_the_operators_own_machine_too() {
-    let (_prepared, candidates) = routed(LatencyClass::Fast);
+    let (_prepared, candidates) = routed(DEPLOYED_J72_LOCALITY, LatencyClass::Fast);
 
     let decision = RuleRouter.route(
         &request(512, PrivacyConstraint::LocalOnly, Urgency::Background),
@@ -346,7 +409,7 @@ fn a_local_only_turn_excludes_the_operators_own_machine_too() {
 /// Case C. The declared window is the declared window.
 #[test]
 fn a_turn_larger_than_the_declared_window_is_refused_by_both() {
-    let (_prepared, candidates) = routed(LatencyClass::Fast);
+    let (_prepared, candidates) = routed(DEPLOYED_J72_LOCALITY, LatencyClass::Fast);
 
     let decision = RuleRouter.route(
         &request(4_097, PrivacyConstraint::Unconstrained, Urgency::Background),
@@ -371,7 +434,7 @@ fn a_turn_larger_than_the_declared_window_is_refused_by_both() {
 /// regardless of the order the registry happened to hand them over.
 #[test]
 fn the_same_request_against_the_same_candidates_always_decides_the_same_way() {
-    let (_prepared, candidates) = routed(LatencyClass::Fast);
+    let (_prepared, candidates) = routed(DEPLOYED_J72_LOCALITY, LatencyClass::Fast);
     let request = request(256, PrivacyConstraint::Unconstrained, Urgency::Background);
 
     let first = RuleRouter.route(&request, &candidates).unwrap();
@@ -397,7 +460,7 @@ fn the_same_request_against_the_same_candidates_always_decides_the_same_way() {
 /// measurement is in: it is pinned to the declaration, not to a hope.
 #[test]
 fn urgency_is_answered_by_the_declared_latency_and_nothing_else() {
-    let (_prepared, fast) = routed(LatencyClass::Fast);
+    let (_prepared, fast) = routed(LocalityClass::LocalNetwork, LatencyClass::Fast);
     let interactive = request(
         256,
         PrivacyConstraint::NoExternalService,
@@ -406,7 +469,7 @@ fn urgency_is_answered_by_the_declared_latency_and_nothing_else() {
     let decision = RuleRouter.route(&interactive, &fast);
     assert_eq!(verdict(&decision, J72_SLOT), RoutingReason::Selected);
 
-    let (_prepared, slow) = routed(LatencyClass::Slow);
+    let (_prepared, slow) = routed(LocalityClass::LocalNetwork, LatencyClass::Slow);
     let decision = RuleRouter.route(&interactive, &slow);
     assert_eq!(
         verdict(&decision, J72_SLOT),
@@ -432,10 +495,15 @@ fn the_chosen_machine_answers_and_its_answer_is_still_only_material() {
     ))
     .unwrap();
     let qwen = FixtureServer::always(FixtureResponse::ok("must not be reached")).unwrap();
+    // Both fixtures are loopback sockets this process started, so `LocalHost`
+    // is simply true of the J72 stand-in — and it is what makes the
+    // no-external-service turn have somewhere to go. The Qwen stand-in keeps
+    // the external declaration it has in the deployment.
     configure_both(
         &prepared.dir,
         j72.base_url(),
         qwen.base_url(),
+        LocalityClass::LocalHost,
         LatencyClass::Fast,
     );
 
@@ -537,7 +605,13 @@ fn a_dead_j72_costs_nothing_canonical_and_is_not_papered_over_by_the_qwen() {
         };
         // Live, healthy, and off-limits for this turn.
         let qwen = FixtureServer::always(FixtureResponse::ok("I could have answered")).unwrap();
-        configure_both(&prepared.dir, j72_url, qwen.base_url(), LatencyClass::Fast);
+        configure_both(
+            &prepared.dir,
+            j72_url,
+            qwen.base_url(),
+            LocalityClass::LocalHost,
+            LatencyClass::Fast,
+        );
         {
             let path = prepared.dir.join(RuntimeConfig::FILE_NAME);
             let mut config = RuntimeConfig::load(&path).unwrap();
@@ -602,7 +676,7 @@ fn a_dead_j72_costs_nothing_canonical_and_is_not_papered_over_by_the_qwen() {
 /// answer that question.
 #[test]
 fn nothing_in_a_routing_request_asks_a_model_where_the_thinking_should_happen() {
-    let (_prepared, candidates) = routed(LatencyClass::Fast);
+    let (_prepared, candidates) = routed(DEPLOYED_J72_LOCALITY, LatencyClass::Fast);
     let request = request(256, PrivacyConstraint::Unconstrained, Urgency::Background);
 
     // The request is the task's requirements and nothing else: no candidate
