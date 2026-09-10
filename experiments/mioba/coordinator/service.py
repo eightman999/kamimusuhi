@@ -255,7 +255,7 @@ class MiobaService:
                     self.db.emit(self.experiment_id, M.EV_JOB_REQUEUED,
                                  payload={"job_id": job_id, "action": action},
                                  source="coordinator")
-                self.population.maybe_advance()
+                self._counters["births"] += self.population.maybe_advance()
                 now = time.time()
                 if now - last_mie >= mie_interval:
                     last_mie = now
