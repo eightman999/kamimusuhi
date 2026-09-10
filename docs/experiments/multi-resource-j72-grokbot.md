@@ -81,6 +81,18 @@ model id             j72-30m
 
 同じ VM の 8080 で GrokBot Qwen (llama.cpp) が動いている。
 
+`/v1/chat/completions` の実測（`max_tokens=32`）:
+
+```text
+HTTP 200            OpenAI 互換 schema
+finish_reason       "stop"
+usage               prompt/completion/total すべて -1（未計測）
+timings.total_s     あり（独自フィールド）
+wall                2.65s
+```
+
+`usage` が使えないので、token 会計は Kamimusuhi 側から取得できない。
+
 `/health` の実測（CPU 移設後）:
 
 ```json
@@ -111,27 +123,82 @@ novllm の `config/phase55_probe.json` の `primary`:
 
 を宣言する。GrokBot Qwen と偶然同じ値だが、根拠は別（あちらは llama.cpp の `n_ctx`）。
 
-> **未実施:** capacity 境界の実機テスト（capacity 内 → accepted / capacity 超 →
-> rejected か silent truncate か）は endpoint 認証待ちで未実行。silent truncate
-> するなら宣言値を下げる必要がある。
+境界の実機テストは実施済み。結果は「**J72 は拒否しない**」であり、詳細は
+[実測: context 境界](#実測-context-境界--両者で正反対)に記す。
+宣言値 4096 は据え置く。サーバが受理してしまう以上、下げても上げても
+守るのは router だけであり、モデルが訓練された窓に合わせるのが正しい。
 
-## capability 宣言
+## capability 宣言（実測後）
 
 | 項目 | j72 | grokbot | 根拠 |
 | --- | --- | --- | --- |
-| `locality` | `external` | `external` | 現在は同じ第三者 VM 上。機械の管理者に従う |
+| `locality` | `external` | `external` | 同じ第三者 VM 上 |
 | `modalities` | `text` | `text` | |
-| `context_capacity` | `4096` | `4096` | checkpoint config / `n_ctx` |
-| `latency` | **未測定** | `slow` (11.2s 実測) | 下記。CPU 移設でさらに遅い可能性 |
+| `context_capacity` | `4096` | `4096` | checkpoint config / `n_ctx`（実測、後述） |
+| `latency` | `slow` | `slow` | 実測。Kamimusuhi 経路で 6.0–11.2s |
 | `cost` | `free` | `free` | 課金 API を経由しない |
-| `quality` | `basic` | `basic` | 150M / 3B Q4。benchmark 未取得 |
-| `health` | `healthy` | `healthy` | 静的宣言 |
-| `precedence` | `ordinary` (既定) | `last_resort` | 借り物 VM を既定の依存先にしない |
+| `quality` | `basic` | `basic` | 語彙上の最下位。J72 は下記のとおりこれでも過大 |
+| `health` | `healthy` | `healthy` | 両者とも応答する |
+| `precedence` | **`last_resort`** | `ordinary` | 実測。サイズではない |
 
-> **未実施:** J72 の latency 実測。**CPU 実行になったため、CUDA 時の想定は使えない。**`LatencyClass::Instant` は使わない
-> （別ホスト上の network resource なので意味論上 `fast` が最速候補）。
-> 現状の script 既定値は保守的に `slow`。実測後に `J72_LATENCY=fast` で更新する。
-> **モデルサイズから決めない。**
+`precedence` が入れ替わった点が今回最大の修正である。単一資源実験では
+grokbot が「唯一の借り物マシン」だったので `last_resort` だった。現在は
+**両方が同じ借り物 VM 上**にあり、precedence はもはやその懸念を表現できない。
+両者を互いに順序づけるだけの軸になり、実測は Qwen を先に取れと言っている。
+
+J72 を `last_resort` にした根拠は測定であって 150M というサイズではない
+（0/36、Qwen の約 8 倍の median latency）。health や cost に嘘を書いて
+同じ順序を作ることはしていない。その軸の読みが全て壊れるからである。
+
+## 実測: latency
+
+`scripts/compare-cognitive-resources.py`、12 タスク × 3 回 = 各 36 サンプル、
+`max_tokens=64`、`temperature=0`。
+
+| | min | median | p95 | max |
+| --- | --- | --- | --- | --- |
+| j72 (150M, CPU) | 5.02s | **6.82s** | 10.09s | 15.60s |
+| grokbot (3B Q4, llama.cpp) | 0.554s | **0.86s** | 2.83s | 3.51s |
+
+**150M の CPU モデルが、3B の量子化モデルより約 8 倍遅い。**
+`LatencyClass::Instant` は使用していない（別ホスト上の network resource のため）。
+
+ただし Kamimusuhi の実経路ではどちらも `slow` である:
+
+```text
+Kamimusuhi turn (grokbot)   6054 ms / 11229 ms   生成長無制限
+bounded 64 tokens (grokbot)  860 ms (median)
+```
+
+差の原因は **adapter が `max_tokens` を送っていない**ことである
+(`crates/kamimusuhi-resource-http/src/openai.rs`)。生成が無制限なので、
+shallow な分類タスクでも長文が返る。宣言は実経路に合わせて `slow` とした。
+出力長を束縛できるようにすることは未解決事項として残す。
+
+## 実測: context 境界 — 両者で正反対
+
+同一の過大入力（`あ` × N、`max_tokens=8`）を両 endpoint に送った。
+
+| chars | j72 (custom PyTorch) | grokbot (llama.cpp) |
+| --- | --- | --- |
+| 1,000 | HTTP 200 / 1.50s | — |
+| 8,000 | **HTTP 200 / 4.41s** | **HTTP 400** `exceed_context_size_error` (8029 tokens > n_ctx 4096) |
+| 40,000 | **HTTP 200 / 18.83s** | **HTTP 400** (40029 tokens > n_ctx 4096) |
+
+llama.cpp は明示的に拒否し、`n_ctx: 4096` を実測で裏づけた。
+
+**J72 は一度も拒否しない。** 4096 token を大きく超える入力を 200 で受理し、
+latency は入力長に比例して伸びる（切り捨てて即座に捨てているわけではない）。
+外部からは truncate か劣化生成かを区別できないが、Kamimusuhi にとっての事実は
+ひとつである:
+
+```text
+J72 について、4096 の宣言だけが唯一の防御である。
+サーバ側には境界が無い。
+```
+
+これは「declared, not discovered」が冗長な二重化ではなく、
+実際に効いている資源があるという実例である。
 
 ## privacy routing matrix
 
@@ -149,6 +216,15 @@ novllm の `config/phase55_probe.json` の `primary`:
 | --- | --- | --- | --- |
 | `no_external_service` | eligible | `PRIVACY_EXCLUDED` | **j72** |
 
+実機での確認（`scripts/multi-resource-smoke.sh`、両 endpoint とも live）:
+
+```text
+1. no-external-service   refused                        両方 PRIVACY_EXCLUDED
+2. local-only            refused                        両方 PRIVACY_EXCLUDED
+3. unconstrained         selected: grokbot
+                         considered: grokbot SELECTED / j72 NOT_PREFERRED
+```
+
 `local_only` が `LocalHost` までしか許さないのは現行定義どおりで、
 **Tailscale 接続だから通す、という特例は作っていない。**
 
@@ -157,6 +233,7 @@ novllm の `config/phase55_probe.json` の `primary`:
 品質比較の結果ではない。
 
 現構成では、**行き先を分けているのは locality ではなく precedence** である。
+そしてその precedence は実測に基づいている。
 「データ境界で物理的に異なる外付け脳を選ぶ」実証は、J72 が owned hardware に
 戻るまで自動テスト内の router policy として保持されているだけで、実機では成立していない。
 
@@ -225,32 +302,126 @@ AUTH_ENV=KAMIMUSUHI_GROKBOT_API_KEY \
 恒久設定例では MagicDNS 名 (`cursor`) を使い、Tailscale IP は書かない。
 インフラ固有情報を architecture requirement にしないためである。
 
-## 比較評価 (J72 vs Qwen2.5-3B)
+## 実測: J72 vs Qwen2.5-3B 同一入力比較
 
-`scripts/compare-cognitive-resources.py` が両 endpoint に**完全に同一の
-prompt**を送り、latency・成否・指示追従・出力妥当性・安定性を記録する。
+同一 prompt・同一パラメータ。shallow 8 種 + 能力境界用 deep 4 種、各 3 回。
 
-shallow タスク 8 種:
-2値/3値 classification / intent / salience / 情報抽出 / provenance label /
-短文要約 / 矛盾判定 / 単純 transformation。
-能力境界を測るための deep タスク 4 種:
-multi-step reasoning / 曖昧な質問 / やや長い要約 / 知識依存質問。
+| | shallow | deep | call failures |
+| --- | --- | --- | --- |
+| j72 | **0/24** | **0/12** | 0 |
+| grokbot | 18/24 | 9/12 | 0 |
 
-**J72 が deep を落とすこと自体は failure ではない。** 能力境界の測定が目的である。
+### J72: instruct モデルではない
 
-> **未実施:** 実行は endpoint 認証待ち。結果が出るまで、役割配分について
-> 何も結論を書かない。「30M だから K-Edge」「3B だから上位」と先に決めない、
-> というのが今回の明示的な制約である。
+J72 は指示に一切従わない。`temperature=0` で全 12 タスクに対し
+
+```text
+、その、その、その、その、その、その、その…
+```
+
+という退化した反復を返した（`stable=True`、つまり再現性はある）。
+別の短い呼び出しでは青空文庫由来と思われる日本語の小説的テキストを生成した。
+
+これは故障ではない。`novllm` = **novel LM**、日本語小説コーパスの
+base language model であり、instruction tuning を受けていない。
+classification / extraction / summarization といった現行の `TaskClass` 語彙は、
+このモデルが訓練された作業ではない。
+
+したがって、`quality: basic` は語彙上の最下位でありながら **なお過大**である。
+現行の routing 語彙には「これは continuation model であって instruct model ではない」
+を表現する軸が無い。今回は precedence で最下位に置くことで実害を避けているが、
+本来は task class 側の問題である（未解決事項）。
+
+### Qwen: shallow は強く、厳密操作は弱い
+
+| task | 結果 |
+| --- | --- |
+| classify-sentiment / intent / salience / provenance | 3/3 |
+| extract-date | 3/3 (`2026-03-14`) |
+| summarize / longer-summary / ambiguous / knowledge | 3/3 |
+| **contradiction** | 0/3 — 18時閉店と20時営業を「矛盾しない」と回答。不安定 |
+| **transform-case** | 0/3 — `kamimusuhi` → `KAMIMUSHI`（音節が落ちている） |
+| **multi-step** | 0/3 — 10 のところ 14 |
+
+分類・抽出・要約は実用域、算術と厳密な文字列変換は不可。
+**大文字化のような自明な変換で入力を壊す**点は、出力を検証せず取り込む設計が
+危険であることの具体例になっている。
+
+## 役割の考察 — 仮説は反転した
+
+事前の仮説は次のものだった。
+
+```text
+J72-30M     small / cheap / potentially interactive / shallow cognition 候補
+Qwen2.5-3B  larger / stronger / measured slow / background cognition 候補
+```
+
+**実測はこれを反転させた。** J72 は遅く（8x）、現行のどの task class も遂行できない。
+Qwen は速く、shallow タスクの大半を正しく処理する。
+
+先に決めずに測ったことがそのまま結論になっている:
+
+```text
+K-Edge / K-Core / K-Deep != parameter count
+
+role is determined by
+latency / capability / locality / cost / task requirements
+```
+
+150M という数字は、CPU 実行と instruction tuning の不在の前では
+何の役割も保証しなかった。現時点で J72 に割り当てられる cognitive role は無い。
+将来 continuation / 文体生成のような、このモデルが実際に訓練された task class が
+語彙に入れば話は変わる。
+
+## 実機での canonical state 不変性と failure isolation
+
+`unconstrained` の実 turn（grokbot が応答）:
+
+```text
+resource.slot             grokbot
+resource.implementation   openai-compatible
+attempts                  1
+latency_ms                6054                実クロック
+routing_decision          grokbot SELECTED / j72 NOT_PREFERRED
+head_before == head_after true
+individual_id             fixture phase と同一
+relationship              {"preference": "ほうじ茶"}   DB から復元
+workspace item            EXTERNAL_RESOURCE_RESULT / external_material
+```
+
+続いて J72 を死んだポートへ向け、precedence を `preferred` にして
+**必ず選ばれてから失敗する**状況を作った:
+
+```text
+stderr   [TRANSPORT] resource ...0472 transport failure after 1 attempt(s):
+         connect: Connection refused
+exit     1
+
+inspect  individual_id / head.commit_id / relationship.active
+         いずれも実行前と完全一致            CANONICAL STATE UNCHANGED
+
+resource_calls  ...0472 | TRANSPORT        失敗は 1 行記録される
+```
+
+grokbot は live のままだったが**呼ばれていない**。
+失敗した資源の代わりに別の資源へ回す挙動は無い。
 
 ## limitations / 未解決
 
-- **両 endpoint の認証情報が未取得。** 鍵は rotate 済みで、旧値は 8080/8081 とも 401。
-  latency 実測・context 境界テスト・比較評価がこれ待ち。
-- **`no_external_service` で使えるモデルが現在ひとつも無い。** 両モデルが同じ
-  第三者 VM 上にあるため。J72 を owned hardware へ戻すまで解消しない。
-- J72 は CPU 実行になった。CUDA 時を前提とした latency の見込みは使えない。
-- `latency` / `quality` は宣言であり、J72 については未測定。
+- **J72 には現在割り当てられる cognitive role が無い。** instruct モデルではなく、
+  現行の `TaskClass`（summarize / generate / classify）のいずれも遂行できない。
+  routing 語彙に「continuation model」を表す軸が無いため、precedence で
+  最下位に置いて実害を避けているだけである。
+- **adapter が `max_tokens` を送らない。** そのため shallow なタスクでも生成が
+  無制限になり、bounded 0.86s の endpoint が実経路では 6s になる。
+  出力長の束縛は未実装で、`latency` 宣言はこの制約込みの値になっている。
+- **J72 サーバは context 超過を拒否しない。** 宣言 4096 だけが防御である。
+- **J72 の `usage` が全て -1。** token 会計を Kamimusuhi 側から取れない。
+- **`no_external_service` で使えるモデルが無い。** 両モデルが同じ第三者 VM 上に
+  あるため。J72 を owned hardware へ戻すまで解消しない。
+- `quality` の語彙が粗い。`basic` が最下位だが、J72 にはそれでも過大である。
 - `health` は静的宣言で、health check による自動降格はない。
-- context compressor は未実装。capacity 超過は拒否されるだけで分割されない。
+- context compressor は未実装。capacity 超過は router が拒否するだけで分割されない。
 - 比較 harness の採点は部分一致ベースの粗いもの。監査可能性を優先している。
-- role 配分（K-Edge / K-Core / K-Deep）の結論は測定後に書く。
+- Qwen は自明な文字列変換を壊す（`kamimusuhi` → `KAMIMUSHI`）。出力を検証せずに
+  取り込む設計が危険であることの具体例。

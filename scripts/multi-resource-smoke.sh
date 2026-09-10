@@ -33,10 +33,16 @@
 # The name goes in runtime.json; the value is read at call time and never
 # written to the config, the database or the trace.
 #
-# J72's declared latency comes from measurement, not from its size. Override it
-# when a fresh measurement says something different:
+# Both latencies come from measurement, not from model size. Override them when
+# a fresh measurement says something different:
 #
-#   J72_LATENCY=slow ./scripts/multi-resource-smoke.sh ...
+#   J72_LATENCY=fast GROKBOT_LATENCY=slow ./scripts/multi-resource-smoke.sh ...
+#
+# J72 is declared last_resort because measurement says so, not because it is
+# small: 0/36 on every task in the comparison harness, and roughly 8x the
+# median latency of the Qwen on the same bounded workload. Precedence is the
+# axis for "reach for this last"; lying on health or cost to get the same
+# ordering would corrupt every other reading of those fields.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -46,7 +52,10 @@ GROKBOT_URL="${2:-http://cursor:8080/v1}"
 DIR="${3:-.local/multi-resource-smoke}"
 J72_MODEL="${J72_MODEL:-j72-30m}"
 GROKBOT_MODEL="${GROKBOT_MODEL:-qwen2.5-3b-instruct}"
+GROKBOT_LATENCY="${GROKBOT_LATENCY:-slow}"
+GROKBOT_PRECEDENCE="${GROKBOT_PRECEDENCE:-ordinary}"
 J72_LATENCY="${J72_LATENCY:-slow}"
+J72_PRECEDENCE="${J72_PRECEDENCE:-last_resort}"
 J72_LOCALITY="${J72_LOCALITY:-external}"
 AUTH_ENV="${AUTH_ENV:-}"
 RUNTIME="cargo run --quiet --release -p kamimusuhi-runtime --"
@@ -79,8 +88,8 @@ fi
 # (novllm phase55_probe.json, primary: hidden 768 / 12 layers / 4096), which
 # /health corroborates by reporting the matching parameter count.
 echo "==> registering both resources"
-echo "    j72      $J72_URL ($J72_MODEL)   $J72_LOCALITY / $J72_LATENCY"
-echo "    grokbot  $GROKBOT_URL ($GROKBOT_MODEL)   external / slow / last_resort"
+echo "    j72      $J72_URL ($J72_MODEL)   $J72_LOCALITY / $J72_LATENCY / $J72_PRECEDENCE"
+echo "    grokbot  $GROKBOT_URL ($GROKBOT_MODEL)   external / $GROKBOT_LATENCY / $GROKBOT_PRECEDENCE"
 cat > "$DIR/runtime.json" <<EOF
 {
   "config_version": 1,
@@ -111,7 +120,8 @@ $AUTH_LINE
         "latency": "$J72_LATENCY",
         "cost": "free",
         "quality": "basic",
-        "health": "healthy"
+        "health": "healthy",
+        "precedence": "$J72_PRECEDENCE"
       }
     },
     "grokbot": {
@@ -126,11 +136,11 @@ $AUTH_LINE
         "locality": "external",
         "modalities": ["text"],
         "context_capacity": 4096,
-        "latency": "slow",
+        "latency": "$GROKBOT_LATENCY",
         "cost": "free",
         "quality": "basic",
         "health": "healthy",
-        "precedence": "last_resort"
+        "precedence": "$GROKBOT_PRECEDENCE"
       }
     }
   }
@@ -183,7 +193,8 @@ echo "    refused, as it must be. Tailscale is not a reason to make an exception
 
 echo
 echo "==> 3. privacy = unconstrained"
-echo "    both eligible. the Qwen declared itself a last resort, so it loses."
+echo "    both eligible. J72 declared itself the last resort on measured"
+echo "    evidence, so the Qwen takes it."
 $RUNTIME demo-continuity \
   --dir "$DIR" \
   --phase resume \

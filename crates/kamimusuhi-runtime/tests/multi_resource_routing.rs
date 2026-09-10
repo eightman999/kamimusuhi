@@ -84,9 +84,11 @@ const GROKBOT_RESOURCE: ResourceId = ResourceId::from_u128(0x6B04B);
 fn j72_capabilities(locality: LocalityClass, latency: LatencyClass) -> ResourceCapabilities {
     ResourceCapabilities {
         locality,
-        // No declared standing. It does not need one to outrank a resource
-        // that declared itself a last resort.
-        precedence: Precedence::Ordinary,
+        // Measured, not assumed from its size: 0/36 on every task class in
+        // the comparison harness, at roughly 8x the Qwen's median latency.
+        // A model that cannot serve any TaskClass in the vocabulary is the
+        // one you reach for last.
+        precedence: Precedence::LastResort,
         modalities: [Modality::Text].into_iter().collect(),
         context_capacity: 4_096,
         latency,
@@ -96,11 +98,18 @@ fn j72_capabilities(locality: LocalityClass, latency: LatencyClass) -> ResourceC
     }
 }
 
-/// The Grok Bot Qwen, unchanged from the single-resource experiment.
+/// The Grok Bot Qwen.
+///
+/// `Ordinary` here, unlike in the single-resource experiment. There it was the
+/// only borrowed machine among otherwise-owned fixtures, and `LastResort` said
+/// "do not let a free borrowed box become the default". Both models now live
+/// on that same borrowed box, so precedence can no longer express that concern
+/// — it can only order these two against each other, and measurement says the
+/// Qwen is the one to reach for first.
 fn grokbot_capabilities() -> ResourceCapabilities {
     ResourceCapabilities {
         locality: LocalityClass::External,
-        precedence: Precedence::LastResort,
+        precedence: Precedence::Ordinary,
         modalities: [Modality::Text].into_iter().collect(),
         context_capacity: 4_096,
         latency: LatencyClass::Slow,
@@ -445,11 +454,11 @@ fn the_same_request_against_the_same_candidates_always_decides_the_same_way() {
     reversed.reverse();
     assert_eq!(RuleRouter.route(&request, &reversed).unwrap(), first);
 
-    // Unconstrained, both eligible: the Qwen declared itself a last resort, so
-    // the ordinary resource takes it. Nothing measured anything.
-    assert_eq!(first.slot.as_str(), J72_SLOT);
+    // Unconstrained, both eligible: J72 is declared the last resort, so the
+    // Qwen takes it. Outranked, not excluded — J72 is still a usable resource.
+    assert_eq!(first.slot.as_str(), GROKBOT_SLOT);
     assert_eq!(
-        verdict(&Ok(first), GROKBOT_SLOT),
+        verdict(&Ok(first), J72_SLOT),
         RoutingReason::NotPreferred,
         "outranked, not excluded"
     );
@@ -713,6 +722,6 @@ fn nothing_in_a_routing_request_asks_a_model_where_the_thinking_should_happen() 
     // answer with both endpoints unreachable as with both live, because no
     // model was asked anything.
     let decided = RuleRouter.route(&request, &candidates).unwrap();
-    assert_eq!(decided.slot.as_str(), J72_SLOT);
+    assert_eq!(decided.slot.as_str(), GROKBOT_SLOT);
     assert_eq!(decided.considered.len(), 2);
 }
