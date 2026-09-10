@@ -366,9 +366,12 @@ class Database:
         """Atomically claim the highest-priority QUEUED job."""
         with self._lock:
             row = self._q("SELECT job_id FROM evaluation_jobs WHERE "
-                          "experiment_id=? AND status='QUEUED' "
+                          "experiment_id=? AND status='QUEUED' AND "
+                          "(last_error IS NULL OR last_error NOT LIKE "
+                          "'retryable:%' OR claimed_by_worker IS NULL OR "
+                          "claimed_by_worker<>?) "
                           "ORDER BY priority DESC, created_at LIMIT 1",
-                          (experiment_id,)).fetchone()
+                          (experiment_id, worker_id)).fetchone()
             if row is None:
                 return None
             cur = self._q("UPDATE evaluation_jobs SET status='RUNNING',"
@@ -421,6 +424,32 @@ class Database:
                     (status, self._now(), error, result_id, job_id))
             self._commit()
 
+    def release_job_for_retry(self, job_id: str, worker_id: str,
+                              error: str | None = None,
+                              result_id: str | None = None) -> None:
+        """RUNNING -> UNKNOWN for an infrastructure/resource failure.
+
+        ``claimed_by_worker`` is deliberately retained while UNKNOWN/QUEUED
+        so the same worker does not immediately reclaim a job it just proved
+        unable to execute.  A different worker may claim it.
+        """
+        with self._lock:
+            job = self.get_job(job_id)
+            if job is None:
+                raise InvalidTransition("no such job")
+            if job["status"] != M.JOB_RUNNING:
+                raise InvalidTransition(
+                    f"job {job_id} is {job['status']}, expected RUNNING")
+            if job["claimed_by_worker"] != worker_id:
+                raise InvalidTransition(
+                    f"job {job_id} claimed by {job['claimed_by_worker']}, "
+                    f"not {worker_id}")
+            detail = f"retryable:{worker_id}:{error or 'infrastructure failure'}"
+            self._q("UPDATE evaluation_jobs SET status='UNKNOWN', last_error=?, "
+                    "result_id=? WHERE job_id=?",
+                    (detail, result_id, job_id))
+            self._commit()
+
     def cancel_job(self, job_id: str) -> None:
         with self._lock:
             job = self.get_job(job_id)
@@ -461,15 +490,26 @@ class Database:
         Returns [(job_id, 'requeued'|'failed'), ...]."""
         out = []
         with self._lock:
-            rows = self._q("SELECT job_id,attempt FROM evaluation_jobs WHERE "
-                           "experiment_id=? AND status='UNKNOWN'",
+            rows = self._q("SELECT job_id,attempt,last_error FROM "
+                           "evaluation_jobs WHERE experiment_id=? AND "
+                           "status='UNKNOWN'",
                            (experiment_id,)).fetchall()
             for r in rows:
-                if r["attempt"] + 1 >= max_attempts:
+                retryable = str(r["last_error"] or "").startswith("retryable:")
+                if not retryable and r["attempt"] + 1 >= max_attempts:
                     self._q("UPDATE evaluation_jobs SET status='FAILED',"
                             " finished_at=?, last_error='max_attempts' "
                             "WHERE job_id=?", (self._now(), r["job_id"]))
                     out.append((r["job_id"], "failed"))
+                elif retryable:
+                    # Keep claimed_by_worker as an avoid-worker hint.  This
+                    # job remains scientifically unresolved until another
+                    # worker can execute it; do not convert infra trouble to
+                    # selection fitness.
+                    self._q("UPDATE evaluation_jobs SET status='QUEUED',"
+                            " attempt=attempt+1, claimed_at=NULL WHERE job_id=?",
+                            (r["job_id"],))
+                    out.append((r["job_id"], "requeued"))
                 else:
                     self._q("UPDATE evaluation_jobs SET status='QUEUED',"
                             " attempt=attempt+1, claimed_at=NULL,"
@@ -559,6 +599,10 @@ class Database:
                         device: str | None = None) -> str:
         wrid = _uid("wrun")
         with self._lock:
+            self._q("UPDATE worker_runs SET status='offline', "
+                    "current_job_id=NULL WHERE experiment_id=? AND "
+                    "worker_id=? AND status='online'",
+                    (experiment_id, worker_id))
             self._q("INSERT INTO worker_runs(experiment_id,worker_run_id,"
                     "worker_id,hostname,gpu_json,runtime_info_json,bench_json,"
                     "started_at,last_heartbeat_at,status,batch_size,device)"
@@ -574,7 +618,9 @@ class Database:
         with self._lock:
             now = self._now()
             self._q("UPDATE worker_runs SET last_heartbeat_at=?, status='online',"
-                    " current_job_id=? WHERE experiment_id=? AND worker_id=? AND "
+                    " current_job_id=? WHERE worker_run_id=(SELECT worker_run_id "
+                    "FROM worker_runs WHERE experiment_id=? AND worker_id=? "
+                    "ORDER BY started_at DESC, rowid DESC LIMIT 1) AND "
                     "status != 'lost'",
                     (now, sample.get("current_job_id"), experiment_id, worker_id))
             self._q("INSERT INTO worker_heartbeats(experiment_id,worker_id,at,"
@@ -594,7 +640,9 @@ class Database:
         col = "completed_jobs" if ok else "failed_jobs"
         with self._lock:
             self._q(f"UPDATE worker_runs SET {col}={col}+1, current_job_id=NULL "
-                    f"WHERE experiment_id=? AND worker_id=?",
+                    f"WHERE worker_run_id=(SELECT worker_run_id FROM worker_runs "
+                    f"WHERE experiment_id=? AND worker_id=? ORDER BY started_at "
+                    f"DESC, rowid DESC LIMIT 1)",
                     (experiment_id, worker_id))
             self._commit()
 

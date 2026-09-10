@@ -225,7 +225,7 @@ const routes = { dashboard, population, organism, telemetry, events };
 function renderChrome() {
   document.documentElement.lang = LANG;
   $('#nav').innerHTML = Object.keys(routes).map(r => `<a href="#/${r}" data-r="${r}">${esc(t('nav', r))}</a>`).join('');
-  $('#ro').textContent = t('readonly', undefined) === undefined ? '' : T().readonly;
+  $('#ro').textContent = T().readonly || '';
   $('#lang').innerHTML = Object.keys(I18N).map(l => l === LANG ? `<b>${l.toUpperCase()}</b>` : `<a href="#" data-l="${l}" style="color:var(--dim)">${l.toUpperCase()}</a>`).join(' / ');
   document.querySelectorAll('#lang a').forEach(a => a.addEventListener('click', ev => { ev.preventDefault(); LANG = a.dataset.l; localStorage.setItem('mioba.lang', LANG); renderChrome(); route(); }));
 }

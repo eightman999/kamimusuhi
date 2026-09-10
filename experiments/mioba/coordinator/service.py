@@ -305,6 +305,18 @@ class MiobaService:
             raise KeyError(f"no such job {job_id}")
         if result_id and job.get("result_id") == result_id:
             return {"ok": True, "duplicate": True, "job_status": job["status"]}
+        if status == "RETRY":
+            with self.db.transaction():
+                self.db.release_job_for_retry(job_id, worker_id, error,
+                                              result_id=result_id)
+                self.db.emit(
+                    self.experiment_id, M.EV_JOB_MARKED_UNKNOWN, "warn",
+                    {"job_id": job_id, "worker_id": worker_id,
+                     "reason": "retryable_infrastructure_failure",
+                     "error": error, "result_id": result_id},
+                    "coordinator")
+            return {"ok": True, "duplicate": False,
+                    "job_status": M.JOB_UNKNOWN, "retryable": True}
         ok = status == M.JOB_SUCCEEDED and evaluation is not None
         if status == M.JOB_SUCCEEDED and evaluation is None:
             status, error = M.JOB_FAILED, error or "success without evaluation"

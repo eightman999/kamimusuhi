@@ -49,19 +49,26 @@ def create_app(service) -> FastAPI:
                 "jobs": service.db.list_jobs(service.experiment_id, status,
                                              limit)}
 
-    @app.post("/api/jobs")
+    @app.post("/api/jobs", dependencies=[Depends(require_token)])
     def enqueue(body: dict):
+        genome_id = body.get("genome_id")
+        grow = service.db.get_genome(genome_id) if genome_id else None
+        if grow is None:
+            raise HTTPException(404, "no such genome")
+        ev = service.config.get("evaluation", {})
         jid = service.db.enqueue_job(
-            service.experiment_id, body["genome_id"],
-            body.get("environment_id", "synthetic-quiet-v0"),
-            int(body.get("seed", 0)), body.get("evaluation_tier", "smoke"),
-            body.get("backend", "mock"),
-            float(body.get("duration_ms", 500)),
+            service.experiment_id, genome_id,
+            ev.get("environment_id", "synthetic-quiet-v0"),
+            int(grow["random_seed"]), ev.get("tier", "smoke"),
+            ev.get("backend", "mock"),
+            float(ev.get("duration_ms", 500)),
             body.get("requested_traces", []),
-            int(body.get("priority", 0)))
+            int(body.get("priority", 0)),
+            replicates=int(ev.get("replicates", 1)))
         return {"job_id": jid}
 
-    @app.post("/api/jobs/{job_id}/cancel")
+    @app.post("/api/jobs/{job_id}/cancel",
+              dependencies=[Depends(require_token)])
     def cancel(job_id: str):
         try:
             service.db.cancel_job(job_id)

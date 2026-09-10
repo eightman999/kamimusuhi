@@ -112,9 +112,9 @@ def test_worker_never_marks_running_succeeded(client, service):
     assert service.db.get_job(jid)["status"] == "SUCCEEDED"
 
 
-def test_sigterm_mid_job_reports_failed_not_running(client, service):
-    """A worker stopped mid-job reports FAILED(interrupted), never leaves
-    the job RUNNING."""
+def test_sigterm_mid_job_is_retryable_not_scientific_failure(client, service):
+    """A worker interruption is infrastructure failure: make the job
+    recoverable instead of assigning -inf fitness to the organism."""
     from experiments.mioba.workers import worker as w
     _register(client, "w1")
     r = client.post("/api/worker/claim", json={"worker_id": "w1"})
@@ -124,9 +124,10 @@ def test_sigterm_mid_job_reports_failed_not_running(client, service):
         body = w.run_job(client, "w1", r.json(), "cpu", 1, grace_s=0.0)
     finally:
         w._stop.clear()
-    assert body["status"] == "FAILED"
+    assert body["status"] == "RETRY"
     assert "interrupted" in body["error"]
-    assert service.db.get_job(jid)["status"] == "FAILED"
+    assert service.db.get_job(jid)["status"] == "UNKNOWN"
+    assert service.counters()["evaluations_failed"] == 0
 
 
 def test_clade_inheritance(service):

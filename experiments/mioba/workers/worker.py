@@ -80,9 +80,11 @@ def default_worker_id(device: str = "cpu") -> str:
     return f"{socket.gethostname()}-{dev}-{uuid.uuid4().hex[:8]}"
 
 
-def backend_kwargs(config: dict, run_dir: str | None) -> dict:
+def backend_kwargs(config: dict, run_dir: str | None,
+                   data_dir: str | None = None) -> dict:
     fba = (config or {}).get("fba", {})
-    kw = {"data_dir": fba.get("data_dir"),
+    kw = {"data_dir": (data_dir if data_dir is not None
+                       else fba.get("data_dir")),
           "synthetic": bool(fba.get("synthetic", True)),
           "synthetic_neurons": int(fba.get("synthetic_neurons", 2000)),
           "runs_dir": run_dir}
@@ -182,10 +184,37 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
             "replicate_seeds": [int(x) for x in seeds]}
 
 
+def _is_oom(exc: BaseException) -> bool:
+    name = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    return "outofmemory" in name or "out of memory" in msg or "cuda oom" in msg
+
+
+def _is_retryable_infra(exc: BaseException) -> bool:
+    if _is_oom(exc) or isinstance(exc, (OSError, TimeoutError, ConnectionError)):
+        return True
+    if type(exc).__name__ == "BackendUnavailable":
+        return True
+    msg = str(exc).lower()
+    return any(x in msg for x in (
+        "interrupted", "cuda error", "cuda driver", "device-side",
+        "cublas", "cusparse", "driver shutting down", "device unavailable"))
+
+
+def _clear_cuda_cache(device: str) -> None:
+    if not str(device).startswith("cuda"):
+        return
+    try:
+        import torch
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
 def run_job(client, worker_id: str, job: dict, device: str,
             execution_batch: int, grace_s: float = 30.0,
             runtime_info: dict | None = None, state: WorkerState = STATE,
-            deliver: bool = True) -> dict:
+            deliver: bool = True, data_dir: str | None = None) -> dict:
     """Execute one claimed job and deliver its result until acknowledged.
     Returns the result body (with ``delivery`` = accepted|duplicate|
     rejected|gone|abandoned when delivered).
@@ -199,16 +228,28 @@ def run_job(client, worker_id: str, job: dict, device: str,
     genome = Genome.from_json(job["genome_json"])
     phenotype = develop(genome)
     config = job.get("config") or {}
-    backend = get_backend(job["backend"],
-                          **backend_kwargs(config, job.get("run_dir")))
+    backend = None
     started = utcnow()
     _current_job_started = time.time()
     result_id = result_id_for(job["job_id"], worker_id,
                               int(job.get("attempt") or 0))
     try:
-        rep = evaluate_replicates(backend, phenotype, job, device,
-                                  execution_batch, grace_s=grace_s,
-                                  deadline_started=_current_job_started)
+        backend = get_backend(
+            job["backend"],
+            **backend_kwargs(config, job.get("run_dir"), data_dir=data_dir))
+        used_batch = max(1, int(execution_batch))
+        while True:
+            try:
+                rep = evaluate_replicates(
+                    backend, phenotype, job, device, used_batch,
+                    grace_s=grace_s, deadline_started=_current_job_started)
+                break
+            except Exception as exc:
+                if _is_oom(exc) and used_batch > 1:
+                    used_batch = max(1, used_batch // 2)
+                    _clear_cuda_cache(device)
+                    continue
+                raise
         summary = rep["summary"]
         trace_path = None
         if job.get("requested_traces"):
@@ -240,7 +281,8 @@ def run_job(client, worker_id: str, job: dict, device: str,
         status, error = M.JOB_SUCCEEDED, None
     except Exception as exc:
         evaluation = None
-        status, error = M.JOB_FAILED, f"{type(exc).__name__}: {exc}"
+        status = "RETRY" if _is_retryable_infra(exc) else M.JOB_FAILED
+        error = f"{type(exc).__name__}: {exc}"
     finally:
         _current_job_started = None
     body = {"job_id": job["job_id"], "worker_id": worker_id,
@@ -452,7 +494,8 @@ def main(argv=None) -> int:
             continue
         job = resp.json()
         run_job(client, worker_id, job, args.device, batch_size or 1,
-                grace_s=args.grace_s, runtime_info=runtime_info)
+                grace_s=args.grace_s, runtime_info=runtime_info,
+                data_dir=args.data_dir)
         if _stop.is_set():
             break
     return 0

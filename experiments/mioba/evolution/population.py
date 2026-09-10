@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import random
+from contextlib import contextmanager
 from typing import Callable
 
 from ..genome.mutation import mutate
@@ -51,6 +52,23 @@ class PopulationController:
         self.root_clade_id = (clade["clade_id"] if clade else
                               db.create_clade(experiment_id, ROOT_CLADE, None))
 
+    @contextmanager
+    def _atomic_generation(self):
+        """Commit DB writes and Python RNG movement as one logical unit.
+
+        SQLite rollback cannot rewind ``random.Random``.  Keep the
+        pre-generation state and restore it if anything inside the
+        generation transaction raises, so the background loop can retry in
+        the *same process* without changing the lineage.
+        """
+        rng_before = self.rng.getstate()
+        try:
+            with self.db.transaction():
+                yield
+        except BaseException:
+            self.rng.setstate(rng_before)
+            raise
+
     # ------------------------------------------------------------- seeding
     def seed_if_empty(self) -> int:
         """Create the initial generation if the experiment has no genomes."""
@@ -61,7 +79,7 @@ class PopulationController:
         seed = int(self.config.get("evolution", {}).get("mutation_seed", 0))
         base = fba0_genome(seed=seed)
         born = 0
-        with self.db.transaction():
+        with self._atomic_generation():
             for i in range(target):
                 if i == 0:
                     g = base
@@ -182,7 +200,7 @@ class PopulationController:
         elites = [gid for _, gid in scored[:elite_k]] or [current[0]["genome_id"]]
         target = int(self.config.get("population", {}).get("target_size", 8))
         born = 0
-        with self.db.transaction():
+        with self._atomic_generation():
             self.db.emit(self.experiment_id, "generation_advanced",
                          payload={"from_generation": current_gen,
                                   "to_generation": current_gen + 1,

@@ -209,7 +209,7 @@ class TorchBackend(FbaBackend):
         if len(replicate_seeds) != self.batch_size:
             raise ValueError("len(replicate_seeds) must equal batch_size")
         self.replicate_seeds = [int(s) for s in replicate_seeds]
-        self._gens = [torch.Generator(device=self.device.type)
+        self._gens = [torch.Generator(device=self.device)
                       for _ in range(self.batch_size)]
 
         self.params = dict(PARAMS)
