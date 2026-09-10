@@ -156,7 +156,7 @@ def render(artifacts):
             by_arm={r["run_id"].split("-")[-1]:r[metric] for r in ppo if r["seed"]==seed}
             ax.plot(range(len(arms)),[by_arm.get(a,np.nan) for a in arms],color="#999",alpha=.25,linewidth=.8)
         ax.set_xticks(range(len(arms)),arms);ax.set_ylabel(ylabel)
-    fig.suptitle("Paired GRU-128 PPO ablations; B0 imitation-best, B1–B7 PPO-final")
+    fig.suptitle("Paired GRU-128 PPO ablations; B0 imitation-best, B1–B8 PPO-final")
     save(fig,"ppo_ablation.png")
     conditions=sorted({r["condition"] for r in ood})
     matrix=np.full((len(ARCHES),len(conditions)),np.nan)
