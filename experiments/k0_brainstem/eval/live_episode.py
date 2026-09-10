@@ -11,6 +11,7 @@ from ..train.trainer import atomic
 def run(checkpoint,endpoint,episodes=50,timeout=10):
     torch.set_num_threads(4);model,c=load(checkpoint);backend=RealJ72LanguageBackend(endpoint,timeout=timeout)
     env=VectorEnv(episodes,c['episode_length'],'cpu',990123);obs=env.reset();state=model.initial_state(episodes,'cpu')
+    evaluation_id=f'j72-{time.time_ns()}'
     log=Path(checkpoint).parent/'language_events.jsonl';calls=failures=missed=false=required=0
     with log.open('a') as f,torch.no_grad():
         for t in range(env.episode_length):
@@ -18,10 +19,10 @@ def run(checkpoint,endpoint,episodes=50,timeout=10):
             required+=int((target==5).sum());missed+=int(((target==5)&(act!=5)).sum());false+=int(((target!=5)&(act==5)).sum())
             for i in (act==5).nonzero().flatten().tolist():
                 response=backend.invoke(obs[i].tolist(),model.state_metrics(state[i:i+1]))
-                event={'timestamp':time.time(),'run_id':Path(checkpoint).parent.name,'episode':i,'time':t,'scenario':int(env.scenario[i]),'signals':obs[i].tolist(),'core_confidence':float(prob[i,5]),'oracle_required':bool(target[i]==5),'j72_called':True,'j72_latency':response['latency'],**response}
+                event={'evaluation_id':evaluation_id,'timestamp':time.time(),'run_id':Path(checkpoint).parent.name,'episode':i,'time':t,'scenario':int(env.scenario[i]),'signals':obs[i].tolist(),'core_confidence':float(prob[i,5]),'oracle_required':bool(target[i]==5),'j72_called':True,'j72_latency':response['latency'],**response}
                 f.write(json.dumps(event,ensure_ascii=False)+'\n');f.flush();calls+=1;failures+=response['status']!='ok'
             obs,_,_,_=env.step(act)
-    result={'episodes':episodes,'calls':calls,'successful_calls':calls-failures,'http_failures':failures,'required':required,'missed':missed,'false_calls':false,'gate_verified':calls>0,'complete':calls>0 and failures==0}
+    result={'evaluation_id':evaluation_id,'episodes':episodes,'calls':calls,'successful_calls':calls-failures,'http_failures':failures,'required':required,'missed':missed,'false_calls':false,'gate_verified':calls>0,'complete':calls>0 and failures==0}
     atomic(log.parent/'j72_evaluation.json',result);return result
 
 if __name__=='__main__':

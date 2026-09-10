@@ -56,7 +56,7 @@ def evaluate_checkpoint(checkpoint,device='cpu',episodes=512):
         for _ in range(500):cpu(x,s)
     result['cpu_inference_latency_ms']=(time.perf_counter()-start)*2
     cp=torch.load(checkpoint,map_location='cpu',weights_only=False)
-    result['checkpoint']={'filename':Path(checkpoint).name,'sha256':hashlib.sha256(Path(checkpoint).read_bytes()).hexdigest(),'update':cp['update'],'stage':cp['stage']}
+    result['checkpoint']={'filename':Path(checkpoint).name,'sha256':hashlib.sha256(Path(checkpoint).read_bytes()).hexdigest(),'update':cp['update'],'stage':'imitation' if cp['update']<=c['imitation_updates'] else 'ppo','stage_recorded':cp['stage']}
     result['config']=c
     directory=Path(checkpoint).parent
     atomic(directory/'evaluation.json',result);atomic(directory/'episodes.json',records)

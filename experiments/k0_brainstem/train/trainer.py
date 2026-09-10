@@ -79,7 +79,7 @@ def train(config,artifacts,run_id,resume=False):
         save_status(resumed_from_update=start,environment_rng_reset=False)
     def checkpoint(update):
         tmp=directory/'checkpoint.tmp'
-        torch.save({'model':model.state_dict(),'optimizer':optimizer.state_dict(),'update':update,'stage':'imitation' if update<config['imitation_updates'] else 'ppo','config':config,'env_rng':env.generator.get_state(),'best_score':best_score,'torch_rng':torch.get_rng_state(),'numpy_rng':np.random.get_state(),'python_rng':random.getstate(),'cuda_rng':torch.cuda.get_rng_state(device) if device.type=='cuda' else None},tmp)
+        torch.save({'model':model.state_dict(),'optimizer':optimizer.state_dict(),'update':update,'stage':'imitation' if update<=config['imitation_updates'] else 'ppo','next_stage':'imitation' if update<config['imitation_updates'] else 'ppo','config':config,'env_rng':env.generator.get_state(),'best_score':best_score,'torch_rng':torch.get_rng_state(),'numpy_rng':np.random.get_state(),'python_rng':random.getstate(),'cuda_rng':torch.cuda.get_rng_state(device) if device.type=='cuda' else None},tmp)
         tmp.replace(directory/'checkpoint.pt')
     try:
         for update in range(start,total):
