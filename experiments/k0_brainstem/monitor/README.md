@@ -23,3 +23,9 @@ GUI は HTTP と WebSocket を使う thin client。再接続は 1–30 秒の ba
 `../artifacts/gui_smoke.png` は fixture ではなく、Mac の通常 GUI が SSH tunnel `127.0.0.1:18097` 経由でリモートの実 GPU smoke 結果を表示した screenshot。`gui_smoke_verification.json` は実測確認結果。
 
 確認した表示は 3 runs、`smoke-gru64` の 4 metrics、RTX 3060 と P100 の温度・VRAM・利用率。実際の GUI WebSocket 切断から自動再接続まで成功し、制御要求は送信していない。取得時には評価前のため実 episode は 0 行。episode/language viewer の描画はこの段階では fixture による確認であり、実 J72 evaluation の表示証拠とは区別する。学習 process の server 停止後の生存、および実 GPU の PAUSE/RESUME は別の smoke 証拠を参照する。
+
+## 日本語表示
+
+見出し、操作ボタン、実験状態、計測グラフ、表示期間、内部状態の指標名、エピソード行動、言語ゲート、エラー案内、停止確認を日本語表示にした。実験ID・構成名・設定ファイル名とAPIのJSONキー／制御コマンドは保持する。J72の生成応答は原文を表示する。
+
+macOSでは標準の `Hiragino Sans` を優先する。offscreen描画と主要な日本語文字のglyph存在を確認済み。表示変更後のmonitor testは11件PASSで、停止ダイアログの日本語ボタン・取消、表示を日本語にしても送信プロトコルが変わらないことを含む。

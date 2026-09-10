@@ -145,20 +145,20 @@ def test_qt_live_websocket_and_reconnect(tmp_path, monkeypatch):
             process.wait(timeout=5)
             pytest.fail("monitor server exceeded bounded graceful shutdown")
     try:
-        until(lambda: "LIVE" in window.connection_label.text() and window.episodes.rowCount() == 1)
+        until(lambda: "接続済み" in window.connection_label.text() and window.episodes.rowCount() == 1)
         assert window.runs.rowCount() == 1
         assert len(window.curves["reward_mean"].getData()[0]) == 5
         assert window.languages.rowCount() == 1
-        assert "hidden_norm" in window.brain.toPlainText()
+        assert "内部状態ノルム" in window.brain.toPlainText()
         if os.environ.get("K0_GUI_TEST_SCREENSHOT"):
             window.grab().save(os.environ["K0_GUI_TEST_SCREENSHOT"])
-        monkeypatch.setattr(QtWidgets.QMessageBox, "question", lambda *a: QtWidgets.QMessageBox.No)
+        monkeypatch.setattr(Monitor, "confirm_stop", lambda self: False)
         window.control("stop")
         assert not (run / "control.json").exists()
         stop_server()
-        until(lambda: "OFFLINE" in window.connection_label.text())
+        until(lambda: "切断" in window.connection_label.text())
         process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        until(lambda: "LIVE" in window.connection_label.text())
+        until(lambda: "接続済み" in window.connection_label.text())
         # Closing only the client must leave the independent server alive.
         window.close()
         application.processEvents()
@@ -203,21 +203,65 @@ def test_qt_queued_selection_clears_stale_metrics_and_formats_values(monkeypatch
             {"run_id": "pending", "status": "queued", "latest": {}}])
         assert window.selected == "finished"
         assert len(window.curves["reward_mean"].getData()[0]) == 1
-        assert "hidden_norm" in window.brain.toPlainText()
+        assert "内部状態ノルム" in window.brain.toPlainText()
         window.runs.selectRow(1)
         assert window.selected == "pending"
         for curve in window.curves.values():
             x, _ = curve.getData()
             assert x is None or len(x) == 0
-        assert "hidden_norm" not in window.brain.toPlainText()
+        assert "内部状態ノルム" not in window.brain.toPlainText()
         assert list(window.action_bars.opts["height"]) == [0] * 6
         window.update_system({"gpus": [{"index": 0, "name": "3060", "memory_used_mb": 8192.0, "memory_total_mb": 12288.0}]})
         assert "VRAM 8,192/12,288 MiB" in window.system_label.text()
         window.set_languages([{"timestamp": 1700000000.0}])
         assert window.languages.item(0, 0).text() == datetime.fromtimestamp(1700000000).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
         window.set_episodes([{"time": 0, "chosen_action": 5, "oracle_action": 2}])
-        assert window.episodes.item(0, 3).text() == "INVOKE_LANGUAGE"
-        assert window.episodes.item(0, 4).text() == "ORIENT"
+        assert window.episodes.item(0, 3).text() == "言語系を呼ぶ"
+        assert window.episodes.item(0, 4).text() == "注意を向ける"
+    finally:
+        window.close()
+        application.processEvents()
+
+
+def test_qt_japanese_labels_dialog_font_and_unchanged_protocol(monkeypatch):
+    import os
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PyQt5.QtWidgets")
+    from PyQt5 import QtCore, QtGui, QtWidgets
+    from experiments.k0_brainstem.monitor.mac_gui import Monitor, japanese_font
+    requests = []
+    monkeypatch.setattr(Monitor, "request", lambda self, route, callback=None, body=None: requests.append((route, body)))
+    monkeypatch.setattr(Monitor, "connect_ws", lambda *args: None)
+    application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    window = Monitor("http://127.0.0.1:1")
+    try:
+        assert window.windowTitle().endswith("K0 人工脳幹")
+        assert [window.period.itemText(i) for i in range(3)] == ["1分", "5分", "全期間"]
+        assert {b.text() for b in window.findChildren(QtWidgets.QPushButton)} >= {"開始", "一時停止", "再開", "停止"}
+        window.update_runs([{"run_id": "sample", "status": "queued", "latest": {}}])
+        assert window.runs.item(0, 8).text() == "待機中"
+        window.set_languages([{"scenario": 5, "oracle_required": True, "j72_called": False, "status": "VIRTUAL_ORACLE"}])
+        assert window.languages.item(0, 2).text() == "言語処理が必要"
+        assert window.languages.item(0, 5).text() == "はい"
+        assert window.languages.item(0, 6).text() == "いいえ"
+        assert window.languages.item(0, 8).text() == "仮想オラクル"
+        window.control("start")
+        assert requests[-1] == ("/api/run/start", {"config": "smoke.yaml", "device": "cpu"})
+        observed = []
+        def cancel_dialog():
+            dialog = window.findChild(QtWidgets.QMessageBox)
+            observed.extend([dialog.text(), *[b.text() for b in dialog.buttons()]])
+            if os.environ.get("K0_GUI_JA_DIALOG_SCREENSHOT"):
+                dialog.grab().save(os.environ["K0_GUI_JA_DIALOG_SCREENSHOT"])
+            next(b for b in dialog.buttons() if b.text() == "キャンセル").click()
+        QtCore.QTimer.singleShot(0, cancel_dialog)
+        assert window.confirm_stop() is False
+        assert set(observed) == {"学習を停止しますか？", "停止する", "キャンセル"}
+        if sys.platform == "darwin":
+            font = japanese_font()
+            assert font.family() == "Hiragino Sans"
+            metrics = QtGui.QFontMetrics(font)
+            assert all(metrics.inFont(ch) for ch in "人工脳幹平均報酬課題成功率学習処理速度内部状態言語ゲート一時停止再開")
     finally:
         window.close()
         application.processEvents()

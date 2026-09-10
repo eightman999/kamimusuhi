@@ -10,7 +10,7 @@ if [[ "${K0_NO_TUNNEL:-0}" != "1" ]]; then
   trap 'kill "$TUNNEL_PID" 2>/dev/null || true' EXIT
   sleep 1
   if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
-    echo "SSH tunnel failed. Reuse an existing tunnel with K0_NO_TUNNEL=1."
+    echo "SSHトンネルに接続できませんでした。既存のトンネルを使う場合は K0_NO_TUNNEL=1 を指定してください。"
     exit 1
   fi
 fi

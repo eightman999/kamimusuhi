@@ -9,14 +9,33 @@ from PyQt5 import QtCore, QtGui, QtNetwork, QtWidgets, QtWebSockets
 import pyqtgraph as pg
 
 ACTIONS = ("IGNORE", "WAIT", "ORIENT", "OBSERVE", "RECALL", "INVOKE_LANGUAGE")
-GRAPHS = (("reward_mean", "Reward"), ("task_success", "Task success"),
-          ("llm_call_rate", "LLM call rate"), ("missed_llm_rate", "Missed LLM rate"),
-          ("false_llm_call_rate", "False LLM rate"), ("steps_per_second", "Training steps / second"))
+ACTION_LABELS = ("無視", "待機", "注意を向ける", "観察", "想起", "言語系を呼ぶ")
+COMMAND_LABELS = {"start": "開始", "pause": "一時停止", "resume": "再開", "stop": "停止"}
+STATUS_LABELS = {"queued": "待機中", "running": "学習中", "paused": "一時停止中", "complete": "完了", "failed": "失敗", "stopped": "停止済み", "pending": "受付待ち", "ok": "成功", "VIRTUAL_ORACLE": "仮想オラクル", "LANGUAGE_BACKEND_UNAVAILABLE": "言語バックエンド利用不可"}
+SCENARIOS = ("待機・ノイズ", "反復刺激", "突然の新奇刺激", "遅延手がかり", "目標の競合", "言語処理が必要", "持続する異常", "言語系の誤誘発")
+SCENARIO_KEYS = ("idle_noise", "repeated_stimulus", "sudden_novelty", "delayed_cue", "conflicting_goal", "language_required", "persistent_anomaly", "false_language_trigger")
+STATE_LABELS = {"hidden_norm": "内部状態ノルム", "hidden_variance": "内部状態の分散", "state_retention_score": "状態保持スコア", "habituation_score": "慣れスコア", "habituation_sequence_score": "系列での慣れスコア", "novelty_response_score": "新奇刺激への反応", "novelty": "新奇性", "salience": "顕著性", "persistence": "持続性", "module_sensory": "感覚モジュール", "module_salience": "顕著性モジュール", "module_persistence": "状態保持モジュール", "module_action_selection": "行動選択モジュール"}
+ERROR_LABELS = {
+    "invalid run ID": "実験IDが正しくありません。", "unknown run": "指定した実験が見つかりません。",
+    "unknown configuration": "指定した設定が見つかりません。", "run ID already exists": "同じ実験IDが既に存在します。",
+    "run is not active": "この実験は現在実行中ではありません。", "trainer failed to launch": "学習プロセスを起動できませんでした。",
+    "experiment queue owns scheduling; wait until the queue finishes": "実験キューが実行中です。全実験の終了後に開始してください。",
+    "GPU process inventory unavailable": "GPUの利用状況を確認できません。", "requested GPU unavailable": "指定したGPUを利用できません。",
+    "GPU occupied by an existing compute process": "指定したGPUは別の計算プロセスが使用中です。",
+    "GPU already assigned to an active run": "指定したGPUには実行中の実験が割り当てられています。",
+    "saved configuration or checkpoint unavailable": "保存済み設定またはチェックポイントが見つかりません。",
+    "browser-origin controls disabled": "ブラウザー経由の操作は許可されていません。",
+}
+GRAPHS = (("reward_mean", "平均報酬"), ("task_success", "課題成功率"),
+          ("llm_call_rate", "LLM呼び出し率"), ("missed_llm_rate", "必要なLLM呼び出しの見逃し率"),
+          ("false_llm_call_rate", "不要なLLM呼び出し率"), ("steps_per_second", "学習処理速度（ステップ / 秒）"))
 
 
 def display(value):
     if value is None:
         return "—"
+    if isinstance(value, bool):
+        return "はい" if value else "いいえ"
     if isinstance(value, float):
         return f"{value:.4g}"
     if isinstance(value, (dict, list)):
@@ -29,7 +48,25 @@ def memory_mb(value):
 
 
 def action_name(value):
-    return ACTIONS[value] if isinstance(value, int) and 0 <= value < len(ACTIONS) else display(value)
+    if isinstance(value, str) and value in ACTIONS:
+        return ACTION_LABELS[ACTIONS.index(value)]
+    return ACTION_LABELS[value] if isinstance(value, int) and 0 <= value < len(ACTIONS) else display(value)
+
+
+def scenario_name(value):
+    if isinstance(value, int) and 0 <= value < len(SCENARIOS):
+        return SCENARIOS[value]
+    if value in SCENARIO_KEYS:
+        return SCENARIOS[SCENARIO_KEYS.index(value)]
+    return "評価" if value == "evaluation" else display(value)
+
+
+def japanese_font():
+    families = set(QtGui.QFontDatabase().families())
+    for family in ("Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP", "Yu Gothic"):
+        if family in families:
+            return QtGui.QFont(family, 11)
+    return QtWidgets.QApplication.font()
 
 
 def human_time(value):
@@ -58,13 +95,20 @@ def timestamp(value):
 class Monitor(QtWidgets.QMainWindow):
     def __init__(self, server):
         super().__init__()
+        application = QtWidgets.QApplication.instance()
+        application.setFont(japanese_font())
+        if not hasattr(application, "_k0_ja_translator"):
+            translator = QtCore.QTranslator(application)
+            if translator.load("qtbase_ja", QtCore.QLibraryInfo.location(QtCore.QLibraryInfo.TranslationsPath)):
+                application.installTranslator(translator)
+            application._k0_ja_translator = translator
         self.server = server.rstrip("/")
         self.histories = {}
         self.selected = None
         self.episode_data = []
         self.reconnect_seconds = 1
         self.closing = False
-        self.setWindowTitle("KAMIMUSUHI · K0 ARTIFICIAL BRAINSTEM")
+        self.setWindowTitle("KAMIMUSUHI · K0 人工脳幹")
         self.resize(1500, 1000)
         self.network = QtNetwork.QNetworkAccessManager(self)
         self.ws = QtWebSockets.QWebSocket()
@@ -102,15 +146,15 @@ class Monitor(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
         layout = QtWidgets.QVBoxLayout(central)
         header = QtWidgets.QHBoxLayout()
-        title = QtWidgets.QLabel("KAMIMUSUHI  <span style='color:#6fe0cf'>K0 ARTIFICIAL BRAINSTEM</span>")
+        title = QtWidgets.QLabel("KAMIMUSUHI  <span style='color:#6fe0cf'>K0 人工脳幹</span>")
         title.setStyleSheet("font-size: 18px; font-weight: bold;")
         header.addWidget(title)
         header.addStretch()
-        self.connection_label = QtWidgets.QLabel("Connecting…")
+        self.connection_label = QtWidgets.QLabel("接続しています…")
         self.connection_label.setMinimumWidth(170)
         header.addWidget(self.connection_label)
         layout.addLayout(header)
-        self.system_label = QtWidgets.QLabel("llm_master: waiting for live telemetry")
+        self.system_label = QtWidgets.QLabel("llm_master：計測データを待っています")
         self.system_label.setWordWrap(True)
         layout.addWidget(self.system_label)
         controls = QtWidgets.QHBoxLayout()
@@ -120,24 +164,24 @@ class Monitor(QtWidgets.QMainWindow):
         self.device_choice = QtWidgets.QComboBox()
         self.device_choice.setMinimumWidth(90)
         self.device_choice.addItem("cpu")
-        controls.addWidget(QtWidgets.QLabel("Configuration"))
+        controls.addWidget(QtWidgets.QLabel("設定"))
         controls.addWidget(self.config_choice)
-        controls.addWidget(QtWidgets.QLabel("Device"))
+        controls.addWidget(QtWidgets.QLabel("実行デバイス"))
         controls.addWidget(self.device_choice)
-        for command in ("START", "PAUSE", "RESUME", "STOP"):
-            button = QtWidgets.QPushButton(command)
+        for command, label in COMMAND_LABELS.items():
+            button = QtWidgets.QPushButton(label)
             button.clicked.connect(lambda checked=False, c=command.lower(): self.control(c))
             controls.addWidget(button)
         controls.addStretch()
-        controls.addWidget(QtWidgets.QLabel("History"))
+        controls.addWidget(QtWidgets.QLabel("表示期間"))
         self.period = QtWidgets.QComboBox()
         self.period.setMinimumWidth(90)
-        self.period.addItems(["1 min", "5 min", "all"])
-        self.period.setCurrentText("all")
+        self.period.addItems(["1分", "5分", "全期間"])
+        self.period.setCurrentText("全期間")
         self.period.currentTextChanged.connect(self.draw_selected)
         controls.addWidget(self.period)
         layout.addLayout(controls)
-        self.runs = self.table(["Run", "Architecture", "Seed", "GPU / Device", "Step", "Reward", "Task success", "LLM call %", "Status"])
+        self.runs = self.table(["実験", "モデル構成", "シード", "GPU / デバイス", "ステップ", "報酬", "課題成功率", "LLM呼び出し率 %", "状態"])
         self.runs.setMaximumHeight(190)
         self.runs.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.runs.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
@@ -149,7 +193,7 @@ class Monitor(QtWidgets.QMainWindow):
         for index, ((key, label), color) in enumerate(zip(GRAPHS, colors)):
             plot = pg.PlotWidget(title=label)
             plot.showGrid(x=True, y=True, alpha=.15)
-            plot.setLabel("bottom", "Elapsed", units="s")
+            plot.setLabel("bottom", "経過時間（秒）")
             if key in ("task_success", "llm_call_rate", "missed_llm_rate", "false_llm_call_rate"):
                 plot.setYRange(0, 1)
             self.plots[key] = plot
@@ -157,14 +201,15 @@ class Monitor(QtWidgets.QMainWindow):
             graphs.addWidget(plot, index // 3, index % 3)
         layout.addLayout(graphs, 3)
         lower = QtWidgets.QHBoxLayout()
-        self.actions = pg.PlotWidget(title="Action distribution")
+        self.actions = pg.PlotWidget(title="行動の分布")
         self.actions.setMaximumWidth(370)
-        self.actions.getAxis("bottom").setTicks([list(enumerate(["IGN", "WAIT", "ORI", "OBS", "REC", "LANG"]))])
+        self.actions.getAxis("bottom").setTicks([list(enumerate(["無視", "待機", "注意", "観察", "想起", "言語"]))])
+        self.actions.setToolTip("無視・待機・注意を向ける・観察・想起・言語系を呼ぶ、の選択割合")
         self.actions.setYRange(0, 1)
         self.action_bars = pg.BarGraphItem(x=list(range(6)), height=[0]*6, width=.6, brush="#6fe0cf")
         self.actions.addItem(self.action_bars)
         lower.addWidget(self.actions)
-        brain_box = QtWidgets.QGroupBox("Brain state / modules")
+        brain_box = QtWidgets.QGroupBox("内部状態 / モジュール")
         brain_layout = QtWidgets.QVBoxLayout(brain_box)
         self.brain = QtWidgets.QTextEdit()
         self.brain.setReadOnly(True)
@@ -177,20 +222,20 @@ class Monitor(QtWidgets.QMainWindow):
         self.episode_choice = QtWidgets.QComboBox()
         self.episode_choice.currentIndexChanged.connect(self.show_episode)
         episode_layout.addWidget(self.episode_choice)
-        self.episodes = self.table(["Time", "Sensor vector", "Internal state", "Action", "Oracle", "Reward"])
+        self.episodes = self.table(["時点", "センサーベクトル", "内部状態", "選択した行動", "正解行動", "報酬"])
         for column in (1, 2):
             self.episodes.horizontalHeader().setSectionResizeMode(column, QtWidgets.QHeaderView.Interactive)
             self.episodes.setColumnWidth(column, 190)
         episode_layout.addWidget(self.episodes)
-        viewers.addTab(episode_widget, "Episode viewer")
-        self.languages = self.table(["Timestamp", "Run", "Scenario", "Reason / signals", "Confidence", "Required?", "J72 called?", "Latency", "Response / error"])
+        viewers.addTab(episode_widget, "エピソード")
+        self.languages = self.table(["日時", "実験", "シナリオ", "理由 / センサー値", "確信度", "呼び出し必要", "J72呼び出し", "待ち時間（秒）", "応答 / エラー"])
         for column in (0, 3, 8):
             self.languages.horizontalHeader().setSectionResizeMode(column, QtWidgets.QHeaderView.Interactive)
             self.languages.setColumnWidth(column, 160)
-        viewers.addTab(self.languages, "Language gate")
+        viewers.addTab(self.languages, "言語ゲート")
         lower.addWidget(viewers, 2)
         layout.addLayout(lower, 2)
-        self.statusBar().showMessage(self.server + " · GUI disconnect does not stop training")
+        self.statusBar().showMessage(self.server + " · GUIを切断しても学習は継続します")
 
     @staticmethod
     def table(headers):
@@ -213,11 +258,11 @@ class Monitor(QtWidgets.QMainWindow):
             try:
                 payload = json.loads(bytes(reply.readAll()).decode())
                 if reply.error() != QtNetwork.QNetworkReply.NoError:
-                    self.statusBar().showMessage("Request failed: " + display(payload), 12000)
+                    self.statusBar().showMessage(ERROR_LABELS.get(payload.get("detail") if isinstance(payload, dict) and isinstance(payload.get("detail"), str) else "", "操作に失敗しました。入力内容と接続状態を確認してください。"), 12000)
                 elif callback:
                     callback(payload)
             except (ValueError, TypeError) as error:
-                self.statusBar().showMessage("Connection unavailable: " + str(error), 10000)
+                self.statusBar().showMessage("サーバーから応答を取得できません。接続状態を確認してください。", 10000)
             finally:
                 reply.deleteLater()
         reply.finished.connect(finished)
@@ -232,18 +277,19 @@ class Monitor(QtWidgets.QMainWindow):
     def connected(self):
         self.reconnect.stop()
         self.reconnect_seconds = 1
-        self.connection_label.setText("● LIVE · WebSocket")
+        self.connection_label.setText("● 接続済み · WebSocket")
+        self.statusBar().showMessage(self.server + " · 接続済み。GUIを切断しても学習は継続します")
         self.request("/api/configs", self.set_configs)
         self.refresh_selected()
 
     def websocket_error(self, _):
-        self.statusBar().showMessage("WebSocket: " + self.ws.errorString(), 15000)
+        self.statusBar().showMessage("WebSocket接続に失敗しました。自動的に再接続します。", 15000)
         self.disconnected()
 
     def disconnected(self):
         if self.closing or self.reconnect.isActive():
             return
-        self.connection_label.setText(f"○ OFFLINE · reconnect in {self.reconnect_seconds}s")
+        self.connection_label.setText(f"○ 切断 · {self.reconnect_seconds}秒後に再接続")
         self.reconnect.start(self.reconnect_seconds * 1000)
         self.reconnect_seconds = min(30, self.reconnect_seconds * 2)
 
@@ -253,7 +299,7 @@ class Monitor(QtWidgets.QMainWindow):
             self.update_system(payload.get("system", {}))
             self.update_runs(payload.get("runs", []))
         except (ValueError, TypeError, KeyError) as error:
-            self.statusBar().showMessage("Invalid telemetry: " + str(error))
+            self.statusBar().showMessage("計測データの形式が正しくありません。")
 
     def set_configs(self, configs):
         old = self.config_choice.currentText()
@@ -263,11 +309,11 @@ class Monitor(QtWidgets.QMainWindow):
             self.config_choice.setCurrentText(old)
 
     def update_system(self, system):
-        parts = [f"llm_master · CPU {display(system.get('cpu_percent'))}%", f"RAM {display(system.get('ram_percent'))}%"]
+        parts = [f"llm_master · CPU使用率 {display(system.get('cpu_percent'))}%", f"RAM使用率 {display(system.get('ram_percent'))}%"]
         devices = ["cpu"]
         for gpu in system.get("gpus", []):
             devices.append(f"cuda:{gpu['index']}")
-            parts.append(f"GPU {gpu['index']} {gpu['name']} · {display(gpu.get('utilization_percent'))}% · VRAM {memory_mb(gpu.get('memory_used_mb'))}/{memory_mb(gpu.get('memory_total_mb'))} MiB · {display(gpu.get('temperature_c'))} °C")
+            parts.append(f"GPU {gpu['index']} {gpu['name']} · 使用率 {display(gpu.get('utilization_percent'))}% · VRAM {memory_mb(gpu.get('memory_used_mb'))}/{memory_mb(gpu.get('memory_total_mb'))} MiB · 温度 {display(gpu.get('temperature_c'))} °C")
         self.system_label.setText("   |   ".join(parts))
         if devices != [self.device_choice.itemText(i) for i in range(self.device_choice.count())]:
             old = self.device_choice.currentText()
@@ -285,7 +331,7 @@ class Monitor(QtWidgets.QMainWindow):
             latest = record.get("latest", {})
             gpu = record.get("physical_gpu", {})
             device_label = f"{gpu.get('index', '?')}: {gpu.get('name', 'GPU')}" if gpu else record.get("device", record.get("gpu"))
-            values = [run_id, record.get("architecture"), record.get("seed"), device_label, latest.get("training_step", record.get("training_step")), latest.get("reward_mean"), latest.get("task_success"), 100*latest["llm_call_rate"] if latest.get("llm_call_rate") is not None else None, record.get("status", "queued")]
+            values = [run_id, record.get("architecture"), record.get("seed"), device_label, latest.get("training_step", record.get("training_step")), latest.get("reward_mean"), latest.get("task_success"), 100*latest["llm_call_rate"] if latest.get("llm_call_rate") is not None else None, STATUS_LABELS.get(record.get("status", "queued"), display(record.get("status")))]
             for column, value in enumerate(values):
                 self.runs.setItem(row, column, QtWidgets.QTableWidgetItem(display(value)))
             if run_id == self.selected:
@@ -333,11 +379,11 @@ class Monitor(QtWidgets.QMainWindow):
             for curve in self.curves.values():
                 curve.setData([], [])
             self.action_bars.setOpts(height=[0] * len(ACTIONS))
-            self.brain.setPlainText("No metrics reported for this run")
+            self.brain.setPlainText("この実験の計測データはまだありません")
             return
         origin = timestamp(history[0].get("timestamp"))
         end = timestamp(history[-1].get("timestamp"))
-        duration = {"1 min": 60, "5 min": 300, "all": float("inf")}[self.period.currentText()]
+        duration = {"1分": 60, "5分": 300, "全期間": float("inf")}[self.period.currentText()]
         visible = [record for record in history if timestamp(record.get("timestamp")) >= end-duration]
         for key, curve in self.curves.items():
             points = [(timestamp(record.get("timestamp"))-origin, record[key]) for record in visible if isinstance(record.get(key), (int, float))]
@@ -349,7 +395,7 @@ class Monitor(QtWidgets.QMainWindow):
         if len(distribution) == 6:
             self.action_bars.setOpts(height=distribution)
         fields = {key: value for key, value in latest.items() if any(word in key.lower() for word in ("hidden", "module", "salience", "persistence", "novelty", "retention", "habituation"))}
-        self.brain.setPlainText("\n".join(f"{key}: {display(value)}" for key, value in fields.items()) or "No internal-state metrics reported")
+        self.brain.setPlainText("\n".join(f"{STATE_LABELS.get(key, key)}：{display(value)}" for key, value in fields.items()) or "内部状態の計測データはありません")
 
     def set_episodes(self, data):
         if isinstance(data, dict):
@@ -360,7 +406,7 @@ class Monitor(QtWidgets.QMainWindow):
         self.episode_data = data
         self.episode_choice.blockSignals(True)
         self.episode_choice.clear()
-        self.episode_choice.addItems([f"Episode {i} · {display(episode.get('scenario', 'evaluation'))}" if isinstance(episode, dict) else f"Episode {i}" for i, episode in enumerate(data)])
+        self.episode_choice.addItems([f"エピソード {i} · {scenario_name(episode.get('scenario', 'evaluation'))}" if isinstance(episode, dict) else f"エピソード {i}" for i, episode in enumerate(data)])
         self.episode_choice.blockSignals(False)
         self.episode_choice.setCurrentIndex(min(max(0, old), len(data)-1))
         self.show_episode(self.episode_choice.currentIndex())
@@ -383,23 +429,35 @@ class Monitor(QtWidgets.QMainWindow):
     def set_languages(self, events):
         self.languages.setRowCount(len(events))
         for i, event in enumerate(reversed(events)):
-            values = [human_time(event.get("timestamp")), event.get("run_id", self.selected), event.get("scenario"), event.get("reason", event.get("signals", event.get("event"))), event.get("core_confidence", event.get("confidence")), event.get("oracle_required", event.get("required_llm")), event.get("j72_called"), event.get("j72_latency", event.get("latency_ms")), event.get("response", event.get("error", event.get("status")))]
+            values = [human_time(event.get("timestamp")), event.get("run_id", self.selected), scenario_name(event.get("scenario")), event.get("reason", event.get("signals", event.get("event"))), event.get("core_confidence", event.get("confidence")), event.get("oracle_required", event.get("required_llm")), event.get("j72_called"), event.get("j72_latency", event.get("latency_ms")), event.get("response", event.get("error", STATUS_LABELS.get(event.get("status"), display(event.get("status")))))]
             for j, value in enumerate(values):
                 item = QtWidgets.QTableWidgetItem(display(value)[:1000])
                 item.setToolTip(display(value))
                 self.languages.setItem(i, j, item)
+
+    def confirm_stop(self):
+        dialog = QtWidgets.QMessageBox(self)
+        dialog.setWindowTitle("学習を停止しますか？")
+        dialog.setText("学習を停止しますか？")
+        dialog.setInformativeText(f"{self.selected} のチェックポイントを保存して停止します。")
+        dialog.setIcon(QtWidgets.QMessageBox.Question)
+        stop_button = dialog.addButton("停止する", QtWidgets.QMessageBox.AcceptRole)
+        cancel_button = dialog.addButton("キャンセル", QtWidgets.QMessageBox.RejectRole)
+        dialog.setDefaultButton(cancel_button)
+        dialog.exec_()
+        return dialog.clickedButton() == stop_button
 
     def control(self, command):
         if command == "start":
             body = {"config": self.config_choice.currentText(), "device": self.device_choice.currentText()}
         else:
             if not self.selected:
-                self.statusBar().showMessage("Select a run first", 5000)
+                self.statusBar().showMessage("先に実験を選択してください", 5000)
                 return
-            if command == "stop" and QtWidgets.QMessageBox.question(self, "Stop training?", f"Save checkpoint and stop {self.selected}?", QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No) != QtWidgets.QMessageBox.Yes:
+            if command == "stop" and not self.confirm_stop():
                 return
             body = {"run_id": self.selected}
-        self.request("/api/run/" + command, lambda result: self.statusBar().showMessage(display(result), 10000), body)
+        self.request("/api/run/" + command, lambda result: self.statusBar().showMessage(f"{result.get('run_id', '実験')}：{COMMAND_LABELS[command]}を要求しました（{STATUS_LABELS.get(result.get('status'), '受付済み')}）", 10000), body)
 
     def closeEvent(self, event):
         self.closing = True
@@ -413,8 +471,8 @@ class Monitor(QtWidgets.QMainWindow):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--server", default="http://127.0.0.1:8097")
+    parser = argparse.ArgumentParser(description="K0人工脳幹の学習モニター")
+    parser.add_argument("--server", default="http://127.0.0.1:8097", help="監視サーバーの接続先URL")
     args = parser.parse_args()
     application = QtWidgets.QApplication(sys.argv)
     window = Monitor(args.server)
