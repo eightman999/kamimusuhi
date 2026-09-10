@@ -21,11 +21,12 @@ def make_report(root):
     with (root/'run_summary.csv').open('w',newline='') as f:
         w=csv.DictWriter(f,fields,lineterminator='\n');w.writeheader();w.writerows(rows)
     arches=sorted(set(r['architecture'] for r in rows));fig,ax=plt.subplots(figsize=(8,5))
+    colors={arch:plt.get_cmap('tab10')(i) for i,arch in enumerate(arches)}
     for arch in arches:
         subset=[r for r in rows if r['architecture']==arch]
-        ax.scatter([r['llm_call_rate'] for r in subset],[r['task_success'] for r in subset],label=arch)
+        ax.scatter([r['llm_call_rate'] for r in subset],[r['task_success'] for r in subset],label=arch,color=colors[arch])
         for r in subset:
-            curve=evaluations[r['run_id']]['pareto'];ax.plot([x['llm_call_rate'] for x in curve],[x['task_success'] for x in curve],alpha=.25)
+            curve=evaluations[r['run_id']]['pareto'];ax.plot([x['llm_call_rate'] for x in curve],[x['task_success'] for x in curve],alpha=.3,color=colors[arch])
     ax.set(xlabel='LLM call rate',ylabel='Task success',title='K0 held-out policy tradeoffs (points: trained gate; lines: logit bias sweep)');ax.legend();fig.tight_layout();fig.savefig(root/'pareto.png',dpi=150);plt.close(fig)
     curves=root/'learning_curves';curves.mkdir(exist_ok=True)
     for arch in arches:

@@ -37,6 +37,11 @@ def evaluate(model,config,episodes=512,seed=900001,ood=None,device='cpu',gate_bi
     return result,records
 
 
+def checkpoint_metadata(path):
+    path=Path(path);cp=torch.load(path,map_location='cpu',weights_only=False)
+    return {'filename':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'update':cp['update'],'stage':'imitation' if cp['update']<=cp['config']['imitation_updates'] else 'ppo','stage_recorded':cp['stage']}
+
+
 def evaluate_checkpoint(checkpoint,device='cpu',episodes=512):
     torch.set_num_threads(4);model,c=load(checkpoint,device)
     result,records=evaluate(model,c,episodes=episodes,device=device,save_episode=True)
@@ -55,19 +60,19 @@ def evaluate_checkpoint(checkpoint,device='cpu',episodes=512):
         start=time.perf_counter()
         for _ in range(500):cpu(x,s)
     result['cpu_inference_latency_ms']=(time.perf_counter()-start)*2
-    cp=torch.load(checkpoint,map_location='cpu',weights_only=False)
-    result['checkpoint']={'filename':Path(checkpoint).name,'sha256':hashlib.sha256(Path(checkpoint).read_bytes()).hexdigest(),'update':cp['update'],'stage':'imitation' if cp['update']<=c['imitation_updates'] else 'ppo','stage_recorded':cp['stage']}
+    result['checkpoint']=checkpoint_metadata(checkpoint)
     result['config']=c
     directory=Path(checkpoint).parent
     atomic(directory/'evaluation.json',result);atomic(directory/'episodes.json',records)
     warm=directory/'warmup.pt'
     if warm.exists() and Path(checkpoint).name!='warmup.pt':
         wm,wc=load(warm,device);before,_=evaluate(wm,wc,episodes=episodes,device=device)
+        before['checkpoint']=checkpoint_metadata(warm)
         atomic(directory/'warmup_evaluation.json',before)
     final=directory/'checkpoint.pt'
     if final.exists():
         fm,fc=load(final,device);fe,_=evaluate(fm,fc,episodes=episodes,device=device)
-        fe['checkpoint']='checkpoint.pt';atomic(directory/'final_evaluation.json',fe)
+        fe['checkpoint']=checkpoint_metadata(final);atomic(directory/'final_evaluation.json',fe)
     return result
 
 
