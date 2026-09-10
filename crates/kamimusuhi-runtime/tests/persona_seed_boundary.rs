@@ -58,6 +58,10 @@ fn ok(args: &[&str]) -> serde_json::Value {
 fn persona_provider(base_url: String) -> PersonaProviderConfig {
     PersonaProviderConfig {
         backend_id: PERSONA,
+        // The fixture endpoint is a loopback socket this test started, but
+        // the declaration is still made explicitly: an undeclared boundary
+        // reads as external, and a test should not lean on that default.
+        locality: LocalityClass::LocalHost,
         base_url,
         model: "fixture-persona".to_owned(),
         auth_env: None,
