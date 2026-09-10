@@ -124,7 +124,10 @@ class Evidence:
             return None
         try:
             raw = path.read_bytes()
-            value = [json.loads(line) for line in raw.splitlines() if line.strip()] if path.suffix == ".jsonl" else json.loads(raw)
+            def reject_nonfinite(value):
+                raise ValueError(f"non-finite JSON constant: {value}")
+            decode = lambda content: json.loads(content, parse_constant=reject_nonfinite)
+            value = [decode(line) for line in raw.splitlines() if line.strip()] if path.suffix == ".jsonl" else decode(raw)
         except (OSError, ValueError):
             self.errors.append(f"{scope}/{filename}: 読み取り失敗")
             return None
@@ -167,6 +170,7 @@ def frame_summary(records):
             continue
         values, masks, quality, ages = arrays
         if (all(finite(x) and 0 <= x <= 1 for x in values + masks + quality)
+                and all(mask in (0, 1) and (q > 0 if mask else q == 0 and value == 0) for value, mask, q in zip(values, masks, quality))
                 and all(x is None or finite(x) and x >= 0 for x in ages)
                 and frame.get("normalization_identity") and frame.get("provenance") and finite(frame.get("timestamp"))):
             valid += 1
@@ -210,6 +214,7 @@ def generate(artifacts, policy_artifacts=None, live_artifacts=None, output=None)
     resources = mapping(evidence.read("resource_summary.json"))
     runtime = mapping(evidence.read("final_runtime_state.json"))
     baseline = mapping(evidence.read("baseline_integrity.json"))
+    attempts = evidence.read("acquisition_attempts.json")
     commits = evidence.read("commits.json")
     validation = mapping(evidence.read("validation_results.json"))
     mac_info, master_info, frame_info = telemetry_summary(mac), telemetry_summary(master), frame_summary(frames)
@@ -244,6 +249,7 @@ def generate(artifacts, policy_artifacts=None, live_artifacts=None, output=None)
                          "research_status": criteria["research_status"], "best_core_validation_only": best,
                          "telemetry": {"mac": mac_info, "master": master_info}, "frame": frame_info,
                          "probe_gate": probe_gate, "replay_comparisons": comparisons, "counterfactual_comparison": cf_comparison,
+                         "acquisition_attempts": attempts,
                          "live_comparisons": live_comparisons, "source_hashes": evidence.inputs, "read_errors": evidence.errors,
                          "statistical_unit": "training seed; shared heldout workloads, not 1 Hz samples"}
     sections = []
@@ -273,7 +279,7 @@ def generate(artifacts, policy_artifacts=None, live_artifacts=None, output=None)
     section(7, f"保存 workload block 数: {len(workloads)}。split件数: {f(splits)}。\n\n"
             "事前計画は48 block、train24 / validation8 / test16。idle、CPU、RTX3060、P100、dual GPU、mixed、disk I/O、network transferを含み、split境界に35秒の記録区間を置く。固定4種類の行列乗算を CPU/RTX3060/P100 で無作為順に測定する。計算 job は実処理だが言語理解の代理ではない。実LLM workloadのrecord-only証拠は別収集・別artifactで確認する。\n\n"
             "1回ずつの action別測定は短時間のpaired測定であり、同時の物理反実仮想ではない。収集 sample 数を独立実験数と数えない。\n\n"
-            "初回primary収集は24block後のMac sleep（壁時計約805秒、monotonic約1秒）により安全停止した。中断記録を保持し、driver期間中のidle-sleep抑制を追加して同条件のprimary_v2を再取得した。初回中断データは今回のprimary集計・独立nに混ぜない。")
+            "初回primary収集は24block後のMac sleep（壁時計約805秒、monotonic約1秒）により安全停止した。中断記録を保持し、driver期間中のidle-sleep抑制を追加して同条件のprimary_v2を再取得した。初回中断データは今回のprimary集計・独立nに混ぜない。\n\n取得試行の監査記録: " + f(attempts))
     section(8, "ridge λ=10、特徴標準化・target SDはtrainだけでfit。未来10秒のGPU使用率と、次jobの実測最小完了時間を区別する。validationで有効非定数targetが2種類以上かつ BODY の正規化MAEが BLIND より10%以上低いことを学習開始 gate とする。\n\n" +
             table(("validation gate", "値"), (("PASS", probe_gate.get("pass")), ("相対 MAE 改善", probe_gate.get("relative_mae_improvement")), ("target", probe_gate.get("targets")), ("BODY / BLIND / SHUFFLED / STALE MAE", probe_gate.get("normalized_mae")), ("test probe 実施", probe.get("test_evaluated")))) +
             ("\n\nvalidation gate が通っていないため policy 学習・held-out評価の成功は主張しない。未実施は未実施として記録する。" if probe_gate.get("pass") is not True else "\n\nprobe の gate は記述的な事前screening。これ単独で研究成功や身体情報の因果価値とは呼ばない。"))

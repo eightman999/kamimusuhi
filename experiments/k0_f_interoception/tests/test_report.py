@@ -101,6 +101,14 @@ class ReportTest(unittest.TestCase):
         self.assertFalse(result["gates"]["probe_validation_gate"])
         self.assertIn("validation gate が通っていない", (self.out / "K0_F_REPORT.md").read_text())
 
+    def test_nonfinite_saved_json_is_rejected_and_reported(self):
+        self.fixture()
+        (self.root / "live_results.json").write_text('{"value":NaN}')
+        stats, result = generate(self.root, output=self.out)
+        self.assertEqual(result["research_status"], "FAIL")
+        self.assertFalse(result["gates"]["evidence_readable"])
+        self.assertIn("live/live_results.json", stats["read_errors"][0])
+
 
 if __name__ == "__main__":
     unittest.main()
