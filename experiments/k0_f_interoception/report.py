@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import statistics
+from datetime import datetime, timezone
 from pathlib import Path
 
 SECTIONS = (
@@ -39,6 +40,10 @@ def f(value, digits=6):
     if isinstance(value, (list, dict)):
         return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return str(value).replace("|", "\\|").replace("\n", " ")
+
+
+def timestamp_text(value):
+    return datetime.fromtimestamp(value, timezone.utc).isoformat(timespec="seconds") if finite(value) else "未取得"
 
 
 def table(headers, records):
@@ -290,15 +295,15 @@ def generate(artifacts, policy_artifacts=None, live_artifacts=None, output=None)
             "初回primary収集は24block後のMac sleep（壁時計約805秒、monotonic約1秒）により安全停止した。中断記録を保持し、driver期間中のidle-sleep抑制を追加して同条件のprimary_v2を再取得した。初回中断データは今回のprimary集計・独立nに混ぜない。\n\n取得試行の監査記録: " + f(attempts) +
             "\n\n既存J72による実LLMの独立record-only区間:\n\n" +
             table(("workload", "model", "source", "開始", "終了", "request数", "record-only", "PID", "終了コード"),
-                  ((r.get("workload_label"), r.get("model"), r.get("source_kind"), r.get("start_timestamp", r.get("start")),
-                    r.get("end_timestamp", r.get("end")), r.get("requests"), r.get("record_only"), r.get("pid"), r.get("returncode")) for r in rows(record_only_workloads))) +
+                  ((r.get("workload_label"), r.get("model"), r.get("source_kind"), timestamp_text(r.get("start_timestamp", r.get("start"))),
+                    timestamp_text(r.get("end_timestamp", r.get("end"))), r.get("requests"), "はい" if r.get("record_only") else "いいえ", r.get("pid"), r.get("returncode")) for r in rows(record_only_workloads))) +
             "\n\nこの実LLM区間はtelemetry取得の観測証拠として別保存する。primary_v2の学習・validation・held-out・seed統計には混ぜず、行列計算policyの言語能力評価とは扱わない。")
-    section(8, "ridge λ=10、特徴標準化・target SDはtrainだけでfit。未来10秒のGPU使用率と、次jobの実測最小完了時間を区別する。validationで有効非定数targetが2種類以上かつ BODY の正規化MAEが BLIND より10%以上低いことを学習開始 gate とする。\n\n" +
-            table(("validation gate", "値"), (("PASS", probe_gate.get("pass")), ("相対 MAE 改善", probe_gate.get("relative_mae_improvement")), ("target", probe_gate.get("targets")), ("BODY / BLIND / SHUFFLED / STALE MAE", probe_gate.get("normalized_mae")), ("test probe 実施", probe.get("test_evaluated")))) +
+    section(8, "ridge λ=10、特徴標準化・target SDはtrainだけでfit。初回v1はBODY 1.323946 / BLIND 0.607069でFAIL。I/O特徴のtrain SDが約0.00005894と微小で、validation変動が最大62.59 SDへ増幅されていた。test成績を見ずにbody特徴のSD下限0.05だけを一度修正し、target・λ・10%gateを維持したv2もFAILだった。未来10秒のGPU使用率と、次jobの実測最小完了時間を区別する。validationで有効非定数targetが2種類以上かつ BODY の正規化MAEが BLIND より10%以上低いことを学習開始 gate とする。\n\n" +
+            table(("validation gate", "値"), (("PASS", probe_gate.get("pass")), ("相対 MAE 改善", probe_gate.get("relative_mae_improvement")), ("target", probe_gate.get("targets")), ("BODY / BLIND / SHUFFLED / STALE MAE", probe_gate.get("normalized_mae")), ("test probe 実施", "実施" if probe.get("test_evaluated") is True else "未実施（validation gate未達）"))) +
             ("\n\nvalidation gate が通っていないため、後続policy・ablation・OOD・liveは探索的診断として区別する。v1不合格を保存し、標準化SDのfloorを0.05へ修正した一回のv2も不合格。成功閾値を変更せず、追加probe探索で成功を探さない。後続成績にかかわらず研究全体はFAIL。" if exploratory else
              "\n\nvalidation gate が通っていないため policy 学習・held-out評価の成功は主張しない。未実施は未実施として記録する。" if probe_gate.get("pass") is not True else "\n\nprobe の gate は記述的な事前screening。これ単独で研究成功や身体情報の因果価値とは呼ばない。"))
     section(9, ("**探索的診断として実施。予測probe不合格後の実験であり、事前の学習開始gateを通過した確証試験ではない。研究全体FAILを固定する。別学習BLINDを含む全結果を表示し、良好な条件だけを採用しない。**\n\n" if exploratory else "") +
-            table(("保存 training config", "値"), ((key, config.get(key)) for key in ("experiment_scope", "seeds", "hidden_sizes", "epochs", "batch_size", "learning_rate", "device", "selection", "PPO", "DAgger", "source_commit"))) +
+            table(("保存 training config", "値"), ((key, ("実施" if config.get(key) else "未実施") if key in ("PPO", "DAgger") else config.get(key)) for key in ("experiment_scope", "seeds", "hidden_sizes", "epochs", "batch_size", "learning_rate", "device", "selection", "PPO", "DAgger", "source_commit"))) +
             "\n\nGRU128 BODY と独立 BLIND を同一seed・初期重み・task順で教師学習。utilityは `1-min(latency/deadline,2)`、実行失敗は-1。lossは teacher cross entropy + expected utility regret。1 episodeに1資源選択であり、replay actionは次rowを変えないので DAggerは実施しない。PPOも実施しない。validation utility最大の最初のbestと最終epochを別保存する。\n\n" +
             table(("validation-only 選定", "値"), best.items()) + "\n\nGRU64: " + ("保存runあり。" if any(row.get("architecture") == "GRU64" for row in rows(run_summary)) else "未実施。軽量構造との優越性は未検証。") +
             "\n\nfinal checkpoint は `final_checkpoint_results.json` に別保存し、primaryをbestから置換しない。final比較の保存行数: " + str(len(rows(finals))))
@@ -335,16 +340,16 @@ def generate(artifacts, policy_artifacts=None, live_artifacts=None, output=None)
     section(17, "独立単位は training seed 0–7。同seed・同評価task列の平均utility差をpairedで比較し、mean・sample SD・median・20,000回seed bootstrap 95% CI・両側exact sign pを保存する。各primaryは n>=8、mean>0、CI下限>0、p<=.05の積条件。telemetry sampleや同一seedのepisodeを独立nとして増やさない。\n\n"
             "CIは固定held-out workloadを共有した学習seed変動だけを表す。未知workload母集団や長期環境変動は含まない。複数比較のpは未補正で、事前指定primaryは全条件成立を要求し、補助比較は探索的に解釈する。\n\n統計機械可読値: `report_statistics.json`、`ablation_results.json`、`live_results.json`。")
     section(18, "資源別コスト行列は順次実測で同時反実仮想ではない。replayで良好でも実ジョブの有効性は別検証が必要。新規liveも同一装置・有限workload cohortであり、一般的な身体・未知機械・長期日常環境への汎化を証明しない。\n\n"
-            "低次元の負荷・圧力はproxyを含む。Mac生温度は未取得で、memory proxyとOS pressureは異なる。sensor permutation/noise等は合成介入、実ネットワーク障害・GPU故障・危険温度試験ではない。行列計算jobの効用改善を言語能力や主観的感覚の証拠へ拡張しない。実ジョブのfinite/checksum検査は出力行列の最初の1行を対象とし、全要素の数値正当性検査ではない。独立double参照との検査行checksum差は最大7.76e-7だった。GRU64やPPO未実施ならその優劣は不明。\n\n"
+            "低次元の負荷・圧力はproxyを含む。Mac生温度は未取得で、memory proxyとOS pressureは異なる。sensor permutation/noise等は合成介入、実ネットワーク障害・GPU故障・危険温度試験ではない。行列計算jobの効用改善を言語能力や主観的感覚の証拠へ拡張しない。実ジョブのfinite/checksum検査は出力行列の最初の1行を対象とし、全要素の数値正当性検査ではない。独立double参照との検査行checksum差は最大7.76e-7だった。GRU64・PPO・MASTER_ONLY/MAC_ONLYの独立比較は未実施で、その優劣やMac追加価値は未確認。Mac欠損の合成介入だけで末梢ノードの追加価値を証明しない。\n\n"
             "無負荷・高負荷の区別だけで成功としない。現在の正しいbodyとdownstream outcomeの改善が成立しないときは研究FAILを維持する。")
     section(19, table(("成功条件", "判定"), gates.items()) + f"\n\n全条件の結合: **{criteria['research_status']}**。欠損・読取失敗・未実施は未検証でありPASSへ置換しない。")
     section(20, ("保存実測再生の3比較、反実仮想、凍結Coreからの新規実ジョブ、安全・再現性の全gateが成立した。限定された計算資源選択taskにおいて、現在身体情報への因果依存と下流効用改善を確認した。主観的感覚や一般知能を示すものではない。" if criteria["research_status"] == "PASS" else
                  "機械身体情報を取得・正規化・入力・検証する実験基盤と、研究上成立した条件を残す。全gateが成立していないため、「身体感覚を獲得した」「実資源判断を有意に改善した」という総合的な成功主張はしない。失敗条件からsensor設計・学習・評価のどこを改善すべきか判断する。"))
-    section(21, "K0-G Visual Peripheral Sense、K0-H Auditory Peripheral Senseは次候補として挙げるに留める。camera・microphone・gaze・VAD等を自動実装しない。今回の結果、未達gate、安全・runtime cleanupを確認した後、次phaseへの最終承認を一度だけユーザーへ求める。")
+    section(21, ("現段階で次phaseへの昇格は推奨しない。SHUFFLED差と新規実ジョブの独立BLIND差、probeを新しい独立データと事前固定した設計で再検証することを優先する。今回のtestを使う追加調整は行わない。\n\n" if criteria["research_status"] == "FAIL" else "") + "K0-G Visual Peripheral Sense、K0-H Auditory Peripheral Senseは次候補として挙げるに留める。camera・microphone・gaze・VAD等を自動実装しない。今回の結果、未達gate、安全・runtime cleanupを確認した後、次phaseへの最終承認を一度だけユーザーへ求める。")
     section(22, "source commit、source file hash、dataset hash、normalization identity、schema、seed、best/final checkpoint hashを保存する。rawは実測を維持し、synthetic介入と別管理する。checkpointバイナリを無条件でGitへ追加しない。接続情報はGit除外済みprivate設定から取得し、報告書・raw・学習configへ記録しない。\n\n" +
             table(("再現性", "値"), (("source_commit", config.get("source_commit")), ("training identities", config.get("identities")), ("live checkpoint identities", live_config.get("checkpoint_sha256")), ("baseline pass", baseline.get("pass")), ("reproducibility_pass", resources.get("reproducibility_pass")))) +
             "\n\n保存結果からの再生成:\n\n```sh\npython -m experiments.k0_f_interoception.visualize --artifacts ARTIFACTS\npython -m experiments.k0_f_interoception.report --artifacts ARTIFACTS --policy-artifacts POLICY --live-artifacts LIVE\n```\n\n収集・学習の正確な引数と停止手順は実験READMEを参照。必須図: " + "、".join(f"[{name}]({name})" for name in PLOTS) + "。")
-    section(23, table(("最終runtime", "値"), runtime.items()) + "\n\n停止したことと負荷・温度の通常範囲への復帰を別々に確認する。今回所有したsensor・training worker・背景workload・transportのみを終了し、既存serviceを開始前状態へ戻す。無関係なGPU processを停止しない。停止証拠がなければcleanupをPASSにしない。")
+    section(23, table(("最終runtime", "値"), ((key, ("はい" if value else "いいえ") if isinstance(value, bool) and key != "cleanup_pass" else value) for key, value in runtime.items())) + "\n\n停止したことと負荷・温度の通常範囲への復帰を別々に確認する。今回所有したsensor・training worker・背景workload・transportのみを終了し、既存serviceを開始前状態へ戻す。無関係なGPU processを停止しない。停止証拠がなければcleanupをPASSにしない。")
     commit_rows = rows(commits)
     section(24, table(("commit", "内容"), ((row.get("hash"), row.get("subject")) for row in commit_rows)) if commit_rows else
             "実装・実験単位でcommitし、外部pushは行わない。最終結果commitを含む一覧は、親agentが最終commit後に `commits.txt` と最終回答へ追記する。生成時点の学習source commit: " + f(config.get("source_commit")))
