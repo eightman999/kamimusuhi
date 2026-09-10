@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ja">
 <head>
 <meta charset="utf-8">
 <title>MIOBA Observatory</title>
@@ -8,93 +8,205 @@
   :root { --bg:#0f1218; --panel:#181d26; --line:#2a3140; --fg:#e6e9ef; --dim:#8a93a6;
           --live:#3ddc84; --rec:#5aa9ff; --der:#f6c343; --warn:#ff9f43; --err:#ff5c5c; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
-  header { display:flex; align-items:center; gap:18px; padding:10px 18px; border-bottom:1px solid var(--line); background:#131820; position:sticky; top:0; z-index:5; }
-  header h1 { font-size:16px; margin:0; letter-spacing:.04em; }
-  nav a { color:var(--dim); text-decoration:none; margin-right:14px; padding:4px 2px; border-bottom:2px solid transparent; }
+  html, body { max-width:100%; overflow-x:hidden; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 -apple-system,"Segoe UI",Roboto,"Hiragino Sans","Noto Sans JP",Helvetica,Arial,sans-serif; }
+  header { display:flex; align-items:center; gap:12px 18px; padding:8px 14px; border-bottom:1px solid var(--line); background:#131820; position:sticky; top:0; z-index:5; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; letter-spacing:.04em; white-space:nowrap; }
+  nav { display:flex; flex-wrap:wrap; gap:2px 12px; }
+  nav a { color:var(--dim); text-decoration:none; padding:4px 2px; border-bottom:2px solid transparent; white-space:nowrap; }
   nav a.active { color:var(--fg); border-color:var(--live); }
-  #exp { margin-left:auto; color:var(--dim); font-family:ui-monospace,Menlo,monospace; font-size:12px; }
-  main { padding:16px 18px; max-width:1500px; margin:0 auto; }
-  .grid { display:grid; gap:12px; }
-  .g2 { grid-template-columns:repeat(2,1fr);} .g3{grid-template-columns:repeat(3,1fr);} .g4{grid-template-columns:repeat(4,1fr);}
-  @media (max-width:1000px){ .g2,.g3,.g4{grid-template-columns:1fr;} }
+  #exp { margin-left:auto; color:var(--dim); font-family:ui-monospace,Menlo,monospace; font-size:12px; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+  #lang { color:var(--dim); font-size:11px; cursor:pointer; }
+  main { padding:14px; max-width:1500px; margin:0 auto; }
+  .grid { display:grid; gap:12px; min-width:0; }
+  .g2 { grid-template-columns:repeat(2,minmax(0,1fr));} .g3{grid-template-columns:repeat(3,minmax(0,1fr));} .g4{grid-template-columns:repeat(4,minmax(0,1fr));}
+  .g21 { grid-template-columns:2fr 1fr; }
+  .workers { grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); }
+  @media (max-width:1000px){ .g3,.g4{grid-template-columns:repeat(2,minmax(0,1fr));} .g21{grid-template-columns:1fr;} }
+  @media (max-width:640px){ .g2,.g3,.g4,.workers{grid-template-columns:1fr;} main{padding:10px;} }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; min-width:0; }
-  .panel h2 { margin:0 0 8px; font-size:13px; color:var(--dim); text-transform:uppercase; letter-spacing:.08em; display:flex; align-items:center; gap:8px; }
-  .kind { font-size:10px; padding:1px 6px; border-radius:10px; border:1px solid; text-transform:none; letter-spacing:0; }
+  .panel h2 { margin:0 0 8px; font-size:13px; color:var(--dim); letter-spacing:.04em; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .kind { font-size:10px; padding:1px 6px; border-radius:10px; border:1px solid; letter-spacing:0; cursor:help; }
   .kind.LIVE{color:var(--live);border-color:var(--live);} .kind.RECORDED{color:var(--rec);border-color:var(--rec);} .kind.DERIVED{color:var(--der);border-color:var(--der);}
-  .big { font-size:26px; font-weight:600; }
-  .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 14px; font-size:13px; }
-  .kv div:nth-child(odd){ color:var(--dim); }
+  .big { font-size:26px; font-weight:600; overflow-wrap:anywhere; }
+  .kv { display:grid; grid-template-columns:auto minmax(0,1fr); gap:2px 14px; font-size:13px; }
+  .kv div:nth-child(odd){ color:var(--dim); white-space:nowrap; }
+  .kv div:nth-child(even){ overflow-wrap:anywhere; }
   table { width:100%; border-collapse:collapse; font-size:12.5px; }
   th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
   th { color:var(--dim); font-weight:500; position:sticky; top:0; background:var(--panel); }
   .scroll { max-height:520px; overflow:auto; }
+  .xscroll { overflow-x:auto; max-width:100%; }
   .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
   .id { cursor:pointer; color:var(--rec); }
   .id:hover { text-decoration:underline; }
   .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; background:#232a37; }
-  .st-running,.st-online{ color:var(--live);} .st-paused,.st-stopping,.st-lost{color:var(--warn);} .st-stopped,.st-offline,.st-error{color:var(--err);}
+  .st-running,.st-online,.st-SUCCEEDED{ color:var(--live);} .st-paused,.st-stopping,.st-lost,.st-UNKNOWN,.st-QUEUED{color:var(--warn);} .st-stopped,.st-offline,.st-error,.st-FAILED{color:var(--err);}
   .sev-warn{ color:var(--warn);} .sev-error{ color:var(--err);}
-  canvas { width:100%; height:120px; display:block; }
+  canvas { width:100%; height:120px; display:block; max-width:100%; }
   .chart-title { font-size:12px; color:var(--dim); margin:6px 0 2px; }
   .legend span { margin-right:12px; font-size:11px; }
   .legend i { display:inline-block; width:10px; height:10px; margin-right:4px; border-radius:2px; vertical-align:middle;}
   .muted { color:var(--dim); }
-  input, select { background:#0f141c; color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:4px 6px; font-size:12px; }
+  input, select { background:#0f141c; color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:4px 6px; font-size:12px; max-width:100%; }
   .toolbar { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
   .bar { height:6px; background:#0f141c; border-radius:3px; overflow:hidden; }
   .bar i { display:block; height:100%; background:var(--rec); }
-  .tree { font-family:ui-monospace,Menlo,monospace; font-size:12px; }
-  .tree div { padding:2px 0; }
+  .tree { font-family:ui-monospace,Menlo,monospace; font-size:12px; overflow-x:auto; }
+  .tree div { padding:2px 0; white-space:nowrap; }
   #err { color:var(--err); font-size:12px; }
+  .alerts { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
+  .alert { border-left:4px solid var(--warn); background:#1f1a14; padding:8px 12px; border-radius:6px; font-size:13px; display:flex; gap:10px; flex-wrap:wrap; align-items:baseline; }
+  .alert.error { border-color:var(--err); background:#231517; }
+  .alert .ts { color:var(--dim); font-size:11px; white-space:nowrap; }
+  .alert .ty { color:var(--dim); font-family:ui-monospace,Menlo,monospace; font-size:11px; }
+  .gpu-title { font-size:15px; color:var(--fg); letter-spacing:0; }
+  .gpu-sub { font-size:12px; color:var(--dim); font-family:ui-monospace,Menlo,monospace; }
+  .ro { color:var(--dim); font-size:11px; white-space:nowrap; }
 </style>
 </head>
 <body>
 <header>
   <h1>MIOBA Observatory</h1>
-  <nav>
-    <a href="#/dashboard" data-r="dashboard">Dashboard</a>
-    <a href="#/population" data-r="population">Population / Lineage</a>
-    <a href="#/organism" data-r="organism">Organism</a>
-    <a href="#/telemetry" data-r="telemetry">MIE / Telemetry</a>
-    <a href="#/events" data-r="events">Events</a>
-  </nav>
+  <nav id="nav"></nav>
   <span id="exp" class="mono"></span>
+  <span id="ro" class="ro"></span>
+  <span id="lang"></span>
 </header>
 <main id="main"></main>
 <script>
+// ---- i18n (presentation layer only; API keys, enums, event types stay English) ----
+const I18N = {
+  ja: {
+    nav: { dashboard:'ダッシュボード', population:'個体群・系譜', organism:'個体インスペクター', telemetry:'MIE / テレメトリ', events:'イベント' },
+    readonly: '監視専用（操作不可）',
+    kind: { LIVE:'ライブ', RECORDED:'記録済み', DERIVED:'算出値' },
+    kindTip: { LIVE:'現在の実行状態', RECORDED:'データベースに保存された実測・履歴データ', DERIVED:'保存データから計算された値' },
+    status: { RUNNING:'実行中', PAUSED:'一時停止', STOPPING:'停止処理中', STOPPED:'停止', QUEUED:'待機中', SUCCEEDED:'成功', FAILED:'失敗', UNKNOWN:'状態不明', CANCELLED:'キャンセル',
+              running:'実行中', paused:'一時停止', stopping:'停止処理中', stopped:'停止', created:'作成済み', online:'オンライン', offline:'オフライン', lost:'切断',
+              info:'情報', warn:'警告', error:'エラー' },
+    event: {
+      worker_joined:'ワーカーが接続しました', worker_lost:'ワーカーとの接続が失われました', worker_offline:'ワーカーがオフラインになりました', worker_failed:'ワーカーがジョブに失敗しました',
+      checkpoint_created:'チェックポイントを作成しました', genome_born:'個体が誕生しました', evaluation_succeeded:'評価が成功しました', evaluation_failed:'評価が失敗しました',
+      job_marked_unknown:'実行中ジョブを状態不明として記録しました', job_requeued:'ジョブを再投入しました', new_best_candidate:'新しい最高適応度候補', new_clade_detected:'新しい系統を検出しました',
+      sensor_anomaly:'センサー異常を検出しました', experiment_paused:'実験を一時停止しました', experiment_resumed:'実験を再開しました', experiment_stopping:'実験の停止処理を開始しました',
+      experiment_stopped:'実験を停止しました', experiment_started:'実験を開始しました', experiment_resumed_from_checkpoint:'チェックポイントから実験を再開しました',
+      runtime_config_changed:'実行環境設定が変更されました', scientific_config_mismatch:'実験条件が変更されています', config_hash_mismatch:'設定ハッシュが保存値と一致しません',
+      stale_result_rejected:'古いワーカー結果を拒否しました', background_error:'バックグラウンド処理でエラーが発生しました', generation_advanced:'世代が進みました' },
+    d: { experiment:'実験', status:'状態', uptime:'稼働時間', id:'実験ID', backend:'バックエンド', host:'ホスト', births:'出生数', birthsEvals:'出生・評価', succeeded:'成功評価数', failed:'失敗評価数',
+         queued:'待機中', running:'実行中', unknown:'状態不明', jobs:'ジョブ', population:'個体数', archive:'評価記録数', popArchive:'個体数・評価記録', cfgHash:'設定ハッシュ', storedCfg:'保存時設定',
+         throughput:'処理速度', evalPerMin:'評価/分', simPerWall:'sim-s / wall-s', window:'集計窓', lastCkpt:'最終チェックポイント', workers:'GPUワーカー', gpuCompare:'異種GPU比較',
+         noWorkers:'登録されたワーカーはありません', recentEvents:'最近のイベント', time:'時刻', type:'種別', severity:'重要度', payload:'内容', alerts:'重要警告', noAlerts:'直近の警告はありません' },
+    w: { worker:'ワーカーID', gpu:'GPU', device:'デバイス', cc:'CC', vram:'VRAM', util:'GPU使用率', temp:'GPU温度', batch:'実行バッチ', job:'実行中ジョブ', completed:'完了ジョブ', failed:'失敗ジョブ',
+         compFailed:'完了 / 失敗ジョブ', hb:'最終ハートビート', bench:'ベンチマーク', benchTp:'処理量 (バッチ×sim-s/wall-s)', uuid:'GPU UUID', driver:'ドライバ / CUDA / Torch', host:'ホスト',
+         chart:'GPU温度 ℃ / GPU使用率 % (10分)', idle:'待機中', unknownGpu:'GPU情報なし' },
+    p: { filter:'ゲノムID / 系統で絞り込み', genomes:'個体', list:'個体一覧', tree:'系譜ツリー（根 = FBA0）', empty:'個体はありません', genome:'ゲノムID', gen:'世代', birth:'出生番号', parents:'親個体',
+         children:'子個体', clade:'系統', fitness:'適応度（暫定）', ancestry:'FBA0由来率', organs:'人工器官', born:'誕生時刻', root:'FBA0 根個体', organ:'器官' },
+    o: { select:'個体を選択', none:'個体はまだありません', identity:'識別情報', hash:'ハッシュ', genBirth:'世代 / 出生番号', seed:'シード', base:'基盤', clades:'系統', created:'作成時刻', schema:'スキーマ',
+         ancestral:'FBA0由来成分', unknown:'不明', noBase:'FBA0のニューロン数が不明です（参照データがコーディネータに未読込）', inherited:'のニューロンを継承（不変の参照',
+         neurons:'ニューロン', extra:'人工ニューロン数', params:'パラメータ（解決後）', ancestryChain:'祖先系譜（FBA0まで）', parents:'親個体', children:'子個体', noParents:'なし（FBA0 根個体）', noChildren:'なし',
+         organs:'人工器官', organ:'器官', kind:'種類', size:'サイズ', origin:'由来', parentGene:'親遺伝子', birthMut:'発生変異', pure:'純粋なFBA0表現型 — 人工器官なし',
+         attachments:'接続', attachment:'接続ID', source:'接続元', target:'接続先', direction:'方向', forward:'順方向', bidirectional:'双方向', weight:'重み倍率', noAtt:'なし',
+         mutations:'パラメータ変異', mutation:'変異ID', path:'パス', op:'操作', value:'値', scope:'範囲', noMut:'パラメータ変異なし', devRules:'発達ルール', plastRules:'可塑性ルール',
+         evals:'評価履歴', evaluation:'評価ID', worker:'ワーカー', backend:'バックエンド', replicates:'反復数 (完了/要求)', batch:'実行バッチ', fitness:'適応度（暫定）', rate:'平均発火率 Hz',
+         active:'活動率', sim:'シミュレーション時間', wall:'実時間', finished:'完了時刻', trace:'記録', full:'完全', summary:'要約' },
+    t: { window:'表示範囲', src:'telemetry_samples + worker_heartbeats；破線 = イベント', experiment:'実験', temp:'GPU温度 ℃（ワーカーハートビート）', util:'GPU使用率 %', vram:'VRAM使用量 MB',
+         stream:'信号・イベントストリーム', time:'時刻', kind:'種別', signal:'種別 / 信号', source:'発生源', value:'値', event:'イベント', sensor:'センサー', nodata:'データなし', min:'分' },
+    e: { type:'種別', all:'すべて', count:'件のイベント', n:'#', time:'時刻', message:'内容', severity:'重要度', source:'発生源', payload:'詳細' },
+    u: { sec:'秒', min:'分', hour:'時間', day:'日' },
+    misc: { none:'—', title:'MIOBA Observatory', fetchErr:'取得に失敗しました' },
+  },
+  /* i18n-en-start */
+  en: {
+    nav: { dashboard:'Dashboard', population:'Population / Lineage', organism:'Organism Inspector', telemetry:'MIE / Telemetry', events:'Events' },
+    readonly: 'read-only observatory',
+    kind: { LIVE:'LIVE', RECORDED:'RECORDED', DERIVED:'DERIVED' },
+    kindTip: { LIVE:'current runtime state', RECORDED:'rows persisted in the database', DERIVED:'computed from recorded rows' },
+    status: {},
+    event: {},
+    d: { experiment:'Experiment', status:'Status', uptime:'Uptime', id:'ID', backend:'Backend', host:'Host', births:'Births', birthsEvals:'Births / Evaluations', succeeded:'Evaluations succeeded', failed:'Evaluations failed',
+         queued:'Queued', running:'Running', unknown:'Unknown', jobs:'Jobs', population:'Population', archive:'Archive', popArchive:'Population / Archive', cfgHash:'Config hash', storedCfg:'Stored cfg',
+         throughput:'Throughput', evalPerMin:'eval/min', simPerWall:'sim-s / wall-s', window:'Window', lastCkpt:'Last checkpoint', workers:'GPU Workers', gpuCompare:'GPU comparison',
+         noWorkers:'No workers registered', recentEvents:'Recent events', time:'Time', type:'Type', severity:'Severity', payload:'Payload', alerts:'Alerts', noAlerts:'No recent warnings' },
+    w: { worker:'Worker ID', gpu:'GPU', device:'Device', cc:'CC', vram:'VRAM', util:'GPU Utilization', temp:'Temperature', batch:'Execution batch', job:'Current Job', completed:'Completed Jobs', failed:'Failed Jobs',
+         compFailed:'Completed / Failed Jobs', hb:'Last Heartbeat', bench:'Benchmark', benchTp:'Throughput (batch × sim-s/wall-s)', uuid:'GPU UUID', driver:'Driver / CUDA / Torch', host:'Host',
+         chart:'Temperature °C / Utilization % (10 min)', idle:'idle', unknownGpu:'No GPU info' },
+    p: { filter:'filter genome id / clade', genomes:'genomes', list:'Genome list', tree:'Lineage tree (root = FBA0)', empty:'empty', genome:'Genome ID', gen:'Generation', birth:'Birth Index', parents:'Parents',
+         children:'Children', clade:'Clade', fitness:'Fitness (placeholder)', ancestry:'Ancestry Fraction', organs:'Artificial Organs', born:'Born', root:'FBA0 root', organ:'organ' },
+    o: { select:'Select an organism', none:'No genomes yet', identity:'Identity', hash:'Hash', genBirth:'Generation / Birth', seed:'Seed', base:'Base', clades:'Clades', created:'Created', schema:'Schema',
+         ancestral:'Ancestral component', unknown:'unknown', noBase:'FBA0 neuron count unavailable (reference data not loaded on coordinator)', inherited:'of neurons inherited from (immutable reference',
+         neurons:'neurons', extra:'Artificial neurons', params:'Parameters (resolved)', ancestryChain:'Ancestry to FBA0', parents:'Parents', children:'Children', noParents:'none (FBA0 root)', noChildren:'none',
+         organs:'Artificial Organs', organ:'Organ', kind:'Kind', size:'Size', origin:'Origin', parentGene:'Parent gene', birthMut:'Birth mutation', pure:'pure FBA0 phenotype — no artificial organs',
+         attachments:'Attachments', attachment:'Attachment', source:'Source', target:'Target', direction:'Direction', forward:'Forward', bidirectional:'Bidirectional', weight:'Weight Scale', noAtt:'none',
+         mutations:'Parameter Mutations', mutation:'Mutation', path:'Path', op:'Op', value:'Value', scope:'Scope', noMut:'no parameter mutations', devRules:'Development rules', plastRules:'Plasticity rules',
+         evals:'Evaluation history', evaluation:'Evaluation', worker:'Worker', backend:'Backend', replicates:'Replicates (done/requested)', batch:'Execution batch', fitness:'Fitness (placeholder)', rate:'Mean rate Hz',
+         active:'Active', sim:'Sim time', wall:'Wall time', finished:'Finished', trace:'Trace', full:'full', summary:'summary' },
+    t: { window:'Window', src:'telemetry_samples + worker_heartbeats; dashed marks = events', experiment:'Experiment', temp:'GPU Temperature °C (worker heartbeats)', util:'GPU Utilization %', vram:'VRAM Used MB',
+         stream:'Sensory / event stream', time:'Timestamp', kind:'Kind', signal:'Type / Signal', source:'Source', value:'Value', event:'event', sensor:'sensor', nodata:'No data', min:'min' },
+    e: { type:'Type', all:'all', count:'events', n:'#', time:'Time', message:'Message', severity:'Severity', source:'Source', payload:'Payload' },
+    u: { sec:'s', min:'min', hour:'h', day:'d' },
+    misc: { none:'—', title:'MIOBA Observatory', fetchErr:'fetch failed' },
+  },
+  /* i18n-en-end */
+};
+let LANG = localStorage.getItem('mioba.lang') || 'ja';
+if (!I18N[LANG]) LANG = 'ja';
+const T = () => I18N[LANG];
+const t = (section, key) => (T()[section] && T()[section][key]) ?? (I18N.ja[section] && I18N.ja[section][key]) ?? key;
+const tStatus = v => v == null ? t('misc','none') : (T().status[v] ?? v);
+const tEvent = ty => T().event[ty] ?? ty;
+const TZ = 'Asia/Tokyo';
+
+// ---- formatting (internal values are UTC ISO8601 / bytes / seconds; display only) ----
 const $ = (s, r=document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const kind = k => k ? `<span class="kind ${esc(k)}">${esc(k)}</span>` : '';
-const short = id => id ? `<span class="mono id" onclick="location.hash='#/organism/${encodeURIComponent(id)}'" title="${esc(id)}">${esc(id.slice(0,18))}…</span>` : '<span class="muted">—</span>';
-const num = (v, d=1) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : Number(v).toFixed(d);
-const fmtTime = t => t ? new Date(t).toLocaleTimeString() : '—';
-const fmtUp = s => { s = Math.floor(s||0); const h=Math.floor(s/3600), m=Math.floor(s%3600/60); return `${h}h ${m}m ${s%60}s`; };
+const kind = k => k ? `<span class="kind ${esc(k)}" title="${esc(t('kindTip',k))} (${esc(k)})">${esc(t('kind',k))}</span>` : '';
+const pill = v => v == null ? '' : `<span class="pill st-${esc(v)}" title="${esc(v)}">${esc(tStatus(v))}</span>`;
+const short = id => id ? `<span class="mono id" onclick="location.hash='#/organism/${encodeURIComponent(id)}'" title="${esc(id)}">${esc(id.slice(0,18))}…</span>` : `<span class="muted">${t('misc','none')}</span>`;
+const num = (v, d=1) => (v === null || v === undefined || Number.isNaN(Number(v))) ? t('misc','none') : Number(v).toFixed(d);
+const DTF = new Intl.DateTimeFormat('ja-JP', { timeZone: TZ, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false });
+const TF  = new Intl.DateTimeFormat('ja-JP', { timeZone: TZ, hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false });
+const jst = (iso, withDate=true) => { const ms = typeof iso === 'number' ? iso : Date.parse(iso); if (!iso || Number.isNaN(ms)) return t('misc','none'); return (withDate ? DTF : TF).format(new Date(ms)) + ' JST'; };
+const fmtTime = (iso, withDate=false) => iso ? `<span title="UTC ${esc(iso)}">${esc(jst(iso, withDate))}</span>` : `<span class="muted">${t('misc','none')}</span>`;
+const fmtDateTime = iso => fmtTime(iso, true);
+const fmtDur = s => { if (s == null || Number.isNaN(Number(s))) return t('misc','none'); s = Math.floor(Number(s)); const u = T().u;
+  if (s < 60) return `${s}${u.sec}`; if (s < 3600) return `${Math.floor(s/60)}${u.min} ${s%60}${u.sec}`;
+  const h = Math.floor(s/3600), m = Math.floor(s%3600/60); return h >= 24 ? `${Math.floor(h/24)}${u.day} ${h%24}${u.hour} ${m}${u.min}` : `${h}${u.hour} ${m}${u.min} ${s%60}${u.sec}`; };
+const fmtMs = ms => ms == null ? t('misc','none') : (ms >= 1000 ? `${num(ms/1000, 2)} ${T().u.sec}` : `${num(ms,0)} ms`);
+const fmtBytes = b => { if (b == null || Number.isNaN(Number(b))) return t('misc','none'); b = Number(b); return b >= 1024**3 ? `${(b/1024**3).toFixed(1)} GB` : `${Math.round(b/1024**2)} MB`; };
+const fmtMB = mb => mb == null ? t('misc','none') : fmtBytes(Number(mb) * 1024**2);
+const fmtVram = (usedMb, totalMb) => usedMb == null && totalMb == null ? t('misc','none') : (totalMb != null && totalMb >= 1024 ? `${num((usedMb||0)/1024,1)} / ${num(totalMb/1024,1)} GB` : `${num(usedMb,0)} / ${num(totalMb,0)} MB`);
+const fmtTemp = c => c == null ? t('misc','none') : `${num(c,0)} ℃`;
+const fmtPct = p => p == null ? t('misc','none') : `${num(p,0)} %`;
 const pj = s => { try { return typeof s === 'string' ? JSON.parse(s) : (s||{}); } catch { return {}; } };
-async function api(p) { const r = await fetch(p); if (!r.ok) throw new Error(`${p} → ${r.status}`); return r.json(); }
+async function api(p) { const r = await fetch(p); if (!r.ok) throw new Error(`${t('misc','fetchErr')}: ${p} → ${r.status}`); return r.json(); }
 let timer = null;
 function schedule(fn, ms) { clearTimeout(timer); timer = setTimeout(fn, ms); }
+const eventRow = e => `<tr><td>${fmtTime(e.at)}</td><td>${esc(tEvent(e.type))}<div class="muted mono" style="font-size:10px">${esc(e.type)}</div></td><td class="sev-${esc(e.severity)}" title="${esc(e.severity)}">${esc(tStatus(e.severity))}</td><td class="mono">${esc(e.payload_json).slice(0,140)}</td></tr>`;
+const alertsHtml = evs => { const rows = evs.filter(e => e.severity === 'warn' || e.severity === 'error').slice(-5).reverse();
+  return `<div class="alerts">${rows.length ? rows.map(e => `<div class="alert ${esc(e.severity)}"><span class="ts">${esc(jst(e.at))}</span><b>${esc(tEvent(e.type))}</b><span class="ty">${esc(e.type)}</span><span class="mono muted" style="font-size:11px;overflow-wrap:anywhere">${esc(e.payload_json).slice(0,160)}</span></div>`).join('') : `<div class="muted" style="font-size:12px">${t('d','noAlerts')}</div>`}</div>`; };
 
 // ---- tiny line chart --------------------------------------------------------
 const COLORS = ['#5aa9ff','#3ddc84','#f6c343','#ff5c5c','#c86dd7','#4fd1c5','#ff9f43','#9fb3c8'];
 function drawChart(canvas, series, opts={}) {
+  if (!canvas) return;
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.clientWidth || 600, H = canvas.clientHeight || 120;
   canvas.width = W*dpr; canvas.height = H*dpr;
   const ctx = canvas.getContext('2d'); ctx.scale(dpr,dpr);
   ctx.clearRect(0,0,W,H);
   const all = series.flatMap(s => s.points);
-  if (!all.length) { ctx.fillStyle='#8a93a6'; ctx.font='12px sans-serif'; ctx.fillText('no data in window', 8, H/2); return; }
+  if (!all.length) { ctx.fillStyle='#8a93a6'; ctx.font='12px sans-serif'; ctx.fillText(t('t','nodata'), 8, H/2); return; }
   const t0 = opts.t0 ?? Math.min(...all.map(p=>p.t)), t1 = opts.t1 ?? Math.max(...all.map(p=>p.t));
   let y0 = opts.y0 ?? Math.min(...all.map(p=>p.v)), y1 = opts.y1 ?? Math.max(...all.map(p=>p.v));
   if (y1 === y0) { y1 = y0 + 1; }
   const pad = {l:38, r:6, t:6, b:16};
-  const X = t => pad.l + (t - t0) / Math.max(1, t1 - t0) * (W - pad.l - pad.r);
+  const X = tt => pad.l + (tt - t0) / Math.max(1, t1 - t0) * (W - pad.l - pad.r);
   const Y = v => H - pad.b - (v - y0) / (y1 - y0) * (H - pad.t - pad.b);
   ctx.strokeStyle = '#2a3140'; ctx.lineWidth = 1;
   for (let i=0;i<=3;i++){ const y = pad.t + i*(H-pad.t-pad.b)/3; ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(W-pad.r,y); ctx.stroke();
     ctx.fillStyle='#8a93a6'; ctx.font='10px sans-serif'; ctx.fillText(num(y1 - i*(y1-y0)/3, 1), 2, y+3); }
-  ctx.fillStyle='#8a93a6'; ctx.fillText(new Date(t0).toLocaleTimeString(), pad.l, H-3); ctx.fillText(new Date(t1).toLocaleTimeString(), W-pad.r-60, H-3);
+  ctx.fillStyle='#8a93a6'; ctx.fillText(TF.format(new Date(t0)), pad.l, H-3); ctx.fillText(TF.format(new Date(t1)), W-pad.r-50, H-3);
   (opts.marks||[]).forEach(m => { ctx.strokeStyle = m.color || '#ff9f43'; ctx.setLineDash([2,3]); ctx.beginPath(); ctx.moveTo(X(m.t),pad.t); ctx.lineTo(X(m.t),H-pad.b); ctx.stroke(); ctx.setLineDash([]); });
   series.forEach((s,i) => {
     ctx.strokeStyle = s.color || COLORS[i%COLORS.length]; ctx.lineWidth = 1.5; ctx.beginPath();
@@ -107,6 +219,13 @@ const pts = (rows, key) => rows.filter(r => r[key] !== null && r[key] !== undefi
 
 // ---- routes -----------------------------------------------------------------
 const routes = { dashboard, population, organism, telemetry, events };
+function renderChrome() {
+  document.documentElement.lang = LANG;
+  $('#nav').innerHTML = Object.keys(routes).map(r => `<a href="#/${r}" data-r="${r}">${esc(t('nav', r))}</a>`).join('');
+  $('#ro').textContent = t('readonly', undefined) === undefined ? '' : T().readonly;
+  $('#lang').innerHTML = Object.keys(I18N).map(l => l === LANG ? `<b>${l.toUpperCase()}</b>` : `<a href="#" data-l="${l}" style="color:var(--dim)">${l.toUpperCase()}</a>`).join(' / ');
+  document.querySelectorAll('#lang a').forEach(a => a.addEventListener('click', ev => { ev.preventDefault(); LANG = a.dataset.l; localStorage.setItem('mioba.lang', LANG); renderChrome(); route(); }));
+}
 function route() {
   clearTimeout(timer);
   const parts = location.hash.replace(/^#\/?/, '').split('/');
@@ -115,59 +234,88 @@ function route() {
   routes[name](decodeURIComponent(parts[1] || '')).catch(e => { $('#main').innerHTML = `<p id="err">${esc(e.message)}</p>`; });
 }
 window.addEventListener('hashchange', route);
-window.addEventListener('load', route);
+window.addEventListener('load', () => { renderChrome(); route(); });
 
 // ---- Dashboard ---------------------------------------------------------------
+function workerCard(w, i) {
+  const ccdev = [w.device, w.compute_capability ? `CC ${w.compute_capability}` : null].filter(Boolean).join(' / ');
+  const total = w.vram_total_mb ?? (w.vram_total_bytes ? w.vram_total_bytes/1024**2 : null);
+  return `
+    <div class="panel">
+      <h2><span class="mono">${esc(w.worker_id)}</span> ${pill(w.status)} ${kind(w.kind)}</h2>
+      <div class="gpu-title">${esc(w.gpu_model || w.gpu_name || t('w','unknownGpu'))}</div>
+      <div class="gpu-sub">${esc(ccdev || t('misc','none'))}${w.gpu_uuid ? ` · <span title="${esc(w.gpu_uuid)}">${esc(String(w.gpu_uuid).slice(0,13))}…</span>` : ''}</div>
+      <div class="kv" style="margin-top:6px">
+        <div>${t('w','vram')}</div><div>${fmtVram(w.vram_used_mb, total)}
+          <div class="bar"><i style="width:${total ? Math.min(100, 100*(w.vram_used_mb||0)/total) : 0}%"></i></div></div>
+        <div>${t('w','temp')}</div><div>${fmtTemp(w.temperature_c)}</div>
+        <div>${t('w','util')}</div><div>${fmtPct(w.utilization_pct)}</div>
+        <div>${t('w','batch')}</div><div>${esc(w.batch_size ?? 'auto')}</div>
+        <div>${t('w','job')}</div><div class="mono">${w.current_job_id ? esc(w.current_job_id) : `<span class="muted">${t('w','idle')}</span>`}</div>
+        <div>${t('w','compFailed')}</div><div>${w.completed_jobs ?? 0} / <span class="${w.failed_jobs ? 'sev-error' : ''}">${w.failed_jobs ?? 0}</span></div>
+        <div>${t('w','bench')}</div><div>${w.bench_sim_seconds_per_wall_second != null ? `${num(w.bench_sim_seconds_per_wall_second,3)} sim-s/wall-s · ${num(w.bench_throughput,2)}` : `<span class="muted">${t('misc','none')}</span>`}</div>
+        <div>${t('w','hb')}</div><div>${fmtTime(w.last_heartbeat_at)}</div>
+        <div>${t('w','host')}</div><div>${esc(w.hostname || t('misc','none'))}</div>
+      </div>
+      <div class="chart-title">${t('w','chart')} ${kind(w.heartbeats.kind)}</div>
+      <canvas id="wc${i}"></canvas>
+    </div>`;
+}
+function gpuCompareTable(ws) {
+  const rows = [
+    [t('w','gpu'), w => esc(w.gpu_model || w.gpu_name || t('misc','none'))],
+    [t('w','device'), w => `<span class="mono">${esc(w.device || t('misc','none'))}</span>`],
+    [t('w','cc'), w => esc(w.compute_capability || t('misc','none'))],
+    [t('w','vram'), w => fmtVram(w.vram_used_mb, w.vram_total_mb ?? (w.vram_total_bytes ? w.vram_total_bytes/1024**2 : null))],
+    [t('w','temp'), w => fmtTemp(w.temperature_c)],
+    [t('w','util'), w => fmtPct(w.utilization_pct)],
+    [t('w','batch'), w => esc(w.batch_size ?? 'auto')],
+    [t('w','job'), w => w.current_job_id ? `<span class="mono">${esc(w.current_job_id)}</span>` : `<span class="muted">${t('w','idle')}</span>`],
+    [t('w','completed'), w => w.completed_jobs ?? 0],
+    [t('w','failed'), w => `<span class="${w.failed_jobs ? 'sev-error' : ''}">${w.failed_jobs ?? 0}</span>`],
+    [t('d','simPerWall'), w => num(w.bench_sim_seconds_per_wall_second,3)],
+    [t('w','benchTp'), w => num(w.bench_throughput,2)],
+    [t('w','driver'), w => esc([w.driver, w.cuda_runtime, w.torch_version].map(x => x || '?').join(' / '))],
+    [t('w','hb'), w => fmtTime(w.last_heartbeat_at)],
+  ];
+  return `<div class="xscroll"><table><thead><tr><th></th>${ws.map(w => `<th><span class="mono">${esc(w.worker_id)}</span> ${pill(w.status)}</th>`).join('')}</tr></thead><tbody>
+    ${rows.map(([label, f]) => `<tr><td class="muted">${label}</td>${ws.map(w => `<td>${f(w)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
 async function dashboard() {
   const d = await api('/api/gui/dashboard?minutes=10');
   const s = d.status, c = s.counters || {};
   $('#exp').textContent = `${s.experiment_id} · ${s.git_commit ? s.git_commit.slice(0,8) : '?'} · cfg ${(s.config_hash||'').slice(0,8)}`;
-  const workerCards = d.workers.map((w,i) => `
-    <div class="panel">
-      <h2>${esc(w.gpu_name || w.worker_id)} ${kind(w.kind)} <span class="pill st-${esc(w.status)}">${esc(w.status)}</span></h2>
-      <div class="kv">
-        <div>worker</div><div class="mono">${esc(w.worker_id)}</div>
-        <div>host</div><div>${esc(w.hostname)}</div>
-        <div>temperature</div><div>${num(w.temperature_c,0)} °C</div>
-        <div>utilization</div><div>${num(w.utilization_pct,0)} %</div>
-        <div>VRAM</div><div>${num(w.vram_used_mb,0)} / ${num(w.vram_total_mb,0)} MB
-          <div class="bar"><i style="width:${w.vram_total_mb ? Math.min(100, 100*w.vram_used_mb/w.vram_total_mb) : 0}%"></i></div></div>
-        <div>batch</div><div>${esc(w.batch_size ?? 'auto')}</div>
-        <div>current job</div><div class="mono">${esc(w.current_job_id || '—')}</div>
-        <div>completed / failed</div><div>${w.completed_jobs} / ${w.failed_jobs}</div>
-        <div>last heartbeat</div><div>${fmtTime(w.last_heartbeat_at)}</div>
-      </div>
-      <div class="chart-title">temperature °C / utilization % (10 min) ${kind(w.heartbeats.kind)}</div>
-      <canvas id="wc${i}"></canvas>
-    </div>`).join('');
+  const ws = d.workers;
   $('#main').innerHTML = `
+    ${alertsHtml(d.recent_events.rows)}
     <div class="grid g4">
-      <div class="panel"><h2>experiment ${kind(s.kind)}</h2><div class="big st-${esc(s.status)}">${esc(s.status)}</div>
-        <div class="kv"><div>uptime</div><div>${fmtUp(s.uptime_s)}</div><div>id</div><div class="mono">${esc(s.experiment_id)}</div>
-        <div>backend</div><div>${esc(d.runtime.backend)}</div><div>host</div><div>${esc(d.runtime.hostname)}</div></div></div>
-      <div class="panel"><h2>births / evaluations ${kind(s.kind)}</h2>
-        <div class="big">${c.births ?? 0} <span class="muted" style="font-size:14px">births</span></div>
-        <div class="kv"><div>succeeded</div><div>${c.evaluations_succeeded ?? 0}</div><div>failed</div><div>${c.evaluations_failed ?? 0}</div>
-        <div>queued / running / unknown</div><div>${c.queued} / ${c.running} / ${c.unknown}</div></div></div>
-      <div class="panel"><h2>population / archive ${kind(s.kind)}</h2>
-        <div class="big">${s.population_size}</div>
-        <div class="kv"><div>archive (evaluations)</div><div>${s.archive_size}</div><div>config hash</div><div class="mono">${esc((s.config_hash||'').slice(0,16))}</div>
-        ${s.config_hash_stored && s.config_hash_stored !== s.config_hash ? `<div class="sev-warn">stored cfg</div><div class="mono sev-warn">${esc(s.config_hash_stored.slice(0,16))}</div>` : ''}</div></div>
-      <div class="panel"><h2>throughput ${kind(d.throughput.kind)}</h2>
-        <div class="big">${num(d.throughput.evaluations_per_minute,2)} <span class="muted" style="font-size:14px">eval/min</span></div>
-        <div class="kv"><div>sim s / wall s</div><div>${num(d.throughput.simulated_seconds_per_wall_second,3)}</div>
-        <div>window</div><div>${d.throughput.window_minutes} min</div>
-        <div>last checkpoint</div><div>${fmtTime(d.checkpoints.rows[0]?.created_at)} ${esc(d.checkpoints.rows[0]?.reason||'')}</div></div></div>
+      <div class="panel"><h2>${t('d','experiment')} ${kind(s.kind)}</h2><div class="big st-${esc(s.status)}" title="${esc(s.status)}">${esc(tStatus(s.status))}</div>
+        <div class="kv"><div>${t('d','uptime')}</div><div>${fmtDur(s.uptime_s)}</div><div>${t('d','id')}</div><div class="mono">${esc(s.experiment_id)}</div>
+        <div>${t('d','backend')}</div><div>${esc(d.runtime.backend)}</div><div>${t('d','host')}</div><div>${esc(d.runtime.hostname)}</div></div></div>
+      <div class="panel"><h2>${t('d','birthsEvals')} ${kind(s.kind)}</h2>
+        <div class="big">${c.births ?? 0} <span class="muted" style="font-size:14px">${t('d','births')}</span></div>
+        <div class="kv"><div>${t('d','succeeded')}</div><div>${c.evaluations_succeeded ?? 0}</div><div>${t('d','failed')}</div><div class="${c.evaluations_failed ? 'sev-error' : ''}">${c.evaluations_failed ?? 0}</div>
+        <div>${t('d','jobs')}</div><div>${t('d','queued')} ${c.queued ?? 0} / ${t('d','running')} ${c.running ?? 0} / <span class="${c.unknown ? 'sev-warn' : ''}">${t('d','unknown')} ${c.unknown ?? 0}</span></div></div></div>
+      <div class="panel"><h2>${t('d','popArchive')} ${kind(s.kind)}</h2>
+        <div class="big">${s.population_size} <span class="muted" style="font-size:14px">${t('d','population')}</span></div>
+        <div class="kv"><div>${t('d','archive')}</div><div>${s.archive_size}</div><div>${t('d','cfgHash')}</div><div class="mono">${esc((s.config_hash||'').slice(0,16))}</div>
+        ${s.config_hash_stored && s.config_hash_stored !== s.config_hash ? `<div class="sev-warn">${t('d','storedCfg')}</div><div class="mono sev-warn">${esc(s.config_hash_stored.slice(0,16))}</div>` : ''}</div></div>
+      <div class="panel"><h2>${t('d','throughput')} ${kind(d.throughput.kind)}</h2>
+        <div class="big">${num(d.throughput.evaluations_per_minute,2)} <span class="muted" style="font-size:14px">${t('d','evalPerMin')}</span></div>
+        <div class="kv"><div>${t('d','simPerWall')}</div><div>${num(d.throughput.simulated_seconds_per_wall_second,3)}</div>
+        <div>${t('d','window')}</div><div>${fmtDur(d.throughput.window_minutes*60)}</div>
+        <div>${t('d','lastCkpt')}</div><div>${fmtTime(d.checkpoints.rows[0]?.created_at)} ${esc(d.checkpoints.rows[0]?.reason||'')}</div></div></div>
     </div>
-    <h2 class="muted" style="font-size:13px;margin:18px 0 8px">GPU WORKERS</h2>
-    <div class="grid g2">${workerCards || '<div class="panel muted">no workers registered</div>'}</div>
-    <div class="panel" style="margin-top:12px"><h2>recent events ${kind(d.recent_events.kind)}</h2>
-      <div class="scroll" style="max-height:260px"><table><thead><tr><th>time</th><th>type</th><th>severity</th><th>payload</th></tr></thead><tbody>
-      ${d.recent_events.rows.slice().reverse().map(e => `<tr><td>${fmtTime(e.at)}</td><td>${esc(e.type)}</td><td class="sev-${esc(e.severity)}">${esc(e.severity)}</td><td class="mono">${esc(e.payload_json).slice(0,140)}</td></tr>`).join('')}
+    <h2 class="muted" style="font-size:13px;margin:18px 0 8px">${t('d','workers')} (${ws.length})</h2>
+    <div class="grid workers">${ws.map(workerCard).join('') || `<div class="panel muted">${t('d','noWorkers')}</div>`}</div>
+    ${ws.length ? `<div class="panel" style="margin-top:12px"><h2>${t('d','gpuCompare')} ${kind('LIVE')}</h2>${gpuCompareTable(ws)}</div>` : ''}
+    <div class="panel" style="margin-top:12px"><h2>${t('d','recentEvents')} ${kind(d.recent_events.kind)}</h2>
+      <div class="scroll" style="max-height:260px"><table><thead><tr><th>${t('d','time')}</th><th>${t('d','type')}</th><th>${t('d','severity')}</th><th>${t('d','payload')}</th></tr></thead><tbody>
+      ${d.recent_events.rows.slice().reverse().map(eventRow).join('')}
       </tbody></table></div></div>`;
-  d.workers.forEach((w,i) => {
+  ws.forEach((w,i) => {
     const rows = w.heartbeats.rows;
-    drawChart($(`#wc${i}`), [{name:'temp °C', points: pts(rows,'temperature_c')}, {name:'util %', points: pts(rows,'utilization_pct')}], {y0:0, y1:100});
+    drawChart($(`#wc${i}`), [{name:`${t('w','temp')} ℃`, points: pts(rows,'temperature_c')}, {name:`${t('w','util')} %`, points: pts(rows,'utilization_pct')}], {y0:0, y1:100});
   });
   schedule(dashboard, 3000);
 }
@@ -179,30 +327,31 @@ async function population() {
   const byId = Object.fromEntries(gs.map(g => [g.genome_id, g]));
   const children = {}; gs.forEach(g => (g.parent_ids||[]).forEach(p => (children[p] ||= []).push(g.genome_id)));
   const roots = gs.filter(g => !(g.parent_ids||[]).length);
-  const tree = (id, depth) => { const g = byId[id]; if (!g) return ''; return `<div style="padding-left:${depth*18}px">${depth?'└ ':''}${short(id)} <span class="muted">g${g.generation} #${g.birth_index}</span> ${g.organ_count ? `<span class="pill">${g.organ_count} organ</span>`:''}</div>` + (children[id]||[]).map(c => tree(c, depth+1)).join(''); };
+  const tree = (id, depth) => { const g = byId[id]; if (!g) return ''; return `<div style="padding-left:${depth*18}px">${depth?'└ ':''}${short(id)} <span class="muted">g${g.generation} #${g.birth_index}</span> ${g.organ_count ? `<span class="pill">${t('p','organs')} ${g.organ_count}</span>`:''}</div>` + (children[id]||[]).map(c => tree(c, depth+1)).join(''); };
   $('#main').innerHTML = `
-    <div class="toolbar"><input id="q" placeholder="filter genome id / clade"> <span class="muted">${gs.length} genomes ${kind(d.kind)}</span></div>
-    <div class="grid" style="grid-template-columns:2fr 1fr">
-    <div class="panel scroll"><h2>genome list ${kind(d.kind)}</h2><table><thead><tr>
-      <th>genome</th><th>gen</th><th>birth #</th><th>parent</th><th>children</th><th>clade</th><th>fitness (placeholder)</th><th>ancestry %</th><th>organs</th><th>born</th></tr></thead>
-      <tbody id="rows"></tbody></table></div>
-    <div class="panel scroll"><h2>lineage tree (root = FBA0) ${kind('DERIVED')}</h2><div class="tree">${roots.map(r => tree(r.genome_id,0)).join('') || '<span class="muted">empty</span>'}</div></div></div>`;
+    <div class="toolbar"><input id="q" placeholder="${t('p','filter')}"> <span class="muted">${gs.length} ${t('p','genomes')} ${kind(d.kind)}</span></div>
+    <div class="grid g21">
+    <div class="panel"><h2>${t('p','list')} ${kind(d.kind)}</h2><div class="scroll xscroll"><table><thead><tr>
+      <th>${t('p','genome')}</th><th>${t('p','gen')}</th><th>${t('p','birth')}</th><th>${t('p','parents')}</th><th>${t('p','children')}</th><th>${t('p','clade')}</th><th>${t('p','fitness')}</th><th>${t('p','ancestry')}</th><th>${t('p','organs')}</th><th>${t('p','born')}</th></tr></thead>
+      <tbody id="rows"></tbody></table></div></div>
+    <div class="panel scroll"><h2>${t('p','tree')} ${kind('DERIVED')}</h2><div class="tree">${roots.map(r => tree(r.genome_id,0)).join('') || `<span class="muted">${t('p','empty')}</span>`}</div></div></div>`;
   const render = () => { const q = $('#q').value.toLowerCase();
     $('#rows').innerHTML = gs.filter(g => !q || g.genome_id.includes(q) || (g.clade_name||'').toLowerCase().includes(q)).map(g => `<tr>
       <td>${short(g.genome_id)}</td><td>${g.generation}</td><td>${g.birth_index}</td>
-      <td>${(g.parent_ids||[]).length ? g.parent_ids.map(short).join(' ') : '<span class="muted">FBA0 root</span>'}</td>
-      <td>${g.children_count ?? (children[g.genome_id]||[]).length}</td><td>${esc(g.clade_name || '—')}</td>
-      <td>${num(g.best_fitness,3)}</td><td>${g.ancestry_fraction != null ? num(100*g.ancestry_fraction,2)+' %' : '—'}</td>
-      <td>${g.organ_count ?? 0}</td><td>${fmtTime(g.created_at)}</td></tr>`).join(''); };
+      <td>${(g.parent_ids||[]).length ? g.parent_ids.map(short).join(' ') : `<span class="muted">${t('p','root')}</span>`}</td>
+      <td>${g.children_count ?? (children[g.genome_id]||[]).length}</td><td>${esc(g.clade_name || t('misc','none'))}</td>
+      <td>${num(g.best_fitness,3)}</td><td>${g.ancestry_fraction != null ? fmtPct(100*g.ancestry_fraction) : t('misc','none')}</td>
+      <td>${g.organ_count ?? 0}</td><td>${fmtDateTime(g.created_at)}</td></tr>`).join(''); };
   $('#q').addEventListener('input', render); render();
   schedule(population, 10000);
 }
 
 // ---- Organism inspector -----------------------------------------------------
+const tDirection = d => ({forward: t('o','forward'), bidirectional: t('o','bidirectional')})[d] ?? (d || t('o','forward'));
 async function organism(id) {
   if (!id) {
     const d = await api('/api/gui/genomes?limit=50');
-    $('#main').innerHTML = `<div class="panel"><h2>select an organism</h2>${d.genomes.map(g => `<div>${short(g.genome_id)} <span class="muted">g${g.generation} #${g.birth_index}</span></div>`).join('') || '<span class="muted">no genomes yet</span>'}</div>`;
+    $('#main').innerHTML = `<div class="panel"><h2>${t('o','select')}</h2>${d.genomes.map(g => `<div>${short(g.genome_id)} <span class="muted">g${g.generation} #${g.birth_index}</span></div>`).join('') || `<span class="muted">${t('o','none')}</span>`}</div>`;
     return;
   }
   const d = await api(`/api/gui/genomes/${encodeURIComponent(id)}`);
@@ -211,35 +360,35 @@ async function organism(id) {
   const nBase = (ph.base && ph.base.neurons) || null;
   $('#main').innerHTML = `
     <div class="grid g3">
-      <div class="panel"><h2>identity ${kind(d.kind)}</h2><div class="kv">
-        <div>genome</div><div class="mono">${esc(g.genome_id)}</div><div>hash</div><div class="mono">${esc(g.content_hash)}</div>
-        <div>generation / birth</div><div>${g.generation} / #${g.birth_index}</div><div>seed</div><div>${g.random_seed}</div>
-        <div>species base</div><div>${esc(g.species_base)}</div><div>clades</div><div>${d.clades.map(esc).join(', ') || '—'}</div>
-        <div>created</div><div>${esc(g.created_at)}</div><div>schema</div><div>v${doc.schema_version}</div></div></div>
-      <div class="panel"><h2>ancestral component ${kind(ph.kind)}</h2>
-        <div class="big">${ph.ancestry_fraction == null ? '<span class="muted">unknown</span>' : num(100*ph.ancestry_fraction,2)+' %'}</div><div class="muted">${ph.ancestry_fraction == null ? 'FBA0 neuron count unavailable (reference data not loaded on coordinator)' : `of neurons inherited from ${esc(ph.base?.name || 'FBA0')} (immutable reference${nBase ? ', '+nBase+' neurons' : ''})`}</div>
+      <div class="panel"><h2>${t('o','identity')} ${kind(d.kind)}</h2><div class="kv">
+        <div>${t('p','genome')}</div><div class="mono">${esc(g.genome_id)}</div><div>${t('o','hash')}</div><div class="mono">${esc(g.content_hash)}</div>
+        <div>${t('o','genBirth')}</div><div>${g.generation} / #${g.birth_index}</div><div>${t('o','seed')}</div><div>${g.random_seed}</div>
+        <div>${t('o','base')}</div><div>${esc(g.species_base)}</div><div>${t('o','clades')}</div><div>${d.clades.map(esc).join(', ') || t('misc','none')}</div>
+        <div>${t('o','created')}</div><div>${fmtDateTime(g.created_at)}</div><div>${t('o','schema')}</div><div>v${doc.schema_version}</div></div></div>
+      <div class="panel"><h2>${t('o','ancestral')} ${kind(ph.kind)}</h2>
+        <div class="big">${ph.ancestry_fraction == null ? `<span class="muted">${t('o','unknown')}</span>` : fmtPct(100*ph.ancestry_fraction)}</div><div class="muted">${ph.ancestry_fraction == null ? t('o','noBase') : `${esc(ph.base?.name || 'FBA0')} ${t('o','inherited')}${nBase ? ', '+nBase+' '+t('o','neurons') : ''})`}</div>
         <div class="bar" style="margin:8px 0"><i style="width:${100*(ph.ancestry_fraction||0)}%"></i></div>
-        <div class="kv"><div>artificial neurons</div><div>${ph.n_extra_neurons}</div><div>resolved params</div><div class="mono">${esc(JSON.stringify(ph.params))}</div></div></div>
-      <div class="panel"><h2>ancestry to FBA0 ${kind(d.ancestry_chain.kind)}</h2><div class="tree">
+        <div class="kv"><div>${t('o','extra')}</div><div>${ph.n_extra_neurons}</div><div>${t('o','params')}</div><div class="mono">${esc(JSON.stringify(ph.params))}</div></div></div>
+      <div class="panel"><h2>${t('o','ancestryChain')} ${kind(d.ancestry_chain.kind)}</h2><div class="tree">
         ${d.ancestry_chain.rows.map((a,i) => `<div style="padding-left:${i*14}px">${i?'↑ ':''}${short(a.genome_id)} <span class="muted">g${a.generation} #${a.birth_index}</span></div>`).join('')}
-        <div class="muted" style="margin-top:6px">parents: ${d.parents.map(short).join(' ') || 'none (FBA0 root)'}</div>
-        <div class="muted">children: ${d.children.map(short).join(' ') || 'none'}</div></div></div>
+        <div class="muted" style="margin-top:6px">${t('o','parents')}: ${d.parents.map(short).join(' ') || t('o','noParents')}</div>
+        <div class="muted">${t('o','children')}: ${d.children.map(short).join(' ') || t('o','noChildren')}</div></div></div>
     </div>
     <div class="grid g2" style="margin-top:12px">
-      <div class="panel"><h2>artificial organs (${organs.length}) ${kind(d.kind)}</h2>
-        ${organs.length ? `<table><thead><tr><th>organ</th><th>kind</th><th>size</th><th>origin</th><th>parent gene</th><th>birth mutation</th></tr></thead><tbody>
-        ${organs.map(o => `<tr><td class="mono">${esc(o.organ_id)}</td><td>${esc(o.kind)}</td><td>${o.size}</td><td>${esc(o.provenance?.origin)}</td><td>${short(o.provenance?.parent_gene)}</td><td class="mono">${esc(o.provenance?.birth_mutation_id||'—')}</td></tr>`).join('')}</tbody></table>` : '<span class="muted">pure FBA0 phenotype — no artificial organs</span>'}
-        <h2 style="margin-top:12px">attachments (${atts.length})</h2>
-        ${atts.length ? `<table><thead><tr><th>attachment</th><th>source</th><th>target</th><th>weight</th><th>origin</th></tr></thead><tbody>
-        ${atts.map(a => `<tr><td class="mono">${esc(a.attachment_id)}</td><td class="mono">${esc(a.source)}</td><td class="mono">${esc(a.target)}</td><td>${num(a.weight_scale,3)}</td><td>${esc(a.provenance?.origin)}</td></tr>`).join('')}</tbody></table>` : '<span class="muted">none</span>'}</div>
-      <div class="panel"><h2>mutations (${(doc.parameter_mutations||[]).length}) ${kind(d.kind)}</h2>
-        ${(doc.parameter_mutations||[]).length ? `<table><thead><tr><th>mutation</th><th>path</th><th>op</th><th>value</th><th>scope</th></tr></thead><tbody>
-        ${doc.parameter_mutations.map(m => `<tr><td class="mono">${esc(m.mutation_id)}</td><td class="mono">${esc(m.path)}</td><td>${esc(m.op)}</td><td>${num(m.value,4)}</td><td>${esc(m.scope)}</td></tr>`).join('')}</tbody></table>` : '<span class="muted">no parameter mutations</span>'}
-        <div class="kv" style="margin-top:8px"><div>development rules</div><div>${(doc.development_rules||[]).length}</div><div>plasticity rules</div><div>${(doc.plasticity_rules||[]).length}</div></div></div>
+      <div class="panel"><h2>${t('o','organs')} (${organs.length}) ${kind(d.kind)}</h2>
+        ${organs.length ? `<div class="xscroll"><table><thead><tr><th>${t('o','organ')}</th><th>${t('o','kind')}</th><th>${t('o','size')}</th><th>${t('o','origin')}</th><th>${t('o','parentGene')}</th><th>${t('o','birthMut')}</th></tr></thead><tbody>
+        ${organs.map(o => `<tr><td class="mono">${esc(o.organ_id)}</td><td>${esc(o.kind)}</td><td>${o.size}</td><td>${esc(o.provenance?.origin)}</td><td>${short(o.provenance?.parent_gene)}</td><td class="mono">${esc(o.provenance?.birth_mutation_id||t('misc','none'))}</td></tr>`).join('')}</tbody></table></div>` : `<span class="muted">${t('o','pure')}</span>`}
+        <h2 style="margin-top:12px">${t('o','attachments')} (${atts.length})</h2>
+        ${atts.length ? `<div class="xscroll"><table><thead><tr><th>${t('o','attachment')}</th><th>${t('o','source')}</th><th>${t('o','target')}</th><th>${t('o','direction')}</th><th>${t('o','weight')}</th><th>${t('o','origin')}</th></tr></thead><tbody>
+        ${atts.map(a => `<tr><td class="mono">${esc(a.attachment_id)}</td><td class="mono">${esc(a.source)}</td><td class="mono">${esc(a.target)}</td><td title="${esc(a.direction||'')}">${esc(tDirection(a.direction))}</td><td>${num(a.weight_scale,3)}</td><td>${esc(a.provenance?.origin)}</td></tr>`).join('')}</tbody></table></div>` : `<span class="muted">${t('o','noAtt')}</span>`}</div>
+      <div class="panel"><h2>${t('o','mutations')} (${(doc.parameter_mutations||[]).length}) ${kind(d.kind)}</h2>
+        ${(doc.parameter_mutations||[]).length ? `<div class="xscroll"><table><thead><tr><th>${t('o','mutation')}</th><th>${t('o','path')}</th><th>${t('o','op')}</th><th>${t('o','value')}</th><th>${t('o','scope')}</th></tr></thead><tbody>
+        ${doc.parameter_mutations.map(m => `<tr><td class="mono">${esc(m.mutation_id)}</td><td class="mono">${esc(m.path)}</td><td>${esc(m.op)}</td><td>${num(m.value,4)}</td><td>${esc(m.scope)}</td></tr>`).join('')}</tbody></table></div>` : `<span class="muted">${t('o','noMut')}</span>`}
+        <div class="kv" style="margin-top:8px"><div>${t('o','devRules')}</div><div>${(doc.development_rules||[]).length}</div><div>${t('o','plastRules')}</div><div>${(doc.plasticity_rules||[]).length}</div></div></div>
     </div>
-    <div class="panel" style="margin-top:12px"><h2>evaluation history (${d.evaluations.length}) ${kind('RECORDED')}</h2>
-      <div class="scroll" style="max-height:300px"><table><thead><tr><th>evaluation</th><th>worker</th><th>backend</th><th>seed</th><th>batch</th><th>fitness (placeholder)</th><th>mean rate Hz</th><th>active</th><th>sim ms</th><th>wall s</th><th>finished</th><th>trace</th></tr></thead><tbody>
-      ${d.evaluations.map(e => { const s = pj(e.summary_json); return `<tr><td class="mono">${esc(e.evaluation_id.slice(0,14))}…</td><td class="mono">${esc(e.worker_id)}</td><td>${esc(e.backend)}</td><td>${e.seed}</td><td>${e.batch_size}</td><td>${num(e.fitness,3)}</td><td>${num(s.mean_rate_hz,2)}</td><td>${num(100*(s.active_fraction||0),1)} %</td><td>${num(s.t_ms,0)}</td><td>${e.started_at && e.finished_at ? num((Date.parse(e.finished_at)-Date.parse(e.started_at))/1000,3) : '—'}</td><td>${fmtTime(e.finished_at)}</td><td>${e.trace_path ? 'full' : 'summary'}</td></tr>`; }).join('')}
+    <div class="panel" style="margin-top:12px"><h2>${t('o','evals')} (${d.evaluations.length}) ${kind('RECORDED')}</h2>
+      <div class="scroll xscroll" style="max-height:300px"><table><thead><tr><th>${t('o','evaluation')}</th><th>${t('o','worker')}</th><th>${t('o','backend')}</th><th>${t('o','seed')}</th><th>${t('o','replicates')}</th><th>${t('o','batch')}</th><th>${t('o','fitness')}</th><th>${t('o','rate')}</th><th>${t('o','active')}</th><th>${t('o','sim')}</th><th>${t('o','wall')}</th><th>${t('o','finished')}</th><th>${t('o','trace')}</th></tr></thead><tbody>
+      ${d.evaluations.map(e => { const s = pj(e.summary_json); return `<tr><td class="mono">${esc(e.evaluation_id.slice(0,14))}…</td><td class="mono">${esc(e.worker_id)}</td><td>${esc(e.backend)}</td><td>${e.seed}</td><td>${e.completed_replicates ?? t('misc','none')} / ${e.requested_replicates ?? t('misc','none')}</td><td>${e.execution_batch_size ?? e.batch_size ?? t('misc','none')}</td><td>${num(e.fitness,3)}</td><td>${num(s.mean_rate_hz,2)}</td><td>${fmtPct(100*(s.active_fraction||0))}</td><td>${fmtMs(s.t_ms)}</td><td>${e.started_at && e.finished_at ? fmtDur((Date.parse(e.finished_at)-Date.parse(e.started_at))/1000) : t('misc','none')}</td><td>${fmtDateTime(e.finished_at)}</td><td>${e.trace_path ? t('o','full') : t('o','summary')}</td></tr>`; }).join('')}
       </tbody></table></div></div>`;
 }
 
@@ -257,20 +406,20 @@ async function telemetry() {
   const wSeries = key => workerIds.map(w => ({name: w, points: pts(d.worker_heartbeats[w], key)}));
   const sigs = Object.keys(groups).sort();
   $('#main').innerHTML = `
-    <div class="toolbar">window <select id="mins">${[5,30,120,720,1440].map(m => `<option ${m===mins?'selected':''} value="${m}">${m} min</option>`).join('')}</select>
-      <span class="muted">${kind(d.kind)} telemetry_samples + worker_heartbeats; dashed marks = events</span>
-      <span class="muted">experiment: <b class="st-${esc(d.status.status)}">${esc(d.status.status)}</b> ${kind('LIVE')}</span></div>
+    <div class="toolbar">${t('t','window')} <select id="mins">${[5,30,120,720,1440].map(m => `<option ${m===mins?'selected':''} value="${m}">${fmtDur(m*60)}</option>`).join('')}</select>
+      <span class="muted">${kind(d.kind)} ${t('t','src')}</span>
+      <span class="muted">${t('t','experiment')}: <b class="st-${esc(d.status.status)}" title="${esc(d.status.status)}">${esc(tStatus(d.status.status))}</b> ${kind('LIVE')}</span></div>
     <div class="grid g2">
-      <div class="panel"><h2>GPU temperature °C (worker heartbeats) ${kind('RECORDED')}</h2><canvas id="c_temp"></canvas>${legend(wSeries('temperature_c'))}</div>
-      <div class="panel"><h2>GPU load % ${kind('RECORDED')}</h2><canvas id="c_util"></canvas>${legend(wSeries('utilization_pct'))}</div>
-      <div class="panel"><h2>VRAM used MB ${kind('RECORDED')}</h2><canvas id="c_vram"></canvas>${legend(wSeries('vram_used_mb'))}</div>
+      <div class="panel"><h2>${t('t','temp')} ${kind('RECORDED')}</h2><canvas id="c_temp"></canvas>${legend(wSeries('temperature_c'))}</div>
+      <div class="panel"><h2>${t('t','util')} ${kind('RECORDED')}</h2><canvas id="c_util"></canvas>${legend(wSeries('utilization_pct'))}</div>
+      <div class="panel"><h2>${t('t','vram')} ${kind('RECORDED')}</h2><canvas id="c_vram"></canvas>${legend(wSeries('vram_used_mb'))}</div>
       ${sigs.map((s,i) => `<div class="panel"><h2>${esc(s)} <span class="muted">(${esc(groups[s][0]?.points.length ? d.telemetry[Object.keys(d.telemetry).find(k=>k.endsWith('|'+s))][0].domain : '')})</span> ${kind('RECORDED')}</h2><canvas id="c_s${i}"></canvas>${legend(groups[s])}</div>`).join('')}
     </div>
-    <div class="panel" style="margin-top:12px"><h2>sensory / event stream in window ${kind('RECORDED')}</h2>
-      <div class="scroll" style="max-height:300px"><table><thead><tr><th>time</th><th>kind</th><th>type / signal</th><th>source</th><th>value</th></tr></thead><tbody>
-      ${[...d.events.map(e => ({at:e.at, k:'event', type:e.type, src:e.source, val:e.payload_json, sev:e.severity})),
-         ...Object.entries(d.telemetry).flatMap(([k, rows]) => rows.slice(-5).map(r => ({at:r.at, k:'sensor', type:k.split('|')[1], src:k.split('|')[0], val:num(r.value,3), sev:'info'})))]
-        .sort((a,b) => b.at.localeCompare(a.at)).slice(0,200).map(r => `<tr><td>${fmtTime(r.at)}</td><td>${esc(r.k)}</td><td class="sev-${esc(r.sev)}">${esc(r.type)}</td><td class="mono">${esc(r.src)}</td><td class="mono">${esc(String(r.val)).slice(0,120)}</td></tr>`).join('')}
+    <div class="panel" style="margin-top:12px"><h2>${t('t','stream')} ${kind('RECORDED')}</h2>
+      <div class="scroll xscroll" style="max-height:300px"><table><thead><tr><th>${t('t','time')}</th><th>${t('t','kind')}</th><th>${t('t','signal')}</th><th>${t('t','source')}</th><th>${t('t','value')}</th></tr></thead><tbody>
+      ${[...d.events.map(e => ({at:e.at, k:'event', type:e.type, label:tEvent(e.type), src:e.source, val:e.payload_json, sev:e.severity})),
+         ...Object.entries(d.telemetry).flatMap(([k, rows]) => rows.slice(-5).map(r => ({at:r.at, k:'sensor', type:k.split('|')[1], label:k.split('|')[1], src:k.split('|')[0], val:num(r.value,3), sev:'info'})))]
+        .sort((a,b) => b.at.localeCompare(a.at)).slice(0,200).map(r => `<tr><td>${fmtTime(r.at)}</td><td>${esc(t('t', r.k))}</td><td class="sev-${esc(r.sev)}">${esc(r.label)}${r.k==='event' ? `<div class="muted mono" style="font-size:10px">${esc(r.type)}</div>` : ''}</td><td class="mono">${esc(r.src)}</td><td class="mono">${esc(String(r.val)).slice(0,120)}</td></tr>`).join('') || `<tr><td colspan="5" class="muted">${t('t','nodata')}</td></tr>`}
       </tbody></table></div></div>`;
   $('#mins').addEventListener('change', e => { sessionStorage.setItem('mioba.minutes', e.target.value); telemetry(); });
   const o = {t0, t1, marks: evMarks};
@@ -289,10 +438,11 @@ async function events() {
   const all = await api('/api/events?since_id=0&limit=100000');
   const types = [...new Set(all.events.map(e => e.type))].sort();
   $('#main').innerHTML = `
-    <div class="toolbar">type <select id="ty"><option value="">all</option>${types.map(t => `<option ${t===type?'selected':''}>${esc(t)}</option>`).join('')}</select>
-      <span class="muted">${rows.length} events ${kind(d.kind)}</span></div>
-    <div class="panel scroll" style="max-height:80vh"><table><thead><tr><th>#</th><th>time</th><th>type</th><th>severity</th><th>source</th><th>payload</th></tr></thead><tbody>
-      ${rows.map(e => `<tr><td class="muted">${e.event_id}</td><td>${esc(new Date(e.at).toLocaleString())}</td><td>${esc(e.type)}</td><td class="sev-${esc(e.severity)}">${esc(e.severity)}</td><td>${esc(e.source)}</td><td class="mono">${esc(e.payload_json)}</td></tr>`).join('')}
+    ${alertsHtml(all.events)}
+    <div class="toolbar">${t('e','type')} <select id="ty"><option value="">${t('e','all')}</option>${types.map(ty => `<option value="${esc(ty)}" ${ty===type?'selected':''}>${esc(tEvent(ty))} (${esc(ty)})</option>`).join('')}</select>
+      <span class="muted">${rows.length} ${t('e','count')} ${kind(d.kind)}</span></div>
+    <div class="panel scroll xscroll" style="max-height:80vh"><table><thead><tr><th>${t('e','n')}</th><th>${t('e','time')}</th><th>${t('e','message')}</th><th>${t('e','severity')}</th><th>${t('e','source')}</th><th>${t('e','payload')}</th></tr></thead><tbody>
+      ${rows.map(e => `<tr><td class="muted">${e.event_id}</td><td>${fmtDateTime(e.at)}</td><td>${esc(tEvent(e.type))}<div class="muted mono" style="font-size:10px">${esc(e.type)}</div></td><td class="sev-${esc(e.severity)}" title="${esc(e.severity)}">${esc(tStatus(e.severity))}</td><td>${esc(e.source)}</td><td class="mono">${esc(e.payload_json)}</td></tr>`).join('')}
     </tbody></table></div>`;
   $('#ty').addEventListener('change', e => { sessionStorage.setItem('mioba.evtype', e.target.value); events(); });
   schedule(events, 5000);

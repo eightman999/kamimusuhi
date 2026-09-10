@@ -34,7 +34,8 @@ def _throughput(db, experiment_id, minutes: float) -> dict:
             s = json.loads(e.get("summary_json") or "{}")
         except ValueError:
             s = {}
-        sim_ms += float(s.get("t_ms") or 0.0) * float(e.get("batch_size") or 1)
+        lanes = e.get("completed_replicates") or e.get("batch_size") or 1
+        sim_ms += float(s.get("t_ms") or 0.0) * float(lanes)
         try:
             wall_s += (datetime.fromisoformat(e["finished_at"]) -
                        datetime.fromisoformat(e["started_at"])).total_seconds()
@@ -76,13 +77,40 @@ def mount_gui(app, service) -> None:
                 gpus = json.loads(w.get("gpu_json") or "[]")
             except ValueError:
                 gpus = []
+            try:
+                ri = json.loads(w.get("runtime_info_json") or "{}")
+            except ValueError:
+                ri = {}
+            try:
+                bench = json.loads(w.get("bench_json") or "[]")
+            except ValueError:
+                bench = []
+            selected = next((b for b in bench
+                             if b.get("batch") == w.get("batch_size")
+                             and b.get("ok")), None)
+            vram_total_bytes = ri.get("vram_total_bytes")
             workers.append({
                 "kind": "LIVE",
                 "worker_id": w["worker_id"],
                 "hostname": w.get("hostname"),
                 "status": w.get("status"),
-                "gpu_name": (gpus[0].get("name") if gpus else None),
+                "gpu_name": ri.get("gpu_model") or
+                            (gpus[0].get("name") if gpus else None),
                 "gpus": gpus,
+                "device": w.get("device") or ri.get("device"),
+                "gpu_index": ri.get("gpu_index"),
+                "gpu_uuid": ri.get("gpu_uuid"),
+                "gpu_model": ri.get("gpu_model"),
+                "compute_capability": ri.get("compute_capability"),
+                "vram_total_bytes": vram_total_bytes,
+                "driver": ri.get("driver"),
+                "cuda_runtime": ri.get("cuda_runtime"),
+                "torch_version": ri.get("torch_version"),
+                "bench": {"kind": "RECORDED", "rows": bench,
+                          "selected": selected},
+                "bench_sim_seconds_per_wall_second":
+                    (selected or {}).get("sim_seconds_per_wall_second"),
+                "bench_throughput": (selected or {}).get("throughput"),
                 "batch_size": w.get("batch_size"),
                 "current_job_id": w.get("current_job_id"),
                 "completed_jobs": w.get("completed_jobs"),
