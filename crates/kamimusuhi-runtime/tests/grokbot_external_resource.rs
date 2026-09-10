@@ -29,9 +29,9 @@ use std::process::{Command, Stdio};
 use kamimusuhi_core::ids::ResourceId;
 use kamimusuhi_core::resources::ResourceSlot;
 use kamimusuhi_core::routing::{
-    CostClass, HealthState, LatencyClass, LocalityClass, Modality, PrivacyConstraint, QualityTier,
-    RequiredDepth, ResourceCapabilities, Router, RoutingCandidate, RoutingError, RoutingReason,
-    RoutingRequest, RuleRouter, TaskClass, Urgency,
+    CostClass, HealthState, LatencyClass, LocalityClass, Modality, Precedence, PrivacyConstraint,
+    QualityTier, RequiredDepth, ResourceCapabilities, Router, RoutingCandidate, RoutingError,
+    RoutingReason, RoutingRequest, RuleRouter, TaskClass, Urgency,
 };
 use kamimusuhi_runtime::{ProviderConfig, ResourceImplementation, RuntimeConfig};
 use kamimusuhi_testkit::http_fixture::{FixtureResponse, FixtureServer, refused_base_url};
@@ -59,12 +59,18 @@ const AUTH_ENV: &str = "KAMIMUSUHI_GROKBOT_API_KEY";
 /// What the operator declares the Grok Bot endpoint to be.
 ///
 /// Conservative on every axis that is not directly observable: `Slow` because
-/// nothing has been measured, `Basic` because a 4-bit 4B model is not a
-/// frontier model, `External` because the VM is not ours. `Free` is a fact
-/// about billing and is deliberately the *last* thing the router looks at.
+/// nothing has been measured, `Basic` because a 4-bit 3B model is not a
+/// frontier model, `External` because the VM is not ours.
+///
+/// `LastResort` is the load-bearing one. Being free would otherwise put this
+/// endpoint *first* among the models, because cost is the cheapest thing to
+/// prefer on — and a borrowed machine winning every tie is precisely how a
+/// favour turns into infrastructure. Any LLM registered without saying
+/// anything about its standing outranks it.
 fn grokbot_capabilities() -> ResourceCapabilities {
     ResourceCapabilities {
         locality: LocalityClass::External,
+        precedence: Precedence::LastResort,
         modalities: [Modality::Text].into_iter().collect(),
         context_capacity: 4_096,
         latency: LatencyClass::Slow,
@@ -370,6 +376,89 @@ fn a_resource_declared_slow_is_unreachable_from_an_interactive_turn() {
         &candidates,
     );
     assert_eq!(verdict(&interactive), RoutingReason::TooSlowForUrgency);
+}
+
+/// Another LLM behind the same adapter, saying nothing about its standing.
+///
+/// Deliberately *worse* on every axis the router can compare: it costs money,
+/// it is no faster and no better. If the Grok Bot endpoint still loses to it,
+/// the only thing that decided the order was the declared precedence.
+fn peer_llm(slot: &str, id: u128, precedence: Precedence) -> RoutingCandidate {
+    RoutingCandidate {
+        slot: ResourceSlot::new(slot),
+        descriptor: kamimusuhi_core::resources::ResourceDescriptor {
+            resource_id: ResourceId::from_u128(id),
+            name: slot.to_owned(),
+            kind: kamimusuhi_core::resources::ResourceKind::Generation,
+            adapter: "openai-compatible".to_owned(),
+            version: "1".to_owned(),
+            read_only: true,
+            capabilities: ResourceCapabilities {
+                locality: LocalityClass::External,
+                precedence,
+                modalities: [Modality::Text].into_iter().collect(),
+                context_capacity: 32_768,
+                latency: LatencyClass::Slow,
+                cost: CostClass::High,
+                quality: QualityTier::Basic,
+                health: HealthState::Healthy,
+            },
+        },
+    }
+}
+
+#[test]
+fn any_other_llm_outranks_the_borrowed_one() {
+    let prepared = prepared();
+    configure_grokbot_only(&prepared.dir, "http://127.0.0.1:1/v1".to_owned());
+    let mut candidates = grokbot_candidates(&prepared.dir);
+    // Registered without an opinion about itself, and expensive with it.
+    candidates.push(peer_llm("frontier", 0xF00D, Precedence::Ordinary));
+
+    let decision = RuleRouter
+        .route(&request(64, PrivacyConstraint::Unconstrained), &candidates)
+        .expect("both LLMs qualify");
+    assert_eq!(decision.slot.as_str(), "frontier");
+    // Not excluded — outranked. It is still a usable resource.
+    assert_eq!(verdict(&Ok(decision)), RoutingReason::NotPreferred);
+    assert!(
+        !RoutingReason::NotPreferred.is_exclusion(),
+        "being last in line is not the same as being ineligible"
+    );
+}
+
+#[test]
+fn the_borrowed_one_answers_when_it_is_all_that_is_left() {
+    let prepared = prepared();
+    configure_grokbot_only(&prepared.dir, "http://127.0.0.1:1/v1".to_owned());
+    let mut candidates = grokbot_candidates(&prepared.dir);
+    // The preferred model is there, but its context is too small for this turn.
+    let mut small = peer_llm("frontier", 0xF00D, Precedence::Preferred);
+    small.descriptor.capabilities.context_capacity = 128;
+    candidates.push(small);
+
+    let decision = RuleRouter
+        .route(
+            &request(4_096, PrivacyConstraint::Unconstrained),
+            &candidates,
+        )
+        .expect("the last resort is still a resort");
+    assert_eq!(decision.slot.as_str(), GROKBOT_SLOT);
+    assert_eq!(verdict(&Ok(decision)), RoutingReason::Selected);
+}
+
+#[test]
+fn precedence_never_rescues_a_resource_a_constraint_excluded() {
+    let prepared = prepared();
+    configure_grokbot_only(&prepared.dir, "http://127.0.0.1:1/v1".to_owned());
+    let mut candidates = grokbot_candidates(&prepared.dir);
+    // The only other candidate is preferred *and* external, so a local-only
+    // turn has nowhere to go. Ranking must not turn that into a selection.
+    candidates.push(peer_llm("frontier", 0xF00D, Precedence::Preferred));
+
+    let decision = RuleRouter.route(&request(64, PrivacyConstraint::LocalOnly), &candidates);
+    assert!(decision.is_err());
+    assert_eq!(verdict(&decision), RoutingReason::PrivacyExcluded);
 }
 
 #[test]

@@ -224,10 +224,72 @@ impl fmt::Display for HealthState {
     }
 }
 
+/// How eagerly an operator wants a resource reached for, among those that
+/// already qualify. Ordered most-preferred first.
+///
+/// Deliberately *not* a hard constraint. Precedence never excludes anything:
+/// a `LastResort` resource that is the only candidate is still selected, and
+/// still selected for the ordinary reason. It only settles which of several
+/// eligible resources gets the work.
+///
+/// It exists because the other axes cannot say this. A borrowed machine can
+/// be free, healthy and adequate for the task and still be the thing you want
+/// touched last — because it belongs to someone else, because its capacity is
+/// small, or because it is a favour rather than infrastructure. Encoding that
+/// as a lie on another axis ("call it degraded", "call it expensive") would
+/// make every reading of that axis wrong.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Precedence {
+    /// Reach for this before its peers.
+    Preferred,
+    /// No standing either way. The default, so a resource that says nothing
+    /// about itself is ranked on its declared properties alone.
+    #[default]
+    Ordinary,
+    /// Only when nothing else eligible is left.
+    LastResort,
+}
+
+impl Precedence {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Preferred => "preferred",
+            Self::Ordinary => "ordinary",
+            Self::LastResort => "last_resort",
+        }
+    }
+}
+
+impl fmt::Display for Precedence {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for Precedence {
+    type Err = UnknownVocabulary;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "preferred" => Self::Preferred,
+            "ordinary" => Self::Ordinary,
+            "last_resort" => Self::LastResort,
+            other => return Err(UnknownVocabulary::new("precedence", other)),
+        })
+    }
+}
+
 /// What a resource is declared to be.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceCapabilities {
     pub locality: LocalityClass,
+    /// Standing among the resources that also qualify. Absent in a config
+    /// written before this axis existed, which reads as `Ordinary`.
+    #[serde(default)]
+    pub precedence: Precedence,
     pub modalities: BTreeSet<Modality>,
     /// Largest input this resource accepts, in the same unit a
     /// [`RoutingRequest::context_size`] is expressed in.
@@ -243,6 +305,7 @@ impl ResourceCapabilities {
     pub fn in_process_fixture() -> Self {
         Self {
             locality: LocalityClass::InProcess,
+            precedence: Precedence::Ordinary,
             modalities: [Modality::Text].into_iter().collect(),
             context_capacity: 8_192,
             latency: LatencyClass::Instant,
@@ -620,12 +683,14 @@ pub trait Router: Send + Sync {
 ///
 /// Preference among eligible candidates, in order:
 ///
-/// 1. cheapest — a task should not cost more than it needs to;
-/// 2. healthy before degraded — a usable-but-struggling resource is a
+/// 1. declared precedence — an operator's standing beats every measurable
+///    property, including price;
+/// 2. cheapest — a task should not cost more than it needs to;
+/// 3. healthy before degraded — a usable-but-struggling resource is a
 ///    fallback, not a peer;
-/// 3. highest declared quality;
-/// 4. fastest;
-/// 5. slot name, so the order is total.
+/// 4. highest declared quality;
+/// 5. fastest;
+/// 6. slot name, so the order is total.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RuleRouter;
 
@@ -665,6 +730,12 @@ impl RuleRouter {
     /// Total preference key. Lower sorts first.
     fn rank(capabilities: &ResourceCapabilities, slot: &ResourceSlot) -> impl Ord + use<> {
         (
+            // Ahead of cost on purpose. "Free" is a fact about billing, and
+            // an operator who says a resource is a last resort is making a
+            // statement that outranks it — otherwise the cheapest thing
+            // available is always the first thing reached for, which is how a
+            // borrowed machine quietly becomes load-bearing.
+            capabilities.precedence,
             capabilities.cost,
             capabilities.health,
             // Higher quality first, so invert.
@@ -757,6 +828,7 @@ mod tests {
                 read_only: true,
                 capabilities: ResourceCapabilities {
                     locality,
+                    precedence: Precedence::Ordinary,
                     modalities: [Modality::Text].into_iter().collect(),
                     context_capacity: 8_192,
                     latency,
@@ -766,6 +838,70 @@ mod tests {
                 },
             },
         }
+    }
+
+    /// Precedence is the first key, so it decides even against a candidate
+    /// that wins on every measurable axis.
+    #[test]
+    fn a_last_resort_resource_loses_to_a_worse_one_that_did_not_say_so() {
+        let mut cheap = candidate(
+            "borrowed",
+            0x9,
+            LocalityClass::External,
+            CostClass::Free,
+            QualityTier::High,
+            LatencyClass::Fast,
+        );
+        cheap.descriptor.capabilities.precedence = Precedence::LastResort;
+        let expensive = candidate(
+            "ordinary",
+            0xA,
+            LocalityClass::External,
+            CostClass::High,
+            QualityTier::Basic,
+            LatencyClass::Slow,
+        );
+
+        let request =
+            RoutingRequest::interactive(TaskClass::Summarize, 16).with_urgency(Urgency::Background);
+        let decision = RuleRouter
+            .route(&request, &[cheap.clone(), expensive])
+            .unwrap();
+        assert_eq!(decision.slot.as_str(), "ordinary");
+
+        // Alone, it is chosen without complaint: precedence orders, it never
+        // excludes.
+        let alone = RuleRouter.route(&request, &[cheap]).unwrap();
+        assert_eq!(alone.slot.as_str(), "borrowed");
+        assert_eq!(alone.reason, RoutingReason::Selected);
+    }
+
+    #[test]
+    fn precedence_vocabulary_round_trips_and_defaults_to_ordinary() {
+        for precedence in [
+            Precedence::Preferred,
+            Precedence::Ordinary,
+            Precedence::LastResort,
+        ] {
+            assert_eq!(
+                precedence.as_str().parse::<Precedence>().unwrap(),
+                precedence
+            );
+        }
+        assert_eq!(Precedence::default(), Precedence::Ordinary);
+        assert!("first".parse::<Precedence>().is_err());
+        // A capabilities blob written before this axis existed still loads.
+        let older = serde_json::json!({
+            "locality": "external",
+            "modalities": ["text"],
+            "context_capacity": 4096,
+            "latency": "slow",
+            "cost": "free",
+            "quality": "basic",
+            "health": "healthy"
+        });
+        let parsed: ResourceCapabilities = serde_json::from_value(older).unwrap();
+        assert_eq!(parsed.precedence, Precedence::Ordinary);
     }
 
     fn local() -> RoutingCandidate {

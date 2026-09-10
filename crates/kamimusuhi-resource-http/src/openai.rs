@@ -30,7 +30,7 @@ use kamimusuhi_core::resources::{
     ResourceResult,
 };
 use kamimusuhi_core::routing::{
-    CostClass, HealthState, LatencyClass, LocalityClass, Modality, QualityTier,
+    CostClass, HealthState, LatencyClass, LocalityClass, Modality, Precedence, QualityTier,
     ResourceCapabilities,
 };
 
@@ -76,6 +76,7 @@ impl OpenAiCompatibleConfig {
             trust_anchors: TrustAnchors::default(),
             capabilities: ResourceCapabilities {
                 locality: LocalityClass::External,
+                precedence: Precedence::Ordinary,
                 modalities: [Modality::Text].into_iter().collect(),
                 context_capacity: 8_192,
                 latency: LatencyClass::Fast,

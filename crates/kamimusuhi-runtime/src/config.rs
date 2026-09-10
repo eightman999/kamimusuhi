@@ -25,7 +25,8 @@ use kamimusuhi_core::persona::PersonaCore;
 use kamimusuhi_core::persona_seed::{PersonaSeed, V0_SEED_ID, v0_seed};
 use kamimusuhi_core::resources::{CognitiveResource, ResourceRegistry, ResourceSlot};
 use kamimusuhi_core::routing::{
-    CostClass, HealthState, LatencyClass, LocalityClass, Modality, PrivacyConstraint, QualityTier,
+    CostClass, HealthState, LatencyClass, LocalityClass, Modality, Precedence,
+    PrivacyConstraint, QualityTier,
     ResourceCapabilities,
 };
 use kamimusuhi_persona_http::{OpenAiCompatiblePersona, PersonaBackendConfig};
@@ -129,6 +130,7 @@ pub struct ProviderConfig {
 fn default_provider_capabilities() -> ResourceCapabilities {
     ResourceCapabilities {
         locality: LocalityClass::External,
+        precedence: Precedence::Ordinary,
         modalities: [Modality::Text].into_iter().collect(),
         context_capacity: 8_192,
         latency: LatencyClass::Fast,

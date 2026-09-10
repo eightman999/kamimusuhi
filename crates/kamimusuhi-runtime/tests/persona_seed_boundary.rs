@@ -17,7 +17,7 @@ use std::process::{Command, Stdio};
 use kamimusuhi_core::ids::{PersonaBackendId, ResourceId};
 use kamimusuhi_core::persona_seed::{V0_SEED_ID, v0_seed};
 use kamimusuhi_core::routing::{
-    CostClass, HealthState, LatencyClass, LocalityClass, Modality, QualityTier,
+    CostClass, HealthState, LatencyClass, LocalityClass, Modality, Precedence, QualityTier,
     ResourceCapabilities,
 };
 use kamimusuhi_runtime::config::{
@@ -79,6 +79,7 @@ fn resource_provider(base_url: String) -> ProviderConfig {
         tls_root_ca_path: None,
         capabilities: ResourceCapabilities {
             locality: LocalityClass::External,
+            precedence: Precedence::Ordinary,
             modalities: [Modality::Text].into_iter().collect(),
             context_capacity: 8_192,
             latency: LatencyClass::Fast,

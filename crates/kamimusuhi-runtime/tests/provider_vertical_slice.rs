@@ -80,6 +80,7 @@ fn provider(server: &FixtureServer, resource_id: ResourceId, max_attempts: u32) 
         tls_root_ca_path: None,
         capabilities: kamimusuhi_core::routing::ResourceCapabilities {
             locality: kamimusuhi_core::routing::LocalityClass::External,
+            precedence: kamimusuhi_core::routing::Precedence::Ordinary,
             modalities: [kamimusuhi_core::routing::Modality::Text]
                 .into_iter()
                 .collect(),

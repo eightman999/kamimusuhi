@@ -18,6 +18,14 @@
 #
 #   curl http://<TAILSCALE_IP>:8080/v1/models
 #
+# To watch it lose to a better model, register a second LLM alongside it:
+#
+#   PEER_URL=http://<OTHER_HOST>:8080/v1 PEER_MODEL=qwen3-4b \
+#     ./scripts/grokbot-resource-smoke.sh http://<TAILSCALE_IP>:8080/v1 ...
+#
+# The peer says nothing about its own standing, which is enough: anything that
+# does not declare itself a last resort outranks one that does.
+#
 # If the endpoint needs a token, export it and pass its *variable name*:
 #
 #   export KAMIMUSUHI_GROKBOT_API_KEY=...
@@ -57,19 +65,57 @@ if [ -n "$AUTH_ENV" ]; then
   AUTH_LINE="        \"auth_env\": \"$AUTH_ENV\","
 fi
 
+# An optional second LLM. It declares no precedence at all, which resolves to
+# `ordinary` — and that is already enough to outrank the borrowed machine.
+PEER_URL="${PEER_URL:-}"
+PEER_MODEL="${PEER_MODEL:-}"
+PEER_AUTH_ENV="${PEER_AUTH_ENV:-}"
+PEER_RESOURCE_LINE=""
+PEER_PROVIDER_BLOCK=""
+if [ -n "$PEER_URL" ] && [ -n "$PEER_MODEL" ]; then
+  PEER_AUTH_LINE=""
+  if [ -n "$PEER_AUTH_ENV" ]; then
+    PEER_AUTH_LINE="        \"auth_env\": \"$PEER_AUTH_ENV\","
+  fi
+  PEER_RESOURCE_LINE="    \"peer-llm\": \"openai-compatible\","$'\n'
+  PEER_PROVIDER_BLOCK="    \"peer-llm\": {
+      \"base_url\": \"$PEER_URL\",
+      \"model\": \"$PEER_MODEL\",
+$PEER_AUTH_LINE
+      \"timeout_ms\": 120000,
+      \"max_attempts\": 1,
+      \"retry_backoff_ms\": 0,
+      \"resource_id\": \"00000000000000000000000000000f00\",
+      \"capabilities\": {
+        \"locality\": \"external\",
+        \"modalities\": [\"text\"],
+        \"context_capacity\": 4096,
+        \"latency\": \"slow\",
+        \"cost\": \"low\",
+        \"quality\": \"basic\",
+        \"health\": \"healthy\"
+      }
+    },"$'\n'
+fi
+
 # Declared, not discovered. These are assertions an operator makes about an
 # endpoint they configured — nothing here probes the VM, and the VM does not
 # get to describe itself.
 #
-#   locality          external — Tailscale is a transport, not ownership
-#   context_capacity  4096     — what llama.cpp was started with
-#   latency           slow     — nothing has been measured yet
-#   quality           basic    — a 4-bit 3B model
-#   cost              free     — no metered API behind it
+#   locality          external    — Tailscale is a transport, not ownership
+#   context_capacity  4096        — what llama.cpp was started with
+#   latency           slow        — nothing has been measured yet
+#   quality           basic       — a 4-bit 3B model
+#   cost              free        — no metered API behind it
+#   precedence        last_resort — reach for this after every other model
 #
-# The Grok Bot slot is the only resource configured, so a turn that reaches the
-# VM did so because it qualified rather than because nothing else was left.
-echo "==> pointing the runtime at $BASE_URL ($MODEL) as a cognitive resource"
+# precedence is what keeps `cost: free` from backfiring. Without it the
+# cheapest endpoint wins every tie, and a machine that belongs to someone else
+# quietly becomes the thing everything runs on.
+echo "==> pointing the runtime at $BASE_URL ($MODEL) as the last-resort resource"
+if [ -n "$PEER_PROVIDER_BLOCK" ]; then
+  echo "    and at $PEER_URL ($PEER_MODEL) as an ordinary peer, which outranks it"
+fi
 cat > "$DIR/runtime.json" <<EOF
 {
   "config_version": 1,
@@ -81,10 +127,10 @@ cat > "$DIR/runtime.json" <<EOF
     }
   },
   "resources": {
-    "grokbot": "openai-compatible"
+$PEER_RESOURCE_LINE    "grokbot": "openai-compatible"
   },
   "providers": {
-    "grokbot": {
+$PEER_PROVIDER_BLOCK    "grokbot": {
       "base_url": "$BASE_URL",
       "model": "$MODEL",
 $AUTH_LINE
@@ -99,7 +145,8 @@ $AUTH_LINE
         "latency": "slow",
         "cost": "free",
         "quality": "basic",
-        "health": "healthy"
+        "health": "healthy",
+        "precedence": "last_resort"
       }
     }
   }
@@ -133,7 +180,13 @@ echo "    refused, as it must be (PRIVACY_EXCLUDED in $DIR/trace.jsonl)"
 
 echo
 echo "==> what to look for in the JSON above"
-echo "    resource.slot          grokbot — the borrowed cortex answered"
+if [ -n "$PEER_PROVIDER_BLOCK" ]; then
+  echo "    resource.slot          peer-llm — the better-standing model answered"
+  echo "    routing_decision.considered  grokbot is NOT_PREFERRED, not excluded:"
+  echo "                                 still usable, just last in line"
+else
+  echo "    resource.slot          grokbot — the borrowed cortex answered"
+fi
 echo "    resource.adapter       openai-compatible — the existing adapter, no new client"
 echo "    workspace item domain  EXTERNAL_RESOURCE_RESULT / external_material"
 echo "    head_before == head_after   borrowing thought moves no canonical state"

@@ -15,7 +15,7 @@ use std::process::{Command, Stdio};
 
 use kamimusuhi_core::ids::ResourceId;
 use kamimusuhi_core::routing::{
-    CostClass, HealthState, LatencyClass, LocalityClass, Modality, QualityTier,
+    CostClass, HealthState, LatencyClass, LocalityClass, Modality, Precedence, QualityTier,
     ResourceCapabilities,
 };
 use kamimusuhi_runtime::config::GENERAL_SLOT;
@@ -85,6 +85,7 @@ fn canonical_snapshot(dir: &Path) -> Vec<(String, i64)> {
 fn capabilities(locality: LocalityClass, cost: CostClass) -> ResourceCapabilities {
     ResourceCapabilities {
         locality,
+        precedence: Precedence::Ordinary,
         modalities: [Modality::Text].into_iter().collect(),
         context_capacity: 8_192,
         latency: LatencyClass::Fast,

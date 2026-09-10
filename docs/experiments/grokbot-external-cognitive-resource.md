@@ -94,10 +94,43 @@ slot 名を変えると `resource_calls` の読み方や運用手順まで巻き
 | `cost` | `free` | 追加課金のある API を経由しないという事実 |
 | `quality` | `basic` | 3B Q4_K_M。benchmark を取っていないので上げない |
 | `health` | `healthy` | 起動している前提の初期値 |
+| `precedence` | `last_resort` | LLM 群の中で最後に手を伸ばす先。下記 |
 
 `cost: free` は「無料だから優先」を意味しない。router の hard constraint は
 privacy → modality → health → context → cost → latency → quality の順で評価され、
 cost は eligible な候補が複数ある場合の順位付けに使われるだけである。
+
+## precedence — LLM 群の中で最下位に置く
+
+ただし順位付けにおいて cost は元々 **最初の key** だった。つまり
+`cost: free` を宣言した時点で、この借り物 endpoint は他の LLM に対して
+常に勝ってしまう。無料であることが「最優先で使う理由」になるのは明確に逆であり、
+他人の機械が黙って基盤になっていく典型的な経路である。
+
+そこで `ResourceCapabilities` に宣言軸 `precedence` を追加した。
+
+| 値 | 意味 |
+| --- | --- |
+| `preferred` | 同輩より先に手を伸ばす |
+| `ordinary` | 特に主張なし。**既定値** |
+| `last_resort` | 他に eligible な候補が無いときだけ |
+
+重要な性質が 3 つある。
+
+1. **hard constraint ではない。** precedence は候補を除外しない。
+   `last_resort` の資源が唯一の候補なら普通に `SELECTED` になる。
+   複数 eligible なときの順序を決めるだけである。
+2. **cost より上位の key。** operator の「これは最後に使う」という表明は、
+   price という測定可能な事実に優先する。
+3. **既定値は `ordinary`。** つまり **何も宣言せずに登録した LLM は自動的に
+   grokbot より上位になる。** 優先度の高いモデルを追加するのに、
+   既存の設定を触る必要はない。
+
+この軸を書かなかった古い `runtime.json` は `ordinary` として読まれる（`serde(default)`）。
+
+`precedence` を他の軸の嘘で代用しない、というのが設計上の要点である。
+「degraded ということにする」「high cost ということにする」は動くが、
+その軸を読む全ての箇所が間違った意味を受け取ることになる。
 
 `latency: slow` は装飾ではなく効いている。`Urgency::Interactive` の turn は
 `slow` な資源を `TOO_SLOW_FOR_URGENCY` で除外するので、人が待っている turn は
@@ -209,6 +242,17 @@ resource として登録する。general slot を残さないのは、VM に届�
 「条件を満たしたから」届いたのであって「他に候補がなかったから」ではないことを明確にするためである。
 続けて `--privacy no-external-service` の turn を実行し、拒否されることを確認する。
 
+優先度の高い LLM を並べる場合:
+
+```bash
+PEER_URL=http://<OTHER_HOST>:8080/v1 PEER_MODEL=<model> \
+AUTH_ENV=KAMIMUSUHI_GROKBOT_API_KEY \
+  ./scripts/grokbot-resource-smoke.sh \
+    http://<GROKBOT_TAILSCALE_IP>:8080/v1 qwen2.5-3b-instruct
+```
+
+peer 側は precedence を一切宣言しない。既定の `ordinary` で足りるからである。
+
 ## 自動テスト
 
 `crates/kamimusuhi-runtime/tests/grokbot_external_resource.rs`。
@@ -266,6 +310,22 @@ secret の扱いも実測で確認した。`runtime.json` に入るのは変数�
 `runtime.json` / `trace.jsonl` / `kamimusuhi.sqlite` のいずれにもバイト列として存在せず、
 `Bearer` の文字列も 0 件だった。
 
+### 優先度の実測
+
+同じ runtime に、標準的な llama.cpp host (`llm-machine`, `qwen3-4b`) を
+`peer-llm` slot として追加登録した。peer 側は precedence を宣言していない。
+
+```text
+routing_decision.considered
+  grokbot   NOT_PREFERRED      除外ではない。使えるが最後
+  peer-llm  SELECTED
+resource.slot   peer-llm
+latency_ms      1591
+```
+
+grokbot は `cost: free` かつ peer は `cost: low` なので、precedence 軸が無ければ
+grokbot が選ばれていた。宣言どおり最下位に落ちている。
+
 ### モデルの応答について
 
 このとき返ってきたのは、request に含まれる evidence ID を「2005 年の英国パンク・
@@ -286,4 +346,5 @@ canonical state には一切届かなかった。**内容を読んで信用す�
 - context compressor は未実装。4K を超える task はルーティング時点で拒否されるだけで、分割はされない。
 - health は静的宣言であり、health check による自動降格はない。VM が落ちていても宣言は `healthy` のままで、失敗は call 時に検出される。
 - 実 VM に対する疎通は smoke script で手動確認する範囲であり、CI には含まれない。
+- `precedence` は静的宣言であり、実測に基づく自動調整はしない。
 - Grok Bot 固有の情報を architecture の中心概念にはしていない。この文書は 1 つの実験記録である。
