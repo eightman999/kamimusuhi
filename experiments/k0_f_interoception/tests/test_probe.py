@@ -7,7 +7,7 @@ from unittest import mock
 
 import numpy as np
 
-from experiments.k0_f_interoception.probe import features, fit_ridge, predict, run_probe
+from experiments.k0_f_interoception.probe import BODY_SCALE_FLOOR, PROBE_VERSION, features, fit_ridge, predict, run_probe
 from experiments.k0_f_interoception import probe
 from experiments.k0_f_interoception.tests.test_policy import fixture_rows
 
@@ -20,10 +20,28 @@ class ProbeTests(unittest.TestCase):
         predict(model, np.array([[1e8, -1e8]]))
         np.testing.assert_array_equal(model["x_center"], center)
 
+    def test_body_scaling_floor_preserves_task_scaling(self):
+        x = np.zeros((4, 7))
+        x[:, 0] = [0, .0001, .0002, .0003]
+        x[:, 4] = [0, .00001, .00002, .00003]
+        x[:, 5] = [0, .3, .6, .9]
+        x[:, 6] = 1
+        model = fit_ridge(x, np.arange(4))
+        self.assertAlmostEqual(model["x_scale"][0], x[:, 0].std())
+        self.assertEqual(model["x_scale"][1], 1.)
+        self.assertEqual(model["x_scale"][4], BODY_SCALE_FLOOR)
+        self.assertAlmostEqual(model["x_scale"][5], x[:, 5].std())
+        self.assertEqual(model["x_scale"][6], BODY_SCALE_FLOOR)
+        self.assertEqual(model["probe_version"], PROBE_VERSION)
+        self.assertEqual(model["ridge_lambda"], 10.)
+
     def test_gate_and_no_test_examination(self):
         rows = fixture_rows()
         result, _, predictions = run_probe(rows)
         self.assertTrue(result["gate"]["pass"])
+        self.assertEqual(result["schema_version"], "k0-f-probe-v2")
+        self.assertEqual(result["body_scale_floor"], .05)
+        self.assertEqual(result["gate"]["threshold_relative_mae_improvement"], .10)
         self.assertFalse(result["test_evaluated"])
         self.assertTrue(all(r["split"] == "validation" for r in predictions))
         mutated = copy.deepcopy(rows)

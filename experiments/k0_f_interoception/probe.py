@@ -7,11 +7,13 @@ from pathlib import Path
 
 import numpy as np
 
-from .policy import PRIMARY_MODES, encode_inputs, json_write, load_dataset, sha256
+from .policy import PRIMARY_MODES, TASK_DIM, encode_inputs, json_write, load_dataset, sha256
 
 TARGETS = ("future_rtx3060_util", "future_p100_util", "next_job_latency_seconds")
 RIDGE_LAMBDA = 10.0
 GATE_RELATIVE_IMPROVEMENT = .10
+PROBE_VERSION = "k0-f-probe-v2"
+BODY_SCALE_FLOOR = .05
 
 
 def features(rows, mode, seed=0):
@@ -23,7 +25,10 @@ def features(rows, mode, seed=0):
 def fit_ridge(x, y, ridge_lambda=RIDGE_LAMBDA):
     x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
     center, scale = x.mean(0), x.std(0)
-    scale[scale < 1e-8] = 1
+    # Tasks retain v1 scaling. Body quantities already have physical [0,1]
+    # normalization; tiny incidental train variance must not amplify time drift.
+    scale[:TASK_DIM] = np.where(scale[:TASK_DIM] < 1e-8, 1, scale[:TASK_DIM])
+    scale[TASK_DIM:] = np.maximum(scale[TASK_DIM:], BODY_SCALE_FLOOR)
     y_center, y_scale = float(y.mean()), float(y.std())
     if y_scale < 1e-8:
         y_scale = 1.0
@@ -33,7 +38,9 @@ def fit_ridge(x, y, ridge_lambda=RIDGE_LAMBDA):
     penalty[0, 0] = 0
     coefficients = np.linalg.solve(design.T @ design + penalty, design.T @ ((y - y_center) / y_scale))
     return {"x_center": center, "x_scale": scale, "y_center": y_center,
-            "y_scale": y_scale, "coefficients": coefficients, "ridge_lambda": ridge_lambda}
+            "y_scale": y_scale, "coefficients": coefficients, "ridge_lambda": ridge_lambda,
+            "probe_version": PROBE_VERSION, "body_scale_floor": BODY_SCALE_FLOOR,
+            "unfloored_task_features": TASK_DIM}
 
 
 def predict(model, x):
@@ -91,9 +98,11 @@ def run_probe(rows, *, include_test=False, seed=0):
             "rule": "at least 2 nonconstant targets, BODY aggregate normalized MAE <= 0.9*BLIND; validation only",
             "inferential_claim": False,
             "independence_note": "descriptive probe gate; telemetry samples are not independent n for significance"}
-    return {"schema_version": "k0-f-probe-v1", "rows": result, "gate": gate,
+    return {"schema_version": PROBE_VERSION, "rows": result, "gate": gate,
             "ridge_lambda": RIDGE_LAMBDA, "seed": seed, "fit_split": "train",
             "feature_standardization": "train only", "test_evaluated": include_test,
+            "body_scale_floor": BODY_SCALE_FLOOR, "body_feature_start_index": TASK_DIM,
+            "preprocessing": "task4: original train standard deviation; normalized body/mask features: max(train standard deviation,0.05)",
             "target_weighting": "equal average after train-target standard deviation scaling",
             "limitations": "Frozen ridge diagnostic; gate is validation screening, not primary causal policy success."}, fitted, predictions
 

@@ -44,3 +44,11 @@ live確認では凍結GRU128の8seedと4入力介入、および独立学習BLIN
 ## 収集中断と再取得
 
 初回48block収集は24学習block後、Macのsleepに伴う約805秒のwall-clock空白（source monotonic増分は約1秒）によりmasterがtelemetry stalenessを検出して安全停止した。結果評価・学習は未実施。失敗記録は`artifacts/primary`と`primary_mac`に保存し、独立nへ加算しない。実験processの生存期間だけ`caffeinate -i -w PID`でidle sleepを抑制し、終了時に解放する。fresh `primary_v2`で同じ48block/task/seed/protocolを再取得する。時刻空白を補間で埋めず、成功条件・heldout定義は変更しない。
+
+## validation probe v1 の診断と一回の前処理修正
+
+v1 validationはBODY normalized MAE 1.323946、BLIND 0.607069でFAIL。testの性能を評価せず、train/validationだけで原因を調査した。物理正規化済みmaster_io_pressureのtrain SDが0.00005894と極小なため、validationの0.0037が62.59 SDに増幅され、ridgeのGPU utilization予測が負側へ外挿された。raw/frameの誤変換ではない。
+
+v2では84 probe特徴のbody/mask部分（index>=4）にtrain SD floor=0.05を一度だけ適用する。task4 scaling、3 target、ridge λ10、10%改善gateは維持し、clipやtarget変更やλ探索は行わない。元のFAIL artifactはprimary_v2へそのまま残し、新しいfitはanalysis_v2に保存する。これは同じvalidationを見た後の修正であることを明記し、初回からの独立した合格とは呼ばない。test結果による調整は行わない。
+
+記述的診断ではfuture10秒targetの62.5%は現在block終了後にあり、最小job latencyはどちらのGPUが速いかの情報を失う。一方、task差を除いたGPU busyと自身の実測latencyの相関はvalidation RTX0.469/P1000.444。これらはsensorに情報が残る根拠であり、元gateやprimary成功条件の置換には使わない。

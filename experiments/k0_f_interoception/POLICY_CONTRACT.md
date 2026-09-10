@@ -47,6 +47,9 @@ STALE は age-aware として本収集前に固定する。古い frame を copy
 ## 予測 probe
 
 現在最後の入力 + body 履歴平均を train-only 標準化し、固定 ridge λ=10 で予測する。
+probe v2 では、すでに物理量として `[0,1]` 正規化済みの body・mask 特徴（84 次元特徴の index>=4）の標準偏差に固定下限 0.05 を設ける。task 4 特徴の従来 scaling は保持する。
+これは v1 validation で微小分散の I/O 特徴が外挿を増幅した問題に対する、test 開封前の限定的な前処理修正。旧 FAIL artifact は保全し、v2 の再 fit は新ディレクトリへ保存する。target 3 種・λ10・10% gate は変更しない。
+結果と ridge model に `k0-f-probe-v2`、`body_scale_floor=0.05` を記録する。GRU policy の入力は従来通りで、この probe scaling を適用しない。
 BODY / BLIND / SHUFFLED / STALE をそれぞれ train に fit する。
 target は未来 10 秒後の RTX3060/P100 utilization と、次 job の実測最小 completion cost。
 GPU の未来観測と、直後に測った job cost を artifact の target_kind で区別する。
