@@ -14,9 +14,9 @@
 - taskは固定4種類の行列乗算。特徴はdimension/3072, repetitions/20, deadline/5, precision flag。seed/task/workloadID・action別コスト・絶対timestampは入力しない。
 - 実測latencyにはjob dispatchと同期完了までを含む。同じtaskで3actionをランダム順に測定する。1回ずつの実測行列は同時反実仮想ではなく短い区間のpaired測定であり、この制約を明記する。
 - teacherと評価utility: `1-min(latency_seconds/deadline_seconds,2)`、failure時-1。deadline超過率・latency・failureを別記録。安全上OOMを起こすteacherは用いない。
-- 48 workload blocks、各20秒を基本とする。train24 / validation8 / test16、block単位で分離。各splitにidle/cpu/RTX/P100/dual/mixed/disk/networkを含む。task順・resource測定順は固定seedから生成し保存。収集に遅延があればblockを延長するが件数を増やして有意差を探さない。
+- 48 workload blocks、各20秒を基本とする。train24 / validation8 / test16、block単位で分離。split境界は35秒record-onlyを挿入し、STALE30秒参照も他splitのtask区間に入らない。各splitにidle/cpu/RTX/P100/dual/mixed/disk/networkを含む。task順・resource測定順は固定seedから生成し保存。収集に遅延があればblockを延長するが件数を増やして有意差を探さない。
 - 独立単位はtraining seed0–7。GRU128 BODYと別学習BLIND。primaryは同じBODY checkpointへのBODY/BLIND/SHUFFLED/STALE介入。別学習BLINDとの差はsecondaryとする。
-- sequence historyは1–8、固定step番号・block開始からの時刻を入力しない。STALEは実timestampで30秒前、欠損もmaskで表現。SHUFFLEDは同split内の異なるepisodeから取得、task/cost順を保持。
+- sequence historyは1–8、固定step番号・block開始からの時刻を入力しない。STALEは実timestampで30秒前、欠損もmaskで表現。古い内容のstaleness channelには現在までの経過30秒を加算し、既知の古さを正しく通知する（age-aware STALE）。SHUFFLEDは同split内の異なるepisodeから取得、task/cost順を保持。
 - imitation supervised learningのみ。全actionの実測feedbackがあるfull-information taskなので、追加DAggerで新規状態を作る必要性を評価し、不要なら実施しない。PPOは実施しない。
 - probeはtrain-onlyfit/scaling、validationでBODY MAEがBLINDより10%以上改善すればpolicyへ進む。改善しなければtestを開かずsensor設計を点検、変更時は理由・旧protocol・旧pilotを保全する。
 - policy checkpointはvalidation utility最大で選択。best/finalを両方保存する。学習の予算とoptimizerはpolicy contractでtest開封前に固定。
