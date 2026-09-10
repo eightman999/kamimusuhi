@@ -34,7 +34,8 @@ class GennBackend(FbaBackend):
         self.connectivity = connectivity
         self.runs_dir = runs_dir
 
-    def initialize(self, phenotype, batch_size, seed, device):
+    def initialize(self, phenotype, batch_size, seed, device,
+                   replicate_seeds=None):
         # Model construction sketch (validate on GPU host):
         #   - LIF neuron custom model: dV/dt = (g - (V - vRest)) / tauMem,
         #     threshold vThr, reset vReset, refractory tRefrac.

@@ -11,10 +11,11 @@ from ..storage import models as M
 
 
 def enqueue(db, experiment_id, genome_id, environment_id, seed, tier,
-            backend, duration_ms, requested_traces, priority=0) -> str:
+            backend, duration_ms, requested_traces, priority=0,
+            replicates=1) -> str:
     return db.enqueue_job(experiment_id, genome_id, environment_id, seed,
                           tier, backend, duration_ms, requested_traces,
-                          priority)
+                          priority, replicates=replicates)
 
 
 def claim(db, experiment_id, worker_id, paused: bool) -> dict | None:
@@ -23,8 +24,10 @@ def claim(db, experiment_id, worker_id, paused: bool) -> dict | None:
     return db.claim_job(experiment_id, worker_id)
 
 
-def finish(db, experiment_id, job, status, worker_id, error=None):
-    db.finish_job(job["job_id"], status, worker_id, error)
+def finish(db, experiment_id, job, status, worker_id, error=None,
+           result_id=None):
+    db.finish_job(job["job_id"], status, worker_id, error,
+                  result_id=result_id)
     db.worker_finished_job(experiment_id, worker_id,
                            ok=(status == M.JOB_SUCCEEDED))
 

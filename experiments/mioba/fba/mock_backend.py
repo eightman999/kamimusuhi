@@ -13,6 +13,7 @@ import numpy as np
 
 from .backend import BackendUnavailable, FbaBackend
 from .params import DEFAULT_PARAMS
+from .replicates import replicate_seeds as _default_replicate_seeds
 
 PARAMS = dict(DEFAULT_PARAMS)
 
@@ -27,10 +28,16 @@ class MockBackend(FbaBackend):
 
     # ------------------------------------------------------------- init
     def initialize(self, phenotype: dict, batch_size: int, seed: int,
-                   device: str) -> None:
+                   device: str, replicate_seeds: list[int] | None = None
+                   ) -> None:
         del device  # cpu-only
         self.batch_size = int(batch_size)
         self.seed = int(seed)
+        if replicate_seeds is None:
+            replicate_seeds = _default_replicate_seeds(self.seed, self.batch_size)
+        if len(replicate_seeds) != self.batch_size:
+            raise ValueError("len(replicate_seeds) must equal batch_size")
+        self.replicate_seeds = [int(s) for s in replicate_seeds]
         self.phenotype = phenotype or {}
         n_extra = int(self.phenotype.get("n_extra_neurons", 0) or 0)
         self.n = self.n_neurons + n_extra
@@ -52,8 +59,6 @@ class MockBackend(FbaBackend):
         self._input_rates = np.zeros(self.n, dtype=np.float32)
         self._silence = np.zeros(self.n, dtype=bool)
         self.reset()
-        # stash full rng for checkpointing
-        self._rng = rng
 
     def dataset_identity(self) -> dict:
         return {"dataset_id": "mock-fba",
@@ -69,8 +74,8 @@ class MockBackend(FbaBackend):
         self.refrac = np.zeros((self.batch_size, self.n), np.float32)
         self.spikes = np.zeros((self.batch_size, self.n), np.float32)
         self.spike_counts = np.zeros((self.batch_size, self.n), np.int64)
-        if not hasattr(self, "_rng"):
-            self._rng = np.random.default_rng(getattr(self, "seed", 0))
+        # one Poisson-drive stream per lane, seeded by its replicate seed
+        self._rngs = [np.random.default_rng(s) for s in self.replicate_seeds]
 
     def set_inputs(self, drive: dict) -> None:
         rates = np.zeros(self.n, np.float32)
@@ -92,8 +97,9 @@ class MockBackend(FbaBackend):
         p = self.params
         dt = p["dt"]
         # Poisson drive
-        stim = (self._rng.random((self.batch_size, self.n))
-                < self._input_rates[None, :] * dt / 1000.0).astype(np.float32) * 25.0
+        u = np.stack([r.random(self.n) for r in self._rngs])
+        stim = (u < self._input_rates[None, :] * dt / 1000.0
+                ).astype(np.float32) * 25.0
         # recurrent input through alpha-ish conductance decay
         rec = self.spikes @ self.W
         self.g = self.g * (1 - dt / p["tauSyn"]) + rec * 10.0
@@ -137,6 +143,8 @@ class MockBackend(FbaBackend):
             "per_batch_spike_counts": self.spike_counts.sum(axis=1).tolist(),
             "per_batch_mean_rate_hz": per_batch.tolist(),
             "vram_bytes": None,
+            "vram": {"allocated": None, "reserved": None, "total": None},
+            "replicate_seeds": list(self.replicate_seeds),
         }
 
     def get_population_activity(self, groups: list[str]) -> dict[str, list[float]]:
@@ -166,7 +174,8 @@ class MockBackend(FbaBackend):
             "t_ms": self.t_ms, "v": self.v, "g": self.g,
             "refrac": self.refrac, "spikes": self.spikes,
             "spike_counts": self.spike_counts,
-            "rng": self._rng.bit_generator.state,
+            "rng": [r.bit_generator.state for r in self._rngs],
+            "replicate_seeds": list(self.replicate_seeds),
         })
 
     def restore(self, blob: bytes) -> None:
@@ -174,7 +183,11 @@ class MockBackend(FbaBackend):
         self.t_ms = s["t_ms"]
         self.v = s["v"]; self.g = s["g"]; self.refrac = s["refrac"]
         self.spikes = s["spikes"]; self.spike_counts = s["spike_counts"]
-        self._rng.bit_generator.state = s["rng"]
+        if len(s["rng"]) != len(self._rngs):
+            raise ValueError("checkpoint batch width differs from this backend")
+        for r, st in zip(self._rngs, s["rng"]):
+            r.bit_generator.state = st
+        self.replicate_seeds = list(s["replicate_seeds"])
 
     def capabilities(self) -> dict:
         return {"supports_gpu": False, "supports_batch": True,

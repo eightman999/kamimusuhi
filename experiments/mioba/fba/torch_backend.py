@@ -46,11 +46,15 @@ exists yet; an ``fba0:<region>`` attachment raises
 Randomness
 ----------
 Every random draw goes through explicit generators: ``self._build_gen``
-(CPU, seeded from ``seed``) for network construction and ``self._gen``
-(on ``device``) for the per-step Poisson drive. ``checkpoint()`` stores
-both generator states plus the simulation state, so replaying the same
-steps after ``restore()`` is bit-identical on CPU. On CUDA, sparse matmul
-may use non-deterministic atomics; see README "Determinism".
+(CPU, seeded from ``seed``) for network construction and one
+``self._gens[b]`` (on ``device``) per batch lane for the per-step
+Poisson drive. Lane ``b`` is seeded with ``replicate_seeds[b]``
+(default ``replicate_seed(seed, b)``), so a lane's trajectory is a
+function of its replicate seed only — not of the batch width or of the
+other lanes. ``checkpoint()`` stores all generator states plus the
+simulation state, so replaying the same steps after ``restore()`` is
+bit-identical on CPU. On CUDA, sparse matmul may use non-deterministic
+atomics; see README "Determinism".
 """
 from __future__ import annotations
 
@@ -65,6 +69,7 @@ import numpy as np
 from .backend import BackendUnavailable, FbaBackend
 from .fba0 import DATA_FILES
 from .params import DEFAULT_PARAMS, UnsupportedAttachmentRegion
+from .replicates import replicate_seeds as _default_replicate_seeds
 
 try:
     import torch
@@ -130,13 +135,13 @@ def _load_connectome(data_dir: Path, cache_dir: Path | None):
 
 
 def _sample_edges(n_post_lo, n_post_hi, n_pre_lo, n_pre_hi, p, gen,
-                  no_self=True):
-    """Sample ~p*|post|*|pre| directed edges pre->post uniformly (with
-    replacement; duplicates are summed by coalesce) as (post, pre)
-    int64 tensors. O(edges) memory."""
+                  no_self=True, n_edges: int | None = None):
+    """Sample ~p*|post|*|pre| (or exactly ``n_edges``) directed edges
+    pre->post uniformly (with replacement; duplicates are summed by
+    coalesce) as (post, pre) int64 tensors. O(edges) memory."""
     n_post = n_post_hi - n_post_lo
     n_pre = n_pre_hi - n_pre_lo
-    m = int(round(p * n_post * n_pre))
+    m = int(n_edges) if n_edges is not None else int(round(p * n_post * n_pre))
     if n_post <= 0 or n_pre <= 0 or m <= 0:
         e = torch.empty(0, dtype=torch.int64)
         return e, e.clone()
@@ -153,12 +158,16 @@ class TorchBackend(FbaBackend):
 
     def __init__(self, data_dir: str | None = None, synthetic: bool = True,
                  synthetic_neurons: int = 2000, connectivity: float = 0.01,
-                 runs_dir: str | None = None, region_mode: str | None = None):
+                 runs_dir: str | None = None, region_mode: str | None = None,
+                 synthetic_edges: int | None = None):
         if torch is None:
             raise BackendUnavailable("torch not installed")
         self.data_dir = data_dir or os.environ.get("MIOBA_FLY_BRAIN_DATA")
         self.synthetic = synthetic
         self.synthetic_neurons = int(synthetic_neurons)
+        # explicit edge count (FlyWire-scale smoke: 139k neurons / ~14M
+        # edges) wins over the pair probability
+        self.synthetic_edges = int(synthetic_edges) if synthetic_edges else None
         self.connectivity = float(connectivity)
         self.runs_dir = Path(runs_dir) if runs_dir else None
         # explicit region_mode wins; synthetic defaults to the pseudo-region
@@ -178,21 +187,30 @@ class TorchBackend(FbaBackend):
                     "version": "2025_783",
                     "manifest_hash": self._manifest_hash,
                     "region_mode": self.region_mode}
-        return {"dataset_id": "synthetic-fba",
-                "version": f"v0-n{self.synthetic_neurons}-p{self.connectivity}",
+        if self.synthetic_edges:
+            version = f"v0-n{self.synthetic_neurons}-e{self.synthetic_edges}"
+        else:
+            version = f"v0-n{self.synthetic_neurons}-p{self.connectivity}"
+        return {"dataset_id": "synthetic-fba", "version": version,
                 "manifest_hash": None,
                 "region_mode": self.region_mode}
 
     # ------------------------------------------------------------ init
     def initialize(self, phenotype: dict, batch_size: int, seed: int,
-                   device: str) -> None:
+                   device: str, replicate_seeds: list[int] | None = None
+                   ) -> None:
         self.batch_size = int(batch_size)
         self.seed = int(seed)
         self.device = torch.device(device if device else "cpu")
         self.phenotype = phenotype or {}
         self._build_gen = torch.Generator(device="cpu").manual_seed(self.seed)
-        self._gen = torch.Generator(device=self.device.type).manual_seed(
-            self.seed)
+        if replicate_seeds is None:
+            replicate_seeds = _default_replicate_seeds(self.seed, self.batch_size)
+        if len(replicate_seeds) != self.batch_size:
+            raise ValueError("len(replicate_seeds) must equal batch_size")
+        self.replicate_seeds = [int(s) for s in replicate_seeds]
+        self._gens = [torch.Generator(device=self.device.type)
+                      for _ in range(self.batch_size)]
 
         self.params = dict(PARAMS)
         self.params.update(self.phenotype.get("params") or {})
@@ -206,7 +224,8 @@ class TorchBackend(FbaBackend):
         elif self.synthetic:
             n_base = self.synthetic_neurons
             post, pre = _sample_edges(0, n_base, 0, n_base, self.connectivity,
-                                      self._build_gen)
+                                      self._build_gen,
+                                      n_edges=self.synthetic_edges)
             w = torch.rand(post.numel(), generator=self._build_gen) \
                 * self.params["wScale"]
             self.region_mode = self._region_mode_arg or SYNTHETIC_REGION_MODE
@@ -311,7 +330,8 @@ class TorchBackend(FbaBackend):
         self.refrac = torch.full((B, n), p["tRefrac"], device=d)
         self.spikes = torch.zeros((B, n), device=d)
         self.spike_counts = torch.zeros((B, n), dtype=torch.long, device=d)
-        self._gen.manual_seed(self.seed)
+        for g, s in zip(self._gens, self.replicate_seeds):
+            g.manual_seed(s)
 
     def set_inputs(self, drive: dict) -> None:
         rates = torch.zeros(self.n, device=self.device)
@@ -347,7 +367,8 @@ class TorchBackend(FbaBackend):
     def _one_step(self) -> None:
         p, d = self.params, self.device
         dt = p["dt"]
-        u = torch.rand((self.batch_size, self.n), device=d, generator=self._gen)
+        u = torch.stack([torch.rand((self.n,), device=d, generator=g)
+                         for g in self._gens])
         stim = (u < self._input_rates[None, :] * dt / 1000.0).float() \
             * p["scalePoisson"]
         delayed = self.delay_buf[:, 0, :]
@@ -393,6 +414,16 @@ class TorchBackend(FbaBackend):
             return int(torch.cuda.memory_allocated(self.device))
         return None
 
+    def vram_info(self) -> dict:
+        """allocated / reserved / total bytes for this backend's device
+        (all None on CPU)."""
+        if self.device.type != "cuda":
+            return {"allocated": None, "reserved": None, "total": None}
+        return {"allocated": int(torch.cuda.memory_allocated(self.device)),
+                "reserved": int(torch.cuda.memory_reserved(self.device)),
+                "total": int(torch.cuda.get_device_properties(
+                    self.device).total_memory)}
+
     def get_state_summary(self) -> dict:
         rates = self._rates_hz()
         return {
@@ -403,6 +434,8 @@ class TorchBackend(FbaBackend):
             "per_batch_spike_counts": self.spike_counts.sum(1).tolist(),
             "per_batch_mean_rate_hz": rates.mean(1).tolist(),
             "vram_bytes": self._vram(),
+            "vram": self.vram_info(),
+            "replicate_seeds": list(self.replicate_seeds),
             "n_neurons": self.n,
             "n_base": self.n_base,
             "nnz": self.nnz,
@@ -437,7 +470,8 @@ class TorchBackend(FbaBackend):
             "delay_buf": self.delay_buf.cpu(), "refrac": self.refrac.cpu(),
             "spikes": self.spikes.cpu(),
             "spike_counts": self.spike_counts.cpu(),
-            "gen_state": self._gen.get_state().cpu(),
+            "gen_states": [g.get_state().cpu() for g in self._gens],
+            "replicate_seeds": list(self.replicate_seeds),
             "build_gen_state": self._build_gen.get_state().cpu(),
             "torch_rng_state": torch.get_rng_state(),
             "cuda_rng_state": (torch.cuda.get_rng_state(self.device)
@@ -451,7 +485,11 @@ class TorchBackend(FbaBackend):
         self.t_ms = s["t_ms"]
         for k in ("v", "g", "delay_buf", "refrac", "spikes", "spike_counts"):
             setattr(self, k, s[k].to(self.device))
-        self._gen.set_state(s["gen_state"])
+        if len(s["gen_states"]) != len(self._gens):
+            raise ValueError("checkpoint batch width differs from this backend")
+        for g, st in zip(self._gens, s["gen_states"]):
+            g.set_state(st)
+        self.replicate_seeds = list(s["replicate_seeds"])
         self._build_gen.set_state(s["build_gen_state"])
         torch.set_rng_state(s["torch_rng_state"])
         if s.get("cuda_rng_state") is not None and self.device.type == "cuda":

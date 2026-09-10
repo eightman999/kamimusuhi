@@ -1,9 +1,11 @@
 experiment: {id_prefix: "M", runs_dir: "experiments/mioba/.runs"}
 population: {target_size: 64}
 evolution: {max_generations: 1, elite_k: 8, mutation_seed: 12345}
-worker: {batch_size: auto, candidates: [1,2,4,8,16,32], heartbeat_s: 5, lost_after_s: 90, grace_s: 30}
+# worker.* is operational only: execution_batch (lanes per GPU chunk) never changes
+# replicate count, seeds or fitness. evaluation.replicates is the scientific condition.
+worker: {execution_batch: auto, candidates: [1,2,4,8,16,32], vram_headroom: 0.85, bench_duration_ms: 200, bench_organ_overhead_neurons: 0, heartbeat_s: 5, lost_after_s: 90, grace_s: 30}
 jobs: {requeue_unknown: true, max_attempts: 3}
-evaluation: {tier: smoke, duration_ms: 500, backend: torch, environment_id: synthetic-quiet-v0, target_rate_hz: 5.0}
+evaluation: {tier: smoke, replicates: 8, duration_ms: 500, backend: torch, environment_id: synthetic-quiet-v0, target_rate_hz: 5.0}
 fba: {data_dir: null, synthetic: true, synthetic_neurons: 2000}
 checkpoint: {interval_s: 600}
 stop: {timeout_s: 120}

@@ -220,9 +220,20 @@ def test_resume_allows_runtime_change_blocks_scientific(tmp_path,
     with pytest.raises(ScientificConfigMismatch):
         MiobaService(sci, tmp_path / "runs", resume=exp_id)
 
-    svc3 = MiobaService(sci, tmp_path / "runs", resume=exp_id,
-                        allow_scientific_change=True)
-    evs = svc3.db.list_events(exp_id, type_="scientific_config_mismatch")
-    assert evs and evs[-1]["severity"] == "error"
-    assert json.loads(evs[-1]["payload_json"])["allowed"] is True
-    svc3.db.close()
+    # no override exists: a replicate-count change is scientific too
+    sci2 = copy.deepcopy(smoke_config)
+    sci2["evaluation"]["replicates"] = 99
+    with pytest.raises(ScientificConfigMismatch):
+        MiobaService(sci2, tmp_path / "runs", resume=exp_id)
+    # execution batch / headroom are operational -> resume is fine
+    ops2 = copy.deepcopy(smoke_config)
+    ops2["worker"]["execution_batch"] = 16
+    ops2["worker"]["vram_headroom"] = 0.5
+    svc4 = MiobaService(ops2, tmp_path / "runs", resume=exp_id)
+    from ..storage.db import Database
+    db = Database(tmp_path / "runs" / exp_id / "lineage.sqlite")
+    evs = db.list_events(exp_id, type_="scientific_config_mismatch")
+    assert evs and all(e["severity"] == "error" for e in evs)
+    assert "allowed" not in json.loads(evs[-1]["payload_json"])
+    db.close()
+    svc4.db.close()

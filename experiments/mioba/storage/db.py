@@ -11,8 +11,20 @@ from pathlib import Path
 
 from . import models as M
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text()
+
+# columns added after v2; applied with ALTER TABLE when opening an older DB
+_V3_COLUMNS = (
+    ("evaluation_jobs", "replicates", "INTEGER NOT NULL DEFAULT 1"),
+    ("evaluation_jobs", "result_id", "TEXT"),
+    ("evaluations", "requested_replicates", "INTEGER"),
+    ("evaluations", "completed_replicates", "INTEGER"),
+    ("evaluations", "execution_batch_size", "INTEGER"),
+    ("evaluations", "replicate_seeds_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("evaluations", "result_id", "TEXT"),
+    ("worker_runs", "device", "TEXT"),
+)
 
 
 def _uid(prefix: str) -> str:
@@ -41,7 +53,18 @@ class Database:
             if row is None:
                 self.conn.execute("INSERT INTO schema_version(version) VALUES (?)",
                                   (SCHEMA_VERSION,))
+            elif row["version"] < SCHEMA_VERSION:
+                self._migrate(row["version"])
             self._commit()
+
+    def _migrate(self, from_version: int) -> None:
+        for table, col, decl in _V3_COLUMNS:
+            have = {r["name"] for r in
+                    self.conn.execute(f"PRAGMA table_info({table})")}
+            if col not in have:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        self.conn.execute("UPDATE schema_version SET version=?",
+                          (SCHEMA_VERSION,))
 
     def close(self):
         with self._lock:
@@ -324,16 +347,17 @@ class Database:
     def enqueue_job(self, experiment_id: str, genome_id: str, environment_id: str,
                     seed: int, tier: str, backend: str, duration_ms: float,
                     requested_traces: list[str], priority: int = 0,
-                    job_id: str | None = None) -> str:
+                    job_id: str | None = None, replicates: int = 1) -> str:
         jid = job_id or _uid("job")
         with self._lock:
             self._q("INSERT INTO evaluation_jobs(experiment_id,job_id,genome_id,"
                     "environment_id,seed,evaluation_tier,backend,duration_ms,"
-                    "requested_traces_json,status,priority,created_at,attempt)"
-                    " VALUES(?,?,?,?,?,?,?,?,?,'QUEUED',?,?,0)",
+                    "requested_traces_json,status,priority,created_at,attempt,"
+                    "replicates)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,'QUEUED',?,?,0,?)",
                     (experiment_id, jid, genome_id, environment_id, seed, tier,
                      backend, duration_ms, json.dumps(requested_traces),
-                     priority, self._now()))
+                     priority, self._now(), int(replicates)))
             self._commit()
         return jid
 
@@ -376,7 +400,8 @@ class Database:
         return [dict(r) for r in rows]
 
     def finish_job(self, job_id: str, status: str, worker_id: str,
-                   error: str | None = None) -> None:
+                   error: str | None = None,
+                   result_id: str | None = None) -> None:
         if status not in (M.JOB_SUCCEEDED, M.JOB_FAILED):
             raise InvalidTransition(f"finish_job: bad status {status}")
         with self._lock:
@@ -391,8 +416,8 @@ class Database:
                     f"job {job_id} claimed by {job['claimed_by_worker']}, "
                     f"not {worker_id}")
             self._q("UPDATE evaluation_jobs SET status=?, finished_at=?,"
-                    " last_error=? WHERE job_id=?",
-                    (status, self._now(), error, job_id))
+                    " last_error=?, result_id=? WHERE job_id=?",
+                    (status, self._now(), error, result_id, job_id))
             self._commit()
 
     def cancel_job(self, job_id: str) -> None:
@@ -477,8 +502,11 @@ class Database:
                     "summary_json,runtime_info_json,config_hash,"
                     "scientific_config_hash,genome_hash,"
                     "git_commit,started_at,finished_at,trace_path,"
-                    "environment_id,duration_ms,dataset_json,device)"
-                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "environment_id,duration_ms,dataset_json,device,"
+                    "requested_replicates,completed_replicates,"
+                    "execution_batch_size,replicate_seeds_json,result_id)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
+                    "?,?,?,?,?)",
                     (experiment_id, eid, job_id, genome_id,
                      evaluation.get("worker_id"), evaluation.get("backend"),
                      evaluation.get("seed"), evaluation.get("batch_size"),
@@ -494,7 +522,12 @@ class Database:
                      evaluation.get("environment_id"),
                      evaluation.get("duration_ms"),
                      json.dumps(evaluation.get("dataset") or {}),
-                     evaluation.get("device")))
+                     evaluation.get("device"),
+                     evaluation.get("requested_replicates"),
+                     evaluation.get("completed_replicates"),
+                     evaluation.get("execution_batch_size"),
+                     json.dumps(evaluation.get("replicate_seeds") or []),
+                     evaluation.get("result_id")))
             self._commit()
         return eid
 
@@ -521,17 +554,18 @@ class Database:
     # ------------------------------------------------------------ workers
     def register_worker(self, experiment_id: str, worker_id: str,
                         hostname: str, gpu: list, runtime_info: dict,
-                        bench: list, batch_size: int | None) -> str:
+                        bench: list, batch_size: int | None,
+                        device: str | None = None) -> str:
         wrid = _uid("wrun")
         with self._lock:
             self._q("INSERT INTO worker_runs(experiment_id,worker_run_id,"
                     "worker_id,hostname,gpu_json,runtime_info_json,bench_json,"
-                    "started_at,last_heartbeat_at,status,batch_size)"
-                    " VALUES(?,?,?,?,?,?,?,?,?,'online',?)",
+                    "started_at,last_heartbeat_at,status,batch_size,device)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,'online',?,?)",
                     (experiment_id, wrid, worker_id, hostname,
                      json.dumps(gpu or []), json.dumps(runtime_info or {}),
                      json.dumps(bench or []), self._now(), self._now(),
-                     batch_size))
+                     batch_size, device))
             self._commit()
         return wrid
 

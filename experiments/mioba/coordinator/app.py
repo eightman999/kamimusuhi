@@ -164,13 +164,18 @@ def create_app(service) -> FastAPI:
         return {"ok": True, "status": "stopping"}
 
     # ------------------------------------------------------------ worker protocol
+    @app.get("/api/worker/profile")
+    def wprofile():
+        return service.worker_profile()
+
     @app.post("/api/worker/register")
     def wregister(body: dict):
         service.register_worker(body["worker_id"], body.get("hostname"),
                                 body.get("gpu") or [],
                                 body.get("runtime_info") or {},
                                 body.get("bench") or [],
-                                body.get("batch_size"))
+                                body.get("batch_size"),
+                                device=body.get("device"))
         return {"ok": True, "experiment_id": service.experiment_id}
 
     @app.post("/api/worker/heartbeat")
@@ -189,14 +194,15 @@ def create_app(service) -> FastAPI:
     @app.post("/api/worker/result")
     def wresult(body: dict):
         try:
-            service.worker_result(body["job_id"], body["worker_id"],
-                                  body["status"], body.get("evaluation"),
-                                  body.get("error"))
+            return service.worker_result(body["job_id"], body["worker_id"],
+                                         body["status"],
+                                         body.get("evaluation"),
+                                         body.get("error"),
+                                         result_id=body.get("result_id"))
         except KeyError as exc:
             raise HTTPException(404, str(exc))
         except InvalidTransition as exc:
             raise HTTPException(409, str(exc))
-        return {"ok": True}
 
     @app.exception_handler(InvalidTransition)
     def _invalid(req: Request, exc: InvalidTransition):

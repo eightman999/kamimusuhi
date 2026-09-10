@@ -96,7 +96,12 @@ CREATE TABLE IF NOT EXISTS evaluation_jobs (
     claimed_by_worker     TEXT,
     finished_at           TEXT,
     attempt               INTEGER NOT NULL DEFAULT 0,
-    last_error            TEXT
+    last_error            TEXT,
+    -- scientific replicate count (evaluation.replicates), fixed per experiment
+    replicates            INTEGER NOT NULL DEFAULT 1,
+    -- deterministic id of the worker result that finished this job;
+    -- a re-delivery with the same id is acknowledged, not re-applied
+    result_id             TEXT
 );
 CREATE INDEX IF NOT EXISTS jobs_status ON evaluation_jobs(experiment_id, status, priority);
 
@@ -123,7 +128,13 @@ CREATE TABLE IF NOT EXISTS evaluations (
     duration_ms        REAL,
     -- logical dataset identity {dataset_id, version, manifest_hash, region_mode}
     dataset_json       TEXT NOT NULL DEFAULT '{}',
-    device             TEXT
+    device             TEXT,
+    requested_replicates INTEGER,
+    completed_replicates INTEGER,
+    -- GPU lanes per chunk (operational; must not affect fitness)
+    execution_batch_size INTEGER,
+    replicate_seeds_json TEXT NOT NULL DEFAULT '[]',
+    result_id          TEXT
 );
 CREATE INDEX IF NOT EXISTS evals_genome ON evaluations(experiment_id, genome_id);
 
@@ -141,7 +152,8 @@ CREATE TABLE IF NOT EXISTS worker_runs (
     completed_jobs     INTEGER NOT NULL DEFAULT 0,
     failed_jobs        INTEGER NOT NULL DEFAULT 0,
     current_job_id     TEXT,
-    batch_size         INTEGER
+    batch_size         INTEGER,
+    device             TEXT
 );
 CREATE INDEX IF NOT EXISTS worker_runs_exp ON worker_runs(experiment_id, worker_id);
 

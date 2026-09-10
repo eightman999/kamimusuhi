@@ -7,11 +7,19 @@ from the top-k by `fitness_placeholder` = -|mean_rate_hz - target_rate|.
 
 New clade rule lives here: when a genome's first artificial organ
 appears, a clade row is created (event `new_clade_detected`).
+
+Atomicity: one generation (every child genome, its parents/mutations/
+clade rows, birth events, evaluation jobs, and the post-mutation RNG
+state written by the ``persist`` callback) is committed in a single
+``db.transaction()``. A crash mid-generation rolls the whole generation
+back, so resume re-derives exactly the same children from the stored
+pre-generation RNG state instead of duplicating the ones already born.
 """
 from __future__ import annotations
 
 import json
 import random
+from typing import Callable
 
 from ..genome.mutation import mutate
 from ..genome.schema import Genome, fba0_genome
@@ -29,11 +37,15 @@ def fitness_placeholder(summary: dict, target_rate: float) -> float | None:
 
 class PopulationController:
     def __init__(self, db, experiment_id: str, config: dict,
-                 rng: random.Random):
+                 rng: random.Random,
+                 persist: Callable[[int], None] | None = None):
         self.db = db
         self.experiment_id = experiment_id
         self.config = config
         self.rng = rng
+        # persist(born) writes RNG state + counters; called inside the
+        # generation transaction so they commit together with the children
+        self._persist = persist or (lambda born: None)
         self._best_fitness: float | None = None
         clade = db.get_clade_by_name(experiment_id, ROOT_CLADE)
         self.root_clade_id = (clade["clade_id"] if clade else
@@ -49,16 +61,18 @@ class PopulationController:
         seed = int(self.config.get("evolution", {}).get("mutation_seed", 0))
         base = fba0_genome(seed=seed)
         born = 0
-        for i in range(target):
-            if i == 0:
-                g = base
-                kind = "initial"
-            else:
-                g = mutate(base, self.rng, birth_index=i, generation=0)
-                kind = "mutation"
-            self._birth(g, kind)
-            self._enqueue_eval(g)
-            born += 1
+        with self.db.transaction():
+            for i in range(target):
+                if i == 0:
+                    g = base
+                    kind = "initial"
+                else:
+                    g = mutate(base, self.rng, birth_index=i, generation=0)
+                    kind = "mutation"
+                self._birth(g, kind)
+                self._enqueue_eval(g)
+                born += 1
+            self._persist(born)
         return born
 
     def _parent_clade(self, genome: Genome) -> str | None:
@@ -118,7 +132,8 @@ class PopulationController:
             tier=eval_cfg.get("tier", "smoke"),
             backend=eval_cfg.get("backend", "mock"),
             duration_ms=float(eval_cfg.get("duration_ms", 500)),
-            requested_traces=[])
+            requested_traces=[],
+            replicates=int(eval_cfg.get("replicates", 1)))
 
     # ------------------------------------------------------------- fitness
     def record_fitness(self, genome_id: str, fitness: float | None) -> None:
@@ -167,12 +182,19 @@ class PopulationController:
         elites = [gid for _, gid in scored[:elite_k]] or [current[0]["genome_id"]]
         target = int(self.config.get("population", {}).get("target_size", 8))
         born = 0
-        for i in range(target):
-            parent_row = self.db.get_genome(self.rng.choice(elites))
-            parent = Genome.from_json(parent_row["genome_json"])
-            g = mutate(parent, self.rng, birth_index=i,
-                       generation=current_gen + 1)
-            self._birth(g, "mutation")
-            self._enqueue_eval(g)
-            born += 1
+        with self.db.transaction():
+            self.db.emit(self.experiment_id, "generation_advanced",
+                         payload={"from_generation": current_gen,
+                                  "to_generation": current_gen + 1,
+                                  "elites": elites, "target_size": target},
+                         source="population")
+            for i in range(target):
+                parent_row = self.db.get_genome(self.rng.choice(elites))
+                parent = Genome.from_json(parent_row["genome_json"])
+                g = mutate(parent, self.rng, birth_index=i,
+                           generation=current_gen + 1)
+                self._birth(g, "mutation")
+                self._enqueue_eval(g)
+                born += 1
+            self._persist(born)
         return born

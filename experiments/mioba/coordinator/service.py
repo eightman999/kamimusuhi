@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..evolution.population import PopulationController, fitness_placeholder
+from ..fba.replicates import replicate_seeds
 from ..genome.hashing import (config_hash, runtime_config_hash,
                               scientific_config_hash)
 from ..genome.schema import utcnow
@@ -24,13 +25,17 @@ from . import jobs, lifecycle
 
 class ScientificConfigMismatch(RuntimeError):
     """Resume was attempted with a config whose result-affecting sections
-    differ from the ones the experiment was created with."""
+    differ from the ones the experiment was created with. There is no
+    override: a scientific change is a new experiment."""
+
+
+DEFAULT_BATCH_CANDIDATES = (1, 2, 4, 8, 16, 32)
+DEFAULT_VRAM_HEADROOM = 0.85
 
 
 class MiobaService:
     def __init__(self, config: dict, runs_dir: str | Path,
-                 experiment_id: str | None = None, resume: str | None = None,
-                 allow_scientific_change: bool = False):
+                 experiment_id: str | None = None, resume: str | None = None):
         self.config = config
         self.runs_dir = Path(runs_dir)
         exp_cfg = config.get("experiment", {})
@@ -93,7 +98,7 @@ class MiobaService:
             exp = self.db.get_experiment(self.experiment_id) or {}
             self._stored_config_hash = exp.get("config_hash")
             self._stored_scientific_hash = exp.get("scientific_config_hash")
-            self._check_config_on_resume(exp, allow_scientific_change)
+            self._check_config_on_resume(exp)
             if exp and exp.get("rng_state_json"):
                 self.load_rng_state(exp["rng_state_json"])
             if exp and exp.get("counters_json"):
@@ -111,16 +116,21 @@ class MiobaService:
                          source="coordinator")
 
         self.population = PopulationController(self.db, self.experiment_id,
-                                               config, self.rng)
+                                               config, self.rng,
+                                               persist=self._on_generation)
         if not already:
-            n = self.population.seed_if_empty()
-            self._counters["births"] += n
+            self.population.seed_if_empty()
 
     # ------------------------------------------------------------ helpers
-    def _check_config_on_resume(self, exp: dict, allow_scientific: bool):
+    def _on_generation(self, born: int) -> None:
+        """Runs inside the population's generation transaction: births
+        counter + post-mutation RNG state commit with the children."""
+        self._counters["births"] += born
+        self.persist_state()
+
+    def _check_config_on_resume(self, exp: dict):
         """Operational (runtime) changes are recorded and allowed;
-        scientific changes stop the resume unless explicitly overridden,
-        in which case the override itself becomes part of the record."""
+        a scientific change refuses the resume (new experiment id)."""
         stored_sci = exp.get("scientific_config_hash")
         stored_run = exp.get("runtime_config_hash")
         stored_all = exp.get("config_hash")
@@ -135,18 +145,16 @@ class MiobaService:
                          "coordinator")
         if stored_sci and stored_sci != self.scientific_config_hash:
             payload = {"stored": stored_sci,
-                       "current": self.scientific_config_hash,
-                       "allowed": allow_scientific}
+                       "current": self.scientific_config_hash}
             self.db.emit(self.experiment_id, M.EV_SCIENTIFIC_CONFIG_MISMATCH,
                          "error", payload, "coordinator")
-            if not allow_scientific:
-                self.db.close()
-                raise ScientificConfigMismatch(
-                    f"experiment {self.experiment_id} was created with "
-                    f"scientific_config_hash {stored_sci[:12]} but the "
-                    f"current config hashes to "
-                    f"{self.scientific_config_hash[:12]}; start a new "
-                    "experiment or pass --allow-scientific-change")
+            self.db.close()
+            raise ScientificConfigMismatch(
+                f"experiment {self.experiment_id} was created with "
+                f"scientific_config_hash {stored_sci[:12]} but the "
+                f"current config hashes to "
+                f"{self.scientific_config_hash[:12]}; scientific conditions "
+                "are fixed per experiment - start a new experiment id")
 
     def fba_base_neurons(self) -> int | None:
         """FBA0 neuron count to use for ancestry_fraction: the synthetic-N
@@ -176,13 +184,50 @@ class MiobaService:
         self.db.set_counters(self.experiment_id, self._counters)
 
     # ------------------------------------------------------------ worker API
+    def worker_profile(self) -> dict:
+        """Execution profile a worker must benchmark against: the exact
+        backend / dataset / network size / duration / replicates that its
+        jobs will use (plus the operational batch policy)."""
+        ev = self.config.get("evaluation", {})
+        fba = dict(self.config.get("fba", {}))
+        wk = self.config.get("worker", {})
+        return {
+            "experiment_id": self.experiment_id,
+            "scientific_config_hash": self.scientific_config_hash,
+            "backend": ev.get("backend", "mock"),
+            "fba": fba,
+            "env": self.config.get("env", {}),
+            "evaluation": {
+                "replicates": int(ev.get("replicates", 1)),
+                "duration_ms": float(ev.get("duration_ms", 500)),
+                "environment_id": ev.get("environment_id",
+                                         "synthetic-quiet-v0"),
+                "tier": ev.get("tier", "smoke"),
+            },
+            "worker": {
+                "execution_batch": wk.get("execution_batch",
+                                          wk.get("batch_size", "auto")),
+                "candidates": list(wk.get("candidates",
+                                          DEFAULT_BATCH_CANDIDATES)),
+                "vram_headroom": float(wk.get("vram_headroom",
+                                              DEFAULT_VRAM_HEADROOM)),
+                "bench_duration_ms": float(wk.get("bench_duration_ms",
+                                                  ev.get("duration_ms", 500))),
+                "bench_organ_overhead_neurons": int(
+                    wk.get("bench_organ_overhead_neurons", 0)),
+            },
+        }
+
     def register_worker(self, worker_id, hostname, gpu, runtime_info,
-                        bench, batch_size):
+                        bench, batch_size, device=None):
         self.db.register_worker(self.experiment_id, worker_id, hostname,
-                                gpu, runtime_info, bench, batch_size)
+                                gpu, runtime_info, bench, batch_size,
+                                device=device)
         self.db.emit(self.experiment_id, M.EV_WORKER_JOINED,
                      payload={"worker_id": worker_id, "hostname": hostname,
-                              "gpu": gpu}, source="coordinator")
+                              "device": device, "gpu": gpu,
+                              "execution_batch": batch_size},
+                     source="coordinator")
 
     def heartbeat(self, worker_id, sample: dict, mie_samples: list[dict]):
         self.db.heartbeat(self.experiment_id, worker_id, sample)
@@ -203,6 +248,9 @@ class MiobaService:
             "requested_traces": json.loads(job["requested_traces_json"]),
             "environment_id": job["environment_id"],
             "attempt": job["attempt"],
+            "replicates": int(job.get("replicates") or 1),
+            "replicate_seeds": replicate_seeds(job["seed"],
+                                               int(job.get("replicates") or 1)),
             "config": self.config,
             "run_dir": str(self.run_dir),
             "experiment_id": self.experiment_id,
@@ -239,24 +287,36 @@ class MiobaService:
         return evaluation
 
     def worker_result(self, job_id: str, worker_id: str, status: str,
-                      evaluation: dict | None, error: str | None):
+                      evaluation: dict | None, error: str | None,
+                      result_id: str | None = None) -> dict:
         """Accept a worker's result. The success path (ownership check,
-        RUNNING->SUCCEEDED, evaluation row, worker counter, event) is one
-        SQLite transaction: a crash or exception anywhere leaves the job
-        RUNNING (recoverable), never SUCCEEDED-without-evaluation."""
+        RUNNING->SUCCEEDED, evaluation row, worker counter, counters +
+        RNG state, event) is one SQLite transaction: a crash or exception
+        anywhere leaves the job RUNNING (recoverable), never
+        SUCCEEDED-without-evaluation.
+
+        Idempotent: ``result_id`` is the worker's deterministic id for this
+        (job, worker, attempt). A re-delivery of an already committed
+        result is acknowledged with ``duplicate=True`` and changes nothing;
+        a result for a job that is no longer RUNNING under this worker
+        (reclaimed after UNKNOWN) raises InvalidTransition (HTTP 409)."""
         job = self.db.get_job(job_id)
         if job is None:
             raise KeyError(f"no such job {job_id}")
+        if result_id and job.get("result_id") == result_id:
+            return {"ok": True, "duplicate": True, "job_status": job["status"]}
         ok = status == M.JOB_SUCCEEDED and evaluation is not None
         if status == M.JOB_SUCCEEDED and evaluation is None:
             status, error = M.JOB_FAILED, error or "success without evaluation"
+        before = dict(self._counters)
         try:
             with self.db.transaction():
                 jobs.finish(self.db, self.experiment_id, job, status,
-                            worker_id, error)
+                            worker_id, error, result_id=result_id)
                 if ok:
                     evaluation = self._complete_evaluation(job, worker_id,
                                                            evaluation)
+                    evaluation["result_id"] = result_id
                     self.db.insert_evaluation(self.experiment_id, job_id,
                                               job["genome_id"], evaluation)
                     self.db.emit(self.experiment_id, M.EV_EVALUATION_SUCCEEDED,
@@ -269,18 +329,25 @@ class MiobaService:
                                  "warn", {"job_id": job_id,
                                           "worker_id": worker_id,
                                           "error": error}, "coordinator")
+                self._counters["evaluations_succeeded" if ok
+                               else "evaluations_failed"] += 1
+                self.persist_state()
         except InvalidTransition:
+            self._counters = before
             self.db.emit(self.experiment_id, "stale_result_rejected", "warn",
                          {"job_id": job_id, "worker_id": worker_id,
-                          "status": status}, "coordinator")
+                          "status": status, "result_id": result_id},
+                         "coordinator")
+            raise
+        except BaseException:
+            self._counters = before
             raise
         if ok:
-            self._counters["evaluations_succeeded"] += 1
             self.population.record_fitness(job["genome_id"],
                                            evaluation["fitness"])
-        else:
-            self._counters["evaluations_failed"] += 1
-        self.persist_state()
+        return {"ok": True, "duplicate": False, "job_status": status,
+                "evaluation_id": (evaluation or {}).get("evaluation_id")
+                if ok else None}
 
     # ------------------------------------------------------------ background
     def request_shutdown(self):
@@ -315,7 +382,7 @@ class MiobaService:
                     self.db.emit(self.experiment_id, M.EV_JOB_REQUEUED,
                                  payload={"job_id": job_id, "action": action},
                                  source="coordinator")
-                self._counters["births"] += self.population.maybe_advance()
+                self.population.maybe_advance()
                 now = time.time()
                 if now - last_mie >= mie_interval:
                     last_mie = now

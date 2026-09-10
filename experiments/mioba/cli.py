@@ -74,8 +74,7 @@ def cmd_start(args) -> int:
     try:
         service = MiobaService(
             config, runs_dir, experiment_id=args.experiment_id,
-            resume=args.resume,
-            allow_scientific_change=args.allow_scientific_change)
+            resume=args.resume)
     except ScientificConfigMismatch as exc:
         print(f"ScientificConfigMismatch: {exc}", file=sys.stderr)
         return 3
@@ -96,8 +95,10 @@ def cmd_start(args) -> int:
                 [py, "-m", "experiments.mioba.workers.worker",
                  "--coordinator", f"http://{args.host}:{args.port}",
                  "--device", device, "--backend", backend,
-                 "--batch", str(config.get("worker", {})
-                                .get("batch_size", 1))],
+                 "--execution-batch",
+                 str(config.get("worker", {}).get(
+                     "execution_batch",
+                     config.get("worker", {}).get("batch_size", "auto")))],
                 cwd=str(REPO_ROOT)))
 
     import uvicorn
@@ -183,20 +184,26 @@ def cmd_bench(args) -> int:
     from .fba.runtime_info import collect_runtime_info
     from .genome.schema import fba0_genome
     from .workers.bench import choose_batch, startup_benchmark
-    backend = get_backend(args.backend, synthetic=not args.data_dir,
-                          data_dir=args.data_dir,
-                          synthetic_neurons=args.synthetic_neurons)
+    from .workers.gpu_info import gpu_identity
+    kw = {"synthetic": not args.data_dir, "data_dir": args.data_dir,
+          "synthetic_neurons": args.synthetic_neurons}
+    if args.synthetic_edges:
+        kw["synthetic_edges"] = args.synthetic_edges
+    backend = get_backend(args.backend, **kw)
     candidates = tuple(int(c) for c in args.candidates.split(","))
     rows = startup_benchmark(backend, develop(fba0_genome()),
                              device=args.device, candidates=candidates,
                              duration_ms=args.duration_ms)
-    selected = choose_batch(rows)
+    selected = choose_batch(rows, vram_headroom=args.vram_headroom)
     report = {"device": args.device, "backend": args.backend,
               "dataset": backend.dataset_identity(),
               "duration_ms": args.duration_ms,
+              "vram_headroom": args.vram_headroom,
               "rows": [r.to_dict() for r in rows],
               "selected_batch": selected,
-              "runtime": collect_runtime_info(backend=args.backend)}
+              "gpu_identity": gpu_identity(args.device),
+              "runtime": collect_runtime_info(backend=args.backend,
+                                              device=args.device)}
     for r in rows:
         print(r.to_dict())
     print(f"selected_batch={selected}")
@@ -209,7 +216,7 @@ def cmd_bench(args) -> int:
 
 def cmd_env_info(args) -> int:
     from .fba.runtime_info import collect_runtime_info
-    print(json.dumps(collect_runtime_info(), indent=2))
+    print(json.dumps(collect_runtime_info(device=args.device), indent=2))
     return 0
 
 
@@ -230,7 +237,9 @@ def cmd_replay(args) -> int:
                           current_config=config,
                           current_git_commit=collect_runtime_info().get(
                               "git_commit"),
-                          strict=args.strict)
+                          strict=args.strict,
+                          allow_device_drift=args.allow_device_drift,
+                          execution_batch=args.execution_batch)
         for w in plan.warnings:
             print(f"warning: {w}", file=sys.stderr)
         result = run_plan(plan)
@@ -263,10 +272,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--experiment-id", default=None)
-    p.add_argument("--resume", default=None, metavar="EXPERIMENT_ID")
-    p.add_argument("--allow-scientific-change", action="store_true",
-                   help="resume even if result-affecting config sections "
-                        "changed (recorded as scientific_config_mismatch)")
+    p.add_argument("--resume", default=None, metavar="EXPERIMENT_ID",
+                   help="resume; scientific config sections must be "
+                        "unchanged (a scientific change is a new experiment)")
     p.add_argument("--workers", default=None,
                    help='e.g. "cuda:0:torch,cuda:1:torch"')
     p.set_defaults(fn=cmd_start)
@@ -295,8 +303,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data-dir", default=None,
                    help="location of the recorded real FBA dataset")
     p.add_argument("--strict", action="store_true",
-                   help="fail instead of warning on config/git/backend/"
-                        "device drift")
+                   help="fail instead of warning on config/git/backend drift "
+                        "and on GPU model / compute-capability drift")
+    p.add_argument("--allow-device-drift", action="store_true",
+                   help="with --strict: permit a different GPU model/CC as an "
+                        "explicit cross-GPU parity check (recorded)")
+    p.add_argument("--execution-batch", type=int, default=None,
+                   help="lanes per chunk for the replay (operational; "
+                        "default: recorded execution batch)")
     p.set_defaults(fn=cmd_replay)
 
     p = sub.add_parser("bench")
@@ -305,6 +319,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--duration-ms", type=float, default=200)
     p.add_argument("--candidates", default="1,2,4,8,16,32")
     p.add_argument("--synthetic-neurons", type=int, default=2000)
+    p.add_argument("--synthetic-edges", type=int, default=None,
+                   help="explicit synthetic edge count (default: "
+                        "connectivity * N^2)")
+    p.add_argument("--vram-headroom", type=float, default=0.85,
+                   help="max reserved/total VRAM for an eligible batch")
     p.add_argument("--data-dir", default=None,
                    help="real FBA dataset dir (default: synthetic)")
     p.add_argument("--out", default=None, help="write JSON report here")
@@ -315,6 +334,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_worker)
 
     p = sub.add_parser("env-info")
+    p.add_argument("--device", default=None,
+                   help="describe this CUDA device (e.g. cuda:1)")
     p.set_defaults(fn=cmd_env_info)
     return ap
 
