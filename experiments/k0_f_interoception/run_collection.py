@@ -32,6 +32,9 @@ def main():
             count+=1;network_done.wait(.5)
     source=None;receiver=None;driver=None;mac_log=None;remote_log=None
     try:
+        # Process-scoped idle-sleep inhibition; automatically released on exit.
+        activity=subprocess.Popen(['/usr/bin/caffeinate','-i','-w',str(os.getpid())],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        processes.append(activity)
         receiver=subprocess.Popen(['ssh',a.ssh_alias,remote([a.remote_python,'-m','experiments.k0_f_interoception.acquire','receive','--output',a.remote_output+'/raw_mac_telemetry.jsonl'])],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE);processes.append(receiver)
         source=subprocess.Popen([str(a.sensor_binary),'--duration',str(a.blocks*a.block_seconds+350),'--interval','1','--peer-host',a.peer_host],stdout=subprocess.PIPE,stderr=subprocess.PIPE);processes.append(source)
         mac_log=(a.output/'raw_mac_source.jsonl').open('wb')

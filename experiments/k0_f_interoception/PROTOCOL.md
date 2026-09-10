@@ -40,3 +40,7 @@ GPU背景処理duty<=50%、matrices<256MiB/device、CPU背景<=2threads。GPU>=7
 独立レビューで、SHUFFLEDがdonorの履歴長をそのまま使うとGRUの更新回数まで変わる交絡を発見した。学習・probe・heldout評価前に、同じ履歴長かつ異なるblockでの全単射shuffleへ修正する。raw収集と測定済みcostは変更しない。`prepare_dataset.py` が保存済み過去frameから各blockの8decisionに履歴長1〜8を各1回、固定seed110910+block順番で割り当て、`policy_dataset.jsonl` を別保存する。各split・各履歴長に複数blockを確保し、shuffleでtask順・GRU更新回数・body履歴周辺分布を保つ。長さの選定には成績・cost・workload labelを一切使わない。
 
 live確認では凍結GRU128の8seedと4入力介入、および独立学習BLINDを、8種類の実workload下で動かす。同じtask/seedの5modeは同じ直前bodyを基点に実行順を無作為化する。raw telemetryは継続し、新規jobを選択された資源で実行する。live SHUFFLEDのdonorは同じ履歴長の保存済み別episodeの実測body（無作為抽出、cost/labelは使わない）。live主判定にはBODY対BLINDとBODY対独立学習BLINDのpaired utility改善を用いる。新規live結果を主収集の実測cost再生と別表示する。
+
+## 収集中断と再取得
+
+初回48block収集は24学習block後、Macのsleepに伴う約805秒のwall-clock空白（source monotonic増分は約1秒）によりmasterがtelemetry stalenessを検出して安全停止した。結果評価・学習は未実施。失敗記録は`artifacts/primary`と`primary_mac`に保存し、独立nへ加算しない。実験processの生存期間だけ`caffeinate -i -w PID`でidle sleepを抑制し、終了時に解放する。fresh `primary_v2`で同じ48block/task/seed/protocolを再取得する。時刻空白を補間で埋めず、成功条件・heldout定義は変更しない。
