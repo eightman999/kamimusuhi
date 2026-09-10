@@ -68,6 +68,42 @@ motion_direction
 identity_candidate
 ```
 
+#### 2.1.1 Gaze and attention sensing
+
+Gaze SHOULD be treated as one source of **attention evidence**, not as direct access to a user's intent, preference, emotion, or mental state.
+
+The preferred near-term hot path is compatible with non-deep processing:
+
+```text
+eye / face region
+  -> pupil or iris localization
+  -> optional head pose
+  -> calibration
+  -> gaze vector / coarse target zone
+  -> fixation / saccade / blink state
+  -> SensoryEvent
+```
+
+Raw eye/face frames should normally remain at the receptor or edge node. Higher layers should receive compact observations with target, timing, quality, confidence, and provenance.
+
+A fixation on object A may support the hypothesis that A is a current attention target, but it MUST NOT silently become claims such as "the user likes A", "the user is bored", or "the user wants action on A".
+
+The broader attention layer should fuse gaze with other available evidence:
+
+```text
+gaze
+head orientation
+cursor / pointer
+active window / UI focus
+touch / object interaction
+body orientation
+speech-reference cues
+```
+
+This allows the same interface to work on devices without eye tracking and supports future user/agent/shared attention and deictic-reference grounding.
+
+Detailed design: [`attention-sensing-and-joint-attention.md`](./attention-sensing-and-joint-attention.md).
+
 ### 2.2 Hearing
 
 The auditory path should preserve more than transcript text.
@@ -301,6 +337,8 @@ Required mechanisms include:
 
 No single modality should silently overwrite another. Contradictory sensory evidence should remain representable.
 
+Attention evidence follows the same rule. Gaze, head pose, cursor, touch, and speech-reference cues may disagree; fusion should preserve that disagreement instead of selecting a psychologically loaded interpretation by default.
+
 ## 7. Transport and runtime
 
 For physical robotics, ROS 2 / DDS / Zenoh-like middleware are practical transport candidates, but transport must remain below the Kamimusuhi sensory abstraction.
@@ -338,6 +376,7 @@ The review covers tactile, visual, olfactory, gustatory, auditory, and multisens
 
 - microphone + streaming ASR/VAD;
 - camera/screen perception;
+- coarse attention evidence from active-window/cursor/head orientation;
 - temperature/humidity;
 - IMU/device pose;
 - machine telemetry;
@@ -347,6 +386,8 @@ The review covers tactile, visual, olfactory, gustatory, auditory, and multisens
 
 - sound event + source localization;
 - entity tracking;
+- optional non-deep calibrated gaze and fixation events;
+- gaze/head/cursor/UI evidence fusion;
 - multimodal temporal alignment;
 - basic cross-modal binding.
 
@@ -355,7 +396,8 @@ The review covers tactile, visual, olfactory, gustatory, auditory, and multisens
 - force/tactile sensors;
 - slip/contact reflex;
 - robot proprioception;
-- body schema integration.
+- body schema integration;
+- user/agent/shared-attention experiments for embodied interaction.
 
 ### Phase D — event/neuromorphic sensing
 
@@ -379,6 +421,7 @@ Metrics should include:
 - bandwidth reduction vs raw streams;
 - cross-modal binding accuracy;
 - clock/spatial calibration error;
+- attention-target confidence calibration and stale-target rate where attention sensing is enabled;
 - sensory provenance completeness;
 - failure behavior under missing/conflicting modalities;
 - K-Edge -> K-Core sensory handoff continuity.
