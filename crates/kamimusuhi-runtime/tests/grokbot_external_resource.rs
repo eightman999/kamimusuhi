@@ -1,8 +1,9 @@
-//! The Grok Bot experiment: a 4B model on someone else's VM as a *borrowed*
-//! cortex.
+//! The Grok Bot experiment: a small model on someone else's VM as a
+//! *borrowed* cortex.
 //!
-//! The endpoint is an ordinary OpenAI-compatible one — llama.cpp serving
-//! Qwen3-4B-Instruct with a 4096-token context, reached over Tailscale. It is
+//! The endpoint is an ordinary OpenAI-compatible one — llama.cpp serving a
+//! 4-bit ~3B instruct model with a 4096-token context, reached over
+//! Tailscale. It is
 //! registered as a cognitive resource and never as a Persona Core, so nothing
 //! about the individual lives there: it is asked questions, its answers are
 //! external material, and unplugging it costs a config line.
@@ -37,10 +38,15 @@ use kamimusuhi_testkit::http_fixture::{FixtureResponse, FixtureServer, refused_b
 
 const BINARY: &str = env!("CARGO_BIN_EXE_kamimusuhi-runtime");
 
-/// The slot this experiment fills. A borrowed 4B model is not the general
+/// The slot this experiment fills. A borrowed small model is not the general
 /// slot's peer: it is its own role, so replacing or removing it leaves the
 /// general slot untouched.
-const GROKBOT_SLOT: &str = "grokbot-qwen3-4b";
+///
+/// Deliberately not named after the model. The VM was specified as serving
+/// Qwen3-4B and actually serves Qwen2.5-3B; a slot is a role, and the role
+/// survives that swap. Which model is behind it lives in `providers[].model`,
+/// where changing it is a config edit rather than a rename.
+const GROKBOT_SLOT: &str = "grokbot";
 
 /// Stable per configured endpoint, so the `resource_calls` rows keep saying
 /// which provider answered even after the VM is gone.
@@ -74,7 +80,7 @@ fn grokbot_capabilities() -> ResourceCapabilities {
 fn grokbot_provider(base_url: String, auth_env: Option<&str>) -> ProviderConfig {
     ProviderConfig {
         base_url,
-        model: "qwen3-4b-instruct".to_owned(),
+        model: "qwen2.5-3b-instruct".to_owned(),
         auth_env: auth_env.map(str::to_owned),
         timeout_ms: 5_000,
         // A VM that may simply be off is not worth hammering.

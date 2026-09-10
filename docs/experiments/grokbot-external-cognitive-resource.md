@@ -1,4 +1,4 @@
-# 実験: Grok Bot VM の 4B モデルを external cognitive resource として借りる
+# 実験: Grok Bot VM の小型モデルを external cognitive resource として借りる
 
 実装済みの内容のみを記述する。設計仮説と実測を混同しない。
 
@@ -18,7 +18,7 @@ identity != inference provider
 continuity lineage と canonical self を移動させる必要がないこと、
 そして借り先が消えても individual が継続することである。
 
-借りた 4B モデルの位置づけは **temporary external cortex** であり、交換可能な認知資源にすぎない。
+借りたモデルの位置づけは **temporary external cortex** であり、交換可能な認知資源にすぎない。
 
 ## 対象環境
 
@@ -29,9 +29,14 @@ Grok Bot VM
   RAM       15 GiB
   Network   Tailscale
   Runtime   llama.cpp (OpenAI-compatible server)
-  Model     Qwen3-4B-Instruct Q4_K_M
-  Context   4096 tokens
+  Model     qwen2.5-3b-instruct  (Q4_K - Medium, 3.09B params)
+  Context   n_ctx 4096  (n_ctx_train 32768)
+  Auth      Bearer token required
 ```
+
+実験の指示書は Qwen3-4B-Instruct Q4_K_M と記述していたが、`/v1/models` が実際に返したのは
+**qwen2.5-3b-instruct** である（2026-09-10 時点）。ctx 4096 と Q4_K_M は一致した。
+このずれ自体が、slot 名にモデル名を埋めない理由になっている（下記）。
 
 Kamimusuhi 側は既存の `kamimusuhi-resource-http` の `OpenAiCompatibleResource` をそのまま使う。
 この実験のために新しい HTTP client も新しい provider 実装も追加していない。
@@ -46,7 +51,7 @@ Persona Core
     └── Cognitive Action Router
              ├── local resources
              ├── frontier resources
-             └── grokbot-qwen3-4b   ← 今回
+             └── grokbot            ← 今回
                     │ Tailscale
                     │ llama.cpp
 ```
@@ -54,14 +59,25 @@ Persona Core
 Persona Core は individual として喋る主体であり、Kamimusuhi の runtime config では
 `persona` という **resources とは別の名前空間** に置かれる。router の候補には決してならない。
 
-Grok Bot の 4B モデルはその逆側、すなわち turn が subtask を委譲する先である。
+Grok Bot のモデルはその逆側、すなわち turn が subtask を委譲する先である。
 想定する task class は summarization / classification / short generation /
 information extraction / lightweight reasoning / background cognition のような補助認知であり、
 identity、canonical state、最終的な人格表現の所有者にはしない。
 
-理由は「4B では品質が足りないから」ではない。品質が十分でも同じ結論になる。
+理由は「3B では品質が足りないから」ではない。品質が十分でも同じ結論になる。
 individual の所有者を他人の VM に置くと、その VM の停止・削除・モデル交換が
 individual の存否と結びついてしまい、証明したい命題そのものが崩れる。
+
+## slot 名にモデル名を入れない
+
+slot は **役割** であり、その役割を今どの実装が埋めているかとは別物である
+（`runtime.json` の `resources` が slot → implementation、`providers` が接続先を持つ）。
+
+今回の slot 名は `grokbot`。指示書の候補は `grokbot-4b` / `grokbot-qwen3-4b` だったが、
+実物が Qwen2.5-3B だった時点でどちらの名前も嘘になる。
+モデル名は `providers["grokbot"].model` に置いてあり、載せ替えは config の 1 行編集で済む。
+slot 名を変えると `resource_calls` の読み方や運用手順まで巻き込むので、
+「VM 上のモデルが変わっても壊れない粒度」を slot 名に選んでいる。
 
 ## capability 宣言
 
@@ -76,7 +92,7 @@ individual の存否と結びついてしまい、証明したい命題そのも
 | `context_capacity` | `4096` | llama.cpp を 4K context で起動しているため。provider 既定値 8192 は使わない |
 | `latency` | `slow` | 実測していないので `fast` と仮定しない |
 | `cost` | `free` | 追加課金のある API を経由しないという事実 |
-| `quality` | `basic` | 4B Q4_K_M。benchmark を取っていないので上げない |
+| `quality` | `basic` | 3B Q4_K_M。benchmark を取っていないので上げない |
 | `health` | `healthy` | 起動している前提の初期値 |
 
 `cost: free` は「無料だから優先」を意味しない。router の hard constraint は
@@ -161,27 +177,34 @@ individual、continuity head、relationship memory、Library は変化しない�
 値は call 時に環境から読まれ、request とともに破棄される。
 config・trace・SQLite のいずれにも token は書かれない
 （`crates/kamimusuhi-runtime/tests/grokbot_external_resource.rs` で実際に検証している）。
-なお素の llama.cpp server は認証を要求しないので、通常は `auth_env` 自体が不要である。
+Grok Bot VM の llama.cpp は Bearer token を要求する設定なので、この endpoint では `auth_env` が必要である。
+認証なしの素の llama.cpp server に向ける場合は `auth_env` 自体を省く。
 
 ## 再現手順
 
 ```bash
-# 1. VM 側の疎通確認（model 名はここで確認する。推測しない）
-curl http://<GROKBOT_TAILSCALE_IP>:8080/v1/models
+export KAMIMUSUHI_GROKBOT_API_KEY=...   # 値はシェルの環境変数にだけ置く
+
+# 1. VM 側の疎通確認（model 名と n_ctx はここで確認する。推測しない）
+curl -H "Authorization: Bearer $KAMIMUSUHI_GROKBOT_API_KEY" \
+  http://<GROKBOT_TAILSCALE_IP>:8080/v1/models
 
 curl http://<GROKBOT_TAILSCALE_IP>:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen3-4b-instruct",
+  -H "Authorization: Bearer $KAMIMUSUHI_GROKBOT_API_KEY" \
+  -d '{"model":"qwen2.5-3b-instruct",
        "messages":[{"role":"user","content":"Reply with exactly: KAMIMUSUHI_GROKBOT_OK"}],
        "max_tokens":32}'
 
-# 2. Kamimusuhi adapter 経由
-./scripts/grokbot-resource-smoke.sh http://<GROKBOT_TAILSCALE_IP>:8080/v1 qwen3-4b-instruct
+# 2. Kamimusuhi adapter 経由（渡すのは変数の名前だけ）
+AUTH_ENV=KAMIMUSUHI_GROKBOT_API_KEY \
+  ./scripts/grokbot-resource-smoke.sh \
+    http://<GROKBOT_TAILSCALE_IP>:8080/v1 qwen2.5-3b-instruct
 ```
 
-endpoint は引数であり、コードにも script にも埋め込まれていない。
+endpoint も token も引数・環境変数であり、コードにも script にも埋め込まれていない。
 
-smoke script は runtime を fixture で初期化してから `grokbot-qwen3-4b` slot **だけ** を
+smoke script は runtime を fixture で初期化してから `grokbot` slot **だけ** を
 resource として登録する。general slot を残さないのは、VM に届いた turn が
 「条件を満たしたから」届いたのであって「他に候補がなかったから」ではないことを明確にするためである。
 続けて `--privacy no-external-service` の turn を実行し、拒否されることを確認する。
@@ -204,36 +227,57 @@ resource として登録する。general slot を残さないのは、VM に届�
 
 ## 実測記録 (2026-09-10)
 
-Grok Bot VM そのものは、この作業を行った machine の tailnet から到達できなかった
-（該当ホスト名がなく、4096 ctx の Qwen3-4B-Instruct を出している endpoint も見つからなかった）。
-そのため adapter 経路の実機確認は、同じ tailnet 上の別の llama.cpp host
-(`llm-machine`, `qwen3-4b`) を代役として実施した。**Grok Bot VM 自体での実測ではない。**
-
-代役 endpoint は ctx 32768 なので、`context_capacity: 4096` の宣言は
-その endpoint に対しては過小申告である。過小申告は安全側なので実験は成立するが、
-Grok Bot VM に対して実行するときの 4096 は実際の起動値と一致していなければならない。
-
-確認できたこと:
+Grok Bot VM (`100.111.153.14:8080` / MagicDNS `cursor`) に対して実施した。
 
 ```text
-resource.slot            grokbot-qwen3-4b
-resource.implementation  openai-compatible      既存 adapter を使用
-routing_request.urgency  background
-routing_decision.reason  SELECTED
-attempts                 1
-latency_ms               2076                   実クロックで測定
-head_before == head_after                       true
-individual_id                                   fixture phase と同一
+GET /v1/models
+  id        qwen2.5-3b-instruct
+  n_ctx     4096          （宣言した context_capacity と一致）
+  ftype     Q4_K - Medium
+  owned_by  llamacpp
+
+POST /v1/chat/completions        "KAMIMUSUHI_GROKBOT_OK" を正しく返す
 ```
 
-同じ runtime に対する `--privacy no-external-service` の turn は拒否され、
-trace に `"outcome":"refused"` と `PRIVACY_EXCLUDED` が記録された。
-`runtime.json` と `trace.jsonl` に `Bearer` は 1 件も現れない。
+Kamimusuhi adapter 経由（`AUTH_ENV=KAMIMUSUHI_GROKBOT_API_KEY`）:
 
-モデルの応答内容は「evidence ID について何をしたいのか」を尋ね返すもので、
-task として有用ではなかった。これは prompt shaping の問題であり、
-今回の境界（capacity / privacy / failure / identity 不変性）とは独立である。
-4B モデルに実際に有用な補助認知をさせるための task shaping は未着手である。
+```text
+resource.slot             grokbot
+resource.implementation   openai-compatible     既存 adapter を使用
+routing_request.urgency   background
+routing_request.privacy   unconstrained
+routing_decision.reason   SELECTED
+attempts                  1
+latency_ms                11229                 実クロックで測定
+head_before == head_after true
+individual_id             fixture phase と同一
+relationship              {"preference": "ほうじ茶"}   DB から復元
+workspace item            EXTERNAL_RESOURCE_RESULT / external_material
+```
+
+`latency: slow` は結果的に保守的な仮定ではなく正しい記述だった。11.2 秒は
+`Urgency::Interactive` の turn に出してよい数字ではない。
+
+同じ runtime に対する `--privacy no-external-service` の turn は拒否され、
+trace に `"outcome":"refused"` と `PRIVACY_EXCLUDED` が 1 件記録された。
+
+secret の扱いも実測で確認した。`runtime.json` に入るのは変数名
+`"auth_env": "KAMIMUSUHI_GROKBOT_API_KEY"` だけで、token の値は
+`runtime.json` / `trace.jsonl` / `kamimusuhi.sqlite` のいずれにもバイト列として存在せず、
+`Bearer` の文字列も 0 件だった。
+
+### モデルの応答について
+
+このとき返ってきたのは、request に含まれる evidence ID を「2005 年の英国パンク・
+ドキュメンタリー映画」だと述べる完全な作話だった。
+
+これは今回の実験にとって失敗ではなく、むしろ好都合な実例である。
+その文字列は `EXTERNAL_RESOURCE_RESULT` / `external_material` として workspace に入り、
+canonical state には一切届かなかった。**内容を読んで信用するかどうかを判断したのではなく、
+どこから来たかで権限が決まっている。** 借りたモデルが嘘をついても individual は汚染されない。
+
+なお有用な補助認知をさせるための prompt / task shaping は未着手であり、
+今回の境界（capacity / privacy / failure / identity 不変性）とは独立の課題である。
 
 ## limitations
 

@@ -433,9 +433,9 @@ cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase res
 認知資源は別のマシンや別のサービスに置けます。置き換えても individual は移動しません。
 
 ```bash
-# Tailscale 越しの llama.cpp (Qwen3-4B-Instruct, ctx 4096) を
-# cognitive resource として登録し、background turn で 1 回呼ぶ
-./scripts/grokbot-resource-smoke.sh http://<TAILSCALE_IP>:8080/v1 qwen3-4b-instruct
+# Tailscale 越しの llama.cpp (ctx 4096) を cognitive resource として
+# 登録し、background turn で 1 回呼ぶ
+./scripts/grokbot-resource-smoke.sh http://<TAILSCALE_IP>:8080/v1 qwen2.5-3b-instruct
 ```
 
 借り先は Persona Core ではありません。private な経路で届くことと、その計算機を自分が

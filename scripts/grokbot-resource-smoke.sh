@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# One background turn against a borrowed 4B model on the Grok Bot VM.
+# One background turn against a borrowed small model on the Grok Bot VM.
 #
-# The endpoint is llama.cpp serving Qwen3-4B-Instruct with a 4096-token
-# context, reached over Tailscale. It is registered here as a *cognitive
+# The endpoint is llama.cpp serving a 4-bit ~3B instruct model with a
+# 4096-token context, reached over Tailscale. It is registered here as a *cognitive
 # resource*, never as a Persona Core: the individual, its memory and its
 # lineage stay in this runtime directory, and the VM is only asked questions.
 # Unplugging it is a config edit. See
@@ -11,7 +11,7 @@
 #   ./scripts/grokbot-resource-smoke.sh [base-url] [model] [runtime-dir]
 #
 # e.g.
-#   ./scripts/grokbot-resource-smoke.sh http://100.64.0.5:8080/v1 qwen3-4b-instruct
+#   ./scripts/grokbot-resource-smoke.sh http://100.64.0.5:8080/v1 qwen2.5-3b-instruct
 #
 # The endpoint is an argument and is never compiled in. Ask the server what it
 # calls its model before guessing:
@@ -30,7 +30,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BASE_URL="${1:-http://127.0.0.1:8080/v1}"
-MODEL="${2:-qwen3-4b-instruct}"
+MODEL="${2:-qwen2.5-3b-instruct}"
 DIR="${3:-.local/grokbot-smoke}"
 AUTH_ENV="${AUTH_ENV:-}"
 RUNTIME="cargo run --quiet --release -p kamimusuhi-runtime --"
@@ -64,7 +64,7 @@ fi
 #   locality          external — Tailscale is a transport, not ownership
 #   context_capacity  4096     — what llama.cpp was started with
 #   latency           slow     — nothing has been measured yet
-#   quality           basic    — a 4-bit 4B model
+#   quality           basic    — a 4-bit 3B model
 #   cost              free     — no metered API behind it
 #
 # The Grok Bot slot is the only resource configured, so a turn that reaches the
@@ -81,10 +81,10 @@ cat > "$DIR/runtime.json" <<EOF
     }
   },
   "resources": {
-    "grokbot-qwen3-4b": "openai-compatible"
+    "grokbot": "openai-compatible"
   },
   "providers": {
-    "grokbot-qwen3-4b": {
+    "grokbot": {
       "base_url": "$BASE_URL",
       "model": "$MODEL",
 $AUTH_LINE
@@ -133,7 +133,7 @@ echo "    refused, as it must be (PRIVACY_EXCLUDED in $DIR/trace.jsonl)"
 
 echo
 echo "==> what to look for in the JSON above"
-echo "    resource.slot          grokbot-qwen3-4b — the borrowed cortex answered"
+echo "    resource.slot          grokbot — the borrowed cortex answered"
 echo "    resource.adapter       openai-compatible — the existing adapter, no new client"
 echo "    workspace item domain  EXTERNAL_RESOURCE_RESULT / external_material"
 echo "    head_before == head_after   borrowing thought moves no canonical state"

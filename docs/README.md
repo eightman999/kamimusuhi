@@ -42,7 +42,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 
 ### 実機実験 / Experiments
 
-- [`experiments/grokbot-external-cognitive-resource.md`](./experiments/grokbot-external-cognitive-resource.md) — **Grok Bot VM の 4B モデルを external cognitive resource として借りる実験記録**。Tailscale 越しの llama.cpp (Qwen3-4B-Instruct Q4_K_M, ctx 4096) を Persona Core ではなく交換可能な認知資源として登録し、`locality = external` とする根拠、4K capacity と privacy の境界、endpoint failure 時の canonical state 不変性、secret を保存しない設定、既知の limitation を記述する。実装済みの内容のみ。
+- [`experiments/grokbot-external-cognitive-resource.md`](./experiments/grokbot-external-cognitive-resource.md) — **Grok Bot VM の 4B モデルを external cognitive resource として借りる実験記録**。Tailscale 越しの llama.cpp (Qwen2.5-3B-Instruct Q4_K_M, ctx 4096) を Persona Core ではなく交換可能な認知資源として登録し、`locality = external` とする根拠、4K capacity と privacy の境界、endpoint failure 時の canonical state 不変性、secret を保存しない設定、実機実測、既知の limitation を記述する。実装済みの内容のみ。
 
 ### 器官設計監査 / Organ design audit
 
