@@ -202,6 +202,7 @@ def generate(artifacts, policy_artifacts=None, live_artifacts=None, output=None)
     aligned = evidence.read("aligned_body_telemetry.jsonl")
     normalization = mapping(evidence.read("normalization_config.json"))
     workload = evidence.read("workload_manifest.json")
+    record_only_workloads = evidence.read("record_only_workload_manifest.json")
     config = mapping(evidence.read("training_config.json", "policy"))
     run_summary = mapping(evidence.read("run_summary.json", "policy"))
     probe = mapping(evidence.read("prediction_probe.json", "policy"))
@@ -250,6 +251,7 @@ def generate(artifacts, policy_artifacts=None, live_artifacts=None, output=None)
                          "telemetry": {"mac": mac_info, "master": master_info}, "frame": frame_info,
                          "probe_gate": probe_gate, "replay_comparisons": comparisons, "counterfactual_comparison": cf_comparison,
                          "acquisition_attempts": attempts,
+                         "record_only_workloads": record_only_workloads,
                          "live_comparisons": live_comparisons, "source_hashes": evidence.inputs, "read_errors": evidence.errors,
                          "statistical_unit": "training seed; shared heldout workloads, not 1 Hz samples"}
     sections = []
@@ -279,7 +281,12 @@ def generate(artifacts, policy_artifacts=None, live_artifacts=None, output=None)
     section(7, f"保存 workload block 数: {len(workloads)}。split件数: {f(splits)}。\n\n"
             "事前計画は48 block、train24 / validation8 / test16。idle、CPU、RTX3060、P100、dual GPU、mixed、disk I/O、network transferを含み、split境界に35秒の記録区間を置く。固定4種類の行列乗算を CPU/RTX3060/P100 で無作為順に測定する。計算 job は実処理だが言語理解の代理ではない。実LLM workloadのrecord-only証拠は別収集・別artifactで確認する。\n\n"
             "1回ずつの action別測定は短時間のpaired測定であり、同時の物理反実仮想ではない。収集 sample 数を独立実験数と数えない。\n\n"
-            "初回primary収集は24block後のMac sleep（壁時計約805秒、monotonic約1秒）により安全停止した。中断記録を保持し、driver期間中のidle-sleep抑制を追加して同条件のprimary_v2を再取得した。初回中断データは今回のprimary集計・独立nに混ぜない。\n\n取得試行の監査記録: " + f(attempts))
+            "初回primary収集は24block後のMac sleep（壁時計約805秒、monotonic約1秒）により安全停止した。中断記録を保持し、driver期間中のidle-sleep抑制を追加して同条件のprimary_v2を再取得した。初回中断データは今回のprimary集計・独立nに混ぜない。\n\n取得試行の監査記録: " + f(attempts) +
+            "\n\n既存J72による実LLMの独立record-only区間:\n\n" +
+            table(("workload", "model", "source", "開始", "終了", "request数", "record-only", "PID", "終了コード"),
+                  ((r.get("workload_label"), r.get("model"), r.get("source_kind"), r.get("start_timestamp", r.get("start")),
+                    r.get("end_timestamp", r.get("end")), r.get("requests"), r.get("record_only"), r.get("pid"), r.get("returncode")) for r in rows(record_only_workloads))) +
+            "\n\nこの実LLM区間はtelemetry取得の観測証拠として別保存する。primary_v2の学習・validation・held-out・seed統計には混ぜず、行列計算policyの言語能力評価とは扱わない。")
     section(8, "ridge λ=10、特徴標準化・target SDはtrainだけでfit。未来10秒のGPU使用率と、次jobの実測最小完了時間を区別する。validationで有効非定数targetが2種類以上かつ BODY の正規化MAEが BLIND より10%以上低いことを学習開始 gate とする。\n\n" +
             table(("validation gate", "値"), (("PASS", probe_gate.get("pass")), ("相対 MAE 改善", probe_gate.get("relative_mae_improvement")), ("target", probe_gate.get("targets")), ("BODY / BLIND / SHUFFLED / STALE MAE", probe_gate.get("normalized_mae")), ("test probe 実施", probe.get("test_evaluated")))) +
             ("\n\nvalidation gate が通っていないため policy 学習・held-out評価の成功は主張しない。未実施は未実施として記録する。" if probe_gate.get("pass") is not True else "\n\nprobe の gate は記述的な事前screening。これ単独で研究成功や身体情報の因果価値とは呼ばない。"))

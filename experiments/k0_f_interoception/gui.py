@@ -409,10 +409,10 @@ class BodyDashboard(QtWidgets.QMainWindow):
         rows = []
         for record in records if isinstance(records, list) else []:
             metrics = record.get("metrics", record)
-            condition = "独立学習 BLIND" if record.get("training_mode") == "BLIND" else record.get("condition", record.get("mode", "未取得"))
+            condition = "独立学習 BLIND" if record.get("training_mode") == "BLIND" else record.get("condition", record.get("mode", record.get("training_mode", "未取得")))
             rows.append((record.get("architecture", "未取得"), display(record.get("seed")), condition,
-                         display(metrics.get("utility", metrics.get("reward"))), display(metrics.get("deadline_success_rate", metrics.get("task_success", metrics.get("success_rate"))), 100, "%"),
-                         display(metrics.get("latency_seconds", metrics.get("latency_s", metrics.get("completion_time_s")))), record.get("status", "保存結果")))
+                         display(metrics.get("utility", metrics.get("reward", record.get("best_validation_utility")))), display(metrics.get("deadline_success_rate", metrics.get("task_success", metrics.get("success_rate"))), 100, "%"),
+                         display(metrics.get("latency_seconds", metrics.get("latency_s", metrics.get("completion_time_s")))), record.get("status", "学習完了・validation のみ" if "best_validation_utility" in record else "保存結果")))
         fill(self.runs_table, rows)
         runtime = data.get("final_runtime_state")
         self.runtime_label.setText("最終 runtime: " + (display(runtime)[:800] if runtime else "未取得 — 停止済みとは判断しません"))
@@ -444,6 +444,9 @@ class BodyDashboard(QtWidgets.QMainWindow):
                         self.series_plots[key].plot(x, y, connect="finite", name=label + ("（実測）" if kind == "real" else "（合成）" if kind == "synthetic" else "（出典不明）"),
                             pen=pg.mkPen(COLORS[index], width=1.8, style=QtCore.Qt.SolidLine if kind == "real" else QtCore.Qt.DashLine))
         actions = data.get("core", [])
+        groups = {(row.get("seed"), row.get("mode", row.get("condition")), row.get("training_mode")) for row in actions}
+        action_title = "Core 行動（複数 seed / 条件の保存記録）" if len(groups) > 1 else "Core 行動（保存記録）"
+        self.series_plots["action"].setTitle(action_title, color="#2c465e")
         x, y = [], []
         for index, record in enumerate(actions):
             action = record.get("action", record.get("action_name"))

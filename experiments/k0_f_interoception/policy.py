@@ -567,6 +567,7 @@ def main():
                             seed=seed, hidden_size=hidden, mode=mode, epochs=args.epochs, batch_size=args.batch_size,
                             learning_rate=args.learning_rate, source_commit=commit, identities=identities, device=args.device)
                     summaries.append(summary)
+                    json_write(args.output / "run_summary.json", {"schema_version": SCHEMA, "rows": summaries, "completed_runs": len(summaries), "planned_runs": len(seeds) * len(hidden_sizes) * 2})
                     print(json.dumps({"run": run.name, "best_validation_utility": summary["best_validation_utility"]}), flush=True)
                 else:
                     status = verified_completed_run(run, identities)
