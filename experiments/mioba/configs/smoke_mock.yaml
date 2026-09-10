@@ -1,0 +1,13 @@
+experiment: {id_prefix: "S", runs_dir: "experiments/mioba/.runs"}
+population: {target_size: 4}
+evolution: {max_generations: 1, elite_k: 2, mutation_seed: 99}
+worker: {batch_size: 1, candidates: [1,2], heartbeat_s: 1, lost_after_s: 8, grace_s: 5}
+jobs: {requeue_unknown: true, max_attempts: 3}
+evaluation: {tier: smoke, duration_ms: 100, backend: mock, environment_id: synthetic-quiet-v0, target_rate_hz: 5.0}
+fba: {data_dir: null, synthetic: true, synthetic_neurons: 500}
+checkpoint: {interval_s: 5}
+stop: {timeout_s: 10}
+mie: {interval_s: 1, collectors: [cpu, ram], anomaly: {gpu_temp_c: 85}}
+env: {stim_fraction: 0.01, stim_rate_hz: 50}
+traces: {store_full_for: [elite, novel, debug, explicit], dir: traces}
+gui: {enabled: false}
