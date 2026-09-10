@@ -42,6 +42,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 
 ### 実機実験 / Experiments
 
+- [`experiments/multi-resource-j72-grokbot.md`](./experiments/multi-resource-j72-grokbot.md) — **二資源ルーティング実証**。operator 管理下の `llm-machine` 上の J72 (`local_network`) と第三者 VM 上の Qwen2.5-3B (`external`) を同時に Cognitive Resource として登録し、privacy routing matrix、routing authority をモデルへ渡さない構造、failure isolation（privacy 境界を越えた fallback をしないこと）、provenance の同一扱いを記録する。latency 実測と比較評価は endpoint 認証待ちで未完。
 - [`experiments/grokbot-external-cognitive-resource.md`](./experiments/grokbot-external-cognitive-resource.md) — **Grok Bot VM の 4B モデルを external cognitive resource として借りる実験記録**。Tailscale 越しの llama.cpp (Qwen2.5-3B-Instruct Q4_K_M, ctx 4096) を Persona Core ではなく交換可能な認知資源として登録し、`locality = external` とする根拠、4K capacity と privacy の境界、endpoint failure 時の canonical state 不変性、secret を保存しない設定、実機実測、既知の limitation を記述する。実装済みの内容のみ。
 
 ### 器官設計監査 / Organ design audit
