@@ -354,10 +354,15 @@ impl FromStr for PrivacyConstraint {
 }
 
 /// Whether something is waiting on this task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Urgency {
     /// A person is waiting. Slow resources are excluded.
+    ///
+    /// The default, and the conservative one: it narrows what qualifies. A
+    /// caller that genuinely has nothing waiting says so explicitly, which is
+    /// the only way a `Slow` resource is ever reached.
+    #[default]
     Interactive,
     /// Nothing is waiting; any latency class qualifies.
     Background,
@@ -383,6 +388,18 @@ impl Urgency {
 impl fmt::Display for Urgency {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for Urgency {
+    type Err = UnknownVocabulary;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "interactive" => Self::Interactive,
+            "background" => Self::Background,
+            other => return Err(UnknownVocabulary::new("urgency", other)),
+        })
     }
 }
 

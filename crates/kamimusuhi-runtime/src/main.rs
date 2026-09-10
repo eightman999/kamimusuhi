@@ -23,7 +23,7 @@ use std::process::ExitCode;
 
 use kamimusuhi_core::digest::content_digest;
 use kamimusuhi_core::ids::PersonaBackendId;
-use kamimusuhi_core::routing::{LocalityClass, PrivacyConstraint};
+use kamimusuhi_core::routing::{LocalityClass, PrivacyConstraint, Urgency};
 use kamimusuhi_runtime::config::GENERAL_SLOT;
 use kamimusuhi_runtime::runtime::ClockMode;
 use kamimusuhi_runtime::scenario::ScenarioOptions;
@@ -71,6 +71,9 @@ options:
   --seed <n>        shorthand for --id-seed <n> --clock fixed
   --privacy <p>     how far this turn's material may travel:
                     local-only | no-external-service | unconstrained
+  --urgency <u>     whether anything is waiting on this turn:
+                    interactive (default) | background. A resource declared
+                    `slow` is only ever reachable from a background turn.
   --persona <p>     Persona Core backend: fake | openai-compatible.
                     A model-backed persona needs a `persona.provider` entry in
                     runtime.json; the Persona namespace is separate from
@@ -150,6 +153,7 @@ fn run() -> Result<String, RuntimeError> {
                 phase,
                 ScenarioOptions {
                     privacy: options.privacy.unwrap_or_default(),
+                    urgency: options.urgency.unwrap_or_default(),
                 },
             )?;
             runtime.stopping();
@@ -175,6 +179,7 @@ struct Options {
     id_seed: Option<u64>,
     clock: Option<ClockMode>,
     privacy: Option<PrivacyConstraint>,
+    urgency: Option<Urgency>,
     persona: Option<PersonaBackendKind>,
     persona_url: Option<String>,
     persona_model: Option<String>,
@@ -239,6 +244,14 @@ impl Options {
                         RuntimeError::Usage(format!(
                             "unknown --privacy {raw:?}; expected local-only, \
                              no-external-service or unconstrained"
+                        ))
+                    })?);
+                }
+                "--urgency" => {
+                    let raw = value()?;
+                    options.urgency = Some(raw.parse().map_err(|_| {
+                        RuntimeError::Usage(format!(
+                            "unknown --urgency {raw:?}; expected interactive or background"
                         ))
                     })?);
                 }

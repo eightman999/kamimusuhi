@@ -40,6 +40,10 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 - [`implementation/w5-external-resources.md`](./implementation/w5-external-resources.md) — **W5 実装記録**。external cognitive resource を実 HTTP 経由で呼ぶ際の境界: adapter responsibility、logical call と physical attempt の区別、timeout/retry の所有者、error 分類、OpenAI-compatible adapter とその TLS 制約、secret を保存しない設計、provider 交換の identity 不変性、`resource_calls` の turn correlation、ID seed と clock の分離。計画ではなく実装済みの内容のみを記述する。
 - [`implementation/phase-1-implementation-plan.md`](./implementation/phase-1-implementation-plan.md) — **第一次実装計画書**。v0.1 continuity vertical slice を実コードへ落とすため、Rust + SQLite single-writer、Cargo workspace、schema v1、atomic activation、Fake Persona Core / resource A・B、restart demo、failpoint test、local CI、Wave W0–W5、Definition of Done を具体化。当時の計画であり、実装の達成範囲は別の phase-1 implementation result を参照する。
 
+### 実機実験 / Experiments
+
+- [`experiments/grokbot-external-cognitive-resource.md`](./experiments/grokbot-external-cognitive-resource.md) — **Grok Bot VM の 4B モデルを external cognitive resource として借りる実験記録**。Tailscale 越しの llama.cpp (Qwen3-4B-Instruct Q4_K_M, ctx 4096) を Persona Core ではなく交換可能な認知資源として登録し、`locality = external` とする根拠、4K capacity と privacy の境界、endpoint failure 時の canonical state 不変性、secret を保存しない設定、既知の limitation を記述する。実装済みの内容のみ。
+
 ### 器官設計監査 / Organ design audit
 
 - [`audits/2026-09-08-organ-design-audit.md`](./audits/2026-09-08-organ-design-audit.md) — 日本語。固定 commit を基準に26機能領域を監査し、18件の横断的な設計不足・接続未確定点、既存設計、優先順位、確認限界を整理。実装済みという判定ではない。

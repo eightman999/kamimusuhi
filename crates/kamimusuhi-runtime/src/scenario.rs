@@ -53,7 +53,7 @@ use kamimusuhi_core::persona::{
 use kamimusuhi_core::resources::ResourceRequest;
 use kamimusuhi_core::routing::{
     PrivacyConstraint, Router, RoutingCandidate, RoutingDecision, RoutingRequest, RuleRouter,
-    TaskClass,
+    TaskClass, Urgency,
 };
 use kamimusuhi_core::trace::{TraceCorrelation, TraceEventKind};
 use kamimusuhi_core::workspace::{
@@ -256,6 +256,11 @@ pub struct ScenarioOptions {
     /// unconstrained; `LocalOnly` is what makes the refusal path reachable
     /// from the command line.
     pub privacy: PrivacyConstraint,
+    /// Whether anything is waiting on this turn. Defaults to `Interactive`,
+    /// which excludes every resource declared `Slow` — a background-only
+    /// resource is unreachable until a caller says the turn can wait, and
+    /// that is the intended shape rather than an omission.
+    pub urgency: Urgency,
 }
 
 /// Run one phase of the scenario against an opened runtime.
@@ -853,17 +858,20 @@ fn expression_digest(expression: &str) -> String {
 
 /// What this turn's delegation needs.
 ///
-/// The demo fixture asks for a shallow interactive summary with no privacy
-/// constraint, which every configured implementation can serve — the point of
-/// the scenario is continuity, not routing pressure. `context_size` is the
-/// utterance length, so a resource that declares a small capacity is excluded
-/// on a measured number rather than a guess.
+/// The demo fixture asks for a shallow summary with no privacy constraint,
+/// which every configured implementation can serve — the point of the scenario
+/// is continuity, not routing pressure. `context_size` is the utterance
+/// length, so a resource that declares a small capacity is excluded on a
+/// measured number rather than a guess. Urgency comes from the caller because
+/// it is the one dimension the fixture cannot infer: whether a person is
+/// actually waiting is not a property of the text.
 fn routing_request_for(input: &CurrentInput, options: ScenarioOptions) -> RoutingRequest {
     RoutingRequest::interactive(
         TaskClass::Summarize,
         u32::try_from(input.text.len()).unwrap_or(u32::MAX),
     )
     .with_privacy(options.privacy)
+    .with_urgency(options.urgency)
 }
 
 /// Assemble the four domains W4 has to keep apart.

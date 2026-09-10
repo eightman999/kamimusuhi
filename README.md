@@ -428,6 +428,20 @@ cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase res
 
 **検証範囲:** 自動テストは scripted HTTP/TLS endpoint と別プロセスでの境界検証です。実 LLM server に対する smoke test と能力・人格評価の実測は未記録です。transport のサイズ上限、対応範囲、DNS の制約は [監査結果](./docs/implementation/2026-09-10-spec-implementation-audit.md) を参照してください。
 
+### 借りた認知資源を試す (Grok Bot 実験)
+
+認知資源は別のマシンや別のサービスに置けます。置き換えても individual は移動しません。
+
+```bash
+# Tailscale 越しの llama.cpp (Qwen3-4B-Instruct, ctx 4096) を
+# cognitive resource として登録し、background turn で 1 回呼ぶ
+./scripts/grokbot-resource-smoke.sh http://<TAILSCALE_IP>:8080/v1 qwen3-4b-instruct
+```
+
+借り先は Persona Core ではありません。private な経路で届くことと、その計算機を自分が
+管理していることは別なので、locality は `external` のままです。詳細は
+[`docs/experiments/grokbot-external-cognitive-resource.md`](./docs/experiments/grokbot-external-cognitive-resource.md) を参照してください。
+
 テストと lint は次で回します。GitHub Actions も同じ script を実行します。
 
 ```bash
