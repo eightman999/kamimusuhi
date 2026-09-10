@@ -18,6 +18,7 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 
 | Date / time (JST) | Survey | Main blind spots |
 |---|---|---|
+| 2026-09-11 00:58:49 | [2026-09-11-00-58-49.md](./2026-09-11-00-58-49.md) | conclusion-contaminated audit / unreliable-tool overtrust / individuality loss in personalization / adaptive transcript privacy / effect-conditioned safety metrics / portable runtime evidence |
 | 2026-09-10 19:01:16 | [2026-09-10-19-01-16.md](./2026-09-10-19-01-16.md) | verification adequacy / pre-cognition bootstrap trust / restore-counterfactual forgetting audit / skill trace contracts / compute-cache invalidation / portable Library trust metadata |
 | 2026-09-10 12:59:38 | [2026-09-10-12-59-38.md](./2026-09-10-12-59-38.md) | storage-vs-use forgetting / lifecycle metadata / memory access kernel / cognitive stopping / relational affect / partial-TEE trust |
 | 2026-09-10 06:58:43 | [2026-09-10-06-58-43.md](./2026-09-10-06-58-43.md) | effect acceptance / accountability roles / presentation identity / OpenTelemetry / trajectory databases |
