@@ -19,6 +19,8 @@ The recurring survey spans:
 - multimodal perception, robotics, neuromorphic and low-latency cognition;
 - HCI, lifelong companions, design fiction, and related SF concepts.
 
+Discovery sources include primary papers, official project/specification pages, GitHub repositories and research-lab materials, plus **Zenn, note, and Qiita** for implementation reports, practitioner failure modes, Japanese-language ideas, and leads to primary sources.
+
 ## Evidence discipline
 
 Each promoted item should distinguish:
@@ -31,7 +33,7 @@ Each promoted item should distinguish:
 6. a concrete falsifiable next experiment;
 7. importance (`S` / `A` / `B` / `C`).
 
-Prefer primary papers, official project pages, and released artifacts. Social-media or promotional claims should be treated as leads until independently supported.
+Prefer primary papers, official project pages, and released artifacts. Social-media, Zenn, note, Qiita, or other secondary/promotional claims should be treated as leads unless the article itself is the primary implementation record; generalized technical, performance, and research claims should be checked against primary sources where possible.
 
 ## Promotion flow
 
@@ -57,6 +59,7 @@ A daily survey should not silently turn a preprint, analogy, or benchmark result
 
 | Date | Highlights |
 |---|---|
+| [2026-09-10 19:00 delta](./2026-09-10-19-00-51.md) | explicit-state vs generative-render separation, typed control/data separation, semantic embodiment ABI, runtime agent principals, relationship-hypothesis adjudication, lifecycle trace audits, direct memory ingestion, trace-based skill contracts; Zenn/note/Qiita discovery validation |
 | [2026-09-10 13:00 delta](./2026-09-10-13-00-55.md) | capability-scoped authority, enforced memory revocation, evidence-preserving hypergraph memory, predictive-coding internal/external regulation, experience-learning benchmarks, grounded skill synthesis and consolidation |
 | [2026-09-10 07:01 delta](./2026-09-10-07-01-34.md) | lease/fencing continuity, relational-belief grounded social cognition, co-located assistance triggers, uncertainty-aware group dialogue, temporal representation-loss auditing, curiosity-driven coverage |
 | [2026-09-10 01:01 delta](./2026-09-10-01-01-27.md) | information-evolution replay, action-level memory utility, model–harness compatibility, independent evaluator separation, metanorm social cognition, sensor-organ adaptation, event-driven distributed compute |
