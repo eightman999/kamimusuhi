@@ -6,3 +6,7 @@
 
 # Editor / OS noise
 .DS_Store
+
+# Isolated K0 GUI environment and disposable verification fixtures
+/.venv-k0-monitor/
+/work/

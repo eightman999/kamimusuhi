@@ -484,3 +484,7 @@ cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase res
 ## License
 
 MIT. [`LICENSE`](./LICENSE) を参照してください。
+
+## K0-E 非言語Core実験
+
+センサー列から6行動と言語起動ゲートを学ぶ独立実験は [K0 brainstem実験](./experiments/k0_brainstem/README.md) を参照してください。正典continuity状態とは分離しています。
