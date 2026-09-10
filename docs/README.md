@@ -72,6 +72,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 ### Sensory and motor embodiment
 
 - [`sensory-nervous-system.md`](./sensory-nervous-system.md) — vision, hearing, touch, environment, chemical senses, proprioception, interoception, sensory-event bus, reflexes, multisensory binding, neuromorphic path.
+- [`attention-sensing-and-joint-attention.md`](./attention-sensing-and-joint-attention.md) — **non-deep-first attention sensing design**: gaze as uncertain sensory evidence rather than mind reading, observation→hypothesis→belief separation, gaze/head/cursor/UI/touch/speech fusion, user/agent/shared attention, deictic grounding, joint attention, local raw-frame reduction, graceful fallback without eye tracking, and evaluation gates.
 - [`speech-and-vocal-expression.md`](./speech-and-vocal-expression.md) — speech as motor/social output: utterance planning, prosody, full-duplex dialogue, backchannels, interruption, vocal identity, self-monitoring, streaming synthesis, distributed vocal embodiment.
 
 ### Performance
