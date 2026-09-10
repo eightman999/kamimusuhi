@@ -23,6 +23,8 @@ def run_queue(artifacts,phase,smoke=False):
     elif phase=='ppo':
         for seed in seeds:
             for arm in ['B1','B2','B3','B4','B5','B6','B7']:jobs.append(('gru128',seed,arm))
+    elif phase=='combined':
+        for seed in seeds:jobs.append(('gru128',seed,'B8'))
     else:raise ValueError(phase)
     began=time.time();results=[]
     def worker(gpu,assigned):
@@ -33,7 +35,9 @@ def run_queue(artifacts,phase,smoke=False):
                 status=json.loads((d/'status.json').read_text())
                 if status['status']=='complete':rows.append(dict(run_id=run_id,exit_code=0,skipped=True));continue
                 rows.append(dict(run_id=run_id,exit_code=-1,error='existing incomplete run preserved'));continue
-            c=base_config(arch,seed,arm,smoke);p=root/'configs'/(run_id+'.json');atomic(p,c)
+            c=base_config(arch,seed,arm,smoke)
+            if arm=='B8':c['factors']=json.loads((root/'stabilized_selection.json').read_text())['factors']
+            p=root/'configs'/(run_id+'.json');atomic(p,c)
             cmd=[sys.executable,'-m','experiments.k0_e2_active_info.train','--config',str(p),'--artifacts',str(root),'--run-id',run_id,'--device','cuda:0']
             if arm!='B0':cmd+=['--parent',str(root/'runs'/f'{arch}-s{seed}-B0'/'imitation_best.pt')]
             d.mkdir(parents=True,exist_ok=True)
@@ -54,6 +58,6 @@ def run_queue(artifacts,phase,smoke=False):
     return all(r['exit_code']==0 for r in results)
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--artifacts',required=True);p.add_argument('--phase',choices=['imitation','ppo'],required=True);p.add_argument('--smoke',action='store_true');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--artifacts',required=True);p.add_argument('--phase',choices=['imitation','ppo','combined'],required=True);p.add_argument('--smoke',action='store_true');a=p.parse_args()
     raise SystemExit(0 if run_queue(a.artifacts,a.phase,a.smoke) else 1)
 if __name__=='__main__':main()

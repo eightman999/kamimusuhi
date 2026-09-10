@@ -86,3 +86,10 @@ independent seeds.
 
 The same seed always uses the same physical GPU (even: RTX 3060; odd: P100),
 including every paired PPO arm. B4 records additional critic warm-up compute.
+
+Combined-candidate rule (fixed before reading ablation results): choose factors
+B3–B7 whose mean final validation-score gain over B1 exceeds .01 with paired
+two-sided exact sign p<.05. B2 changes the objective and is causal-only. If fewer
+than two factors qualify, do not duplicate a single-factor run. Otherwise run one
+B8 combination on the same eight parent checkpoints. Factor-composition tests
+require bit-exact equality with the corresponding existing single-factor update.

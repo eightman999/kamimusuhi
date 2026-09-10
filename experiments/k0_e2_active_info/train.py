@@ -89,11 +89,15 @@ def imitation_update(model,optimizer,rollout,config):
     return dict(loss=float(np.mean([x[0] for x in logs])),grad_norm=float(np.mean([x[1] for x in logs])))
 
 
+def enabled(config, factor):
+    return config['arm']==factor or factor in config.get('factors',[])
+
+
 def ppo_update(model,optimizer,rollout,config,anchor):
     obs,actions,oldlog,oldvalues,rewards,_=rollout
     adv,returns=advantages(rewards,oldvalues,.99,.95)
     adv=(adv-adv.mean())/(adv.std()+1e-8)
-    scale=returns.std().clamp_min(.1) if config['arm']=='B5' else torch.ones((),device=obs.device)
+    scale=returns.std().clamp_min(.1) if enabled(config,'B5') else torch.ones((),device=obs.device)
     logs=[]
     for _ in range(config['ppo_epochs']):
         for ids in torch.randperm(obs.shape[1],device=obs.device).split(config['minibatch_envs']):
@@ -104,9 +108,9 @@ def ppo_update(model,optimizer,rollout,config,anchor):
             value=((values-returns[:,ids])/scale).square().mean()
             with torch.no_grad():al,_,_=anchor.forward_sequence(obs[:,ids],anchor.initial_state(len(ids),obs.device))
             kl=torch.distributions.kl_divergence(dist,torch.distributions.Categorical(logits=al)).mean()
-            loss=policy+.5*value-.01*dist.entropy().mean()+(.1*kl if config['arm']=='B6' else 0)
+            loss=policy+.5*value-.01*dist.entropy().mean()+(.1*kl if enabled(config,'B6') else 0)
             optimizer.zero_grad(set_to_none=True);loss.backward()
-            norm=nn.utils.clip_grad_norm_(model.parameters(),.25 if config['arm']=='B7' else 1.0)
+            norm=nn.utils.clip_grad_norm_(model.parameters(),.25 if enabled(config,'B7') else 1.0)
             optimizer.step()
             logs.append([float(x.detach()) for x in (loss,policy,value,kl,dist.entropy().mean(),norm)])
     vals=np.mean(logs,axis=0)
@@ -147,7 +151,7 @@ def train(config,artifacts,run_id,parent=None):
     state()
     model=make_model(config['architecture']).to(device);optimizer=torch.optim.Adam(model.parameters(),lr=.001)
     envconfig=dict(config['env']);envconfig['mix_conditions']=True
-    if config['arm']=='B2':envconfig['zero_call_cost']=True
+    if enabled(config,'B2'):envconfig['zero_call_cost']=True
     env=ActiveInfoEnv(config['num_envs'],device,(100000 if config['arm']=='B0' else 200000)+seed,envconfig)
     parent_hash=None
     if parent:
@@ -155,14 +159,14 @@ def train(config,artifacts,run_id,parent=None):
         parent_hash=hashlib.sha256(Path(parent).read_bytes()).hexdigest()
         # Identical global and environment reset streams across every paired arm.
         restore_rng(cp['rng'])
-        if config['arm']=='B3':
+        if enabled(config,'B3'):
             for group in optimizer.param_groups:group['lr']=.0001
     anchor=copy.deepcopy(model).eval()
     for p in anchor.parameters():p.requires_grad_(False)
     env.reset()
     save_checkpoint(directory/'initial.pt',model,optimizer,config,env,'initial',0,parent_sha256=parent_hash)
     atomic(directory/'initial_validation.json',validation(model,device))
-    if config['arm']=='B4':atomic(directory/'critic_warmup.json',critic_warmup(model,env,config))
+    if enabled(config,'B4'):atomic(directory/'critic_warmup.json',critic_warmup(model,env,config))
     stage='imitation' if config['arm']=='B0' else 'ppo';total=config['imitation_updates'] if stage=='imitation' else config['ppo_updates'];best=-float('inf')
     try:
         for u in range(1,total+1):

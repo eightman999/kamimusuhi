@@ -35,3 +35,18 @@ class TrainingContracts(unittest.TestCase):
         self.assertTrue(bool((rollout[0][1,:,10]>0).all()))
 
 if __name__=='__main__':unittest.main()
+
+class FactorComposition(unittest.TestCase):
+    def test_composition_keeps_single_factor_exact(self):
+        import copy
+        from experiments.k0_e2_active_info.train import ppo_update
+        torch.set_num_threads(2);torch.manual_seed(33)
+        base=make_model('gru64');env=ActiveInfoEnv(8,'cpu',41,{'episode_length':8})
+        rollout,_=collect(base,env)
+        for arm,factors in [('B1',[]),('B5',['B5']),('B6',['B6']),('B7',['B7'])]:
+            a,b=copy.deepcopy(base),copy.deepcopy(base);anchor=copy.deepcopy(base)
+            oa,ob=torch.optim.Adam(a.parameters()),torch.optim.Adam(b.parameters())
+            common={'ppo_epochs':2,'minibatch_envs':4}
+            torch.manual_seed(100);la=ppo_update(a,oa,rollout,{**common,'arm':arm},anchor)
+            torch.manual_seed(100);lb=ppo_update(b,ob,rollout,{**common,'arm':'B8','factors':factors},anchor)
+            self.assertEqual(tensor_hash(a),tensor_hash(b));self.assertEqual(la,lb)
