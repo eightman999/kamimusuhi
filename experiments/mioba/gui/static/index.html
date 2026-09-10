@@ -101,7 +101,7 @@ const I18N = {
          compFailed:'完了 / 失敗ジョブ', hb:'最終ハートビート', bench:'ベンチマーク', benchTp:'処理量 (バッチ×sim-s/wall-s)', uuid:'GPU UUID', driver:'ドライバ / CUDA / Torch', host:'ホスト',
          chart:'GPU温度 ℃ / GPU使用率 % (10分)', idle:'待機中', unknownGpu:'GPU情報なし' },
     p: { filter:'ゲノムID / 系統で絞り込み', genomes:'個体', list:'個体一覧', tree:'系譜ツリー（根 = FBA0）', empty:'個体はありません', genome:'ゲノムID', gen:'世代', birth:'出生番号', parents:'親個体',
-         children:'子個体', clade:'系統', fitness:'適応度（暫定）', ancestry:'FBA0由来率', organs:'人工器官', born:'誕生時刻', root:'FBA0 根個体', organ:'器官' },
+         children:'子個体', clade:'系統', fitness:'適応度（暫定）', ancestry:'FBA0由来率', organs:'人工器官', mutations:'変異', born:'誕生時刻', root:'FBA0 根個体', organ:'器官' },
     o: { select:'個体を選択', none:'個体はまだありません', identity:'識別情報', hash:'ハッシュ', genBirth:'世代 / 出生番号', seed:'シード', base:'基盤', clades:'系統', created:'作成時刻', schema:'スキーマ',
          ancestral:'FBA0由来成分', unknown:'不明', noBase:'FBA0のニューロン数が不明です（参照データがコーディネータに未読込）', inherited:'のニューロンを継承（不変の参照',
          neurons:'ニューロン', extra:'人工ニューロン数', params:'パラメータ（解決後）', ancestryChain:'祖先系譜（FBA0まで）', parents:'親個体', children:'子個体', noParents:'なし（FBA0 根個体）', noChildren:'なし',
@@ -112,6 +112,7 @@ const I18N = {
          active:'活動率', sim:'シミュレーション時間', wall:'実時間', finished:'完了時刻', trace:'記録', full:'完全', summary:'要約' },
     t: { window:'表示範囲', src:'telemetry_samples + worker_heartbeats；破線 = イベント', experiment:'実験', temp:'GPU温度 ℃（ワーカーハートビート）', util:'GPU使用率 %', vram:'VRAM使用量 MB',
          stream:'信号・イベントストリーム', time:'時刻', kind:'種別', signal:'種別 / 信号', source:'発生源', value:'値', event:'イベント', sensor:'センサー', nodata:'データなし', min:'分' },
+    sig: { cpu_percent:'CPU使用率 %', ram_percent:'RAM使用率 %', latency_ms:'ネットワーク遅延 ms', temperature_c:'GPU温度 ℃', utilization_pct:'GPU使用率 %', vram_used_fraction:'VRAM使用率', collector_error:'収集エラー' },
     e: { type:'種別', all:'すべて', count:'件のイベント', n:'#', time:'時刻', message:'内容', severity:'重要度', source:'発生源', payload:'詳細' },
     u: { sec:'秒', min:'分', hour:'時間', day:'日' },
     misc: { none:'—', title:'MIOBA Observatory', fetchErr:'取得に失敗しました' },
@@ -131,7 +132,8 @@ const I18N = {
     w: { worker:'Worker ID', gpu:'GPU', device:'Device', cc:'CC', vram:'VRAM', util:'GPU Utilization', temp:'Temperature', batch:'Execution batch', job:'Current Job', completed:'Completed Jobs', failed:'Failed Jobs',
          compFailed:'Completed / Failed Jobs', hb:'Last Heartbeat', bench:'Benchmark', benchTp:'Throughput (batch × sim-s/wall-s)', uuid:'GPU UUID', driver:'Driver / CUDA / Torch', host:'Host',
          chart:'Temperature °C / Utilization % (10 min)', idle:'idle', unknownGpu:'No GPU info' },
-    p: { filter:'filter genome id / clade', genomes:'genomes', list:'Genome list', tree:'Lineage tree (root = FBA0)', empty:'empty', genome:'Genome ID', gen:'Generation', birth:'Birth Index', parents:'Parents',
+    sig: { cpu_percent:'CPU usage %', ram_percent:'RAM usage %', latency_ms:'Network latency ms', temperature_c:'GPU temperature °C', utilization_pct:'GPU utilization %', vram_used_fraction:'VRAM used fraction', collector_error:'collector error' },
+    p: { filter:'filter genome id / clade', genomes:'genomes', list:'Genome list', mutations:'Mutations', tree:'Lineage tree (root = FBA0)', empty:'empty', genome:'Genome ID', gen:'Generation', birth:'Birth Index', parents:'Parents',
          children:'Children', clade:'Clade', fitness:'Fitness (placeholder)', ancestry:'Ancestry Fraction', organs:'Artificial Organs', born:'Born', root:'FBA0 root', organ:'organ' },
     o: { select:'Select an organism', none:'No genomes yet', identity:'Identity', hash:'Hash', genBirth:'Generation / Birth', seed:'Seed', base:'Base', clades:'Clades', created:'Created', schema:'Schema',
          ancestral:'Ancestral component', unknown:'unknown', noBase:'FBA0 neuron count unavailable (reference data not loaded on coordinator)', inherited:'of neurons inherited from (immutable reference',
@@ -155,6 +157,7 @@ const T = () => I18N[LANG];
 const t = (section, key) => (T()[section] && T()[section][key]) ?? (I18N.ja[section] && I18N.ja[section][key]) ?? key;
 const tStatus = v => v == null ? t('misc','none') : (T().status[v] ?? v);
 const tEvent = ty => T().event[ty] ?? ty;
+const tSignal = s => (T().sig && T().sig[s]) ?? (I18N.ja.sig[s]) ?? s;
 const TZ = 'Asia/Tokyo';
 
 // ---- formatting (internal values are UTC ISO8601 / bytes / seconds; display only) ----
@@ -332,7 +335,7 @@ async function population() {
     <div class="toolbar"><input id="q" placeholder="${t('p','filter')}"> <span class="muted">${gs.length} ${t('p','genomes')} ${kind(d.kind)}</span></div>
     <div class="grid g21">
     <div class="panel"><h2>${t('p','list')} ${kind(d.kind)}</h2><div class="scroll xscroll"><table><thead><tr>
-      <th>${t('p','genome')}</th><th>${t('p','gen')}</th><th>${t('p','birth')}</th><th>${t('p','parents')}</th><th>${t('p','children')}</th><th>${t('p','clade')}</th><th>${t('p','fitness')}</th><th>${t('p','ancestry')}</th><th>${t('p','organs')}</th><th>${t('p','born')}</th></tr></thead>
+      <th>${t('p','genome')}</th><th>${t('p','gen')}</th><th>${t('p','birth')}</th><th>${t('p','parents')}</th><th>${t('p','children')}</th><th>${t('p','clade')}</th><th>${t('p','fitness')}</th><th>${t('p','ancestry')}</th><th>${t('p','organs')}</th><th>${t('p','mutations')}</th><th>${t('p','born')}</th></tr></thead>
       <tbody id="rows"></tbody></table></div></div>
     <div class="panel scroll"><h2>${t('p','tree')} ${kind('DERIVED')}</h2><div class="tree">${roots.map(r => tree(r.genome_id,0)).join('') || `<span class="muted">${t('p','empty')}</span>`}</div></div></div>`;
   const render = () => { const q = $('#q').value.toLowerCase();
@@ -341,7 +344,7 @@ async function population() {
       <td>${(g.parent_ids||[]).length ? g.parent_ids.map(short).join(' ') : `<span class="muted">${t('p','root')}</span>`}</td>
       <td>${g.children_count ?? (children[g.genome_id]||[]).length}</td><td>${esc(g.clade_name || t('misc','none'))}</td>
       <td>${num(g.best_fitness,3)}</td><td>${g.ancestry_fraction != null ? fmtPct(100*g.ancestry_fraction) : t('misc','none')}</td>
-      <td>${g.organ_count ?? 0}</td><td>${fmtDateTime(g.created_at)}</td></tr>`).join(''); };
+      <td>${g.organ_count ?? 0}</td><td>${g.mutation_count ?? t('misc','none')}</td><td>${fmtDateTime(g.created_at)}</td></tr>`).join(''); };
   $('#q').addEventListener('input', render); render();
   schedule(population, 10000);
 }
@@ -413,13 +416,13 @@ async function telemetry() {
       <div class="panel"><h2>${t('t','temp')} ${kind('RECORDED')}</h2><canvas id="c_temp"></canvas>${legend(wSeries('temperature_c'))}</div>
       <div class="panel"><h2>${t('t','util')} ${kind('RECORDED')}</h2><canvas id="c_util"></canvas>${legend(wSeries('utilization_pct'))}</div>
       <div class="panel"><h2>${t('t','vram')} ${kind('RECORDED')}</h2><canvas id="c_vram"></canvas>${legend(wSeries('vram_used_mb'))}</div>
-      ${sigs.map((s,i) => `<div class="panel"><h2>${esc(s)} <span class="muted">(${esc(groups[s][0]?.points.length ? d.telemetry[Object.keys(d.telemetry).find(k=>k.endsWith('|'+s))][0].domain : '')})</span> ${kind('RECORDED')}</h2><canvas id="c_s${i}"></canvas>${legend(groups[s])}</div>`).join('')}
+      ${sigs.map((s,i) => `<div class="panel"><h2>${esc(tSignal(s))} <span class="muted mono">${esc(s)} (${esc(groups[s][0]?.points.length ? d.telemetry[Object.keys(d.telemetry).find(k=>k.endsWith('|'+s))][0].domain : '')})</span> ${kind('RECORDED')}</h2><canvas id="c_s${i}"></canvas>${legend(groups[s])}</div>`).join('')}
     </div>
     <div class="panel" style="margin-top:12px"><h2>${t('t','stream')} ${kind('RECORDED')}</h2>
       <div class="scroll xscroll" style="max-height:300px"><table><thead><tr><th>${t('t','time')}</th><th>${t('t','kind')}</th><th>${t('t','signal')}</th><th>${t('t','source')}</th><th>${t('t','value')}</th></tr></thead><tbody>
       ${[...d.events.map(e => ({at:e.at, k:'event', type:e.type, label:tEvent(e.type), src:e.source, val:e.payload_json, sev:e.severity})),
-         ...Object.entries(d.telemetry).flatMap(([k, rows]) => rows.slice(-5).map(r => ({at:r.at, k:'sensor', type:k.split('|')[1], label:k.split('|')[1], src:k.split('|')[0], val:num(r.value,3), sev:'info'})))]
-        .sort((a,b) => b.at.localeCompare(a.at)).slice(0,200).map(r => `<tr><td>${fmtTime(r.at)}</td><td>${esc(t('t', r.k))}</td><td class="sev-${esc(r.sev)}">${esc(r.label)}${r.k==='event' ? `<div class="muted mono" style="font-size:10px">${esc(r.type)}</div>` : ''}</td><td class="mono">${esc(r.src)}</td><td class="mono">${esc(String(r.val)).slice(0,120)}</td></tr>`).join('') || `<tr><td colspan="5" class="muted">${t('t','nodata')}</td></tr>`}
+         ...Object.entries(d.telemetry).flatMap(([k, rows]) => rows.slice(-5).map(r => ({at:r.at, k:'sensor', type:k.split('|')[1], label:tSignal(k.split('|')[1]), src:k.split('|')[0], val:num(r.value,3), sev:'info'})))]
+        .sort((a,b) => b.at.localeCompare(a.at)).slice(0,200).map(r => `<tr><td>${fmtTime(r.at)}</td><td>${esc(t('t', r.k))}</td><td class="sev-${esc(r.sev)}">${esc(r.label)}${r.label !== r.type ? `<div class="muted mono" style="font-size:10px">${esc(r.type)}</div>` : ''}</td><td class="mono">${esc(r.src)}</td><td class="mono">${esc(String(r.val)).slice(0,120)}</td></tr>`).join('') || `<tr><td colspan="5" class="muted">${t('t','nodata')}</td></tr>`}
       </tbody></table></div></div>`;
   $('#mins').addEventListener('change', e => { sessionStorage.setItem('mioba.minutes', e.target.value); telemetry(); });
   const o = {t0, t1, marks: evMarks};

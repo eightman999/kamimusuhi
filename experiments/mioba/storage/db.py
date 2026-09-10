@@ -282,6 +282,8 @@ class Database:
                               (experiment_id, gid)).fetchone()["f"]
                 children = self._q("SELECT COUNT(*) c FROM parents WHERE "
                                    "parent_id=?", (gid,)).fetchone()["c"]
+                muts = self._q("SELECT COUNT(*) c FROM mutations WHERE "
+                               "genome_id=?", (gid,)).fetchone()["c"]
                 out.append({
                     "genome_id": gid,
                     "parent_ids": json.loads(r["parent_ids_json"]),
@@ -291,6 +293,7 @@ class Database:
                     "clade_id": clade["clade_id"] if clade else None,
                     "clade_name": clade["name"] if clade else None,
                     "organ_count": len(genome.artificial_organs),
+                    "mutation_count": muts,
                     "ancestry_fraction":
                         develop(genome, base_neurons)["ancestry_fraction"],
                     "best_fitness": fit,
