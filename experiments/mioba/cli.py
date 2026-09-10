@@ -191,44 +191,35 @@ def cmd_env_info(args) -> int:
 
 
 def cmd_replay(args) -> int:
+    """Re-run one recorded evaluation under its recorded conditions
+    (backend, dataset identity, seed, env, duration, batch, config
+    snapshot). Fails with ReplayUnavailable rather than substituting a
+    synthetic network for a real-FBA recording."""
     config = load_config(getattr(args, "config", None))
     runs_dir = _runs_dir(args, config)
     exp_dir = _find_experiment(runs_dir, getattr(args, "experiment_id", None))
-    from .storage.db import Database
-    db = Database(exp_dir / "lineage.sqlite")
-    ev = db.get_evaluation(args.evaluation_id)
-    if ev is None:
-        raise SystemExit(f"no evaluation {args.evaluation_id}")
-    job = db.get_job(ev["job_id"])
-    genome_row = db.get_genome(ev["genome_id"])
-    db.close()
-    from .development.phenotype import develop
-    from .fba.registry import get_backend
-    from .genome.schema import Genome
-    from .mie.environments import make_drive
-    genome = Genome.from_json(genome_row["genome_json"])
-    phen = develop(genome)
-    backend = get_backend(args.backend or job["backend"],
-                          data_dir=None, synthetic=True,
-                          runs_dir=str(exp_dir))
-    backend.initialize(phen, batch_size=ev["batch_size"] or 1,
-                       seed=ev["seed"], device=args.device)
-    backend.set_inputs(make_drive(job["environment_id"], backend.n_base
-                                  if hasattr(backend, "n_base") else 512,
-                                  config))
-    stats = backend.run(job["duration_ms"])
-    summary = backend.get_state_summary()
-    original = json.loads(ev["summary_json"])
-    diff = {
-        "original_mean_rate_hz": original.get("mean_rate_hz"),
-        "replay_mean_rate_hz": summary.get("mean_rate_hz"),
-        "original_spikes": sum(original.get("per_batch_spike_counts") or []),
-        "replay_spikes": stats["spikes_total"],
-    }
+    from .coordinator.replay import (ReplayConfigMismatch, ReplayUnavailable,
+                                     build_plan, run_plan)
+    from .fba.runtime_info import collect_runtime_info
+    try:
+        plan = build_plan(exp_dir, args.evaluation_id, device=args.device,
+                          data_dir=args.data_dir, backend=args.backend,
+                          current_config=config,
+                          current_git_commit=collect_runtime_info().get(
+                              "git_commit"),
+                          strict=args.strict)
+        for w in plan.warnings:
+            print(f"warning: {w}", file=sys.stderr)
+        result = run_plan(plan)
+    except ReplayUnavailable as exc:
+        print(f"ReplayUnavailable: {exc}", file=sys.stderr)
+        return 4
+    except ReplayConfigMismatch as exc:
+        print(f"ReplayConfigMismatch (strict): {exc}", file=sys.stderr)
+        return 5
     out = exp_dir / "replays" / f"{args.evaluation_id}.json"
-    out.write_text(json.dumps({"original": original, "replay": summary,
-                               "diff": diff}, indent=2, default=str))
-    print(json.dumps(diff, indent=2))
+    out.write_text(json.dumps(result, indent=2, default=str))
+    print(json.dumps(result["diff"], indent=2))
     print(f"wrote {out}")
     return 0
 
@@ -274,8 +265,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("replay")
     p.add_argument("evaluation_id")
-    p.add_argument("--backend", default=None)
+    p.add_argument("--backend", default=None,
+                   help="override recorded backend (cross-backend parity "
+                        "check; recorded as a warning)")
     p.add_argument("--device", default="cpu")
+    p.add_argument("--data-dir", default=None,
+                   help="location of the recorded real FBA dataset")
+    p.add_argument("--strict", action="store_true",
+                   help="fail instead of warning on config/git/backend/"
+                        "device drift")
     p.set_defaults(fn=cmd_replay)
 
     p = sub.add_parser("bench")
