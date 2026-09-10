@@ -1,0 +1,88 @@
+{
+  "gpu_samples": [
+    {
+      "phase": "imitation",
+      "gpu_uuid": "GPU-1d6afaad-67b7-b965-46c7-efe6c9c395f3",
+      "samples": 132,
+      "utilization_mean": 46.696969696969695,
+      "utilization_max": 66.0,
+      "memory_mib_mean": 344.6666666666667,
+      "memory_mib_max": 424.0,
+      "temperature_c_mean": 46.09090909090909,
+      "temperature_c_max": 48.0,
+      "power_w_mean": 51.095757575757574,
+      "power_w_max": 59.6
+    },
+    {
+      "phase": "imitation",
+      "gpu_uuid": "GPU-d11b6f7f-002d-b252-1921-149ed2d84f15",
+      "samples": 132,
+      "utilization_mean": 72.56060606060606,
+      "utilization_max": 86.0,
+      "memory_mib_mean": 483.8636363636364,
+      "memory_mib_max": 548.0,
+      "temperature_c_mean": 37.5,
+      "temperature_c_max": 39.0,
+      "power_w_mean": 46.001969696969695,
+      "power_w_max": 80.81
+    },
+    {
+      "phase": "ppo",
+      "gpu_uuid": "GPU-1d6afaad-67b7-b965-46c7-efe6c9c395f3",
+      "samples": 26,
+      "utilization_mean": 25.423076923076923,
+      "utilization_max": 65.0,
+      "memory_mib_mean": 313.0,
+      "memory_mib_max": 546.0,
+      "temperature_c_mean": 57.65384615384615,
+      "temperature_c_max": 63.0,
+      "power_w_mean": 50.013461538461534,
+      "power_w_max": 64.96
+    },
+    {
+      "phase": "ppo",
+      "gpu_uuid": "GPU-d11b6f7f-002d-b252-1921-149ed2d84f15",
+      "samples": 26,
+      "utilization_mean": 36.69230769230769,
+      "utilization_max": 81.0,
+      "memory_mib_mean": 421.46153846153845,
+      "memory_mib_max": 670.0,
+      "temperature_c_mean": 38.5,
+      "temperature_c_max": 39.0,
+      "power_w_mean": 47.25615384615384,
+      "power_w_max": 87.87
+    },
+    {
+      "phase": "combined",
+      "gpu_uuid": "GPU-1d6afaad-67b7-b965-46c7-efe6c9c395f3",
+      "samples": 4,
+      "utilization_mean": 17.0,
+      "utilization_max": 68.0,
+      "memory_mib_mean": 168.0,
+      "memory_mib_max": 418.0,
+      "temperature_c_mean": 40.25,
+      "temperature_c_max": 42.0,
+      "power_w_mean": 36.4725,
+      "power_w_max": 46.83
+    },
+    {
+      "phase": "combined",
+      "gpu_uuid": "GPU-d11b6f7f-002d-b252-1921-149ed2d84f15",
+      "samples": 4,
+      "utilization_mean": 1.25,
+      "utilization_max": 3.0,
+      "memory_mib_mean": 156.5,
+      "memory_mib_max": 320.0,
+      "temperature_c_mean": 36.75,
+      "temperature_c_max": 37.0,
+      "power_w_mean": 32.25,
+      "power_w_max": 35.43
+    }
+  ],
+  "phase_wall_seconds": {
+    "imitation": 664.090505361557,
+    "ppo": 130.88278126716614,
+    "combined": 20.152055501937866
+  },
+  "sample_scope": "nvidia-smi every 5 seconds during each phase, includes worker startup/idle tail; not per-kernel utilization"
+}

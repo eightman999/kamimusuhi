@@ -1,0 +1,10 @@
+{
+  "services": {
+    "llama-master.service": "inactive",
+    "k0-j72-eval.service": "inactive",
+    "k0-e2-j72-eval.service": "inactive"
+  },
+  "gpu_compute_processes": [],
+  "restored_stopped_state": true,
+  "training_workers_terminated": true
+}

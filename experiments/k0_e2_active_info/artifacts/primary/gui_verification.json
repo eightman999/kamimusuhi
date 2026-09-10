@@ -1,0 +1,94 @@
+{
+  "timestamp": 1789035426.050246,
+  "data_scope": "Actual synchronized primary artifacts; no synthetic or test fixture data",
+  "rendering_scope": "Qt offscreen platform using QWidget.grab(); rendered widget evidence, not native desktop screenshot",
+  "native_screen_capture": {
+    "performed": false,
+    "parent_reported_error": "ScreenCaptureKit -3811",
+    "native_accessibility_verification": "Performed separately by parent; not rechecked in this render task"
+  },
+  "gui_source_sha256": "44bd0273c3cfcea825b5eaac40dec2caab96bd9b36ffb0b6a49e2016c213a6db",
+  "qt_version": "5.15.14",
+  "platform": "offscreen",
+  "run_count": 88,
+  "run_statuses": {
+    "running": 0,
+    "complete": 88,
+    "failed": 0,
+    "queued": 0,
+    "paused": 0
+  },
+  "selected_run": "gru128-s6-B0",
+  "selected_run_curve_points": {
+    "reward": 256,
+    "task_success": 256,
+    "call_rate": 256,
+    "steps_per_second": 256
+  },
+  "representative_runs": 2,
+  "j72_episode_count": 48,
+  "selected_trace_step_count": 48,
+  "selected_trace_step": 3,
+  "selected_trace_response_status": "応答到着",
+  "debug_enabled": false,
+  "latent_debug_label_empty": true,
+  "plot_images_loadable": {
+    "voi_cost_curve.png": true,
+    "voi_performance_curve.png": true,
+    "reliability_curve.png": true,
+    "latency_curve.png": true,
+    "policy_intervention.png": true,
+    "response_ablation.png": true,
+    "retention_curve.png": true,
+    "ppo_ablation.png": true,
+    "ood_heatmap.png": true,
+    "pareto.png": true
+  },
+  "selected_plot": "response_ablation.png",
+  "input_sha256": {
+    "j72_results.json": "e81ff803ab178aff2ffb180bc30e5a95da110819fad517db5af769b4620a0380",
+    "run_summary.json": "2cabb2f400778cdc9825ca78a19c14e40f4a6029d8a7dd39735012e29b46f667",
+    "plot_manifest.json": "bc4a6b6f38121b02f1cafada8fbc91abc729c9535ea0a188dc3a05c547c9a971"
+  },
+  "screenshots": {
+    "gui_overview.png": {
+      "sha256": "2425cd04ec4eb95dd02fadb892039cfea46c7cfedb1d505871a4a4ab6b085478",
+      "bytes": 229385,
+      "width": 1440,
+      "height": 1100
+    },
+    "gui_language.png": {
+      "sha256": "9a44395c38a89dd4b8d55da18791851238d553405e09c1c6598ac303ecbe19c0",
+      "bytes": 280150,
+      "width": 1440,
+      "height": 1100
+    },
+    "gui_plots.png": {
+      "sha256": "cd1f20c66ceeb7d2403c88a9737db95434cbdf3f8bd680e67ae9ce49644f2d95",
+      "bytes": 129747,
+      "width": 1440,
+      "height": 1100
+    }
+  },
+  "visual_review": {
+    "status": "PASS",
+    "reviewed_tabs": [
+      "実験と学習曲線",
+      "行動・取得情報・言語応答",
+      "評価グラフ"
+    ],
+    "method": "Model visually inspected all three rendered PNGs with view_image",
+    "findings": [
+      "Japanese glyphs render without missing characters; labels and plots are readable",
+      "Run table reports actual 88 complete, 0 failed; selected learning curves have 256 points",
+      "Live-J72 trace displays language call, waiting, response arrival, next action; invalid parsed information remains absent with confidence zero",
+      "Normal debug checkbox is unchecked and latent debug label empty",
+      "Actual response-ablation figure is fully visible with title, legend and axes; original plot language is preserved"
+    ],
+    "limitations": [
+      "Offscreen QWidget rendering is not an operating-system desktop screenshot",
+      "The native Cocoa process was not touched or reverified by this task",
+      "Scrollable tables show the selected viewport rather than all 88 runs or 48 steps simultaneously"
+    ]
+  }
+}

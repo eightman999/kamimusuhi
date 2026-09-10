@@ -1,0 +1,1 @@
+{"ok":true,"model":"j72-30m","device":"cuda:0","params":{"total":150001152,"embedding":55296000,"lm_head":0,"non_embedding":94705152}}

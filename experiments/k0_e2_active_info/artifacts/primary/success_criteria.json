@@ -1,0 +1,218 @@
+{
+  "execution_complete": true,
+  "execution_scope": "Saved experiment matrix, evaluation, tests, native GUI, parent/RNG pairing and stopped runtime evidence only. Final docs/commit completeness requires root final audit.",
+  "runtime_restored": true,
+  "native_gui_passed": true,
+  "research_status": "FAIL",
+  "architecture_seed_coverage": {
+    "mlp": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "gru64": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "gru128": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ]
+  },
+  "expected_seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "ppo_B1_B7_eight_seed_coverage": true,
+  "combined_B8_required": true,
+  "combined_B8_complete": true,
+  "trained_memory_supplement_complete": true,
+  "category_coverage": {
+    "voi_results.json": {
+      "expected_conditions_per_seed": 19,
+      "record_count": 456,
+      "complete": true
+    },
+    "policy_interventions.json": {
+      "expected_conditions_per_seed": 6,
+      "record_count": 144,
+      "complete": true
+    },
+    "language_response_ablation.json": {
+      "expected_conditions_per_seed": 9,
+      "record_count": 216,
+      "complete": true
+    },
+    "counterfactual.json": {
+      "expected_conditions_per_seed": 1,
+      "record_count": 24,
+      "complete": true
+    },
+    "ambiguity_audit.json": {
+      "expected_conditions_per_seed": 1,
+      "record_count": 24,
+      "complete": true
+    },
+    "active_sensing.json": {
+      "expected_conditions_per_seed": 10,
+      "record_count": 240,
+      "complete": true
+    },
+    "retention_results.json": {
+      "expected_conditions_per_seed": 40,
+      "record_count": 960,
+      "complete": true
+    },
+    "ood_results.json": {
+      "expected_conditions_per_seed": 14,
+      "record_count": 336,
+      "complete": true
+    },
+    "habituation_results.json": {
+      "expected_conditions_per_seed": 12,
+      "record_count": 288,
+      "complete": true
+    }
+  },
+  "missing_inputs": [],
+  "missing_plots": [],
+  "conditions": {
+    "closed_loop_action_changes_future_observation": {
+      "status": "PASS",
+      "evidence": "validation.jsonのE2テスト結果。個別環境テストの範囲に限定し、実サービス動作とは区別する。"
+    },
+    "precall_ambiguity": {
+      "status": "PASS",
+      "evidence": "対象24 seed記録。no-call A/B履歴と行動のbit一致・balanced成功率≤0.5を照合。"
+    },
+    "returned_information_used": {
+      "status": "PASS",
+      "evidence": "GRU64/GRU128のcorrect−shuffled差（言語subset）、8 seed CIとexact sign test。"
+    },
+    "learned_gate_better_than_never": {
+      "status": "PASS",
+      "evidence": "言語subsetでlearned−never、同一episode群。"
+    },
+    "learned_gate_better_than_matched_random": {
+      "status": "PASS",
+      "evidence": "受理call数一致の確認とlearned−global matched random差。episode割当と時点を両方変えるため、純粋なtiming効果ではない。"
+    },
+    "oracle_upper_bound": {
+      "status": "PARTIAL",
+      "evidence": "情報制約付きanalytic参照との比較。大域最適性・厳密な上界は証明していない。oracle gate後の行動には学習policyを使用する。"
+    },
+    "leakage_audit": {
+      "status": "PASS",
+      "evidence": "RNG stream分離、有限fingerprint、no-call A/B、strict memory、固定正規化、baseline hashを確認。未試験入力全体への無漏洩証明ではない。"
+    },
+    "recurrent_memory_dependency": {
+      "status": "PASS",
+      "evidence": "既知の訓練delay=47におけるnormal−reset every step、GRU−MLP、cue A/Bの消失後観測bit一致・最終行動分岐の補足診断。未知delayへの転移とは分離する。"
+    },
+    "memory_temporal_ood_generalization": {
+      "status": "FAIL",
+      "evidence": "訓練47以外の事前指定8/16/24/40/80/160/320/640で評価。少なくとも一条件で両GRUの95% CI上限≤chance .5なら広い時刻転移はFAIL。非単調な破綻から単一memory horizonは定義しない。"
+    },
+    "ppo_causal_dissection": {
+      "status": "PASS",
+      "evidence": "B1–B7各8 seed=True。同一parent hash検証=True。PPOが改善したこと自体を要求せず、退行を含めて因子別に報告する。"
+    },
+    "paired_causal_forks": {
+      "status": "PASS",
+      "evidence": "同一env snapshotとmodel stateからCALL/NO CALL分岐。後続callを両群で無効化した単回強制call estimand。"
+    },
+    "j72_closed_loop": {
+      "status": "FAIL",
+      "evidence": "学習gateによるlive呼び出し、HTTP、strict parse、意味正解、Core downstreamを分離。forced-gate補助診断は学習gateの成功に含めない。"
+    }
+  },
+  "decision_rule": "PASS requires >=8 independent paired seeds, positive difference CI lower>0 and exact two-sided sign p<=.05 for directional behavioral claims; negative CI upper<0 and exact p<=.05, or all-zero paired differences, is FAIL; inconclusive and incomplete evidence is PARTIAL. Exploratory multiple comparisons are not familywise corrected.",
+  "input_sha256": {
+    "run_summary.json": "2cabb2f400778cdc9825ca78a19c14e40f4a6029d8a7dd39735012e29b46f667",
+    "policy_interventions.json": "3a52660706f61716ecb71b806db666cbe7cffdb0136513bd959522a4e1b66f5e",
+    "language_response_ablation.json": "0cedebd1ef5d4fe254bfec6b28f9b37043365fdff8a6fcc7265c91b147d231cd",
+    "retention_results.json": "2b33ef25eb55e2efbb0db75eaa54b235ff389eefe26f0fe6c7f4369426297a41",
+    "ood_results.json": "030005fa55f62f48b1d64c6d2c62c7952fbf94d8a6a159be6ff5f5a476f9b2fe",
+    "voi_results.json": "5950d7e6a4cae25cc0e8f447100f3ebf244af2cb54285e2f4c1fccf16bd16efd",
+    "counterfactual.json": "4f7055bceadd00c202f6d6c6ce5509f4e97956acea609570616bb96fbcf5494c",
+    "ambiguity_audit.json": "e1f1c08565d2d5e6cb63ae14a0425a7f0413367bb98040b5c9a89af1628bd955",
+    "active_sensing.json": "4fda30a3e85253b35cb51e6567c35b15f4c99ce1ce5136af7492dbdc9f2cd670",
+    "habituation_results.json": "33019f1694d2c6fe62dbe0d22b514c04a5b48616175ed3be030707753c5359c0",
+    "ppo_ablation.json": "455d2c1748a8725af06f1d77d823b0f558afcab07347030c0f619003e8f02da4",
+    "seed_statistics.json": "b6d78275c0ca60b5a9d61058b1759baac03691650306a2747cf3235cad116b04",
+    "j72_results.json": "e81ff803ab178aff2ffb180bc30e5a95da110819fad517db5af769b4620a0380",
+    "run_evidence.json": "8c9dc02ceda2341f7f447365920798c6b3a701884862f510023ec6acb2d3d8a8",
+    "validation.json": "013a6af31b6fa129a6b15334d24688a7b81717b2f18040cdf2c4cbad35f10ea9",
+    "leakage_audit.json": "44cbaa6f3192f2c772324f0f7919cfffa79657303a7dc96bc761ff398ea6ea64",
+    "trained_delay_ablation.json": "5690f7a00bc05175a41baebaaf299e48bb64e25b69c18bfd55e3e325f37474d6",
+    "stabilized_selection.json": "8b27e5323f2edd33c27085b8983f15b7ffdbe3b3d6c52ca4c72ad22fd23b0487",
+    "final_runtime_state.json": "06c518a7520ec2bdf8ffc6c25493ca6303c6bfc88184d48c4c5eb716b35e34c4",
+    "j72_health.json": "457c936fccde94fd1f1a1d38c8aef73d78915258c1ff60be422e42f5080ea32d",
+    "resource_summary.json": "a9a8e4c97f1b25d76c155bbe891567f8500d44be31076f4882024be8388d64be",
+    "runs/mlp-s0-B0/selection.json": "73d7924d760b07abc9fe1a4db1b788f9030b07f1dfdadba98c632e560326b8d7",
+    "runs/mlp-s1-B0/selection.json": "ac6508591d6df11a7c376f8deba4005f840e6165ddbc398089ef927769027267",
+    "runs/mlp-s2-B0/selection.json": "7dcecdc5217f4489564ae1931e00802c103f13a4fa6974517d4b44f589302cbb",
+    "runs/mlp-s3-B0/selection.json": "e95c3a7e229507526a0e2da6130cb3d1e7a5dd00fbe4e60407784eebe6be42e7",
+    "runs/mlp-s4-B0/selection.json": "4e675b1bac253530e44c5bcbbd340e6708b7cac13bc1c24e62ceca7948eda819",
+    "runs/mlp-s5-B0/selection.json": "f62134e35ed38b24720bf26ebdc1ca1ba027927c986453418bd4c18994d657c7",
+    "runs/mlp-s6-B0/selection.json": "a6fa1bd2f304de7c8e99c1acd4bbe4cc1e78d2f317351c5d4c95ff66adc55b09",
+    "runs/mlp-s7-B0/selection.json": "8ca105937ee9585f788beb5b745178b2d13db2bf6535aac3a57afe7b8a41d413",
+    "runs/gru64-s0-B0/selection.json": "d7d0f533b26c00bf0fae665268d0b7448a8975cbfeae50596ee317f36397ea51",
+    "runs/gru64-s1-B0/selection.json": "c34f8e178d2c0b3da61014d42155b6df17a8a8a740de3c3335874ce3b62634c4",
+    "runs/gru64-s2-B0/selection.json": "8c658281732566a9b1b6de226d4ee7908db161012d789485aa0421cbc490edf5",
+    "runs/gru64-s3-B0/selection.json": "05f746564621e4c6ac9d69fd2b00c416186ff432545aa7b6974bd2f1558246f7",
+    "runs/gru64-s4-B0/selection.json": "cd6affff5c5a71227be9afb7a5deafdf278415855a925527143b21b892e3f0fe",
+    "runs/gru64-s5-B0/selection.json": "239acb888dc9fccaf88e57b217775473a8e0569e7e39fb4ce8d9d2e1ecaa899d",
+    "runs/gru64-s6-B0/selection.json": "b4780003a8fb3c3a586e69ae007de2e1b27f5ff63df0f4dc9ce6df1733f1ac78",
+    "runs/gru64-s7-B0/selection.json": "18d7132c5ae0dd394cae7abc864972d9ef2532c8ce4a5573d649427c4774111c",
+    "runs/gru128-s0-B0/selection.json": "5fec6d0c24cd61b9d72ee1e0541dda5339b9170e22f3500793382fc852841daa",
+    "runs/gru128-s1-B0/selection.json": "55cc617fd567a627a34ce7e4c08efad549a05f0eaf40ceeea473d96be9f2bf7a",
+    "runs/gru128-s2-B0/selection.json": "95507f537fdacd69d33b53940adcd79e68ae5695c8b2c60e522265e322de999c",
+    "runs/gru128-s3-B0/selection.json": "cb62f39d180cfb81b2ada9b12872f464168aa9167f4ec47f30ea83a96b21d1ca",
+    "runs/gru128-s4-B0/selection.json": "9c69a3a55a3676eaa656eba35cb67628d73c18055c0260a98c6a184ae4d82eba",
+    "runs/gru128-s5-B0/selection.json": "8282ef460904f8245ef1de6ffb3996016833155640a3cb00cd69d5f67fefa309",
+    "runs/gru128-s6-B0/selection.json": "733fe879e1cd70fc738cb8d99750a78c2dad3f27ba085ff12c8c8ed06afc2783",
+    "runs/gru128-s7-B0/selection.json": "d87676fbd0b30a457ec910a7fe74b79e8c1cbff4d8f56caca3f27cb2c48e5b79"
+  },
+  "strong_call_responsiveness": {
+    "mlp": {
+      "cost": "FAIL",
+      "reliability": "FAIL",
+      "latency": "PARTIAL"
+    },
+    "gru64": {
+      "cost": "FAIL",
+      "reliability": "FAIL",
+      "latency": "PARTIAL"
+    },
+    "gru128": {
+      "cost": "PARTIAL",
+      "reliability": "PARTIAL",
+      "latency": "PARTIAL"
+    }
+  },
+  "strong_condition_limit": "These test call-frequency response only. Rational performance preservation and reliability-dependent reliance require joint interpretation, not call-rate alone."
+}

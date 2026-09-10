@@ -1,0 +1,890 @@
+[
+  {
+    "run_id": "gru128-s0-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru128",
+    "seed": 0,
+    "stage": "imitation",
+    "update": 255,
+    "checkpoint_sha256": "59c2aff2ffd2df887d204d74671ff29d039a3762bf3caed0a8c6bdad6fc7f45f",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "b06d88cb374133ce8b6c43fdb083d1754560f06215c745d31f74593a7ad4a0b5",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru128-s1-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru128",
+    "seed": 1,
+    "stage": "imitation",
+    "update": 234,
+    "checkpoint_sha256": "cc53a1a59ad7eabb083a145801044e193b1373f23d3cc1922a8a28464484e986",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "79c08ea76d174c6b0042894d0934e1f4a06083efa59c7231e74965d0e42c83f8",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru128-s2-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru128",
+    "seed": 2,
+    "stage": "imitation",
+    "update": 256,
+    "checkpoint_sha256": "3e0385a52ddd46a4fbe7db29319fabea2752df94793396f95d7dc546f706f946",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "5f0240b797cb3ffb8a5411cc361c79dc931a9104786f99153c14b3ffe34d515b",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru128-s3-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru128",
+    "seed": 3,
+    "stage": "imitation",
+    "update": 229,
+    "checkpoint_sha256": "cc79a1af385d59d9d139f308e7310c52f7be690508209da7058bf1c321bb887f",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "6a5f73f3c211aadc5518373b9d11819a9c9bdb7854c34374d550dabfa8aeaa60",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru128-s4-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru128",
+    "seed": 4,
+    "stage": "imitation",
+    "update": 256,
+    "checkpoint_sha256": "fa8beca2e02f3b4d55ae606ecc1baa5d973259b1d1dbe312450e746bbf9bc539",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "1493ed504f6483da069865c501dba0b319b7f51a566c938ec8e29083de2a47e2",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru128-s5-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru128",
+    "seed": 5,
+    "stage": "imitation",
+    "update": 256,
+    "checkpoint_sha256": "a3642c4114ef03e34a488cbedb517c303172549a3b6f8daa5291eac5a364ab9c",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "e148ef339d296715215a14761933d6b392a06c61b9135ed04c902b6d215d8279",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru128-s6-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru128",
+    "seed": 6,
+    "stage": "imitation",
+    "update": 256,
+    "checkpoint_sha256": "cd7b66111cd8e68fae61698dba5e260cb35700142decd96a2f5b67f8cd0c08cd",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "39d8bc7eee41dcd2e53bbcbbea79f440407806edc525aaf363ba8a37c1a195d8",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru128-s7-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru128",
+    "seed": 7,
+    "stage": "imitation",
+    "update": 256,
+    "checkpoint_sha256": "2ec201fe6e42a1c368a9b543caeb717b6e5637b00b86202118b640b4df6aa4eb",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "61246a7c2a8cda1e42f50be4cd40a0061b6a2e2f72714484bfbf9f17c6a910f8",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru64-s0-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru64",
+    "seed": 0,
+    "stage": "imitation",
+    "update": 246,
+    "checkpoint_sha256": "2f7f28594bb7ab62a9ba3ef9c9485a67801055f9c4e298543826acb77587a98c",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "74c72602215101a4dcaecdb2a10ca40ba2ad250f025ddb476fcf536f77804a12",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru64-s1-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru64",
+    "seed": 1,
+    "stage": "imitation",
+    "update": 251,
+    "checkpoint_sha256": "1df54544baf0dbbc0a1e911b6d142d2e3d3cf8e03b32cc61a832518d0d5eecc5",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "6d65d6c50b252f10560e1d816f5aa0faee01db1eb260566bf5740aa31a79c5a3",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru64-s2-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru64",
+    "seed": 2,
+    "stage": "imitation",
+    "update": 255,
+    "checkpoint_sha256": "07cdef027c9c72af2c814b744070311154b52b1f19dfb3c1ddd2917df250032c",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "a63d0859bdc697797495c0ad5a82bae434f4a1dbe1156382ef6333a451165272",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru64-s3-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru64",
+    "seed": 3,
+    "stage": "imitation",
+    "update": 253,
+    "checkpoint_sha256": "30ecf61b35ec5c6c5a681e343c7556ab3a3f942c1798e65505b9126f9fa0ab72",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "5b29b705028291affb09813794a72cc39fabc6397406f5c2a793c6f0e001f788",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru64-s4-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru64",
+    "seed": 4,
+    "stage": "imitation",
+    "update": 221,
+    "checkpoint_sha256": "700385255673d61e00bbf3919b3402fe603ad8ab587b650463a60a27f656772b",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "68d941a48893fc25490a9c75aa24b37d9406680e0b4321d4121cec94260adc83",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru64-s5-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru64",
+    "seed": 5,
+    "stage": "imitation",
+    "update": 234,
+    "checkpoint_sha256": "b941c1203885bbd3a565b6873e14e936dade96cecfa3baa5830d8405531bf157",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "1fc1d46b8efbca12e46326ad73f41fd97b2c26cc86171235f46e5b2a1cb3d55e",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru64-s6-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru64",
+    "seed": 6,
+    "stage": "imitation",
+    "update": 244,
+    "checkpoint_sha256": "e8786547a568ff70fa3239d3537a1ad8ab275c05b39c58493d6abc622a539823",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "520d8ef19130edbfee85491a1cff9b13da91027c8b3360930897a1aec294671c",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "gru64-s7-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "gru64",
+    "seed": 7,
+    "stage": "imitation",
+    "update": 241,
+    "checkpoint_sha256": "7f06d7f605eedebf226c16965266d56da68e347b4f400f69ce3c03a4eb1cff64",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "840ab56e46c7e2added2531fa02af6dae4ec5a04588e4bd50f254013cfd0c063",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "mlp-s0-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "mlp",
+    "seed": 0,
+    "stage": "imitation",
+    "update": 177,
+    "checkpoint_sha256": "cd1b7f566e397e6a8c35c58e256fdc99bc2b1348bfe8005f699470397a5d5a09",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "251439566b03272606f4b5d3912cb17989b003dac6d6a7e78f9149a01a69975a",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "mlp-s1-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "mlp",
+    "seed": 1,
+    "stage": "imitation",
+    "update": 156,
+    "checkpoint_sha256": "aaf8fd0fa3ea587a76a3bbc6523a541056d81d2397a9236ba281fa8eacc2a69b",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "221ca7f1999cd7d0e8e32296d4313a977d1601158d3b88d1830d026210c59629",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "mlp-s2-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "mlp",
+    "seed": 2,
+    "stage": "imitation",
+    "update": 149,
+    "checkpoint_sha256": "8683e9c1f2fe06d6e96c9b666c98bc4412efe2bb2f02a5187c24a342e4170c0c",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "c44bb41aa9635bbaf3b27bdd3641945eb306b48be8fc486db2f043fb5eecc1af",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "mlp-s3-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "mlp",
+    "seed": 3,
+    "stage": "imitation",
+    "update": 152,
+    "checkpoint_sha256": "47240a5f75a382166184d3f5e9ba02b15969c2461cda52e46f3c175e326023f4",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "9210716894da073062cbde37561378011ee7a65e75836e463b2dad36e91bfdbf",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "mlp-s4-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "mlp",
+    "seed": 4,
+    "stage": "imitation",
+    "update": 178,
+    "checkpoint_sha256": "245dae5d66c00428999cd698f88016ac958ccf73852498f95181b627e5b6b407",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "67c5cbad8c731aca163c000c21d3198e0c1c535b9e9af71166828bd33c97b0ef",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "mlp-s5-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "mlp",
+    "seed": 5,
+    "stage": "imitation",
+    "update": 154,
+    "checkpoint_sha256": "d3b0eb74cebf356e9b902fd4d55bb65634c83dd000107842984a2ea86221c7b4",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "c261e44938505c8edc2f13ed55204d9a0aad114681a92549e32acc33e00ec986",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "mlp-s6-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "mlp",
+    "seed": 6,
+    "stage": "imitation",
+    "update": 154,
+    "checkpoint_sha256": "e027ab6ee24ac31b3f5dea6367ccf3cd00350e556fdc9892a9a0c06c52531bab",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "704e42d06d7a6e60869fa15d0a2ff0bcd7248b2e1eadd29062bcdfd26bead147",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  },
+  {
+    "run_id": "mlp-s7-B0",
+    "checkpoint_name": "imitation_best.pt",
+    "architecture": "mlp",
+    "seed": 7,
+    "stage": "imitation",
+    "update": 203,
+    "checkpoint_sha256": "642e290361985967700bd43d00ad2770f276c382734f906da002ffd19bb582bc",
+    "environment_seed": 900001,
+    "evaluation_protocol": {
+      "num_envs": 256,
+      "long_envs": 64,
+      "config": {
+        "episode_length": 48,
+        "mix_conditions": false,
+        "language_cost": 0.05,
+        "language_reliability": 1.0,
+        "language_latency": 2,
+        "response_mode": "correct",
+        "ood": null
+      },
+      "version": 1
+    },
+    "evaluation_identity": "5715b4193ce14ec001382f973177a125d7c723da34d9a59848ddb29b5f131546",
+    "category": "ambiguity_audit",
+    "condition": "paired_no_call",
+    "metrics": {
+      "episodes_per_latent": 256,
+      "environment_seed": 900001,
+      "bit_identical_no_call_history": true,
+      "identical_no_call_actions": true,
+      "balanced_latent_success": 0.5,
+      "bayes_ceiling": 0.5,
+      "passed": true,
+      "interpretation": "Post-call MLP success is expected; leakage criterion applies before/without language information."
+    }
+  }
+]

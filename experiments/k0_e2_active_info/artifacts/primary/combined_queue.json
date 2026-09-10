@@ -1,0 +1,48 @@
+{
+  "phase": "combined",
+  "started_at": 1789034639.9006803,
+  "finished_at": 1789034660.0527358,
+  "jobs": [
+    {
+      "run_id": "gru128-s0-B8",
+      "exit_code": 0,
+      "gpu_uuid": "GPU-1d6afaad-67b7-b965-46c7-efe6c9c395f3"
+    },
+    {
+      "run_id": "gru128-s2-B8",
+      "exit_code": 0,
+      "gpu_uuid": "GPU-1d6afaad-67b7-b965-46c7-efe6c9c395f3"
+    },
+    {
+      "run_id": "gru128-s4-B8",
+      "exit_code": 0,
+      "gpu_uuid": "GPU-1d6afaad-67b7-b965-46c7-efe6c9c395f3"
+    },
+    {
+      "run_id": "gru128-s6-B8",
+      "exit_code": 0,
+      "gpu_uuid": "GPU-1d6afaad-67b7-b965-46c7-efe6c9c395f3"
+    },
+    {
+      "run_id": "gru128-s1-B8",
+      "exit_code": 0,
+      "gpu_uuid": "GPU-d11b6f7f-002d-b252-1921-149ed2d84f15"
+    },
+    {
+      "run_id": "gru128-s3-B8",
+      "exit_code": 0,
+      "gpu_uuid": "GPU-d11b6f7f-002d-b252-1921-149ed2d84f15"
+    },
+    {
+      "run_id": "gru128-s5-B8",
+      "exit_code": 0,
+      "gpu_uuid": "GPU-d11b6f7f-002d-b252-1921-149ed2d84f15"
+    },
+    {
+      "run_id": "gru128-s7-B8",
+      "exit_code": 0,
+      "gpu_uuid": "GPU-d11b6f7f-002d-b252-1921-149ed2d84f15"
+    }
+  ],
+  "complete": true
+}

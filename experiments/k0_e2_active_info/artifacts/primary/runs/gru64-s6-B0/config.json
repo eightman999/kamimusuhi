@@ -1,0 +1,17 @@
+{
+  "architecture": "gru64",
+  "seed": 6,
+  "arm": "B0",
+  "env": {
+    "episode_length": 48
+  },
+  "num_envs": 1024,
+  "imitation_updates": 256,
+  "ppo_updates": 8,
+  "ppo_epochs": 2,
+  "minibatch_envs": 256,
+  "validation_envs": 256,
+  "device": "cuda:0",
+  "gpu_uuid": "GPU-1d6afaad-67b7-b965-46c7-efe6c9c395f3",
+  "source_commit": "a8c4196ebcdc7c3d4c250da04b970931f8682ae8"
+}

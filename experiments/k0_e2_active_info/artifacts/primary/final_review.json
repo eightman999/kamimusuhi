@@ -1,0 +1,23 @@
+{
+  "primary_runs": 88,
+  "evaluation_rows": 112,
+  "checkpoint_files_verified": 264,
+  "source_commits": [
+    "a3bcd54 feat: add isolated K0-E2 closed-loop information environment",
+    "b4cbce2 test: validate K0-E2 ambiguity and counterfactual dynamics",
+    "34e0260 feat: add paired K0-E2 imitation and PPO ablation training",
+    "6596dfa feat: validate external language feedback and leakage boundaries",
+    "a8c4196 feat: add closed-loop J72 evaluation and bounded validation escalation",
+    "6469e38 feat: add K0-E2 interventions, causal evaluation, and plots",
+    "29683e8 feat: add validation-only selection of one stabilized PPO candidate",
+    "134f4ee feat: add Japanese K0-E2 dashboard and closed-loop integration tests",
+    "475f1e7 docs: describe K0-E2 cognitive information acquisition protocol",
+    "719d29f results: add checkpoint evidence audit and stabilized PPO plots",
+    "1f1f64f test: separate trained-delay memory use from timing generalization",
+    "510dd2c docs: generate audited K0-E2 findings and final validation report"
+  ],
+  "baseline_checkpoint_integrity": true,
+  "restored_stopped_state": true,
+  "gpu_workers_terminated": true,
+  "push_performed": false
+}

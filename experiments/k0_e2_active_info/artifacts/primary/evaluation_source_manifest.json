@@ -1,0 +1,18 @@
+{
+  "files": {
+    "experiments/k0_e2_active_info/visualize.py": "35d4ff88ccf010979a7bdb7b0488c1dbfae656d483e4a27007590316c88db26b",
+    "experiments/k0_e2_active_info/__init__.py": "8f7280c52cb31b4417413d8813b8ce97e9d39540284f7012115faa0cb95fb50a",
+    "experiments/k0_e2_active_info/select_stabilized.py": "651d240b5a3380d07f295f7b0d6b80decae00729d8f673de232d0680d680291f",
+    "experiments/k0_e2_active_info/launch.py": "0e2c6cb08b8f2e54ca7b294ea39bac2db9efa2eb4cf8d61e8135b9f07f5ff547",
+    "experiments/k0_e2_active_info/language.py": "592eda8987e77d67c9160cb41b6fa6349d22d28a3c09fb4b36f98c0ab618fb22",
+    "experiments/k0_e2_active_info/j72_eval.py": "724196d4f3a71a6696eb094477d618bccd68f19f849541fb5a201272b1cc599e",
+    "experiments/k0_e2_active_info/evaluate.py": "cc3d4a66454b692cfca29a8b1a3172d8366370aaee8418806b3ad95ddc49248b",
+    "experiments/k0_e2_active_info/env.py": "88355b17baa2d7a5dd9c82f307b65aaa80c3d0222bb5b3cc42670c1949517d17",
+    "experiments/k0_e2_active_info/train.py": "7ab1f57e94c7076016c3cd810760a2f5f9a46086f2661f734addd60c5b58b75b",
+    "experiments/k0_e2_active_info/trained_delay.py": "d61c9a3ee526afc908fa49a89c722d43cfe93ed38244d14b364fc7ebe9dafe76",
+    "experiments/k0_e2_active_info/audit.py": "31db3901ae70db4d6b3d5acc395ef2767eb87730fee2f3e3c55944021420303f",
+    "experiments/k0_e2_active_info/evidence.py": "e2a883e2db911108dd45f4b7ebc2b9f8a25ef9f9af710598bcb88120c2915958",
+    "experiments/k0_e2_active_info/gui.py": "b98dd61cae769253131e4408d77433d4a4dd00ccac52e8249da9780e4b0f9954"
+  },
+  "commit": "1f1f64fca4952615e1c74875454af06625e6bb20"
+}

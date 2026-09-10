@@ -1,0 +1,6 @@
+{
+  "validation_seed": 700001,
+  "update": 246,
+  "score": 1.1009484191735586,
+  "criterion": "scenario_macro_success + 0.1 * episode_reward"
+}
