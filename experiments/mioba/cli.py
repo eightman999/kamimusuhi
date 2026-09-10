@@ -174,13 +174,36 @@ def cmd_stop(args):
 
 
 def cmd_bench(args) -> int:
+    """Startup benchmark on one device: candidate batch sizes, sim-s/wall-s,
+    VRAM, failure/OOM, selected batch. Written as JSON together with the
+    runtime info (GPU, driver, CUDA, torch, git commit) when --out is
+    given."""
+    from .development.phenotype import develop
     from .fba.registry import get_backend
-    from .workers.bench import startup_benchmark
-    backend = get_backend(args.backend)
-    rows = startup_benchmark(backend, {}, device=args.device,
+    from .fba.runtime_info import collect_runtime_info
+    from .genome.schema import fba0_genome
+    from .workers.bench import choose_batch, startup_benchmark
+    backend = get_backend(args.backend, synthetic=not args.data_dir,
+                          data_dir=args.data_dir,
+                          synthetic_neurons=args.synthetic_neurons)
+    candidates = tuple(int(c) for c in args.candidates.split(","))
+    rows = startup_benchmark(backend, develop(fba0_genome()),
+                             device=args.device, candidates=candidates,
                              duration_ms=args.duration_ms)
+    selected = choose_batch(rows)
+    report = {"device": args.device, "backend": args.backend,
+              "dataset": backend.dataset_identity(),
+              "duration_ms": args.duration_ms,
+              "rows": [r.to_dict() for r in rows],
+              "selected_batch": selected,
+              "runtime": collect_runtime_info(backend=args.backend)}
     for r in rows:
         print(r.to_dict())
+    print(f"selected_batch={selected}")
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(json.dumps(report, indent=2, default=str))
+        print(f"wrote {args.out}")
     return 0
 
 
@@ -280,6 +303,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default="cpu")
     p.add_argument("--backend", default="mock")
     p.add_argument("--duration-ms", type=float, default=200)
+    p.add_argument("--candidates", default="1,2,4,8,16,32")
+    p.add_argument("--synthetic-neurons", type=int, default=2000)
+    p.add_argument("--data-dir", default=None,
+                   help="real FBA dataset dir (default: synthetic)")
+    p.add_argument("--out", default=None, help="write JSON report here")
     p.set_defaults(fn=cmd_bench)
 
     p = sub.add_parser("worker", add_help=False)
