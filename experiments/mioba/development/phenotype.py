@@ -9,7 +9,10 @@ from ..fba.fba0 import FBA0_REFERENCE, fba0_neuron_count
 from ..genome.schema import Genome
 
 
-def develop(genome: Genome) -> dict:
+def develop(genome: Genome, base_neurons: int | None = None) -> dict:
+    """`base_neurons`: caller-provided FBA0 population size override (e.g.
+    the synthetic-N count when the backend runs in synthetic mode);
+    defaults to the real FlyWire v783 count when the data is present."""
     n_extra = sum(o.size for o in genome.artificial_organs)
     overrides: dict[str, float] = {}
     for m in genome.parameter_mutations:
@@ -22,7 +25,7 @@ def develop(genome: Genome) -> dict:
             overrides[m.path] = (cur or 0.0) + m.value
         else:
             overrides[m.path] = m.value
-    base_n = fba0_neuron_count()
+    base_n = base_neurons if base_neurons is not None else fba0_neuron_count()
     denom = (base_n or 0) + n_extra
     ancestry_fraction = (base_n / denom) if base_n and denom else (1.0 if not n_extra else None)
     return {

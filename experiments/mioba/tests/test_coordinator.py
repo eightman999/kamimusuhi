@@ -129,6 +129,36 @@ def test_sigterm_mid_job_reports_failed_not_running(client, service):
     assert service.db.get_job(jid)["status"] == "FAILED"
 
 
+def test_clade_inheritance(service):
+    """First organ founds a clade; descendants inherit it unless they
+    found a new one."""
+    import random
+    from experiments.mioba.genome.mutation import mutate
+    from experiments.mioba.genome.schema import fba0_genome
+
+    db, exp, pop = service.db, service.experiment_id, service.population
+    base = fba0_genome(seed=11)
+    pop._birth(base, "import")
+    root = pop.root_clade_id
+    assert db.genome_clades(base.genome_id) == [root]
+
+    rng = random.Random(5)
+    organ_child = None
+    for i in range(500):
+        g = mutate(base, rng, i, 1)
+        if g.artificial_organs:
+            organ_child = g
+            break
+    assert organ_child is not None
+    pop._birth(organ_child, "mutation")
+    child_clade = db.genome_clades(organ_child.genome_id)
+    assert child_clade != [root]  # founded a new clade
+
+    grandchild = mutate(organ_child, rng, 0, 2)
+    pop._birth(grandchild, "mutation")
+    assert db.genome_clades(grandchild.genome_id) == child_clade
+
+
 def test_resume_config_hash_mismatch(tmp_path, smoke_config):
     import copy
     from experiments.mioba.coordinator.service import MiobaService

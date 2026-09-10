@@ -206,9 +206,13 @@ class Database:
                            (experiment_id,)).fetchone()["c"]
 
     def list_genomes_view(self, experiment_id: str, limit=100,
-                          offset=0) -> list[dict]:
+                          offset=0, base_neurons: int | None = None
+                          ) -> list[dict]:
         """GUI list view: one row per genome with clade, organ count,
-        ancestry fraction, best fitness and children count."""
+        ancestry fraction, best fitness and children count.
+
+        `base_neurons`: synthetic-N override for ancestry_fraction (see
+        develop())."""
         from ..development.phenotype import develop
         from ..genome.schema import Genome
         rows = self.list_genomes(experiment_id, limit, offset)
@@ -235,7 +239,8 @@ class Database:
                     "clade_id": clade["clade_id"] if clade else None,
                     "clade_name": clade["name"] if clade else None,
                     "organ_count": len(genome.artificial_organs),
-                    "ancestry_fraction": develop(genome)["ancestry_fraction"],
+                    "ancestry_fraction":
+                        develop(genome, base_neurons)["ancestry_fraction"],
                     "best_fitness": fit,
                     "children_count": children,
                     "created_at": r["created_at"],

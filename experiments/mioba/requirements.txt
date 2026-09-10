@@ -1,5 +1,4 @@
---extra-index-url https://download.pytorch.org/whl/cu126
-torch==2.9.1+cu126      # cu126 wheels keep sm_60 (Pascal/P100); cu128+ dropped it (pytorch#157517). Do NOT move to cu128/CUDA 13.
+torch
 numpy<2.3
 pandas
 pyarrow
@@ -9,4 +8,3 @@ pyyaml
 psutil
 httpx
 pytest
-# optional GPU-host only:  pygenn==5.4.0 (build from https://github.com/genn-team/genn/archive/refs/tags/5.4.0.zip, needs CUDA 12.x toolkit)

@@ -109,6 +109,15 @@ class MiobaService:
             n = self.population.seed_if_empty()
             self._counters["births"] += n
 
+    # ------------------------------------------------------------ helpers
+    def fba_base_neurons(self) -> int | None:
+        """FBA0 neuron count to use for ancestry_fraction: the synthetic-N
+        when the backend runs synthetic, else the real data count."""
+        fba = self.config.get("fba", {})
+        if fba.get("synthetic"):
+            return int(fba.get("synthetic_neurons", 2000))
+        return None
+
     # ------------------------------------------------------------ rng / counters
     def dump_rng_state(self) -> str:
         return json.dumps(list(self.rng.getstate()[1]),
@@ -182,6 +191,17 @@ class MiobaService:
                            .get("target_rate_hz", 5.0))
             evaluation["fitness"] = fitness_placeholder(
                 evaluation.get("summary") or {}, target)
+            if not evaluation.get("runtime_info"):
+                wr = self.db.get_worker(self.experiment_id, worker_id) or {}
+                try:
+                    ri = json.loads(wr.get("runtime_info_json") or "{}")
+                except ValueError:
+                    ri = {}
+                try:
+                    ri["gpu"] = json.loads(wr.get("gpu_json") or "[]")
+                except ValueError:
+                    ri["gpu"] = []
+                evaluation["runtime_info"] = ri
             evaluation.setdefault("config_hash", self.config_hash)
             evaluation.setdefault("genome_hash", job["genome_id"])
             evaluation.setdefault("git_commit", self.git_commit)

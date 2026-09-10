@@ -35,7 +35,11 @@ def _throughput(db, experiment_id, minutes: float) -> dict:
         except ValueError:
             s = {}
         sim_ms += float(s.get("t_ms") or 0.0) * float(e.get("batch_size") or 1)
-        wall_s += float(s.get("wall_s") or 0.0)
+        try:
+            wall_s += (datetime.fromisoformat(e["finished_at"]) -
+                       datetime.fromisoformat(e["started_at"])).total_seconds()
+        except (KeyError, TypeError, ValueError):
+            pass
     return {
         "kind": "DERIVED",
         "window_minutes": minutes,
@@ -98,13 +102,14 @@ def mount_gui(app, service) -> None:
             "recent_events": {"kind": "RECORDED", "rows": events[-30:]},
             "runtime": dict(service.runtime_info, kind="LIVE"),
             "checkpoints": {"kind": "RECORDED",
-                            "rows": db.list_checkpoints(exp, 5)},
+                            "rows": db.list_checkpoints(exp)[-5:][::-1]},
         }
 
     @app.get("/api/gui/genomes")
     def genomes(limit: int = 500, offset: int = 0):
         return {"kind": "RECORDED",
-                "genomes": db.list_genomes_view(exp, limit, offset)}
+                "genomes": db.list_genomes_view(
+                    exp, limit, offset, service.fba_base_neurons())}
 
     @app.get("/api/gui/genomes/{genome_id}")
     def genome(genome_id: str):
@@ -114,7 +119,7 @@ def mount_gui(app, service) -> None:
         from ..development.phenotype import develop
         from ..genome.schema import Genome
         genome_obj = Genome.from_json(g["genome_json"])
-        phen = develop(genome_obj)
+        phen = develop(genome_obj, base_neurons=service.fba_base_neurons())
         gj = json.loads(g["genome_json"])
         return {
             "kind": "RECORDED",

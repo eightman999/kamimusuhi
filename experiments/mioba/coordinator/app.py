@@ -12,6 +12,7 @@ import threading
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
+from ..gui import mount_gui
 from ..storage import models as M
 from ..storage.db import InvalidTransition
 from . import lifecycle
@@ -81,7 +82,8 @@ def create_app(service) -> FastAPI:
             raise HTTPException(404, "no such genome")
         from ..development.phenotype import develop
         from ..genome.schema import Genome
-        phen = develop(Genome.from_json(g["genome_json"]))
+        phen = develop(Genome.from_json(g["genome_json"]),
+                       base_neurons=service.fba_base_neurons())
         return {
             "kind": "RECORDED",
             "genome": g,
@@ -200,4 +202,5 @@ def create_app(service) -> FastAPI:
     def _invalid(req: Request, exc: InvalidTransition):
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
+    mount_gui(app, service)
     return app

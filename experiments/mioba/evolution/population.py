@@ -61,18 +61,42 @@ class PopulationController:
             born += 1
         return born
 
+    def _parent_clade(self, genome: Genome) -> str | None:
+        """First parent's non-root clade, or root clade, or None."""
+        for pid in genome.parent_ids:
+            clades = self.db.genome_clades(pid)
+            if clades:
+                non_root = [c for c in clades if c != self.root_clade_id]
+                return non_root[0] if non_root else clades[0]
+        return None
+
+    def _parent_has_organs(self, genome: Genome) -> bool:
+        for pid in genome.parent_ids:
+            row = self.db.get_genome(pid)
+            if row is None:
+                continue
+            try:
+                if json.loads(row["genome_json"]).get("artificial_organs"):
+                    return True
+            except ValueError:
+                pass
+        return False
+
     def _birth(self, genome: Genome, kind: str) -> str:
-        clade_id = self.root_clade_id
-        if genome.artificial_organs:
-            # first artificial organ founds a new clade
-            clade = self.db.create_clade(self.experiment_id,
-                                         f"clade-{genome.genome_id[4:12]}",
-                                         genome.genome_id)
-            clade_id = clade
+        """Clade rule: the genome in which an artificial organ first
+        appears founds a new clade; descendants inherit the parent's
+        clade unless they found a new one."""
+        parent_clade = self._parent_clade(genome)
+        if genome.artificial_organs and not self._parent_has_organs(genome):
+            clade_id = self.db.create_clade(
+                self.experiment_id, f"clade-{genome.genome_id[4:12]}",
+                genome.genome_id)
             self.db.emit(self.experiment_id, M.EV_NEW_CLADE,
                          payload={"genome_id": genome.genome_id,
-                                  "clade_id": clade},
+                                  "clade_id": clade_id},
                          source="population")
+        else:
+            clade_id = parent_clade or self.root_clade_id
         self.db.insert_genome(self.experiment_id, genome, kind,
                               clade_id=clade_id)
         self.db.emit(self.experiment_id, M.EV_GENOME_BORN,

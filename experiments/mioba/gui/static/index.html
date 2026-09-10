@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MIOBA Observatory</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f1218; --panel:#181d26; --line:#2a3140; --fg:#e6e9ef; --dim:#8a93a6;
+          --live:#3ddc84; --rec:#5aa9ff; --der:#f6c343; --warn:#ff9f43; --err:#ff5c5c; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  header { display:flex; align-items:center; gap:18px; padding:10px 18px; border-bottom:1px solid var(--line); background:#131820; position:sticky; top:0; z-index:5; }
+  header h1 { font-size:16px; margin:0; letter-spacing:.04em; }
+  nav a { color:var(--dim); text-decoration:none; margin-right:14px; padding:4px 2px; border-bottom:2px solid transparent; }
+  nav a.active { color:var(--fg); border-color:var(--live); }
+  #exp { margin-left:auto; color:var(--dim); font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  main { padding:16px 18px; max-width:1500px; margin:0 auto; }
+  .grid { display:grid; gap:12px; }
+  .g2 { grid-template-columns:repeat(2,1fr);} .g3{grid-template-columns:repeat(3,1fr);} .g4{grid-template-columns:repeat(4,1fr);}
+  @media (max-width:1000px){ .g2,.g3,.g4{grid-template-columns:1fr;} }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; min-width:0; }
+  .panel h2 { margin:0 0 8px; font-size:13px; color:var(--dim); text-transform:uppercase; letter-spacing:.08em; display:flex; align-items:center; gap:8px; }
+  .kind { font-size:10px; padding:1px 6px; border-radius:10px; border:1px solid; text-transform:none; letter-spacing:0; }
+  .kind.LIVE{color:var(--live);border-color:var(--live);} .kind.RECORDED{color:var(--rec);border-color:var(--rec);} .kind.DERIVED{color:var(--der);border-color:var(--der);}
+  .big { font-size:26px; font-weight:600; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 14px; font-size:13px; }
+  .kv div:nth-child(odd){ color:var(--dim); }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--dim); font-weight:500; position:sticky; top:0; background:var(--panel); }
+  .scroll { max-height:520px; overflow:auto; }
+  .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
+  .id { cursor:pointer; color:var(--rec); }
+  .id:hover { text-decoration:underline; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; background:#232a37; }
+  .st-running,.st-online{ color:var(--live);} .st-paused,.st-stopping,.st-lost{color:var(--warn);} .st-stopped,.st-offline,.st-error{color:var(--err);}
+  .sev-warn{ color:var(--warn);} .sev-error{ color:var(--err);}
+  canvas { width:100%; height:120px; display:block; }
+  .chart-title { font-size:12px; color:var(--dim); margin:6px 0 2px; }
+  .legend span { margin-right:12px; font-size:11px; }
+  .legend i { display:inline-block; width:10px; height:10px; margin-right:4px; border-radius:2px; vertical-align:middle;}
+  .muted { color:var(--dim); }
+  input, select { background:#0f141c; color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:4px 6px; font-size:12px; }
+  .toolbar { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+  .bar { height:6px; background:#0f141c; border-radius:3px; overflow:hidden; }
+  .bar i { display:block; height:100%; background:var(--rec); }
+  .tree { font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  .tree div { padding:2px 0; }
+  #err { color:var(--err); font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MIOBA Observatory</h1>
+  <nav>
+    <a href="#/dashboard" data-r="dashboard">Dashboard</a>
+    <a href="#/population" data-r="population">Population / Lineage</a>
+    <a href="#/organism" data-r="organism">Organism</a>
+    <a href="#/telemetry" data-r="telemetry">MIE / Telemetry</a>
+    <a href="#/events" data-r="events">Events</a>
+  </nav>
+  <span id="exp" class="mono"></span>
+</header>
+<main id="main"></main>
+<script>
+const $ = (s, r=document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const kind = k => k ? `<span class="kind ${esc(k)}">${esc(k)}</span>` : '';
+const short = id => id ? `<span class="mono id" onclick="location.hash='#/organism/${encodeURIComponent(id)}'" title="${esc(id)}">${esc(id.slice(0,18))}…</span>` : '<span class="muted">—</span>';
+const num = (v, d=1) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : Number(v).toFixed(d);
+const fmtTime = t => t ? new Date(t).toLocaleTimeString() : '—';
+const fmtUp = s => { s = Math.floor(s||0); const h=Math.floor(s/3600), m=Math.floor(s%3600/60); return `${h}h ${m}m ${s%60}s`; };
+const pj = s => { try { return typeof s === 'string' ? JSON.parse(s) : (s||{}); } catch { return {}; } };
+async function api(p) { const r = await fetch(p); if (!r.ok) throw new Error(`${p} → ${r.status}`); return r.json(); }
+let timer = null;
+function schedule(fn, ms) { clearTimeout(timer); timer = setTimeout(fn, ms); }
+
+// ---- tiny line chart --------------------------------------------------------
+const COLORS = ['#5aa9ff','#3ddc84','#f6c343','#ff5c5c','#c86dd7','#4fd1c5','#ff9f43','#9fb3c8'];
+function drawChart(canvas, series, opts={}) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.clientWidth || 600, H = canvas.clientHeight || 120;
+  canvas.width = W*dpr; canvas.height = H*dpr;
+  const ctx = canvas.getContext('2d'); ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,W,H);
+  const all = series.flatMap(s => s.points);
+  if (!all.length) { ctx.fillStyle='#8a93a6'; ctx.font='12px sans-serif'; ctx.fillText('no data in window', 8, H/2); return; }
+  const t0 = opts.t0 ?? Math.min(...all.map(p=>p.t)), t1 = opts.t1 ?? Math.max(...all.map(p=>p.t));
+  let y0 = opts.y0 ?? Math.min(...all.map(p=>p.v)), y1 = opts.y1 ?? Math.max(...all.map(p=>p.v));
+  if (y1 === y0) { y1 = y0 + 1; }
+  const pad = {l:38, r:6, t:6, b:16};
+  const X = t => pad.l + (t - t0) / Math.max(1, t1 - t0) * (W - pad.l - pad.r);
+  const Y = v => H - pad.b - (v - y0) / (y1 - y0) * (H - pad.t - pad.b);
+  ctx.strokeStyle = '#2a3140'; ctx.lineWidth = 1;
+  for (let i=0;i<=3;i++){ const y = pad.t + i*(H-pad.t-pad.b)/3; ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(W-pad.r,y); ctx.stroke();
+    ctx.fillStyle='#8a93a6'; ctx.font='10px sans-serif'; ctx.fillText(num(y1 - i*(y1-y0)/3, 1), 2, y+3); }
+  ctx.fillStyle='#8a93a6'; ctx.fillText(new Date(t0).toLocaleTimeString(), pad.l, H-3); ctx.fillText(new Date(t1).toLocaleTimeString(), W-pad.r-60, H-3);
+  (opts.marks||[]).forEach(m => { ctx.strokeStyle = m.color || '#ff9f43'; ctx.setLineDash([2,3]); ctx.beginPath(); ctx.moveTo(X(m.t),pad.t); ctx.lineTo(X(m.t),H-pad.b); ctx.stroke(); ctx.setLineDash([]); });
+  series.forEach((s,i) => {
+    ctx.strokeStyle = s.color || COLORS[i%COLORS.length]; ctx.lineWidth = 1.5; ctx.beginPath();
+    s.points.forEach((p,j) => j ? ctx.lineTo(X(p.t),Y(p.v)) : ctx.moveTo(X(p.t),Y(p.v)));
+    ctx.stroke();
+  });
+}
+const legend = series => `<div class="legend">${series.map((s,i)=>`<span><i style="background:${s.color||COLORS[i%COLORS.length]}"></i>${esc(s.name)}</span>`).join('')}</div>`;
+const pts = (rows, key) => rows.filter(r => r[key] !== null && r[key] !== undefined).map(r => ({t: Date.parse(r.at), v: Number(r[key])}));
+
+// ---- routes -----------------------------------------------------------------
+const routes = { dashboard, population, organism, telemetry, events };
+function route() {
+  clearTimeout(timer);
+  const parts = location.hash.replace(/^#\/?/, '').split('/');
+  const name = routes[parts[0]] ? parts[0] : 'dashboard';
+  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.r === name));
+  routes[name](decodeURIComponent(parts[1] || '')).catch(e => { $('#main').innerHTML = `<p id="err">${esc(e.message)}</p>`; });
+}
+window.addEventListener('hashchange', route);
+window.addEventListener('load', route);
+
+// ---- Dashboard ---------------------------------------------------------------
+async function dashboard() {
+  const d = await api('/api/gui/dashboard?minutes=10');
+  const s = d.status, c = s.counters || {};
+  $('#exp').textContent = `${s.experiment_id} · ${s.git_commit ? s.git_commit.slice(0,8) : '?'} · cfg ${(s.config_hash||'').slice(0,8)}`;
+  const workerCards = d.workers.map((w,i) => `
+    <div class="panel">
+      <h2>${esc(w.gpu_name || w.worker_id)} ${kind(w.kind)} <span class="pill st-${esc(w.status)}">${esc(w.status)}</span></h2>
+      <div class="kv">
+        <div>worker</div><div class="mono">${esc(w.worker_id)}</div>
+        <div>host</div><div>${esc(w.hostname)}</div>
+        <div>temperature</div><div>${num(w.temperature_c,0)} °C</div>
+        <div>utilization</div><div>${num(w.utilization_pct,0)} %</div>
+        <div>VRAM</div><div>${num(w.vram_used_mb,0)} / ${num(w.vram_total_mb,0)} MB
+          <div class="bar"><i style="width:${w.vram_total_mb ? Math.min(100, 100*w.vram_used_mb/w.vram_total_mb) : 0}%"></i></div></div>
+        <div>batch</div><div>${esc(w.batch_size ?? 'auto')}</div>
+        <div>current job</div><div class="mono">${esc(w.current_job_id || '—')}</div>
+        <div>completed / failed</div><div>${w.completed_jobs} / ${w.failed_jobs}</div>
+        <div>last heartbeat</div><div>${fmtTime(w.last_heartbeat_at)}</div>
+      </div>
+      <div class="chart-title">temperature °C / utilization % (10 min) ${kind(w.heartbeats.kind)}</div>
+      <canvas id="wc${i}"></canvas>
+    </div>`).join('');
+  $('#main').innerHTML = `
+    <div class="grid g4">
+      <div class="panel"><h2>experiment ${kind(s.kind)}</h2><div class="big st-${esc(s.status)}">${esc(s.status)}</div>
+        <div class="kv"><div>uptime</div><div>${fmtUp(s.uptime_s)}</div><div>id</div><div class="mono">${esc(s.experiment_id)}</div>
+        <div>backend</div><div>${esc(d.runtime.backend)}</div><div>host</div><div>${esc(d.runtime.hostname)}</div></div></div>
+      <div class="panel"><h2>births / evaluations ${kind(s.kind)}</h2>
+        <div class="big">${c.births ?? 0} <span class="muted" style="font-size:14px">births</span></div>
+        <div class="kv"><div>succeeded</div><div>${c.evaluations_succeeded ?? 0}</div><div>failed</div><div>${c.evaluations_failed ?? 0}</div>
+        <div>queued / running / unknown</div><div>${c.queued} / ${c.running} / ${c.unknown}</div></div></div>
+      <div class="panel"><h2>population / archive ${kind(s.kind)}</h2>
+        <div class="big">${s.population_size}</div>
+        <div class="kv"><div>archive (evaluations)</div><div>${s.archive_size}</div><div>config hash</div><div class="mono">${esc((s.config_hash||'').slice(0,16))}</div>
+        ${s.config_hash_stored && s.config_hash_stored !== s.config_hash ? `<div class="sev-warn">stored cfg</div><div class="mono sev-warn">${esc(s.config_hash_stored.slice(0,16))}</div>` : ''}</div></div>
+      <div class="panel"><h2>throughput ${kind(d.throughput.kind)}</h2>
+        <div class="big">${num(d.throughput.evaluations_per_minute,2)} <span class="muted" style="font-size:14px">eval/min</span></div>
+        <div class="kv"><div>sim s / wall s</div><div>${num(d.throughput.simulated_seconds_per_wall_second,3)}</div>
+        <div>window</div><div>${d.throughput.window_minutes} min</div>
+        <div>last checkpoint</div><div>${fmtTime(d.checkpoints.rows[0]?.created_at)} ${esc(d.checkpoints.rows[0]?.reason||'')}</div></div></div>
+    </div>
+    <h2 class="muted" style="font-size:13px;margin:18px 0 8px">GPU WORKERS</h2>
+    <div class="grid g2">${workerCards || '<div class="panel muted">no workers registered</div>'}</div>
+    <div class="panel" style="margin-top:12px"><h2>recent events ${kind(d.recent_events.kind)}</h2>
+      <div class="scroll" style="max-height:260px"><table><thead><tr><th>time</th><th>type</th><th>severity</th><th>payload</th></tr></thead><tbody>
+      ${d.recent_events.rows.slice().reverse().map(e => `<tr><td>${fmtTime(e.at)}</td><td>${esc(e.type)}</td><td class="sev-${esc(e.severity)}">${esc(e.severity)}</td><td class="mono">${esc(e.payload_json).slice(0,140)}</td></tr>`).join('')}
+      </tbody></table></div></div>`;
+  d.workers.forEach((w,i) => {
+    const rows = w.heartbeats.rows;
+    drawChart($(`#wc${i}`), [{name:'temp °C', points: pts(rows,'temperature_c')}, {name:'util %', points: pts(rows,'utilization_pct')}], {y0:0, y1:100});
+  });
+  schedule(dashboard, 3000);
+}
+
+// ---- Population / Lineage ---------------------------------------------------
+async function population() {
+  const d = await api('/api/gui/genomes?limit=1000');
+  const gs = d.genomes;
+  const byId = Object.fromEntries(gs.map(g => [g.genome_id, g]));
+  const children = {}; gs.forEach(g => (g.parent_ids||[]).forEach(p => (children[p] ||= []).push(g.genome_id)));
+  const roots = gs.filter(g => !(g.parent_ids||[]).length);
+  const tree = (id, depth) => { const g = byId[id]; if (!g) return ''; return `<div style="padding-left:${depth*18}px">${depth?'└ ':''}${short(id)} <span class="muted">g${g.generation} #${g.birth_index}</span> ${g.organ_count ? `<span class="pill">${g.organ_count} organ</span>`:''}</div>` + (children[id]||[]).map(c => tree(c, depth+1)).join(''); };
+  $('#main').innerHTML = `
+    <div class="toolbar"><input id="q" placeholder="filter genome id / clade"> <span class="muted">${gs.length} genomes ${kind(d.kind)}</span></div>
+    <div class="grid" style="grid-template-columns:2fr 1fr">
+    <div class="panel scroll"><h2>genome list ${kind(d.kind)}</h2><table><thead><tr>
+      <th>genome</th><th>gen</th><th>birth #</th><th>parent</th><th>children</th><th>clade</th><th>fitness (placeholder)</th><th>ancestry %</th><th>organs</th><th>born</th></tr></thead>
+      <tbody id="rows"></tbody></table></div>
+    <div class="panel scroll"><h2>lineage tree (root = FBA0) ${kind('DERIVED')}</h2><div class="tree">${roots.map(r => tree(r.genome_id,0)).join('') || '<span class="muted">empty</span>'}</div></div></div>`;
+  const render = () => { const q = $('#q').value.toLowerCase();
+    $('#rows').innerHTML = gs.filter(g => !q || g.genome_id.includes(q) || (g.clade_name||'').toLowerCase().includes(q)).map(g => `<tr>
+      <td>${short(g.genome_id)}</td><td>${g.generation}</td><td>${g.birth_index}</td>
+      <td>${(g.parent_ids||[]).length ? g.parent_ids.map(short).join(' ') : '<span class="muted">FBA0 root</span>'}</td>
+      <td>${g.children_count ?? (children[g.genome_id]||[]).length}</td><td>${esc(g.clade_name || '—')}</td>
+      <td>${num(g.best_fitness,3)}</td><td>${g.ancestry_fraction != null ? num(100*g.ancestry_fraction,2)+' %' : '—'}</td>
+      <td>${g.organ_count ?? 0}</td><td>${fmtTime(g.created_at)}</td></tr>`).join(''); };
+  $('#q').addEventListener('input', render); render();
+  schedule(population, 10000);
+}
+
+// ---- Organism inspector -----------------------------------------------------
+async function organism(id) {
+  if (!id) {
+    const d = await api('/api/gui/genomes?limit=50');
+    $('#main').innerHTML = `<div class="panel"><h2>select an organism</h2>${d.genomes.map(g => `<div>${short(g.genome_id)} <span class="muted">g${g.generation} #${g.birth_index}</span></div>`).join('') || '<span class="muted">no genomes yet</span>'}</div>`;
+    return;
+  }
+  const d = await api(`/api/gui/genomes/${encodeURIComponent(id)}`);
+  const g = d.genome, doc = d.genome_doc, ph = d.phenotype;
+  const organs = doc.artificial_organs || [], atts = doc.attachments || [];
+  const nBase = (ph.base && ph.base.neurons) || null;
+  $('#main').innerHTML = `
+    <div class="grid g3">
+      <div class="panel"><h2>identity ${kind(d.kind)}</h2><div class="kv">
+        <div>genome</div><div class="mono">${esc(g.genome_id)}</div><div>hash</div><div class="mono">${esc(g.content_hash)}</div>
+        <div>generation / birth</div><div>${g.generation} / #${g.birth_index}</div><div>seed</div><div>${g.random_seed}</div>
+        <div>species base</div><div>${esc(g.species_base)}</div><div>clades</div><div>${d.clades.map(esc).join(', ') || '—'}</div>
+        <div>created</div><div>${esc(g.created_at)}</div><div>schema</div><div>v${doc.schema_version}</div></div></div>
+      <div class="panel"><h2>ancestral component ${kind(ph.kind)}</h2>
+        <div class="big">${ph.ancestry_fraction == null ? '<span class="muted">unknown</span>' : num(100*ph.ancestry_fraction,2)+' %'}</div><div class="muted">${ph.ancestry_fraction == null ? 'FBA0 neuron count unavailable (reference data not loaded on coordinator)' : `of neurons inherited from ${esc(ph.base?.name || 'FBA0')} (immutable reference${nBase ? ', '+nBase+' neurons' : ''})`}</div>
+        <div class="bar" style="margin:8px 0"><i style="width:${100*(ph.ancestry_fraction||0)}%"></i></div>
+        <div class="kv"><div>artificial neurons</div><div>${ph.n_extra_neurons}</div><div>param overrides</div><div class="mono">${esc(JSON.stringify(ph.param_overrides))}</div></div></div>
+      <div class="panel"><h2>ancestry to FBA0 ${kind(d.ancestry_chain.kind)}</h2><div class="tree">
+        ${d.ancestry_chain.rows.map((a,i) => `<div style="padding-left:${i*14}px">${i?'↑ ':''}${short(a.genome_id)} <span class="muted">g${a.generation} #${a.birth_index}</span></div>`).join('')}
+        <div class="muted" style="margin-top:6px">parents: ${d.parents.map(short).join(' ') || 'none (FBA0 root)'}</div>
+        <div class="muted">children: ${d.children.map(short).join(' ') || 'none'}</div></div></div>
+    </div>
+    <div class="grid g2" style="margin-top:12px">
+      <div class="panel"><h2>artificial organs (${organs.length}) ${kind(d.kind)}</h2>
+        ${organs.length ? `<table><thead><tr><th>organ</th><th>kind</th><th>size</th><th>origin</th><th>parent gene</th><th>birth mutation</th></tr></thead><tbody>
+        ${organs.map(o => `<tr><td class="mono">${esc(o.organ_id)}</td><td>${esc(o.kind)}</td><td>${o.size}</td><td>${esc(o.provenance?.origin)}</td><td>${short(o.provenance?.parent_gene)}</td><td class="mono">${esc(o.provenance?.birth_mutation_id||'—')}</td></tr>`).join('')}</tbody></table>` : '<span class="muted">pure FBA0 phenotype — no artificial organs</span>'}
+        <h2 style="margin-top:12px">attachments (${atts.length})</h2>
+        ${atts.length ? `<table><thead><tr><th>attachment</th><th>source</th><th>target</th><th>weight</th><th>origin</th></tr></thead><tbody>
+        ${atts.map(a => `<tr><td class="mono">${esc(a.attachment_id)}</td><td class="mono">${esc(a.source)}</td><td class="mono">${esc(a.target)}</td><td>${num(a.weight_scale,3)}</td><td>${esc(a.provenance?.origin)}</td></tr>`).join('')}</tbody></table>` : '<span class="muted">none</span>'}</div>
+      <div class="panel"><h2>mutations (${(doc.parameter_mutations||[]).length}) ${kind(d.kind)}</h2>
+        ${(doc.parameter_mutations||[]).length ? `<table><thead><tr><th>mutation</th><th>path</th><th>op</th><th>value</th><th>scope</th></tr></thead><tbody>
+        ${doc.parameter_mutations.map(m => `<tr><td class="mono">${esc(m.mutation_id)}</td><td class="mono">${esc(m.path)}</td><td>${esc(m.op)}</td><td>${num(m.value,4)}</td><td>${esc(m.scope)}</td></tr>`).join('')}</tbody></table>` : '<span class="muted">no parameter mutations</span>'}
+        <div class="kv" style="margin-top:8px"><div>development rules</div><div>${(doc.development_rules||[]).length}</div><div>plasticity rules</div><div>${(doc.plasticity_rules||[]).length}</div></div></div>
+    </div>
+    <div class="panel" style="margin-top:12px"><h2>evaluation history (${d.evaluations.length}) ${kind('RECORDED')}</h2>
+      <div class="scroll" style="max-height:300px"><table><thead><tr><th>evaluation</th><th>worker</th><th>backend</th><th>seed</th><th>batch</th><th>fitness (placeholder)</th><th>mean rate Hz</th><th>active</th><th>sim ms</th><th>wall s</th><th>finished</th><th>trace</th></tr></thead><tbody>
+      ${d.evaluations.map(e => { const s = pj(e.summary_json); return `<tr><td class="mono">${esc(e.evaluation_id.slice(0,14))}…</td><td class="mono">${esc(e.worker_id)}</td><td>${esc(e.backend)}</td><td>${e.seed}</td><td>${e.batch_size}</td><td>${num(e.fitness,3)}</td><td>${num(s.mean_rate_hz,2)}</td><td>${num(100*(s.active_fraction||0),1)} %</td><td>${num(s.t_ms,0)}</td><td>${e.started_at && e.finished_at ? num((Date.parse(e.finished_at)-Date.parse(e.started_at))/1000,3) : '—'}</td><td>${fmtTime(e.finished_at)}</td><td>${e.trace_path ? 'full' : 'summary'}</td></tr>`; }).join('')}
+      </tbody></table></div></div>`;
+}
+
+// ---- MIE / Telemetry --------------------------------------------------------
+async function telemetry() {
+  const mins = Number(sessionStorage.getItem('mioba.minutes') || 30);
+  const d = await api(`/api/gui/telemetry?minutes=${mins}`);
+  const t1 = Date.now();
+  const firstAt = [...Object.values(d.telemetry).flat(), ...Object.values(d.worker_heartbeats).flat()].reduce((m, r) => Math.min(m, Date.parse(r.at)), t1);
+  const t0 = Math.max(Date.parse(d.since), firstAt - 5000);
+  const evMarks = d.events.filter(e => e.severity !== 'info' || /paused|resumed|worker|stopped|started/.test(e.type)).map(e => ({t: Date.parse(e.at), color: e.severity==='info' ? '#5aa9ff' : e.severity==='warn' ? '#ff9f43' : '#ff5c5c'}));
+  const groups = {};
+  Object.entries(d.telemetry).forEach(([k, rows]) => { const [src, sig] = k.split('|'); (groups[sig] ||= []).push({name: src, points: pts(rows, 'value')}); });
+  const workerIds = Object.keys(d.worker_heartbeats);
+  const wSeries = key => workerIds.map(w => ({name: w, points: pts(d.worker_heartbeats[w], key)}));
+  const sigs = Object.keys(groups).sort();
+  $('#main').innerHTML = `
+    <div class="toolbar">window <select id="mins">${[5,30,120,720,1440].map(m => `<option ${m===mins?'selected':''} value="${m}">${m} min</option>`).join('')}</select>
+      <span class="muted">${kind(d.kind)} telemetry_samples + worker_heartbeats; dashed marks = events</span>
+      <span class="muted">experiment: <b class="st-${esc(d.status.status)}">${esc(d.status.status)}</b> ${kind('LIVE')}</span></div>
+    <div class="grid g2">
+      <div class="panel"><h2>GPU temperature °C (worker heartbeats) ${kind('RECORDED')}</h2><canvas id="c_temp"></canvas>${legend(wSeries('temperature_c'))}</div>
+      <div class="panel"><h2>GPU load % ${kind('RECORDED')}</h2><canvas id="c_util"></canvas>${legend(wSeries('utilization_pct'))}</div>
+      <div class="panel"><h2>VRAM used MB ${kind('RECORDED')}</h2><canvas id="c_vram"></canvas>${legend(wSeries('vram_used_mb'))}</div>
+      ${sigs.map((s,i) => `<div class="panel"><h2>${esc(s)} <span class="muted">(${esc(groups[s][0]?.points.length ? d.telemetry[Object.keys(d.telemetry).find(k=>k.endsWith('|'+s))][0].domain : '')})</span> ${kind('RECORDED')}</h2><canvas id="c_s${i}"></canvas>${legend(groups[s])}</div>`).join('')}
+    </div>
+    <div class="panel" style="margin-top:12px"><h2>sensory / event stream in window ${kind('RECORDED')}</h2>
+      <div class="scroll" style="max-height:300px"><table><thead><tr><th>time</th><th>kind</th><th>type / signal</th><th>source</th><th>value</th></tr></thead><tbody>
+      ${[...d.events.map(e => ({at:e.at, k:'event', type:e.type, src:e.source, val:e.payload_json, sev:e.severity})),
+         ...Object.entries(d.telemetry).flatMap(([k, rows]) => rows.slice(-5).map(r => ({at:r.at, k:'sensor', type:k.split('|')[1], src:k.split('|')[0], val:num(r.value,3), sev:'info'})))]
+        .sort((a,b) => b.at.localeCompare(a.at)).slice(0,200).map(r => `<tr><td>${fmtTime(r.at)}</td><td>${esc(r.k)}</td><td class="sev-${esc(r.sev)}">${esc(r.type)}</td><td class="mono">${esc(r.src)}</td><td class="mono">${esc(String(r.val)).slice(0,120)}</td></tr>`).join('')}
+      </tbody></table></div></div>`;
+  $('#mins').addEventListener('change', e => { sessionStorage.setItem('mioba.minutes', e.target.value); telemetry(); });
+  const o = {t0, t1, marks: evMarks};
+  drawChart($('#c_temp'), wSeries('temperature_c'), {...o, y0:0, y1:100});
+  drawChart($('#c_util'), wSeries('utilization_pct'), {...o, y0:0, y1:100});
+  drawChart($('#c_vram'), wSeries('vram_used_mb'), {...o, y0:0});
+  sigs.forEach((s,i) => drawChart($(`#c_s${i}`), groups[s], o));
+  schedule(telemetry, 5000);
+}
+
+// ---- Events timeline --------------------------------------------------------
+async function events() {
+  const type = sessionStorage.getItem('mioba.evtype') || '';
+  const d = await api(`/api/events?since_id=0&limit=100000${type ? '&type='+encodeURIComponent(type) : ''}`);
+  const rows = d.events.slice().reverse();
+  const all = await api('/api/events?since_id=0&limit=100000');
+  const types = [...new Set(all.events.map(e => e.type))].sort();
+  $('#main').innerHTML = `
+    <div class="toolbar">type <select id="ty"><option value="">all</option>${types.map(t => `<option ${t===type?'selected':''}>${esc(t)}</option>`).join('')}</select>
+      <span class="muted">${rows.length} events ${kind(d.kind)}</span></div>
+    <div class="panel scroll" style="max-height:80vh"><table><thead><tr><th>#</th><th>time</th><th>type</th><th>severity</th><th>source</th><th>payload</th></tr></thead><tbody>
+      ${rows.map(e => `<tr><td class="muted">${e.event_id}</td><td>${esc(new Date(e.at).toLocaleString())}</td><td>${esc(e.type)}</td><td class="sev-${esc(e.severity)}">${esc(e.severity)}</td><td>${esc(e.source)}</td><td class="mono">${esc(e.payload_json)}</td></tr>`).join('')}
+    </tbody></table></div>`;
+  $('#ty').addEventListener('change', e => { sessionStorage.setItem('mioba.evtype', e.target.value); events(); });
+  schedule(events, 5000);
+}
+</script>
+</body>
+</html>
