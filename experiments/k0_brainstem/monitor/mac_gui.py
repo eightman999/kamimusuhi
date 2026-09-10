@@ -24,6 +24,27 @@ def display(value):
     return str(value)
 
 
+def memory_mb(value):
+    return "—" if value is None else f"{value:,.0f}"
+
+
+def action_name(value):
+    return ACTIONS[value] if isinstance(value, int) and 0 <= value < len(ACTIONS) else display(value)
+
+
+def human_time(value):
+    if value is None:
+        return "—"
+    try:
+        if isinstance(value, (int, float)):
+            moment = datetime.fromtimestamp(value).astimezone()
+        else:
+            moment = datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone()
+        return moment.strftime("%Y-%m-%d %H:%M:%S %Z")
+    except (ValueError, TypeError, OverflowError, OSError):
+        return display(value)
+
+
 def timestamp(value):
     try:
         return float(value)
@@ -246,7 +267,7 @@ class Monitor(QtWidgets.QMainWindow):
         devices = ["cpu"]
         for gpu in system.get("gpus", []):
             devices.append(f"cuda:{gpu['index']}")
-            parts.append(f"GPU {gpu['index']} {gpu['name']} · {display(gpu.get('utilization_percent'))}% · VRAM {display(gpu.get('memory_used_mb'))}/{display(gpu.get('memory_total_mb'))} MiB · {display(gpu.get('temperature_c'))} °C")
+            parts.append(f"GPU {gpu['index']} {gpu['name']} · {display(gpu.get('utilization_percent'))}% · VRAM {memory_mb(gpu.get('memory_used_mb'))}/{memory_mb(gpu.get('memory_total_mb'))} MiB · {display(gpu.get('temperature_c'))} °C")
         self.system_label.setText("   |   ".join(parts))
         if devices != [self.device_choice.itemText(i) for i in range(self.device_choice.count())]:
             old = self.device_choice.currentText()
@@ -286,6 +307,9 @@ class Monitor(QtWidgets.QMainWindow):
         run_id = self.runs.item(row, 0).text()
         if run_id != self.selected:
             self.selected = run_id
+            self.draw_selected()
+            self.set_episodes([])
+            self.set_languages([])
             self.refresh_selected()
 
     def refresh_selected(self):
@@ -306,6 +330,10 @@ class Monitor(QtWidgets.QMainWindow):
     def draw_selected(self, *_):
         history = self.histories.get(self.selected, [])
         if not history:
+            for curve in self.curves.values():
+                curve.setData([], [])
+            self.action_bars.setOpts(height=[0] * len(ACTIONS))
+            self.brain.setPlainText("No metrics reported for this run")
             return
         origin = timestamp(history[0].get("timestamp"))
         end = timestamp(history[-1].get("timestamp"))
@@ -345,7 +373,7 @@ class Monitor(QtWidgets.QMainWindow):
         rows = episode.get("steps", episode.get("trajectory", [])) if isinstance(episode, dict) else episode
         self.episodes.setRowCount(len(rows))
         for i, row in enumerate(rows):
-            values = [row.get("time", row.get("step", i)), row.get("sensors", row.get("observation", row.get("sensor_vector"))), row.get("internal_state", row.get("state")), row.get("chosen_action", row.get("action")), row.get("oracle_action"), row.get("reward")]
+            values = [row.get("time", row.get("step", i)), row.get("sensors", row.get("observation", row.get("sensor_vector"))), row.get("internal_state", row.get("state")), action_name(row.get("chosen_action", row.get("action"))), action_name(row.get("oracle_action")), row.get("reward")]
             for j, value in enumerate(values):
                 text = display(value)
                 item = QtWidgets.QTableWidgetItem(text)
@@ -355,7 +383,7 @@ class Monitor(QtWidgets.QMainWindow):
     def set_languages(self, events):
         self.languages.setRowCount(len(events))
         for i, event in enumerate(reversed(events)):
-            values = [event.get("timestamp"), event.get("run_id", self.selected), event.get("scenario"), event.get("reason", event.get("signals", event.get("event"))), event.get("core_confidence", event.get("confidence")), event.get("oracle_required", event.get("required_llm")), event.get("j72_called"), event.get("j72_latency", event.get("latency_ms")), event.get("response", event.get("error", event.get("status")))]
+            values = [human_time(event.get("timestamp")), event.get("run_id", self.selected), event.get("scenario"), event.get("reason", event.get("signals", event.get("event"))), event.get("core_confidence", event.get("confidence")), event.get("oracle_required", event.get("required_llm")), event.get("j72_called"), event.get("j72_latency", event.get("latency_ms")), event.get("response", event.get("error", event.get("status")))]
             for j, value in enumerate(values):
                 item = QtWidgets.QTableWidgetItem(display(value)[:1000])
                 item.setToolTip(display(value))

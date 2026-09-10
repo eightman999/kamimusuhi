@@ -183,3 +183,41 @@ def test_physical_gpu_occupancy_and_queue_block(tmp_path):
         assert popen.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"] == "GPU-3060"
         (tmp_path / "queue.json").write_text('{"pending":["full-run"],"active":{}}')
         assert client.post("/api/run/start", json={"config": "smoke.yaml", "device": "cpu"}).status_code == 409
+
+
+def test_qt_queued_selection_clears_stale_metrics_and_formats_values(monkeypatch):
+    from datetime import datetime
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PyQt5.QtWidgets")
+    from PyQt5 import QtWidgets
+    from experiments.k0_brainstem.monitor.mac_gui import Monitor
+    monkeypatch.setattr(Monitor, "request", lambda *args, **kwargs: None)
+    monkeypatch.setattr(Monitor, "connect_ws", lambda *args: None)
+    application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    window = Monitor("http://127.0.0.1:1")
+    try:
+        window.update_runs([
+            {"run_id": "finished", "status": "complete", "latest": {
+                "timestamp": 1700000000.0, "reward_mean": .7, "hidden_norm": 2.0,
+                "action_distribution": [.1,.1,.1,.1,.1,.5]}},
+            {"run_id": "pending", "status": "queued", "latest": {}}])
+        assert window.selected == "finished"
+        assert len(window.curves["reward_mean"].getData()[0]) == 1
+        assert "hidden_norm" in window.brain.toPlainText()
+        window.runs.selectRow(1)
+        assert window.selected == "pending"
+        for curve in window.curves.values():
+            x, _ = curve.getData()
+            assert x is None or len(x) == 0
+        assert "hidden_norm" not in window.brain.toPlainText()
+        assert list(window.action_bars.opts["height"]) == [0] * 6
+        window.update_system({"gpus": [{"index": 0, "name": "3060", "memory_used_mb": 8192.0, "memory_total_mb": 12288.0}]})
+        assert "VRAM 8,192/12,288 MiB" in window.system_label.text()
+        window.set_languages([{"timestamp": 1700000000.0}])
+        assert window.languages.item(0, 0).text() == datetime.fromtimestamp(1700000000).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        window.set_episodes([{"time": 0, "chosen_action": 5, "oracle_action": 2}])
+        assert window.episodes.item(0, 3).text() == "INVOKE_LANGUAGE"
+        assert window.episodes.item(0, 4).text() == "ORIENT"
+    finally:
+        window.close()
+        application.processEvents()

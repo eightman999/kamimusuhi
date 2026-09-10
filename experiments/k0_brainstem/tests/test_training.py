@@ -21,6 +21,10 @@ class Tests(unittest.TestCase):
             r=b.invoke([0.]*16,{})
             self.assertEqual(r['status'],'LANGUAGE_BACKEND_UNAVAILABLE')
             self.assertLess(r['latency'],.18)
+            b.timeout=1
+            r=b.invoke([0.]*16,{})
+            self.assertEqual(r['status'],'LANGUAGE_BACKEND_UNAVAILABLE')
+            self.assertEqual(r['error_type'],'HTTPError')
         finally:server.shutdown();server.server_close()
 
 if __name__=='__main__':unittest.main()
