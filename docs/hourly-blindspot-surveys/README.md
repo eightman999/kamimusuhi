@@ -8,6 +8,7 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 
 - `docs/daily-surveys/` と過去24時間の本ディレクトリを確認して重複を避ける。
 - 過去1〜24時間の一次資料・公式資料を優先する。
+- Zenn / note / Qiita も実装知見・日本語圏の着想を拾う discovery source として探索し、一般化された技術・性能・研究主張は可能な限り一次資料で裏取りする。
 - 新着が薄い場合のみ、Kamimusuhi に未収載の重要な過去研究・古典・異分野概念を少数補完する。
 - 「実証済み」と「提案・推測」を分ける。
 - Kamimusuhi との差分と、借りるべき設計契約を明示する。
@@ -17,6 +18,7 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 
 | Date / time (JST) | Survey | Main blind spots |
 |---|---|---|
+| 2026-09-10 19:01:16 | [2026-09-10-19-01-16.md](./2026-09-10-19-01-16.md) | verification adequacy / pre-cognition bootstrap trust / restore-counterfactual forgetting audit / skill trace contracts / compute-cache invalidation / portable Library trust metadata |
 | 2026-09-10 12:59:38 | [2026-09-10-12-59-38.md](./2026-09-10-12-59-38.md) | storage-vs-use forgetting / lifecycle metadata / memory access kernel / cognitive stopping / relational affect / partial-TEE trust |
 | 2026-09-10 06:58:43 | [2026-09-10-06-58-43.md](./2026-09-10-06-58-43.md) | effect acceptance / accountability roles / presentation identity / OpenTelemetry / trajectory databases |
 | 2026-09-10 00:57:57 | [2026-09-10-00-57-57.md](./2026-09-10-00-57-57.md) | object capabilities / runtime assurance / privacy-aware memory / PROV-O / CRDT state classification |
