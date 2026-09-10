@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import datetime, timezone
 from typing import Literal
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Name of the immutable FBA0 reference base (see fba/fba0.py).
 FBA0_BASE_NAME = "flywire-v783-shiu-lif"
@@ -46,6 +46,8 @@ class Attachment:
     attachment_id: str
     source: str  # "fba0:<region-or-celltype>" or an organ_id
     target: str  # organ_id or "fba0:<region>"
+    # "forward": source (pre) -> target (post); "bidirectional": both ways
+    direction: Literal["forward", "bidirectional"] = "forward"
     weight_scale: float = 1.0
     provenance: OrganProvenance = field(default_factory=OrganProvenance)
 

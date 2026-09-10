@@ -94,7 +94,7 @@ def create_app(service) -> FastAPI:
             "evaluations": service.db.list_evaluations(
                 service.experiment_id, genome_id=genome_id),
             "phenotype": {k: phen[k] for k in
-                          ("n_extra_neurons", "param_overrides",
+                          ("n_extra_neurons", "params",
                            "ancestry_fraction", "base")},
         }
 

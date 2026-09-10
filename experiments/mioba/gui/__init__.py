@@ -135,7 +135,7 @@ def mount_gui(app, service) -> None:
             "phenotype": {"kind": "DERIVED",
                           "base": phen["base"],
                           "n_extra_neurons": phen["n_extra_neurons"],
-                          "param_overrides": phen["param_overrides"],
+                          "params": phen["params"],
                           "ancestry_fraction": phen["ancestry_fraction"]},
         }
 

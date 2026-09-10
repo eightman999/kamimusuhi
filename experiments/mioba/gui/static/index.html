@@ -219,7 +219,7 @@ async function organism(id) {
       <div class="panel"><h2>ancestral component ${kind(ph.kind)}</h2>
         <div class="big">${ph.ancestry_fraction == null ? '<span class="muted">unknown</span>' : num(100*ph.ancestry_fraction,2)+' %'}</div><div class="muted">${ph.ancestry_fraction == null ? 'FBA0 neuron count unavailable (reference data not loaded on coordinator)' : `of neurons inherited from ${esc(ph.base?.name || 'FBA0')} (immutable reference${nBase ? ', '+nBase+' neurons' : ''})`}</div>
         <div class="bar" style="margin:8px 0"><i style="width:${100*(ph.ancestry_fraction||0)}%"></i></div>
-        <div class="kv"><div>artificial neurons</div><div>${ph.n_extra_neurons}</div><div>param overrides</div><div class="mono">${esc(JSON.stringify(ph.param_overrides))}</div></div></div>
+        <div class="kv"><div>artificial neurons</div><div>${ph.n_extra_neurons}</div><div>resolved params</div><div class="mono">${esc(JSON.stringify(ph.params))}</div></div></div>
       <div class="panel"><h2>ancestry to FBA0 ${kind(d.ancestry_chain.kind)}</h2><div class="tree">
         ${d.ancestry_chain.rows.map((a,i) => `<div style="padding-left:${i*14}px">${i?'↑ ':''}${short(a.genome_id)} <span class="muted">g${a.generation} #${a.birth_index}</span></div>`).join('')}
         <div class="muted" style="margin-top:6px">parents: ${d.parents.map(short).join(' ') || 'none (FBA0 root)'}</div>

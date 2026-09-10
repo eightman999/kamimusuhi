@@ -6,6 +6,7 @@ The phenotype is a plain dict (serialisable) consumed by FBA backends.
 from __future__ import annotations
 
 from ..fba.fba0 import FBA0_REFERENCE, fba0_neuron_count
+from ..fba.params import resolve_params
 from ..genome.schema import Genome
 
 
@@ -14,17 +15,8 @@ def develop(genome: Genome, base_neurons: int | None = None) -> dict:
     the synthetic-N count when the backend runs in synthetic mode);
     defaults to the real FlyWire v783 count when the data is present."""
     n_extra = sum(o.size for o in genome.artificial_organs)
-    overrides: dict[str, float] = {}
-    for m in genome.parameter_mutations:
-        if m.scope != "global":
-            continue  # region/organ-scoped overrides applied by the backend
-        cur = overrides.get(m.path)
-        if m.op == "scale":
-            overrides[m.path] = (cur if cur is not None else 1.0) * m.value
-        elif m.op == "add":
-            overrides[m.path] = (cur or 0.0) + m.value
-        else:
-            overrides[m.path] = m.value
+    # region/organ-scoped mutations are left to the backend
+    params = resolve_params(genome.parameter_mutations)
     base_n = base_neurons if base_neurons is not None else fba0_neuron_count()
     denom = (base_n or 0) + n_extra
     ancestry_fraction = (base_n / denom) if base_n and denom else (1.0 if not n_extra else None)
@@ -40,10 +32,11 @@ def develop(genome: Genome, base_neurons: int | None = None) -> dict:
         ],
         "attachments": [
             {"attachment_id": a.attachment_id, "source": a.source,
-             "target": a.target, "weight_scale": a.weight_scale}
+             "target": a.target, "direction": a.direction,
+             "weight_scale": a.weight_scale}
             for a in genome.attachments
         ],
-        "param_overrides": overrides,
+        "params": params,
         "ancestry_fraction": ancestry_fraction,
     }
 

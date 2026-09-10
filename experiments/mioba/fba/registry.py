@@ -16,7 +16,7 @@ def get_backend(name: str, **kwargs) -> FbaBackend:
         return TorchBackend(**{k: v for k, v in kwargs.items()
                                if k in ("data_dir", "synthetic",
                                         "synthetic_neurons", "connectivity",
-                                        "runs_dir")})
+                                        "runs_dir", "region_mode")})
     if name == "genn":
         from .genn_backend import GennBackend
         return GennBackend(**{k: v for k, v in kwargs.items()

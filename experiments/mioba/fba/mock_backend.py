@@ -12,9 +12,9 @@ import time
 import numpy as np
 
 from .backend import BackendUnavailable, FbaBackend
+from .params import DEFAULT_PARAMS
 
-PARAMS = dict(tauMem=20.0, tauSyn=5.0, vRest=-52.0, vThr=-45.0,
-              tRefrac=2.2, dt=0.1)
+PARAMS = dict(DEFAULT_PARAMS)
 
 
 class MockBackend(FbaBackend):
@@ -40,22 +40,25 @@ class MockBackend(FbaBackend):
             self._organ_ranges.append((organ["organ_id"], off, off + organ["size"]))
             off += organ["size"]
 
+        # phenotype-resolved params (global scope; see fba/params.py)
+        self.params = dict(PARAMS)
+        self.params.update(self.phenotype.get("params") or {})
         rng = np.random.default_rng(self.seed)
-        # sparse random recurrent weights (dense bool mask, small N)
+        # W[pre, post]; propagation is spikes @ W (dense, small N only)
         mask = rng.random((self.n, self.n)) < self.connectivity
         np.fill_diagonal(mask, False)
-        self.W = (mask * rng.uniform(0.1, 1.0, (self.n, self.n)) * 0.275).astype(
-            np.float32)
-        # phenotype param overrides (global only)
-        self.params = dict(PARAMS)
-        for k, scale in (self.phenotype.get("param_overrides") or {}).items():
-            if k in self.params:
-                self.params[k] *= scale
+        self.W = (mask * rng.uniform(0.1, 1.0, (self.n, self.n))
+                  * self.params["wScale"]).astype(np.float32)
         self._input_rates = np.zeros(self.n, dtype=np.float32)
         self._silence = np.zeros(self.n, dtype=bool)
         self.reset()
         # stash full rng for checkpointing
         self._rng = rng
+
+    def dataset_identity(self) -> dict:
+        return {"dataset_id": "mock-fba",
+                "version": f"v0-n{self.n_neurons}-p{self.connectivity}",
+                "manifest_hash": None, "region_mode": None}
 
     # ------------------------------------------------------------- state
     def reset(self) -> None:

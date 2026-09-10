@@ -62,3 +62,10 @@ class FbaBackend(ABC):
     @abstractmethod
     def capabilities(self) -> BackendCapabilities:
         ...
+
+    def dataset_identity(self) -> dict:
+        """Logical identity of the connectome data this backend simulates
+        (``dataset_id``, ``version``, ``manifest_hash``, ``region_mode``).
+        Recorded on every evaluation; never a raw filesystem path."""
+        return {"dataset_id": self.name, "version": None,
+                "manifest_hash": None, "region_mode": None}
