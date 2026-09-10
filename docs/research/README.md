@@ -11,6 +11,7 @@ It is intentionally different from the existing research notes:
 
 ## Documents
 
+- [`survey-decisions-2026-09-11.md`](./survey-decisions-2026-09-11.md) — **反映判断 済✅️**: decisions for 9 daily and 6 blind-spot surveys, Issue destinations, deferred/rejected candidates, source blob versions, and explicit decisions not to promote unvalidated findings into spec or implemented-capability claims. Review completion is not implementation completion.
 - [`landscape.md`](./landscape.md) — cross-disciplinary research landscape, comparison matrix, research gaps, and prioritized experimental agenda. Baseline: 2026-09-08.
 - [`fio-neural-function-growth-2026-09-08.md`](./fio-neural-function-growth-2026-09-08.md) — Markdown transcription of FIO's *神経関数が育つ* experiment record plus Kamimusuhi analysis of descending modulation, perceptual gating vs motor reflex, anti-self-blinding safeguards, shadow comparison, and reproducibility metrics.
 - [`fio-system-architecture-2026-09-09.md`](./fio-system-architecture-2026-09-09.md) — source-grounded review of FIO / SerialExperiments' 2026-09-09 measured architecture: conscious/unconscious timing split, 0.25-second nervous heartbeat, two-tier memory, sensory gating, per-nerve adaptive state, embodiment as observability, inference-vessel abstraction, single decision points, runtime-evidence discipline, and implications for Kamimusuhi's K-Fast / FlyBrain-inspired multi-timescale design.

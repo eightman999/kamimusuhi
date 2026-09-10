@@ -14,13 +14,19 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 - Kamimusuhi との差分と、借りるべき設計契約を明示する。
 - 有意な発見がない場合も、検索した領域と `有意な新規発見なし` を記録する。
 
+## 反映判断
+
+[2026-09-11 判定台帳](../research/survey-decisions-2026-09-11.md)に、文書別の採否・理由・Issue反映先・保留条件・判断対象blobを記録した。**`済✅️` は反映するか否かの判断完了であり、全提案の採用・実装完了・論文の全面検証を意味しない。** 原文の研究記録は変更しない。
+
+新規サーベイは `未判定` とする。既存Issue/spec/READMEとの重複を確認し、採用・既存反映済み・保留・不採用を決め、採用する書込みを確認してから `済✅️` を付ける。原文blobや判断に重要なevidence/実装条件が変わった場合は再判定する。過去の完了マークを新規findingへ継承せず、S/A評価だけで規範へ自動昇格させない。
+
 ## Index
 
-| Date / time (JST) | Survey | Main blind spots |
-|---|---|---|
-| 2026-09-11 07:00:48 | [2026-09-11-07-00-48.md](./2026-09-11-07-00-48.md) | verifiable outsourced cognition / latent competence telemetry / differentiated trust / correlated cognitive dependency / trajectory tamper localization / bitemporal memory semantics |
-| 2026-09-11 00:58:49 | [2026-09-11-00-58-49.md](./2026-09-11-00-58-49.md) | conclusion-contaminated audit / unreliable-tool overtrust / individuality loss in personalization / adaptive transcript privacy / effect-conditioned safety metrics / portable runtime evidence |
-| 2026-09-10 19:01:16 | [2026-09-10-19-01-16.md](./2026-09-10-19-01-16.md) | verification adequacy / pre-cognition bootstrap trust / restore-counterfactual forgetting audit / skill trace contracts / compute-cache invalidation / portable Library trust metadata |
-| 2026-09-10 12:59:38 | [2026-09-10-12-59-38.md](./2026-09-10-12-59-38.md) | storage-vs-use forgetting / lifecycle metadata / memory access kernel / cognitive stopping / relational affect / partial-TEE trust |
-| 2026-09-10 06:58:43 | [2026-09-10-06-58-43.md](./2026-09-10-06-58-43.md) | effect acceptance / accountability roles / presentation identity / OpenTelemetry / trajectory databases |
-| 2026-09-10 00:57:57 | [2026-09-10-00-57-57.md](./2026-09-10-00-57-57.md) | object capabilities / runtime assurance / privacy-aware memory / PROV-O / CRDT state classification |
+| Date / time (JST) | Survey | Main blind spots | 反映判断 |
+|---|---|---|---|
+| 2026-09-11 07:00:48 | [2026-09-11-07-00-48.md](./2026-09-11-07-00-48.md) | verifiable outsourced cognition / latent competence telemetry / differentiated trust / correlated cognitive dependency / trajectory tamper localization / bitemporal memory semantics | [済✅️](../research/survey-decisions-2026-09-11.md#b06) |
+| 2026-09-11 00:58:49 | [2026-09-11-00-58-49.md](./2026-09-11-00-58-49.md) | conclusion-contaminated audit / unreliable-tool overtrust / individuality loss in personalization / adaptive transcript privacy / effect-conditioned safety metrics / portable runtime evidence | [済✅️](../research/survey-decisions-2026-09-11.md#b05) |
+| 2026-09-10 19:01:16 | [2026-09-10-19-01-16.md](./2026-09-10-19-01-16.md) | verification adequacy / pre-cognition bootstrap trust / restore-counterfactual forgetting audit / skill trace contracts / compute-cache invalidation / portable Library trust metadata | [済✅️](../research/survey-decisions-2026-09-11.md#b04) |
+| 2026-09-10 12:59:38 | [2026-09-10-12-59-38.md](./2026-09-10-12-59-38.md) | storage-vs-use forgetting / lifecycle metadata / memory access kernel / cognitive stopping / relational affect / partial-TEE trust | [済✅️](../research/survey-decisions-2026-09-11.md#b03) |
+| 2026-09-10 06:58:43 | [2026-09-10-06-58-43.md](./2026-09-10-06-58-43.md) | effect acceptance / accountability roles / presentation identity / OpenTelemetry / trajectory databases | [済✅️](../research/survey-decisions-2026-09-11.md#b02) |
+| 2026-09-10 00:57:57 | [2026-09-10-00-57-57.md](./2026-09-10-00-57-57.md) | object capabilities / runtime assurance / privacy-aware memory / PROV-O / CRDT state classification | [済✅️](../research/survey-decisions-2026-09-11.md#b01) |
