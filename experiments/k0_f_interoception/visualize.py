@@ -70,7 +70,7 @@ def finish(fig, path):
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
         axis.grid(alpha=.16)
-    fig.tight_layout(rect=(0, 0, 1, .96))
+    fig.tight_layout(rect=(0, .055, 1, .94))
     fig.savefig(path, dpi=170, bbox_inches="tight")
     plt.close(fig)
 
@@ -129,25 +129,32 @@ def render(artifacts):
     root.mkdir(parents=True, exist_ok=True)
     plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 9, "axes.titlesize": 11})
     names = ("raw_mac_telemetry.jsonl", "raw_master_telemetry.jsonl", "interoceptive_frames.jsonl", "policy_traces.jsonl",
-             "prediction_probe.json", "ablation_results.json", "counterfactual_body.json", "ood_results.json", "run_summary.json")
+             "prediction_probe.json", "ablation_results.json", "counterfactual_body.json", "ood_results.json", "run_summary.json", "training_config.json")
     inputs = {name: read(root, name) for name in names}
     mac, master, frames, traces = (rows(inputs[name]) for name in names[:4])
     probe, ablation, counter, ood = (rows(inputs[name]) for name in names[4:8])
     # A separately trained BLIND model is a distinct control, not a duplicate seed
     # of the BODY model's BLIND input intervention.
     ablation = [dict(row, mode="TRAINED_BLIND") if row.get("training_mode") == "BLIND" else row for row in ablation]
+    config = inputs["training_config.json"] if isinstance(inputs["training_config.json"], dict) else {}
+    experiment_scope = config.get("experiment_scope", "unspecified")
+    exploratory = experiment_scope == "exploratory_after_failed_probe"
     timestamps = [record["timestamp"] for record in mac + master if finite(record.get("timestamp"))]
     origin = min(timestamps) if timestamps else 0
     manifest = {"schema_version": "k0f.plots.v1", "files": [], "inputs": {},
+                "experiment_scope": experiment_scope, "research_status_locked": "FAIL" if exploratory else None,
                 "uncertainty": "95% percentile bootstrap over independent training seeds; 1 Hz telemetry is descriptive only",
                 "missing_data": "Unavailable panels explicitly marked; no substitute success values",
                 "raw_source_kinds": sorted({record.get("source_kind", "unknown") for record in mac + master}),
                 "trace_source_kinds": sorted({record.get("source_kind", "unknown") for record in traces}),
+                "ood_kinds": sorted({record.get("kind", "unknown") for record in ood}),
                 "policy_evidence": "Trace replay / counterfactual estimates are not proof of live chosen-job execution"}
     for name in names:
         if (root / name).exists():
             manifest["inputs"][name] = hashlib.sha256((root / name).read_bytes()).hexdigest()
     def save(fig, name, available):
+        scope_label = "Scope: exploratory_after_failed_probe | Research status locked FAIL" if exploratory else "Scope: " + experiment_scope
+        fig.text(.5, .012, scope_label, ha="center", va="bottom", fontsize=9, color="#943d2d" if exploratory else "#657384")
         finish(fig, root / name)
         manifest["files"].append({"name": name, "status": "data_present" if available else "not_collected",
                                   "sha256": hashlib.sha256((root / name).read_bytes()).hexdigest()})
@@ -173,7 +180,7 @@ def render(artifacts):
         axis = axes.flat[5]
         axis.plot(range(len(traces)), [action_names.index(row["action"]) if row.get("action") in action_names else np.nan for row in traces], ".", color=COLORS[0], markersize=2)
         axis.set_yticks(range(len(action_names)), action_names)
-        axis.set(title="Core actions (saved policy replay)", xlabel="Trace record index", ylabel="Action")
+        axis.set(title="Core actions (saved replay; all seeds / modes)", xlabel="Trace record index", ylabel="Action")
     else:
         missing(axes.flat[5], "Core action trace not collected")
     fig.suptitle("K0-F body telemetry; solid = real, dashed = synthetic; gaps = missing sensors")
@@ -230,15 +237,21 @@ def render(artifacts):
     save(fig, "network_body_state.png", present)
 
     targets = sorted({str(row.get("target")) for row in probe})
+    probe_payload = inputs["prediction_probe.json"] if isinstance(inputs["prediction_probe.json"], dict) else {}
+    test_splits = ("test", "heldout", "held_out")
+    probe_test_evaluated = probe_payload.get("test_evaluated", any(row.get("split") in test_splits for row in probe)) is True
+    probe_split = "test" if probe_test_evaluated else "validation"
+    manifest["probe_display_split"] = probe_split
+    manifest["probe_test_evaluated"] = probe_test_evaluated
     fig, axes = plt.subplots(1, max(1, len(targets)), figsize=(max(7, len(targets)*4), 4), squeeze=False)
     present = False
     for axis, target in zip(axes.flat, targets or [None]):
         if target is None:
             missing(axis, "Prediction probe not evaluated")
             continue
-        selected = [row for row in probe if str(row.get("target")) == target and row.get("split") in ("test", "heldout", "held_out")]
+        selected = [row for row in probe if str(row.get("target")) == target and (row.get("split") in test_splits if probe_test_evaluated else row.get("split") == "validation")]
         if not selected:
-            missing(axis, "Held-out probe results not collected")
+            missing(axis, f"{probe_split.capitalize()} probe results not collected")
             continue
         for index, mode in enumerate(MODES):
             group = [row for row in selected if row.get("mode") == mode and finite(row.get("normalized_mae", row.get("mae")))]
@@ -249,7 +262,8 @@ def render(artifacts):
                 raise ValueError(f"Ambiguous probe aggregation for {target}/{mode}")
         axis.set_xticks(range(len(MODES)), MODES, rotation=25, ha="right")
         axis.set(title=target.replace("_", " "), ylabel="Normalized MAE" if any("normalized_mae" in row for row in selected) else "MAE")
-    fig.suptitle("Held-out sensor informativeness; lower error is better; descriptive probe estimates")
+    fig.suptitle("Sensor informativeness: " + ("held-out test" if probe_test_evaluated else "validation only / test NOT evaluated") +
+                 "\nLower MAE is better; descriptive estimates, not independent telemetry trials", fontsize=11)
     save(fig, "prediction_probe.png", present)
 
     fig, axes = plt.subplots(1, 3, figsize=(14, 4.7))
@@ -314,7 +328,7 @@ def render(artifacts):
             present = False
     else:
         missing(axis, "Temporal / sensor OOD not evaluated")
-    fig.suptitle("Controlled synthetic observation perturbations over held-out real telemetry")
+    fig.suptitle("Controlled sensor / resource perturbations over held-out real telemetry\nMeasured costs retained except simulated RTX selection failure", fontsize=11)
     save(fig, "ood_heatmap.png", present)
 
     fig, axes = plt.subplots(1, 3, figsize=(13, 4.7))

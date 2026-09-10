@@ -328,11 +328,14 @@ def generate(artifacts, policy_artifacts=None, live_artifacts=None, output=None)
         note = "sampling interval、更新遅延、jitter、dropout、30秒STALE、task履歴長変更をcontrolled perturbationとして評価。固定step暗記や実時間での頑健性を当然とは扱わない。" if category == "temporal" else "noise、dropout、constant、scale、GPU sensor欠損、Mac欠損、network latency、inversion、permutationを評価。controlled_resource_unavailableだけはRTX選択時のfailureを合成した資源障害simulationで、他の観測介入と分ける。実GPUを故障・停止させた試験ではない。"
         section(number, note + "\n\n" + summary + f"\n\n最悪の保存条件: {worst or '未評価'}、平均効用 {f(mean_records(valid_groups[worst], 'utility')) if worst else '未取得'}。大幅低下も省略しない。")
     section(16, "背景GPU duty<=50%、256MiB/device未満のmatrix、CPU背景<=2thread、GPU75℃以上または必須観測不能で停止する。OOM storm・thermal shutdown・電源断・host crashを目標にしない。センサー取得だけで安全運用の完了とはしない。\n\n" +
-            table(("最終安全監査", "値"), (("safety_pass", resources.get("safety_pass")), ("baseline preservation", baseline.get("pass")), ("resource summary", resources))))
+            table(("最終安全監査", "値"), (("安全判定", resources.get("safety_pass")), ("既存成果物の保全", baseline.get("pass")),
+                  ("連続telemetry", resources.get("telemetry_continuous")), ("固定frame検証", resources.get("fixed_frame_valid")),
+                  ("runtime cleanup", runtime.get("cleanup_pass")))) +
+            "\n\n実測温度・負荷・daemon overheadの記述統計は4–5節を参照。全監査値と資源別の詳細は [resource_summary.json](resource_summary.json)、終了時の状態は [final_runtime_state.json](final_runtime_state.json) に保存する。")
     section(17, "独立単位は training seed 0–7。同seed・同評価task列の平均utility差をpairedで比較し、mean・sample SD・median・20,000回seed bootstrap 95% CI・両側exact sign pを保存する。各primaryは n>=8、mean>0、CI下限>0、p<=.05の積条件。telemetry sampleや同一seedのepisodeを独立nとして増やさない。\n\n"
             "CIは固定held-out workloadを共有した学習seed変動だけを表す。未知workload母集団や長期環境変動は含まない。複数比較のpは未補正で、事前指定primaryは全条件成立を要求し、補助比較は探索的に解釈する。\n\n統計機械可読値: `report_statistics.json`、`ablation_results.json`、`live_results.json`。")
     section(18, "資源別コスト行列は順次実測で同時反実仮想ではない。replayで良好でも実ジョブの有効性は別検証が必要。新規liveも同一装置・有限workload cohortであり、一般的な身体・未知機械・長期日常環境への汎化を証明しない。\n\n"
-            "低次元の負荷・圧力はproxyを含む。Mac生温度は未取得で、memory proxyとOS pressureは異なる。sensor permutation/noise等は合成介入、実ネットワーク障害・GPU故障・危険温度試験ではない。行列計算jobの効用改善を言語能力や主観的感覚の証拠へ拡張しない。GRU64やPPO未実施ならその優劣は不明。\n\n"
+            "低次元の負荷・圧力はproxyを含む。Mac生温度は未取得で、memory proxyとOS pressureは異なる。sensor permutation/noise等は合成介入、実ネットワーク障害・GPU故障・危険温度試験ではない。行列計算jobの効用改善を言語能力や主観的感覚の証拠へ拡張しない。実ジョブのfinite/checksum検査は出力行列の最初の1行を対象とし、全要素の数値正当性検査ではない。独立double参照との検査行checksum差は最大7.76e-7だった。GRU64やPPO未実施ならその優劣は不明。\n\n"
             "無負荷・高負荷の区別だけで成功としない。現在の正しいbodyとdownstream outcomeの改善が成立しないときは研究FAILを維持する。")
     section(19, table(("成功条件", "判定"), gates.items()) + f"\n\n全条件の結合: **{criteria['research_status']}**。欠損・読取失敗・未実施は未検証でありPASSへ置換しない。")
     section(20, ("保存実測再生の3比較、反実仮想、凍結Coreからの新規実ジョブ、安全・再現性の全gateが成立した。限定された計算資源選択taskにおいて、現在身体情報への因果依存と下流効用改善を確認した。主観的感覚や一般知能を示すものではない。" if criteria["research_status"] == "PASS" else

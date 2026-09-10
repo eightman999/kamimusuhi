@@ -67,6 +67,8 @@ python -m experiments.k0_f_interoception.probe \
 
 ## C: 教師学習、固定checkpoint、評価
 
+以下はprobe合格時の通常confirmatoryレシピ。今回の診断実行には直後の専用レシピを使い、`probe --include-test` は実施しない。
+
 ```sh
 python -m experiments.k0_f_interoception.policy \
   --dataset "$K0F_DATASET" --output "$K0F_POLICY_ARTIFACTS" \
@@ -85,6 +87,25 @@ python -m experiments.k0_f_interoception.policy \
 ```
 
 16run = GRU128 BODY/BLIND各8seed。BODY-bestへのBODY/BLIND/SHUFFLED/STALEをprimary、独立学習BLINDをsecondaryとする。bestはvalidation最大、finalは別結果に保存。PPO・DAggerを自動追加しない。中断runの上書きは拒否し、完了runはsource/data/normalization/checkpoint hash一致時だけ再利用する。
+
+今回の探索的診断では、不合格probeと固定amendmentのidentityを保存して次のコマンドを使う。test probeは開封せず、validation-onlyのFAILを保持する。方策のheld-out診断をprobeのtest評価と混同しない。
+
+```sh
+python -m experiments.k0_f_interoception.policy \
+  --dataset "$K0F_DATASET" --output "$K0F_POLICY_ARTIFACTS" \
+  --probe "$K0F_POLICY_ARTIFACTS/prediction_probe.json" \
+  --normalization-config "$K0F_NORMALIZATION" --stage train \
+  --seeds 0,1,2,3,4,5,6,7 --hidden-sizes 128 \
+  --epochs 160 --batch-size 64 --learning-rate 0.001 --threads 4 \
+  --exploratory-after-failed-probe experiments/k0_f_interoception/DIAGNOSTIC_AMENDMENT.json
+python -m experiments.k0_f_interoception.policy \
+  --dataset "$K0F_DATASET" --output "$K0F_POLICY_ARTIFACTS" \
+  --probe "$K0F_POLICY_ARTIFACTS/prediction_probe.json" \
+  --normalization-config "$K0F_NORMALIZATION" --stage evaluate \
+  --seeds 0,1,2,3,4,5,6,7 --hidden-sizes 128 \
+  --epochs 160 --batch-size 64 --learning-rate 0.001 --threads 4 \
+  --exploratory-after-failed-probe experiments/k0_f_interoception/DIAGNOSTIC_AMENDMENT.json
+```
 
 ## 凍結Coreによる新規実ジョブ
 
