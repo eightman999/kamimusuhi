@@ -12,10 +12,10 @@ critic warm-up at 300000+seed, validation at 700001,
 held-out evaluation at 900001. Evaluation RNG streams are common across models
 for paired comparisons but disjoint from training. No test-based tuning.
 
-Stage A: 64 imitation updates, 1024 environments, 48 transitions/episode,
+Stage A primary: 256 imitation updates, 1024 environments, 48 transitions/episode,
 Adam learning rate .001, full-sequence training. Demonstrations use the
-information-constrained analytic teacher. Updates 1–32 follow the teacher;
-33–64 use 80% teacher / 20% sampled learner actions per environment step
+information-constrained analytic teacher. Updates 1–128 follow the teacher;
+129–256 use 80% teacher / 20% sampled learner actions per environment step
 with teacher labels on the resulting states (DAgger exposure).
 Action-balanced CE is additionally weighted at decisions (32x) and
 acquisition actions (4x). No hidden truth is a policy input.
@@ -72,3 +72,17 @@ Protocol execution and research success are distinct. Preserve failed runs,
 NaN checks, checkpoint stages/RNG/source hashes and actual GPU UUIDs.
 Report unmet gates, no-language Bayes ceiling and synthetic-task limitations.
 Only the final response asks whether to proceed to K1.
+
+## Validation-only finite escalation
+
+The initial 64-update, 24-run attempt is preserved under `artifacts/runs`.
+Before any held-out evaluation, initial validation showed GRU call rate zero
+and success around .57, versus MLP around .73 with calls. This underfitting
+justifies one common increase to 256 fresh updates for all three architectures
+and eight seeds, isolated under `artifacts/primary`. No further training-budget
+search is authorized by this protocol. Primary PPO branches use these primary
+imitation-best checkpoints. Initial and primary attempts are never pooled as
+independent seeds.
+
+The same seed always uses the same physical GPU (even: RTX 3060; odd: P100),
+including every paired PPO arm. B4 records additional critic warm-up compute.

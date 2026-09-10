@@ -7,7 +7,7 @@ GPU_UUIDS=['GPU-1d6afaad-67b7-b965-46c7-efe6c9c395f3','GPU-d11b6f7f-002d-b252-19
 
 def base_config(arch,seed,arm,smoke=False):
     return dict(architecture=arch,seed=seed,arm=arm,env={'episode_length':48},num_envs=32 if smoke else 1024,
-                imitation_updates=2 if smoke else 64,ppo_updates=1 if smoke else 8,
+                imitation_updates=2 if smoke else 256,ppo_updates=1 if smoke else 8,
                 ppo_epochs=2,minibatch_envs=16 if smoke else 256,validation_envs=32 if smoke else 256)
 
 def run_queue(artifacts,phase,smoke=False):
