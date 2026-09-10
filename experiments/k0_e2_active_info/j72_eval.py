@@ -13,7 +13,7 @@ def fault_transport(kind,fact):
         if kind=='timeout':raise TimeoutError('controlled timeout fixture')
         if kind=='http_503':raise urllib.error.HTTPError('fixture',503,'controlled unavailable',None,None)
         if kind=='slow':time.sleep(.01)
-        text={'malformed':'{not-json','empty':'','contradiction':'{"category":["A","B"],"confidence":1,"evidence_id":"record-1"}'}.get(kind,
+        text={'malformed':'{not-json','empty':'','contradiction':json.dumps({'category':'A' if fact else 'B','confidence':1.,'evidence_id':'record-1'})}.get(kind,
              json.dumps({'category':'B' if fact else 'A','confidence':1.,'evidence_id':'record-1'}))
         return {'choices':[{'message':{'content':text}}]}
     return transport
@@ -25,12 +25,12 @@ def evaluate_closed_loop(model,endpoint,n=24,seed=920001,backend='j72',fault=Non
     if backend!='scripted':config['language_backend']='external'
     env=ActiveInfoEnv(n,'cpu',seed,config);obs=env.reset();state=model.initial_state(n,'cpu')
     episodes=[dict(episode_id=i,steps=[],calls=[],success=False) for i in range(n)]
-    reward=torch.zeros(n);allfinite=True
+    reward=torch.zeros(n);allfinite=True;accepted_gate_calls=0
     for t in range(env.episode_length):
         logits,_,state=model(obs,state);action=logits.argmax(-1)
         if force_gate and t==0:action.fill_(5)
         before=obs.clone();obs,r,done,info=env.step(action);reward+=r
-        accepted=info['call_accepted'].nonzero().flatten().tolist()
+        accepted=info['call_accepted'].nonzero().flatten().tolist();accepted_gate_calls+=len(accepted)
         for i in accepted:
             if backend=='scripted':continue
             result=query(endpoint,int(env.latent[i]),before[i].tolist(),transport=fault_transport(fault,int(env.latent[i])) if fault else None)
@@ -44,7 +44,8 @@ def evaluate_closed_loop(model,endpoint,n=24,seed=920001,backend='j72',fault=Non
             if bool(done[i]):episodes[i]['success']=bool(info['success'][i]);episodes[i]['reward']=float(reward[i])
     calls=[c for e in episodes for c in e['calls']]
     def rate(key):return sum(bool(c[key]) for c in calls)/len(calls) if calls else None
-    return dict(backend=backend,fault=fault,force_gate=force_gate,episodes=episodes,num_episodes=n,calls=len(calls),
+    return dict(backend=backend,fault=fault,force_gate=force_gate,episodes=episodes,num_episodes=n,calls=len(calls),accepted_gate_calls=accepted_gate_calls,
+                http_attempts=sum(len(c['attempts']) for c in calls) if backend=='j72' else 0,
                 api_success=rate('api_success'),parse_success=rate('parse_success'),semantic_correctness=rate('semantic_correct'),
                 downstream_success=sum(e['success'] for e in episodes)/n,reward=float(reward.mean()),
                 response_latency_seconds=sum(c['latency_seconds'] for c in calls)/len(calls) if calls else None,
