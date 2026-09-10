@@ -1,3 +1,5 @@
 artifacts/*
 !artifacts/.gitkeep
 mac/.build/
+__pycache__/
+*.pyc
