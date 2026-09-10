@@ -50,7 +50,7 @@ def build(root):
     assert not failed and not nonfinite
     assert all(all(p[k] for k in ['same_initial_model','same_parent_checkpoint','same_rollout_rng','same_gpu']) for p in pairing)
     atomic(root/'run_evidence.json',result)
-    files={str(p.relative_to(Path.cwd())):hashlib.sha256(p.read_bytes()).hexdigest() for p in Path('experiments/k0_e2_active_info').glob('*.py')}
+    files={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in Path('experiments/k0_e2_active_info').glob('*.py')}
     atomic(root/'evaluation_source_manifest.json',dict(files=files,commit=result['final_source_commit']))
     print(json.dumps({k:v for k,v in result.items() if k!='runs'},indent=2))
     return result
