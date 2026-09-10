@@ -16,7 +16,7 @@ from ..genome.hashing import config_hash
 from ..genome.schema import utcnow
 from ..mie.registry import load_collectors
 from ..storage import models as M
-from ..storage.db import Database
+from ..storage.db import Database, InvalidTransition
 from ..telemetry.recorder import TelemetryRecorder
 from . import jobs, lifecycle
 
@@ -63,6 +63,7 @@ class MiobaService:
         self._bg_thread: threading.Thread | None = None
         self._counters = {"births": 0, "evaluations_succeeded": 0,
                           "evaluations_failed": 0}
+        self._stored_config_hash = None
         self.anomaly_threshold = float(
             config.get("mie", {}).get("anomaly", {}).get("gpu_temp_c", 85))
 
@@ -80,6 +81,14 @@ class MiobaService:
 
         if already:
             exp = self.db.get_experiment(self.experiment_id)
+            self._stored_config_hash = (exp or {}).get("config_hash")
+            if (self._stored_config_hash and
+                    self._stored_config_hash != self.config_hash):
+                self.db.emit(self.experiment_id, "config_hash_mismatch",
+                             "warn",
+                             {"stored": self._stored_config_hash,
+                              "current": self.config_hash},
+                             "coordinator")
             if exp and exp.get("rng_state_json"):
                 self.load_rng_state(exp["rng_state_json"])
             if exp and exp.get("counters_json"):
@@ -158,7 +167,14 @@ class MiobaService:
         if job is None:
             raise KeyError(f"no such job {job_id}")
         ok = status == M.JOB_SUCCEEDED
-        jobs.finish(self.db, self.experiment_id, job, status, error)
+        try:
+            jobs.finish(self.db, self.experiment_id, job, status,
+                        worker_id, error)
+        except InvalidTransition:
+            self.db.emit(self.experiment_id, "stale_result_rejected", "warn",
+                         {"job_id": job_id, "worker_id": worker_id,
+                          "status": status}, "coordinator")
+            raise
         if ok and evaluation is not None:
             evaluation = dict(evaluation)
             evaluation["worker_id"] = worker_id
@@ -295,9 +311,10 @@ class MiobaService:
             "uptime_s": round(time.time() - self.started_at, 1),
             "counters": counters,
             "population_size": self.db.count_genomes(self.experiment_id),
-            "archive_size": len(self.db.list_evaluations(self.experiment_id,
-                                                         limit=10**9)),
+            "archive_size": self.db.count_evaluations(self.experiment_id),
             "git_commit": self.git_commit,
             "config_hash": self.config_hash,
+            "config_hash_stored": (self._stored_config_hash or
+                                   self.config_hash),
             "kind": "LIVE",
         }

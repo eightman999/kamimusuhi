@@ -11,6 +11,37 @@ def db(tmp_path):
     d.close()
 
 
+def test_stale_result_rejected(service):
+    """A claims; job UNKNOWN->requeued; B claims; A's late result rejected."""
+    db = service.db
+    exp = service.experiment_id
+    # clear the seeded queue so the claim below is deterministic
+    for j in db.list_jobs(exp, status="QUEUED", limit=10000):
+        db.cancel_job(j["job_id"])
+    gid = db.list_genomes(exp)[0]["genome_id"]
+    jid = db.enqueue_job(exp, gid, "env", 0, "smoke", "mock", 10, [])
+
+    job_a = db.claim_job(exp, "workerA")
+    assert job_a["job_id"] == jid
+    db.mark_running_unknown(exp, [jid])
+    db.requeue_unknown(exp, max_attempts=3)
+    job_b = db.claim_job(exp, "workerB")
+    assert job_b["job_id"] == jid
+    assert job_b["claimed_by_worker"] == "workerB"
+
+    with pytest.raises(InvalidTransition):
+        service.worker_result(jid, "workerA", "SUCCEEDED",
+                              {"summary": {"mean_rate_hz": 1.0}}, None)
+    assert db.list_evaluations(exp, genome_id=gid) == []
+    evs = db.list_events(exp, type_="stale_result_rejected")
+    assert evs and evs[-1]["severity"] == "warn"
+
+    service.worker_result(jid, "workerB", "SUCCEEDED",
+                          {"summary": {"mean_rate_hz": 1.0}}, None)
+    assert db.get_job(jid)["status"] == "SUCCEEDED"
+    assert len(db.list_evaluations(exp, genome_id=gid)) == 1
+
+
 def _job(db, jid=None):
     return db.enqueue_job("e", "g1", "env", 0, "smoke", "mock", 10, [],
                           job_id=jid)

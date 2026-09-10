@@ -199,6 +199,68 @@ class Database:
             return self._q("SELECT COUNT(*) c FROM genomes WHERE experiment_id=?",
                            (experiment_id,)).fetchone()["c"]
 
+    def count_evaluations(self, experiment_id: str) -> int:
+        with self._lock:
+            return self._q("SELECT COUNT(*) c FROM evaluations WHERE "
+                           "experiment_id=?",
+                           (experiment_id,)).fetchone()["c"]
+
+    def list_genomes_view(self, experiment_id: str, limit=100,
+                          offset=0) -> list[dict]:
+        """GUI list view: one row per genome with clade, organ count,
+        ancestry fraction, best fitness and children count."""
+        from ..development.phenotype import develop
+        from ..genome.schema import Genome
+        rows = self.list_genomes(experiment_id, limit, offset)
+        out = []
+        with self._lock:
+            for r in rows:
+                gid = r["genome_id"]
+                genome = Genome.from_json(r["genome_json"])
+                clade = self._q(
+                    "SELECT c.clade_id, c.name FROM genome_clades gc JOIN "
+                    "clades c ON c.clade_id=gc.clade_id WHERE gc.genome_id=? "
+                    "LIMIT 1", (gid,)).fetchone()
+                fit = self._q("SELECT MAX(fitness) f FROM evaluations WHERE "
+                              "experiment_id=? AND genome_id=?",
+                              (experiment_id, gid)).fetchone()["f"]
+                children = self._q("SELECT COUNT(*) c FROM parents WHERE "
+                                   "parent_id=?", (gid,)).fetchone()["c"]
+                out.append({
+                    "genome_id": gid,
+                    "parent_ids": json.loads(r["parent_ids_json"]),
+                    "generation": r["generation"],
+                    "birth_index": r["birth_index"],
+                    "species_base": r["species_base"],
+                    "clade_id": clade["clade_id"] if clade else None,
+                    "clade_name": clade["name"] if clade else None,
+                    "organ_count": len(genome.artificial_organs),
+                    "ancestry_fraction": develop(genome)["ancestry_fraction"],
+                    "best_fitness": fit,
+                    "children_count": children,
+                    "created_at": r["created_at"],
+                })
+        return out
+
+    def children_of(self, genome_id: str) -> list[str]:
+        return self.genome_children(genome_id)
+
+    def ancestry_chain(self, genome_id: str) -> list[dict]:
+        """Walk first-parent links to the FBA0 root; returns root-first
+        list of {genome_id, generation, birth_index}."""
+        chain, seen = [], set()
+        gid = genome_id
+        while gid and gid not in seen:
+            seen.add(gid)
+            row = self.get_genome(gid)
+            if row is None:
+                break
+            chain.append({"genome_id": gid, "generation": row["generation"],
+                          "birth_index": row["birth_index"]})
+            parents = self.genome_parents(gid)
+            gid = parents[0] if parents else None
+        return list(reversed(chain))
+
     # ------------------------------------------------------------ clades
     def create_clade(self, experiment_id: str, name: str,
                      founder_genome_id: str | None) -> str:
@@ -279,7 +341,8 @@ class Database:
                                (experiment_id, limit)).fetchall()
         return [dict(r) for r in rows]
 
-    def finish_job(self, job_id: str, status: str, error: str | None = None) -> None:
+    def finish_job(self, job_id: str, status: str, worker_id: str,
+                   error: str | None = None) -> None:
         if status not in (M.JOB_SUCCEEDED, M.JOB_FAILED):
             raise InvalidTransition(f"finish_job: bad status {status}")
         with self._lock:
@@ -289,6 +352,10 @@ class Database:
             if job["status"] != M.JOB_RUNNING:
                 raise InvalidTransition(
                     f"job {job_id} is {job['status']}, expected RUNNING")
+            if job["claimed_by_worker"] != worker_id:
+                raise InvalidTransition(
+                    f"job {job_id} claimed by {job['claimed_by_worker']}, "
+                    f"not {worker_id}")
             self._q("UPDATE evaluation_jobs SET status=?, finished_at=?,"
                     " last_error=? WHERE job_id=?",
                     (status, self._now(), error, job_id))
@@ -551,6 +618,34 @@ class Database:
         if since:
             sql += " AND at>?"; params.append(since)
         sql += " ORDER BY id DESC LIMIT ?"; params.append(limit)
+        with self._lock:
+            rows = self._q(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def telemetry_series(self, experiment_id: str, since_iso: str | None,
+                         signal_types: list[str] | None, limit: int = 1000
+                         ) -> list[dict]:
+        sql = "SELECT * FROM telemetry_samples WHERE experiment_id=?"
+        params: list = [experiment_id]
+        if since_iso:
+            sql += " AND at>=?"; params.append(since_iso)
+        if signal_types:
+            marks = ",".join("?" * len(signal_types))
+            sql += f" AND signal_type IN ({marks})"; params.extend(signal_types)
+        sql += " ORDER BY at ASC, id ASC LIMIT ?"; params.append(limit)
+        with self._lock:
+            rows = self._q(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def worker_heartbeat_series(self, experiment_id: str, worker_id: str,
+                                since_iso: str | None,
+                                limit: int = 1000) -> list[dict]:
+        sql = ("SELECT * FROM worker_heartbeats WHERE experiment_id=? AND "
+               "worker_id=?")
+        params: list = [experiment_id, worker_id]
+        if since_iso:
+            sql += " AND at>=?"; params.append(since_iso)
+        sql += " ORDER BY at ASC LIMIT ?"; params.append(limit)
         with self._lock:
             rows = self._q(sql, params).fetchall()
         return [dict(r) for r in rows]

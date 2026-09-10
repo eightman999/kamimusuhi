@@ -110,3 +110,43 @@ def test_worker_never_marks_running_succeeded(client, service):
     # and a stale-claimed job can never be marked succeeded behind the
     # coordinator's back: status stays SUCCEEDED from the first result
     assert service.db.get_job(jid)["status"] == "SUCCEEDED"
+
+
+def test_sigterm_mid_job_reports_failed_not_running(client, service):
+    """A worker stopped mid-job reports FAILED(interrupted), never leaves
+    the job RUNNING."""
+    from experiments.mioba.workers import worker as w
+    _register(client, "w1")
+    r = client.post("/api/worker/claim", json={"worker_id": "w1"})
+    jid = r.json()["job_id"]
+    w._stop.set()
+    try:
+        body = w.run_job(client, "w1", r.json(), "cpu", 1, grace_s=0.0)
+    finally:
+        w._stop.clear()
+    assert body["status"] == "FAILED"
+    assert "interrupted" in body["error"]
+    assert service.db.get_job(jid)["status"] == "FAILED"
+
+
+def test_resume_config_hash_mismatch(tmp_path, smoke_config):
+    import copy
+    from experiments.mioba.coordinator.service import MiobaService
+
+    cfg = copy.deepcopy(smoke_config)
+    svc = MiobaService(cfg, tmp_path / "runs")
+    exp_id = svc.experiment_id
+    stored = svc.config_hash
+    svc.db.close()
+
+    cfg2 = copy.deepcopy(smoke_config)
+    cfg2["mie"]["interval_s"] = 9  # operator-tuned interval
+    svc2 = MiobaService(cfg2, tmp_path / "runs", resume=exp_id)
+    assert svc2.config_hash != stored
+    evs = svc2.db.list_events(exp_id, type_="config_hash_mismatch")
+    assert evs and evs[-1]["severity"] == "warn"
+    assert evs[-1]
+    s = svc2.status()
+    assert s["config_hash_stored"] == stored
+    assert s["config_hash"] == svc2.config_hash
+    svc2.db.close()

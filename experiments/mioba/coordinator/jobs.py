@@ -23,9 +23,9 @@ def claim(db, experiment_id, worker_id, paused: bool) -> dict | None:
     return db.claim_job(experiment_id, worker_id)
 
 
-def finish(db, experiment_id, job, status, error=None):
-    db.finish_job(job["job_id"], status, error)
-    db.worker_finished_job(experiment_id, job.get("claimed_by_worker") or "",
+def finish(db, experiment_id, job, status, worker_id, error=None):
+    db.finish_job(job["job_id"], status, worker_id, error)
+    db.worker_finished_job(experiment_id, worker_id,
                            ok=(status == M.JOB_SUCCEEDED))
 
 

@@ -52,8 +52,13 @@ def backend_kwargs(config: dict, run_dir: str | None) -> dict:
 
 
 def run_job(client, worker_id: str, job: dict, device: str,
-            batch_size: int) -> dict:
-    """Execute one claimed job and POST the result. Returns the result body."""
+            batch_size: int, grace_s: float = 30.0) -> dict:
+    """Execute one claimed job and POST the result. Returns the result body.
+
+    On SIGTERM (_stop set): the job keeps running while it is younger
+    than grace_s; once older, it reports FAILED("interrupted") — it is
+    never left RUNNING.
+    """
     global _current_job_started
     genome = Genome.from_json(job["genome_json"])
     phenotype = develop(genome)
@@ -68,7 +73,14 @@ def run_job(client, worker_id: str, job: dict, device: str,
         drive = make_drive(job["environment_id"], backend.n_base
                            if hasattr(backend, "n_base") else 512, config)
         backend.set_inputs(drive)
-        backend.run(job["duration_ms"])
+        remaining = float(job["duration_ms"])
+        while remaining > 1e-9:
+            if _stop.is_set() and \
+                    time.time() - _current_job_started > grace_s:
+                raise RuntimeError("interrupted")
+            chunk = min(50.0, remaining)
+            backend.run(chunk)
+            remaining -= chunk
         summary = backend.get_state_summary()
         summary["activity"] = backend.get_population_activity(["all", "fba0"])
         trace_path = None
@@ -204,7 +216,7 @@ def main(argv=None) -> int:
             continue
         job = resp.json()
         run_job(client, worker_id, job, args.device,
-                batch_size or 1)
+                batch_size or 1, grace_s=args.grace_s)
         if _stop.is_set():
             break
     return 0
