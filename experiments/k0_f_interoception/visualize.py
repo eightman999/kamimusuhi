@@ -133,6 +133,9 @@ def render(artifacts):
     inputs = {name: read(root, name) for name in names}
     mac, master, frames, traces = (rows(inputs[name]) for name in names[:4])
     probe, ablation, counter, ood = (rows(inputs[name]) for name in names[4:8])
+    # A separately trained BLIND model is a distinct control, not a duplicate seed
+    # of the BODY model's BLIND input intervention.
+    ablation = [dict(row, mode="TRAINED_BLIND") if row.get("training_mode") == "BLIND" else row for row in ablation]
     timestamps = [record["timestamp"] for record in mac + master if finite(record.get("timestamp"))]
     origin = min(timestamps) if timestamps else 0
     manifest = {"schema_version": "k0f.plots.v1", "files": [], "inputs": {},

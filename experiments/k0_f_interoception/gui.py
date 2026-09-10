@@ -25,12 +25,13 @@ FRAME_LABELS = (
     "P100 温度圧", "P100 計算負荷", "P100 VRAM 圧", "P100 電力圧",
     "Mac 熱圧", "Mac CPU 使用率", "Mac メモリー圧", "Mac 電源圧",
     "通信遅延", "パケット損失", "身体情報の古さ", "身体情報の取得率")
-ACTIONS = ("WAIT", "RUN_CPU", "RUN_RTX3060", "RUN_P100", "RUN_DUAL_GPU", "INVOKE_LANGUAGE", "DEFER")
+ACTIONS = ("RUN_CPU", "RUN_RTX3060", "RUN_P100")
 ACTION_LABELS = {"WAIT": "待機", "RUN_CPU": "CPU で実行", "RUN_RTX3060": "RTX 3060 で実行",
                  "RUN_P100": "P100 で実行", "RUN_DUAL_GPU": "両 GPU で実行",
                  "INVOKE_LANGUAGE": "言語器官を呼ぶ", "DEFER": "延期"}
 SOURCE_LABELS = {"real": "実測", "synthetic": "合成", "mixed": "実測と合成の混合",
                  "real_telemetry_measured_cost_replay": "実測身体・実測費用の再生評価",
+                 "real_new_hardware_job": "凍結方策による新規実ジョブ",
                  "synthetic_observation_perturbation": "合成センサー介入"}
 PLOTS = (
     ("body_timeseries.png", "身体状態の時系列"),
@@ -94,7 +95,7 @@ def read_snapshot(root):
         "mac": ("raw_mac_telemetry.jsonl",), "master": ("raw_master_telemetry.jsonl",),
         "aligned": ("aligned_body_telemetry.jsonl",),
         "frames": ("interoceptive_frames.jsonl",),
-        "core": ("policy_trace.jsonl", "policy_traces.jsonl", "core_trace.jsonl"),
+        "core": ("live_jobs.jsonl", "policy_trace.jsonl", "policy_traces.jsonl", "core_trace.jsonl"),
     }.items():
         snapshot[key] = []
         for name in names:
@@ -105,7 +106,7 @@ def read_snapshot(root):
                 except OSError:
                     snapshot["errors"].append(f"{name}: 読み取り失敗")
                 break
-    for name in ("run_summary", "prediction_probe", "ablation_results", "success_criteria", "final_runtime_state"):
+    for name in ("run_summary", "prediction_probe", "ablation_results", "live_results", "success_criteria", "final_runtime_state"):
         snapshot[name] = None
         path = root / (name + ".json")
         if path.exists():
@@ -381,6 +382,7 @@ class BodyDashboard(QtWidgets.QMainWindow):
         latest = records[-1] if records else {}
         action = latest.get("action", latest.get("action_name"))
         hidden = latest.get("hidden_summary", latest.get("state_summary", latest.get("hidden_norm")))
+        action = ACTIONS[int(action)] if finite(action) and int(action) == action and 0 <= action < len(ACTIONS) else action
         label = ACTION_LABELS.get(action, display(action)) if isinstance(action, str) else display(action)
         source = SOURCE_LABELS.get(latest.get("source_kind"), display(latest.get("source_kind")))
         self.cards["core"].setText(f"<b>保存済み行動</b>　{html.escape(label)}<br><b>hidden / state</b>　{html.escape(display(hidden))}<br>"
@@ -388,6 +390,7 @@ class BodyDashboard(QtWidgets.QMainWindow):
         rows = []
         for record in records[-200:]:
             action = record.get("action", record.get("action_name"))
+            action = ACTIONS[int(action)] if finite(action) and int(action) == action and 0 <= action < len(ACTIONS) else action
             rows.append((display(record.get("timestamp", record.get("step"))), display(record.get("condition", record.get("mode"))),
                          ACTION_LABELS.get(action, display(action)) if isinstance(action, str) else display(action),
                          display(record.get("hidden_summary", record.get("state_summary", record.get("hidden_norm")))), display(record.get("source_kind"))))
@@ -400,10 +403,14 @@ class BodyDashboard(QtWidgets.QMainWindow):
         records = data.get("ablation_results") or data.get("run_summary") or []
         if isinstance(records, dict):
             records = records.get("rows", records.get("records", records.get("results", records.get("runs", []))))
+        live = data.get("live_results")
+        if isinstance(live, dict):
+            records = list(records) + [dict(row, architecture="GRU128", status="新規実ジョブ") for row in live.get("rows", [])]
         rows = []
         for record in records if isinstance(records, list) else []:
             metrics = record.get("metrics", record)
-            rows.append((record.get("architecture", "未取得"), display(record.get("seed")), record.get("condition", record.get("mode", "未取得")),
+            condition = "独立学習 BLIND" if record.get("training_mode") == "BLIND" else record.get("condition", record.get("mode", "未取得"))
+            rows.append((record.get("architecture", "未取得"), display(record.get("seed")), condition,
                          display(metrics.get("utility", metrics.get("reward"))), display(metrics.get("deadline_success_rate", metrics.get("task_success", metrics.get("success_rate"))), 100, "%"),
                          display(metrics.get("latency_seconds", metrics.get("latency_s", metrics.get("completion_time_s")))), record.get("status", "保存結果")))
         fill(self.runs_table, rows)
@@ -472,7 +479,7 @@ class BodyDashboard(QtWidgets.QMainWindow):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--artifacts", default="experiments/k0_f_interoception/artifacts/primary")
+    parser.add_argument("--artifacts", default="experiments/k0_f_interoception/artifacts/primary_v2")
     parser.add_argument("--poll-ms", type=int, default=2000)
     args = parser.parse_args()
     application = QtWidgets.QApplication(sys.argv[:1])

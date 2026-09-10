@@ -91,6 +91,14 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(records, [{}])
         self.assertEqual(len(errors), 1)
 
+    def test_live_numeric_action_matches_three_resource_contract(self):
+        self.apply(core=[{"action": 0, "mode": "BODY", "hidden_norm": 1, "source_kind": "real_new_hardware_job"}],
+                   live_results={"rows": [{"seed": 1, "mode": "BODY", "utility": .8, "latency_seconds": .002}]})
+        self.assertIn("CPU で実行", self.window.cards["core"].text())
+        self.assertNotIn("待機", self.window.cards["core"].text())
+        self.assertIn("新規実ジョブ", self.window.cards["core"].text())
+        self.assertEqual(self.window.runs_table.item(0, 6).text(), "新規実ジョブ")
+
     def test_wrong_frame_length_not_silently_normal(self):
         self.apply(frames=[{"values": [1], "mask": [1], "quality": [1], "age_s": [0]}])
         self.assertIn("固定長データ不整合", self.window.frame_summary.text())

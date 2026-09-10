@@ -10,4 +10,4 @@ if [[ ! -x "$K0F_PYTHON" ]]; then
   exit 1
 fi
 cd "$K0F_ROOT"
-exec "$K0F_PYTHON" -m experiments.k0_f_interoception.gui --artifacts "${K0F_ARTIFACTS:-$K0F_ROOT/experiments/k0_f_interoception/artifacts/primary}" "$@"
+exec "$K0F_PYTHON" -m experiments.k0_f_interoception.gui --artifacts "${K0F_ARTIFACTS:-$K0F_ROOT/experiments/k0_f_interoception/artifacts/primary_v2}" "$@"
