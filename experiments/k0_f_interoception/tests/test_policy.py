@@ -10,10 +10,11 @@ import torch
 from torch import nn
 
 from experiments.k0_f_interoception.policy import (
-    ACTION_NAMES, BodyPolicy, SENSOR_OOD, TEMPORAL_OOD, counterfactual, evaluate_models,
+    ACTION_NAMES, BodyPolicy, SENSOR_OOD, TEMPORAL_OOD, admit_policy_run, counterfactual, evaluate_models,
     encode_inputs, infer, load_model, require_unique_seed_rows, score_actions, train_one,
-    unique_integer_list, utilities, validate_rows,
+    sha256, unique_integer_list, utilities, validate_frozen_diagnostic_policy, validate_rows,
 )
+from experiments.k0_f_interoception import policy
 from experiments.k0_f_interoception.statistics import describe, exact_sign_test, paired_comparison
 
 
@@ -141,7 +142,9 @@ class PolicyTests(unittest.TestCase):
         validation = [r for r in rows if r["split"] == "validation"]
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "run"
-            result = train_one(train, validation, path, epochs=3, hidden_size=8, batch_size=8)
+            diagnostic = {"exploratory_after_failed_probe": True, "confirmatory_eligible": False,
+                "decision_sha256": "fixture-only", "research_status_locked": "FAIL", "failed_probe_sha256": "fixture-only"}
+            result = train_one(train, validation, path, epochs=3, hidden_size=8, batch_size=8, identities=diagnostic)
             model, meta = load_model(path / "best.pt")
             self.assertEqual(meta["checkpoint_stage"], "best")
             self.assertEqual(meta["best_validation_utility"], result["best_validation_utility"])
@@ -153,10 +156,71 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue(all(r["checkpoint"] == "final" for r in final["rows"]))
             self.assertTrue(all(r["checkpoint"] == "best" for r in best["rows"]))
             self.assertFalse(final["primary"])
+            self.assertFalse(meta["identities"]["confirmatory_eligible"])
+            self.assertEqual(meta["identities"]["decision_sha256"], "fixture-only")
+            for filename in ("ablation_results.json", "final_checkpoint_results.json", "counterfactual_body.json", "ood_results.json"):
+                artifact = json.loads((Path(temporary) / "evaluation" / filename).read_text())
+                self.assertTrue(artifact["exploratory_after_failed_probe"])
+                self.assertFalse(artifact["confirmatory_eligible"])
+                self.assertEqual(artifact["research_status_locked"], "FAIL")
+                self.assertEqual(artifact["experiment_scope"], "exploratory_after_failed_probe")
+                self.assertTrue(all(r["decision_sha256"] == "fixture-only" for r in artifact["rows"]))
             with self.assertRaises(FileExistsError):
                 train_one(train, validation, path, epochs=1)
             with self.assertRaises(ValueError):
                 train_one([rows[-1]], validation, Path(temporary) / "leak", epochs=1)
+
+    def test_default_probe_failure_refuses_before_data_or_training(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            probe_file = path / "probe.json"
+            probe_file.write_text(json.dumps({"gate": {"pass": False}}))
+            args = ["policy", "--dataset", str(path / "unreadable"), "--probe", str(probe_file),
+                "--output", str(path / "output"), "--normalization-config", str(path / "unreadable-normalization")]
+            with mock.patch("sys.argv", args), mock.patch.object(policy, "load_dataset") as load, mock.patch.object(policy, "train_one") as train:
+                with self.assertRaisesRegex(RuntimeError, "gate failed"):
+                    policy.main()
+                load.assert_not_called()
+                train.assert_not_called()
+
+    def test_frozen_diagnostic_amendment_requires_matching_false_gate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            data, probe_file, amendment_file = path / "data", path / "probe.json", path / "amendment.json"
+            data.write_text("fixture-data-only\n")
+            probe_file.write_text(json.dumps({"gate": {"pass": False}, "dataset_sha256": sha256(data)}))
+            valid = {"schema_version": "k0-f-diagnostic-amendment-v1",
+                "status": "frozen_before_policy_training_and_test_performance",
+                "experiment_scope": "exploratory_after_failed_probe", "confirmatory_eligible": False,
+                "research_status_locked": "FAIL", "test_performance_examined_before_amendment": False,
+                "dataset_sha256": sha256(data), "probe_sha256": sha256(probe_file)}
+            for key, wrong in (("schema_version", "other"), ("status", "after_test"),
+                ("experiment_scope", "confirmatory"), ("dataset_sha256", "0" * 64),
+                ("probe_sha256", "0" * 64), ("confirmatory_eligible", 0),
+                ("test_performance_examined_before_amendment", 0), ("research_status_locked", "PASS")):
+                with self.subTest(key=key):
+                    amendment_file.write_text(json.dumps(dict(valid, **{key: wrong})))
+                    with self.assertRaises(ValueError):
+                        admit_policy_run(data, probe_file, amendment_file)
+            amendment_file.write_text(json.dumps(valid))
+            analysis, amendment = admit_policy_run(data, probe_file, amendment_file)
+            self.assertEqual(amendment, valid)
+            self.assertTrue(analysis["exploratory_after_failed_probe"])
+            self.assertFalse(analysis["confirmatory_eligible"])
+            self.assertEqual(analysis["experiment_scope"], "exploratory_after_failed_probe")
+            self.assertEqual(analysis["decision_sha256"], sha256(amendment_file))
+            self.assertEqual(analysis["failed_probe_sha256"], sha256(probe_file))
+
+    def test_diagnostic_training_budget_cannot_change(self):
+        frozen = {"frozen_policy": {"architecture": "GRU128", "seeds": list(range(8)),
+            "epochs": 160, "batch_size": 64, "learning_rate": .001,
+            "training_modes": ["BODY", "BLIND"], "primary_inputs": ["BODY", "BLIND", "SHUFFLED", "STALE"],
+            "checkpoint_selection": "validation only"}}
+        args = dict(seeds=list(range(8)), hidden_sizes=[128], epochs=160, batch_size=64, learning_rate=.001)
+        validate_frozen_diagnostic_policy(frozen, **args)
+        for key, value in (("seeds", [0]), ("hidden_sizes", [64]), ("epochs", 320), ("learning_rate", .0001)):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                validate_frozen_diagnostic_policy(frozen, **dict(args, **{key: value}))
 
     def test_duplicate_seeds_and_result_rows_rejected(self):
         for value, name in (("0,1,0", "seeds"), ("128,128", "hidden_sizes")):

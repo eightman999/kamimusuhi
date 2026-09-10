@@ -223,6 +223,8 @@ def generate(artifacts, policy_artifacts=None, live_artifacts=None, output=None)
     cf_comparison = mapping(mapping(counter.get("comparisons")).get("GRU128"))
     live_comparisons = mapping(live.get("comparisons"))
     probe_gate = mapping(probe.get("gate"))
+    experiment_scope = config.get("experiment_scope", "confirmatory")
+    exploratory = experiment_scope == "exploratory_after_failed_probe"
     keys = ["GRU128_BODY_vs_" + mode for mode in ("BLIND", "SHUFFLED", "STALE")]
     gates = {
         "A_telemetry": resources.get("telemetry_continuous") is True and mac_info["real_stream"] and master_info["real_stream"],
@@ -238,15 +240,18 @@ def generate(artifacts, policy_artifacts=None, live_artifacts=None, output=None)
         "baseline_preservation": baseline.get("pass") is True,
         "runtime_cleanup": runtime.get("cleanup_pass") is True,
         "probe_validation_gate": probe_gate.get("pass") is True,
+        "confirmatory_scope": not exploratory,
         "evidence_readable": not evidence.errors,
     }
     criteria = {"schema_version": "k0f.success.v1", "research_status": "PASS" if all(gates.values()) else "FAIL",
+                "experiment_scope": experiment_scope,
                 "gates": gates, "unmet": [key for key, value in gates.items() if not value],
                 "rule": "prespecified conjunction; missing evidence is not success; every paired gate requires n>=8, mean>0, 95% CI lower>0, exact sign p<=.05",
                 "live_scope": "new real jobs after frozen policy choices; separately reported from measured-cost replay"}
     best = best_validation_core(run_summary)
     execution_complete = bool(resources.get("execution_complete") is True and runtime.get("cleanup_pass") is True and baseline.get("pass") is True and not evidence.errors)
     statistics_output = {"schema_version": "k0f.report_statistics.v1", "execution_complete": execution_complete,
+                         "experiment_scope": experiment_scope,
                          "research_status": criteria["research_status"], "best_core_validation_only": best,
                          "telemetry": {"mac": mac_info, "master": master_info}, "frame": frame_info,
                          "probe_gate": probe_gate, "replay_comparisons": comparisons, "counterfactual_comparison": cf_comparison,
@@ -260,6 +265,7 @@ def generate(artifacts, policy_artifacts=None, live_artifacts=None, output=None)
 
     missing_gates = "、".join(criteria["unmet"]) or "なし"
     section(1, f"**研究成功: {criteria['research_status']}。実施完了: {'確認済み' if execution_complete else '未確認 / 作業残あり'}。**\n\n"
+            + ("**本学習・ablation・OOD・liveは、予測probe不合格後の探索的診断（exploratory_after_failed_probe）である。後続比較が良好でも研究全体FAILを固定し、確証的な研究成功へ昇格しない。**\n\n" if exploratory else "") +
             f"未達・未検証 gate: {missing_gates}。最良 Core は validation の seed 平均だけで選定し、{best.get('architecture') or '未学習 / 未選定'}。\n\n"
             "実測テレメトリーの取得、保存済み実測費用による再生評価、凍結方策が選んだ資源で新規に実行した実ジョブを別の証拠層として示す。GUI の完成を研究成功に含めない。\n\n" +
             comparison_table(comparisons, keys) + "\n\n新規実ジョブの主確認:\n\n" + comparison_table(live_comparisons, ("BODY_vs_BLIND", "BODY_vs_TRAINED_BLIND")))
@@ -289,8 +295,10 @@ def generate(artifacts, policy_artifacts=None, live_artifacts=None, output=None)
             "\n\nこの実LLM区間はtelemetry取得の観測証拠として別保存する。primary_v2の学習・validation・held-out・seed統計には混ぜず、行列計算policyの言語能力評価とは扱わない。")
     section(8, "ridge λ=10、特徴標準化・target SDはtrainだけでfit。未来10秒のGPU使用率と、次jobの実測最小完了時間を区別する。validationで有効非定数targetが2種類以上かつ BODY の正規化MAEが BLIND より10%以上低いことを学習開始 gate とする。\n\n" +
             table(("validation gate", "値"), (("PASS", probe_gate.get("pass")), ("相対 MAE 改善", probe_gate.get("relative_mae_improvement")), ("target", probe_gate.get("targets")), ("BODY / BLIND / SHUFFLED / STALE MAE", probe_gate.get("normalized_mae")), ("test probe 実施", probe.get("test_evaluated")))) +
-            ("\n\nvalidation gate が通っていないため policy 学習・held-out評価の成功は主張しない。未実施は未実施として記録する。" if probe_gate.get("pass") is not True else "\n\nprobe の gate は記述的な事前screening。これ単独で研究成功や身体情報の因果価値とは呼ばない。"))
-    section(9, table(("保存 training config", "値"), ((key, config.get(key)) for key in ("seeds", "hidden_sizes", "epochs", "batch_size", "learning_rate", "device", "selection", "PPO", "DAgger", "source_commit"))) +
+            ("\n\nvalidation gate が通っていないため、後続policy・ablation・OOD・liveは探索的診断として区別する。v1不合格を保存し、標準化SDのfloorを0.05へ修正した一回のv2も不合格。成功閾値を変更せず、追加probe探索で成功を探さない。後続成績にかかわらず研究全体はFAIL。" if exploratory else
+             "\n\nvalidation gate が通っていないため policy 学習・held-out評価の成功は主張しない。未実施は未実施として記録する。" if probe_gate.get("pass") is not True else "\n\nprobe の gate は記述的な事前screening。これ単独で研究成功や身体情報の因果価値とは呼ばない。"))
+    section(9, ("**探索的診断として実施。予測probe不合格後の実験であり、事前の学習開始gateを通過した確証試験ではない。研究全体FAILを固定する。別学習BLINDを含む全結果を表示し、良好な条件だけを採用しない。**\n\n" if exploratory else "") +
+            table(("保存 training config", "値"), ((key, config.get(key)) for key in ("experiment_scope", "seeds", "hidden_sizes", "epochs", "batch_size", "learning_rate", "device", "selection", "PPO", "DAgger", "source_commit"))) +
             "\n\nGRU128 BODY と独立 BLIND を同一seed・初期重み・task順で教師学習。utilityは `1-min(latency/deadline,2)`、実行失敗は-1。lossは teacher cross entropy + expected utility regret。1 episodeに1資源選択であり、replay actionは次rowを変えないので DAggerは実施しない。PPOも実施しない。validation utility最大の最初のbestと最終epochを別保存する。\n\n" +
             table(("validation-only 選定", "値"), best.items()) + "\n\nGRU64: " + ("保存runあり。" if any(row.get("architecture") == "GRU64" for row in rows(run_summary)) else "未実施。軽量構造との優越性は未検証。") +
             "\n\nfinal checkpoint は `final_checkpoint_results.json` に別保存し、primaryをbestから置換しない。final比較の保存行数: " + str(len(rows(finals))))

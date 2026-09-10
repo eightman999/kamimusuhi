@@ -63,6 +63,16 @@ validation gate は事前固定する。
 - 最初は validation のみ出力。held-out は gate 固定後に `--include-test` で追加し、旧 gate を保存する。
 - held-out の dataset 読取・probe 呼出の前に、既存 validation gate の存在・PASS、dataset/source hash と seed の一致を検証する。欠落・FAIL の gate では probe 自体を呼ばない。
 
+### FAIL 後の診断的 policy 実験
+
+v1・v2 とも gate が FAIL のため、通常入口は引き続き学習を拒否する。sensor 設計の再検討と test 開封前の判断を `DIAGNOSTIC_AMENDMENT.json` に固定した場合だけ、`--exploratory-after-failed-probe DIAGNOSTIC_AMENDMENT.json` による別の診断的入口を設ける。
+
+amendment は schema `k0-f-diagnostic-amendment-v1`、status `frozen_before_policy_training_and_test_performance`、experiment_scope `exploratory_after_failed_probe`、実 dataset/probe SHA、literal boolean の `test_performance_examined_before_amendment=false` と `confirmatory_eligible=false`、`research_status_locked=FAIL` を厳密検証する。
+
+GRU128、seed 0〜7、160 epochs、lr0.001、batch64、BODY/独立BLIND、4 入力介入と validation-only 選択を amendment と照合し、変更を拒否する。config・checkpoint identities・metrics・全評価 JSON/JSONL に `exploratory_after_failed_probe=true`、`confirmatory_eligible=false`、decision SHA と FAIL 固定を記録する。以降の差や sign test の条件達成は診断的所見であり、confirmatory 成功へ昇格しない。
+
+probe 自身の `--include-test` guard は変更しない。失敗 gate の probe test は未評価のまま保持し、追加 target 選択・λ探索・scaling 調整・test に基づく再学習は行わない。
+
 ```sh
 python -m experiments.k0_f_interoception.probe --dataset DATASET --output OUTPUT
 python -m experiments.k0_f_interoception.policy --dataset DATASET --output OUTPUT --probe OUTPUT/prediction_probe.json --normalization-config NORMALIZATION --stage train

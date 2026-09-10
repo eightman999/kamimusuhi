@@ -109,6 +109,21 @@ class ReportTest(unittest.TestCase):
         self.assertFalse(result["gates"]["evidence_readable"])
         self.assertIn("live/live_results.json", stats["read_errors"][0])
 
+    def test_exploratory_scope_cannot_pass_even_when_all_metrics_pass(self):
+        self.fixture()
+        path = self.root / "training_config.json"
+        config = json.loads(path.read_text())
+        config["experiment_scope"] = "exploratory_after_failed_probe"
+        self.write(path.name, config)
+        stats, result = generate(self.root, output=self.out)
+        self.assertEqual(result["research_status"], "FAIL")
+        self.assertFalse(result["gates"]["confirmatory_scope"])
+        self.assertEqual(stats["experiment_scope"], "exploratory_after_failed_probe")
+        report = (self.out / "K0_F_REPORT.md").read_text()
+        self.assertIn("後続比較が良好でも研究全体FAILを固定", report)
+        self.assertIn("別学習BLINDを含む全結果", report)
+        self.assertIn("BODY_vs_independently_trained_BLIND", report)
+
 
 if __name__ == "__main__":
     unittest.main()

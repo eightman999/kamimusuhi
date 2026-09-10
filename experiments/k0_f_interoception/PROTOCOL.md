@@ -52,3 +52,11 @@ v1 validationはBODY normalized MAE 1.323946、BLIND 0.607069でFAIL。testの�
 v2では84 probe特徴のbody/mask部分（index>=4）にtrain SD floor=0.05を一度だけ適用する。task4 scaling、3 target、ridge λ10、10%改善gateは維持し、clipやtarget変更やλ探索は行わない。元のFAIL artifactはprimary_v2へそのまま残し、新しいfitはanalysis_v2に保存する。これは同じvalidationを見た後の修正であることを明記し、初回からの独立した合格とは呼ばない。test結果による調整は行わない。
 
 記述的診断ではfuture10秒targetの62.5%は現在block終了後にあり、最小job latencyはどちらのGPUが速いかの情報を失う。一方、task差を除いたGPU busyと自身の実測latencyの相関はvalidation RTX0.469/P1000.444。これらはsensorに情報が残る根拠であり、元gateやprimary成功条件の置換には使わない。
+
+## FAILを保持した探索的診断への明示的逸脱
+
+v2 validationもBODY 0.608080、BLIND 0.607069でFAIL（改善率−0.1665%）。ここで本プロトコルの確認的K0-F研究判定をFAILに固定する。追加probe tuning、target選択、閾値変更は行わない。
+
+ユーザー指示の「学習前にsensor設計を再検討」を前節の診断で実施した。ユーザーが要求する学習・ablation・OOD・downstream実ジョブ確認までを、独立した探索的診断として完遂する。これは元の「probe PASS時のみpolicyへ進む」という本プロトコルへの明示的逸脱であり、確認的成功の救済ではない。`DIAGNOSTIC_AMENDMENT.json`にdataset/probe hash、test性能未評価、8seed/160epoch/GRU128の固定条件を保存し、以降のconfig・checkpoint・結果には探索的scopeを継承する。通常入口のprobe FAIL停止は維持する。probeのheldout評価は開かない。
+
+センサーの値・mask・履歴・正規化は維持する。現時点で不確かな情報価値を、事前指定済みの同task/同seed介入・同hidden body fork・新規実ジョブで診断する。良い結果が出てもK0-F研究全体FAILを変更せず、testを見た後に再学習・再選択・予算拡張しない。確認的再試験は新しいユーザー承認と新しい独立データを必要とする。

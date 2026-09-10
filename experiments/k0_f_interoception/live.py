@@ -30,6 +30,8 @@ def collect(args):
     torch.set_num_threads(2)
     out=args.output;out.mkdir(parents=True,exist_ok=True)
     if (out/'driver_identity.json').exists():raise FileExistsError('Use a fresh live directory')
+    training_config=json.loads((args.training_artifacts/'training_config.json').read_text())
+    scope=training_config.get('experiment_scope','confirmatory');eligible=training_config.get('confirmatory_eligible',True)
     models={};identities={}
     for seed in range(8):
         for mode in ['BODY','BLIND']:
@@ -44,7 +46,7 @@ def collect(args):
     donors=[r for r in load_dataset(args.dataset) if r['split']=='test']
     save(out/'initial_runtime_state.json',runtime_state())
     save(out/'driver_identity.json',dict(pid=__import__('os').getpid(),started_at=time.time(),owned_by='k0-f-acquire'))
-    save(out/'live_config.json',dict(seeds=list(range(8)),modes=list(PRIMARY_MODES)+['TRAINED_BLIND'],blocks=args.blocks,tasks=TASKS,checkpoint_sha256=identities,source_commit=args.source_commit,shuffle='different archived episode with identical history length; costs and labels excluded',timing='randomized task/seed/mode order per block; common pre-action body for each 5-mode group',success_rule='live BODY vs BLIND and independently trained BLIND paired utility difference mean>0, CI lower>0, exact p<=.05',body_kind='real',reward='1-min(real_latency/deadline,2); failure=-1'))
+    save(out/'live_config.json',dict(experiment_scope=scope,confirmatory_eligible=eligible,decision_sha256=training_config.get('decision_sha256'),seeds=list(range(8)),modes=list(PRIMARY_MODES)+['TRAINED_BLIND'],blocks=args.blocks,tasks=TASKS,checkpoint_sha256=identities,source_commit=args.source_commit,shuffle='different archived episode with identical history length; costs and labels excluded',timing='randomized task/seed/mode order per block; common pre-action body for each 5-mode group',success_rule='live BODY vs BLIND and independently trained BLIND paired utility difference mean>0, CI lower>0, exact p<=.05',body_kind='real',reward='1-min(real_latency/deadline,2); failure=-1'))
     aligner=Aligner(out);sensor=None;bg=None;rows=[];manifest=[];ok=False
     try:
         sensor=subprocess.Popen([sys.executable,'-m','experiments.k0_f_interoception.sensors','--duration','2300','--interval','1','--output',str(out/'raw_master_telemetry.jsonl')],stdout=subprocess.DEVNULL)
@@ -85,7 +87,8 @@ def collect(args):
                 bg.check();bg.close();manifest.append(dict(block_id=bid,workload_label=label,start_timestamp=started,end_timestamp=time.time(),workload_processes=bg.evidence()));bg=None;save(out/'workload_manifest.json',manifest)
                 print(json.dumps(dict(event='block_end',block_id=bid)),flush=True)
         for _ in range(10):aligner.guard();time.sleep(1)
-        save(out/'live_results.json',aggregate(rows));ok=True
+        result=aggregate(rows);result.update(experiment_scope=scope,confirmatory_eligible=eligible,decision_sha256=training_config.get('decision_sha256'))
+        save(out/'live_results.json',result);ok=True
     finally:
         if bg:bg.close()
         aligner.close()

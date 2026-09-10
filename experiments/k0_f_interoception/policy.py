@@ -32,6 +32,68 @@ SENSOR_OOD = ("sensor_noise", "sensor_dropout", "constant_value", "delayed_telem
               "network_latency_increase", "partial_sensor_inversion", "sensor_permutation")
 TEMPORAL_OOD = ("sampling_interval_2x", "body_update_delay", "network_jitter",
                 "temporal_sensor_dropout", "stale_frames", "task_start_timing")
+ANALYSIS_DEFAULTS = {"exploratory_after_failed_probe": False, "confirmatory_eligible": True,
+                     "decision_sha256": None, "research_status_locked": None,
+                     "failed_probe_sha256": None, "experiment_scope": "confirmatory"}
+
+
+def analysis_metadata(identities=None):
+    result = {key: (identities or {}).get(key, default) for key, default in ANALYSIS_DEFAULTS.items()}
+    if result["exploratory_after_failed_probe"]:
+        result["experiment_scope"] = "exploratory_after_failed_probe"
+        if result["confirmatory_eligible"] is not False or result["research_status_locked"] != "FAIL":
+            raise ValueError("diagnostic identities cannot claim confirmatory eligibility or unlock FAIL")
+    return result
+
+
+def admit_policy_run(dataset_path: Path, probe_path: Path, amendment_path: Path | None = None):
+    """Keep the normal gate strict; an explicit frozen amendment creates diagnostics."""
+    probe = json.loads(probe_path.read_text())
+    gate_pass = probe.get("gate", {}).get("pass")
+    if gate_pass is not True and gate_pass is not False:
+        raise ValueError("probe gate pass must be a JSON boolean")
+    if not gate_pass and amendment_path is None:
+        raise RuntimeError("validation informativeness gate failed; policy training is not authorized by protocol")
+    dataset_hash = sha256(dataset_path)
+    if probe.get("dataset_sha256") != dataset_hash:
+        raise ValueError("probe gate was not computed on this dataset")
+    if amendment_path is None:
+        return dict(ANALYSIS_DEFAULTS), None
+    if gate_pass:
+        raise ValueError("failed-probe diagnostic amendment cannot label a passing probe")
+    amendment = json.loads(amendment_path.read_text())
+    required = {
+        "schema_version": "k0-f-diagnostic-amendment-v1",
+        "status": "frozen_before_policy_training_and_test_performance",
+        "experiment_scope": "exploratory_after_failed_probe",
+        "research_status_locked": "FAIL",
+        "dataset_sha256": dataset_hash,
+        "probe_sha256": sha256(probe_path),
+    }
+    for key, expected in required.items():
+        if amendment.get(key) != expected:
+            raise ValueError(f"diagnostic amendment mismatch: {key}")
+    for key in ("confirmatory_eligible", "test_performance_examined_before_amendment"):
+        if amendment.get(key) is not False:
+            raise ValueError(f"diagnostic amendment requires literal false: {key}")
+    return {"exploratory_after_failed_probe": True, "confirmatory_eligible": False,
+            "decision_sha256": sha256(amendment_path), "research_status_locked": "FAIL",
+            "failed_probe_sha256": sha256(probe_path), "experiment_scope": "exploratory_after_failed_probe"}, amendment
+
+
+def validate_frozen_diagnostic_policy(amendment, *, seeds, hidden_sizes, epochs, batch_size, learning_rate):
+    if amendment is None:
+        return
+    expected = {"architecture": "GRU128", "seeds": seeds, "epochs": epochs,
+                "batch_size": batch_size, "learning_rate": learning_rate,
+                "training_modes": ["BODY", "BLIND"], "primary_inputs": list(PRIMARY_MODES),
+                "checkpoint_selection": "validation only"}
+    if hidden_sizes != [128] or seeds != list(range(8)):
+        raise ValueError("diagnostic amendment only permits frozen GRU128 seeds 0..7")
+    frozen = amendment.get("frozen_policy", {})
+    for key, value in expected.items():
+        if frozen.get(key) != value:
+            raise ValueError(f"diagnostic policy differs from frozen amendment: {key}")
 
 
 def json_write(path: Path, value):
@@ -253,6 +315,7 @@ def train_one(train_rows, validation_rows, output: Path, *, seed=0, hidden_size=
     """Validation utility selects immutable best; held-out rows are not accepted."""
     if any(r["split"] != "train" for r in train_rows) or any(r["split"] != "validation" for r in validation_rows):
         raise ValueError("train_one accepts only train and validation rows")
+    analysis = analysis_metadata(identities)
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"refusing to overwrite existing training run: {output}")
     output.mkdir(parents=True, exist_ok=True)
@@ -294,7 +357,7 @@ def train_one(train_rows, validation_rows, output: Path, *, seed=0, hidden_size=
         if validation["utility"] > best + 1e-12:
             best, best_epoch = validation["utility"], epoch
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-        entry = {"epoch": epoch, "training_loss": float(np.mean(losses)),
+        entry = {**analysis, "epoch": epoch, "training_loss": float(np.mean(losses)),
                  "validation_utility": validation["utility"], "validation_latency_seconds": validation["latency_seconds"]}
         metrics.append(entry)
         with (output / "metrics.jsonl").open("a") as handle:
@@ -304,7 +367,7 @@ def train_one(train_rows, validation_rows, output: Path, *, seed=0, hidden_size=
     final_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
     for stage, state in (("initial", initial_state), ("best", best_state), ("final", final_state)):
         require_finite_tensors(state.values(), f"{stage} checkpoint parameters")
-    metadata = {"schema_version": SCHEMA, "architecture": f"GRU{hidden_size}", "seed": seed,
+    metadata = {**analysis, "schema_version": SCHEMA, "architecture": f"GRU{hidden_size}", "seed": seed,
                 "parent": None, "training_stage": "supervised_measured_cost_imitation",
                 "training_mode": mode, "source_commit": source_commit,
                 "identities": identities or {}, "initial_parameter_sha256": initial_hash,
@@ -396,8 +459,13 @@ def evaluate_models(rows, run_paths, output: Path):
         raise ValueError("duplicate run paths are not independent seeds")
     ablations, ood, counter, traces, forks, input_traces, final_results = [], [], [], [], [], [], []
     run_identities = set()
+    analysis = None
     for run in run_paths:
         model, meta = load_model(run / "best.pt")
+        run_analysis = analysis_metadata(meta["identities"])
+        if analysis is not None and run_analysis != analysis:
+            raise ValueError("cannot mix confirmatory and diagnostic runs or different amendments")
+        analysis = run_analysis
         seed, training_mode = meta["seed"], meta["training_mode"]
         run_identity = (meta["architecture"], training_mode, seed)
         if run_identity in run_identities:
@@ -443,6 +511,11 @@ def evaluate_models(rows, run_paths, output: Path):
                     kind="synthetic_resource_failure_simulation" if mode == "controlled_resource_unavailable" else "synthetic_observation_perturbation",
                     outcome_provenance="RTX_selection_failure_simulated; other_actions_measured_cost" if mode == "controlled_resource_unavailable" else "measured_action_cost_replay",
                     **score_actions(outcomes, actions)))
+    if analysis is None:
+        raise ValueError("at least one run is required")
+    for records in (ablations, ood, counter, traces, forks, input_traces, final_results):
+        for record in records:
+            record.update(analysis)
     require_unique_seed_rows(ablations)
     require_unique_seed_rows(final_results)
     primary = [r for r in ablations if r["training_mode"] == "BODY"]
@@ -459,7 +532,7 @@ def evaluate_models(rows, run_paths, output: Path):
         independent = sorted([r for r in ablations if r["architecture"] == architecture and r["training_mode"] == "BLIND"], key=lambda r: r["seed"])
         if independent and [r["seed"] for r in independent] == [r["seed"] for r in table["BODY"]]:
             comparisons[f"{architecture}_BODY_vs_independently_trained_BLIND"] = paired_comparison([r["utility"] for r in table["BODY"]], [r["utility"] for r in independent])
-    json_write(output / "ablation_results.json", {"schema_version": SCHEMA, "rows": ablations, "comparisons": comparisons, "statistics": aggregates,
+    json_write(output / "ablation_results.json", {**analysis, "schema_version": SCHEMA, "rows": ablations, "comparisons": comparisons, "statistics": aggregates,
         "primary_control": "same BODY checkpoint; independent BLIND training is secondary", "outcome_provenance": "measured_action_cost_replay"})
     final_statistics, final_vs_best = {}, {}
     for architecture, training_mode, mode in sorted(set((r["architecture"], r["training_mode"], r["mode"]) for r in final_results)):
@@ -471,7 +544,7 @@ def evaluate_models(rows, run_paths, output: Path):
         final_statistics[key] = {metric: describe([r[metric] for r in final_rows]) for metric in
             ("utility", "latency_seconds", "deadline_success_rate", "failure_rate", "oracle_match_rate")}
         final_vs_best[key] = paired_comparison([r["utility"] for r in final_rows], [r["utility"] for r in best_rows])
-    json_write(output / "final_checkpoint_results.json", {"schema_version": SCHEMA, "rows": final_results,
+    json_write(output / "final_checkpoint_results.json", {**analysis, "schema_version": SCHEMA, "rows": final_results,
         "statistics": final_statistics, "final_vs_best_utility": final_vs_best,
         "checkpoint": "final", "primary": False, "outcome_provenance": "measured_action_cost_replay",
         "selection_note": "Final checkpoint is reported separately; validation-best remains the frozen primary choice."})
@@ -480,12 +553,12 @@ def evaluate_models(rows, run_paths, output: Path):
     counter_descriptive = {arch: {metric: describe([r[metric] for r in counter if r.get("available") and r["architecture"] == arch])
         for metric in ("action_change_rate", "matched_utility", "frozen_utility", "utility_gain", "matched_latency_seconds", "frozen_latency_seconds")}
         for arch in counter_stats}
-    json_write(output / "counterfactual_body.json", {"schema_version": SCHEMA, "rows": counter, "comparisons": counter_stats, "statistics": counter_descriptive,
+    json_write(output / "counterfactual_body.json", {**analysis, "schema_version": SCHEMA, "rows": counter, "comparisons": counter_stats, "statistics": counter_descriptive,
         "limitation": "Archived real outcomes; body swapping is controlled in model replay, not a randomized physical intervention."})
     ood_statistics = {f"{arch}_{mode}": {metric: describe([r[metric] for r in ood if r["architecture"] == arch and r["mode"] == mode])
         for metric in ("utility", "latency_seconds", "deadline_success_rate", "failure_rate", "oracle_match_rate")}
         for arch in sorted(set(r["architecture"] for r in ood)) for mode in TEMPORAL_OOD + SENSOR_OOD}
-    json_write(output / "ood_results.json", {"schema_version": SCHEMA, "rows": ood, "statistics": ood_statistics,
+    json_write(output / "ood_results.json", {**analysis, "schema_version": SCHEMA, "rows": ood, "statistics": ood_statistics,
         "limitation": "Synthetic observation changes scored against fixed measured costs; no real network fault, GPU failure, or unsafe workload induced.",
         "rtx3060_sensor_unavailable_scope": "RTX3060 sensor channels missing; measured costs unchanged",
         "controlled_resource_unavailable_scope": "RTX3060 sensor channels missing; selecting RTX receives utility=-1 and failure=1; physical GPU remains available"})
@@ -519,28 +592,28 @@ def main():
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--normalization-config", type=Path, required=True)
+    parser.add_argument("--exploratory-after-failed-probe", type=Path,
+                        help="Frozen diagnostic amendment; does not change or pass the failed probe gate")
     args = parser.parse_args()
     torch.set_num_threads(args.threads)
-    probe_result = json.loads(args.probe.read_text())
-    if not probe_result["gate"]["pass"]:
-        raise RuntimeError("validation informativeness gate failed; policy training is not authorized by protocol")
-    if probe_result.get("dataset_sha256") != sha256(args.dataset):
-        raise ValueError("probe gate was not computed on this dataset")
+    analysis, amendment = admit_policy_run(args.dataset, args.probe, args.exploratory_after_failed_probe)
+    seeds = unique_integer_list(args.seeds, "seeds")
+    hidden_sizes = unique_integer_list(args.hidden_sizes, "hidden_sizes", minimum=1)
+    validate_frozen_diagnostic_policy(amendment, seeds=seeds, hidden_sizes=hidden_sizes,
+        epochs=args.epochs, batch_size=args.batch_size, learning_rate=args.learning_rate)
     rows = load_dataset(args.dataset)
     args.output.mkdir(parents=True, exist_ok=True)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     from .normalize import canonical_identity
     normalization_config = json.loads(args.normalization_config.read_text())
     normalization_config.pop("identity", None)
-    identities = {"dataset_sha256": sha256(args.dataset), "policy_source_sha256": sha256(Path(__file__)),
+    identities = {**analysis, "dataset_sha256": sha256(args.dataset), "policy_source_sha256": sha256(Path(__file__)),
                   "source_files_sha256": {name: sha256(Path(__file__).with_name(name)) for name in ("policy.py", "probe.py", "statistics.py", "normalize.py")},
                   "sensor_schema_identity": normalization_config["frame_schema"],
                   "raw_sensor_schema_identity": normalization_config["raw_schema"],
                   "normalization_identity": canonical_identity(normalization_config),
                   "normalization_file_sha256": sha256(args.normalization_config)}
-    seeds = unique_integer_list(args.seeds, "seeds")
-    hidden_sizes = unique_integer_list(args.hidden_sizes, "hidden_sizes", minimum=1)
-    config = {"schema_version": SCHEMA, "seeds": seeds, "hidden_sizes": hidden_sizes, "epochs": args.epochs,
+    config = {**analysis, "schema_version": SCHEMA, "seeds": seeds, "hidden_sizes": hidden_sizes, "epochs": args.epochs,
               "batch_size": args.batch_size, "learning_rate": args.learning_rate, "device": args.device,
               "reward": "1-min(measured_latency/deadline,2); measured failure=-1",
               "selection": "validation utility only", "identities": identities, "source_commit": commit,
@@ -567,12 +640,12 @@ def main():
                             seed=seed, hidden_size=hidden, mode=mode, epochs=args.epochs, batch_size=args.batch_size,
                             learning_rate=args.learning_rate, source_commit=commit, identities=identities, device=args.device)
                     summaries.append(summary)
-                    json_write(args.output / "run_summary.json", {"schema_version": SCHEMA, "rows": summaries, "completed_runs": len(summaries), "planned_runs": len(seeds) * len(hidden_sizes) * 2})
+                    json_write(args.output / "run_summary.json", {**analysis, "schema_version": SCHEMA, "rows": summaries, "completed_runs": len(summaries), "planned_runs": len(seeds) * len(hidden_sizes) * 2})
                     print(json.dumps({"run": run.name, "best_validation_utility": summary["best_validation_utility"]}), flush=True)
                 else:
                     status = verified_completed_run(run, identities)
                     summaries.append(status)
-    json_write(args.output / "run_summary.json", {"schema_version": SCHEMA, "rows": summaries})
+    json_write(args.output / "run_summary.json", {**analysis, "schema_version": SCHEMA, "rows": summaries})
     if args.stage in ("evaluate", "all"):
         if (args.output / "ablation_results.json").exists():
             raise FileExistsError("refusing to overwrite frozen held-out evaluation")

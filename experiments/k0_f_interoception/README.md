@@ -63,6 +63,8 @@ python -m experiments.k0_f_interoception.probe \
 
 保存 `prediction_probe.json` の `gate.pass` がtrueの場合だけpolicyへ進む。train-only ridge/scaling、validationのBODY正規化MAEがBLINDより10%以上低いことを事前条件とする。未達ならtestを開かず停止理由を報告する。sensor再設計は旧protocol・旧pilotを保全し、別namespaceへ記録する。
 
+今回のv1 probeはFAIL。標準化SDのfloorを0.05とする一回の診断修正後もv2はFAIL（validation正規化MAE: BODY約0.608080、BLIND約0.607069）。両結果を保持し、成功閾値変更や追加probe探索は行わない。sensor設計再検討を記録したうえで後続の8seed学習・ablation・OOD・新規liveを実施する場合は、`training_config.experiment_scope = "exploratory_after_failed_probe"` を固定する。これは不合格後の探索的診断であり、上記の確証protocolを通過した学習ではない。後続結果が良好でも研究全体FAILを維持する。独立学習BLINDとの結果も省略しない。
+
 ## C: 教師学習、固定checkpoint、評価
 
 ```sh
@@ -112,6 +114,8 @@ python -m experiments.k0_f_interoception.report --artifacts "$K0F_PRIMARY" \
 GUIは保存フォルダーを2秒ごとに読む閲覧専用。中央hostのcontrolや負荷起動は行わない。生値・normalization・欠損・age・qualityを表示し、live_jobsがある場合は新規実ジョブのactionを優先表示する。再生評価のtraceはliveと区別する。図生成は10PNGとinput/image hash manifestを作り、欠損panelは未取得を明示する。統計上のnはseedでありtelemetry点数ではない。
 
 reportは24節の日本語Markdownと `report_statistics.json` / `success_criteria.json` を生成する。最終監査の `resource_summary.json` は `telemetry_continuous`, `fixed_frame_valid`, `safety_pass`, `reproducibility_pass`, `execution_complete`、runtimeは `cleanup_pass`、baseline監査は `pass` を保存する。未知・欠損・falseは成功へ昇格しない。liveの2主比較を含む全gateを要求する。
+
+`experiment_scope="exploratory_after_failed_probe"` の成果物は結論・learning protocol・機械可読統計に探索的診断であることを明記し、研究PASSを生成しない。
 
 ## 検証と終了
 
