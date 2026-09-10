@@ -3,14 +3,16 @@
 FastAPI server は `127.0.0.1:8097` のみに bind する。trainer は別 session の process として動作し、GUI/server の終了では停止しない。PAUSE/RESUME/STOP は既知 run の `control.json` に要求を書き、trainer が update 境界で受け付ける。STOP は checkpoint を保存する。
 
 ```bash
-# llm_master_now: repository root, training venv
+# Remote host: repository root, training venv
 .venv-k0/bin/python -m experiments.k0_brainstem.monitor.server --artifacts experiments/k0_brainstem/artifacts
 
 # Mac: isolated monitor venv (PyTorch is unnecessary)
 python3 -m venv .venv-k0-monitor
 .venv-k0-monitor/bin/python -m pip install -r experiments/k0_brainstem/requirements-monitor.txt
-./run_k0_monitor.command
+K0_SSH_HOST=your-ssh-alias ./run_k0_monitor.command
 ```
+
+接続先は `K0_SSH_HOST`、または `.local/connections/k0-ssh-host` の1行で指定する（環境変数を優先）。`.local/connections/` は `.gitignore` で除外している。ホスト名・IP・ユーザー名・鍵の参照先などの接続情報はこの配下に保存し、秘密鍵・トークンそのものはコピーしない。
 
 既存 SSH tunnel を使う場合は `K0_NO_TUNNEL=1 K0_MONITOR_PORT=18097 ./run_k0_monitor.command`。直接接続先を指定する場合は `.venv-k0-monitor/bin/python -m experiments.k0_brainstem.monitor.mac_gui --server http://127.0.0.1:18097`。
 

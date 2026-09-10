@@ -3,6 +3,8 @@
 
 # Local runtime state: databases, JSONL traces, demo artifacts
 /.local/
+# Private SSH connection references and machine-specific monitor destination
+/.local/connections/
 
 # Editor / OS noise
 .DS_Store
