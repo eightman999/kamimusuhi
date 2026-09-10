@@ -34,3 +34,9 @@ counterfactualは同task・同hidden・同historyで最終bodyだけを交換し
 GPU背景処理duty<=50%、matrices<256MiB/device、CPU背景<=2threads。GPU>=75℃または観測不能なら背景処理停止。主収集側でもthermal/load監視。有限duration、全child PIDを所有してfinallyで終了。メモリ割当失敗を意図的に誘発しない。disk workloadは専用workディレクトリ内の小さい一時ファイルのみ。
 
 実験前後のservices・compute PID・thermal/loadを保存し、今回のsensor/workload/workerのみ停止。既存service状態を復元。private接続情報は既存Git除外設定から参照し、raw/config/reportに記録しない。commitのみ、pushしない。全実装・実験・報告・cleanup後に次phase承認を一度だけ求める。
+
+## 成績を開く前の監査補記
+
+独立レビューで、SHUFFLEDがdonorの履歴長をそのまま使うとGRUの更新回数まで変わる交絡を発見した。学習・probe・heldout評価前に、同じ履歴長かつ異なるblockでの全単射shuffleへ修正する。raw収集と測定済みcostは変更しない。`prepare_dataset.py` が保存済み過去frameから各blockの8decisionに履歴長1〜8を各1回、固定seed110910+block順番で割り当て、`policy_dataset.jsonl` を別保存する。各split・各履歴長に複数blockを確保し、shuffleでtask順・GRU更新回数・body履歴周辺分布を保つ。長さの選定には成績・cost・workload labelを一切使わない。
+
+live確認では凍結GRU128の8seedと4入力介入、および独立学習BLINDを、8種類の実workload下で動かす。同じtask/seedの5modeは同じ直前bodyを基点に実行順を無作為化する。raw telemetryは継続し、新規jobを選択された資源で実行する。live SHUFFLEDのdonorは同じ履歴長の保存済み別episodeの実測body（無作為抽出、cost/labelは使わない）。live主判定にはBODY対BLINDとBODY対独立学習BLINDのpaired utility改善を用いる。新規live結果を主収集の実測cost再生と別表示する。
