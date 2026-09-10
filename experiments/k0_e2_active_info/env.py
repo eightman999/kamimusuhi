@@ -41,6 +41,8 @@ class ActiveInfoEnv:
             self.episode_length *= 2
         if self.episode_length < 8:
             raise ValueError("episode_length must be >=8")
+        if self.config.get("language_backend", "scripted") not in ("scripted", "external"):
+            raise ValueError("language_backend must be scripted or external")
         self.response_mode = self.config.get("response_mode", "correct")
         if self.response_mode not in RESPONSE_MODES:
             raise ValueError(f"Unknown response_mode: {self.response_mode}")
@@ -97,6 +99,10 @@ class ActiveInfoEnv:
         self.due = torch.full((n,), length + 1, dtype=torch.long, device=self.device)
         self.language_fact = torch.zeros(n, dtype=torch.long, device=self.device)
         self.language_confidence = torch.zeros(n, device=self.device)
+        self.external_response_ready = torch.zeros(n, dtype=torch.bool, device=self.device)
+        self.external_categories = torch.zeros(n, dtype=torch.long, device=self.device)
+        self.external_confidences = torch.zeros(n, device=self.device)
+        self.external_valid = torch.zeros(n, dtype=torch.bool, device=self.device)
         self.orient_remaining = torch.zeros(n, dtype=torch.long, device=self.device)
         self.observed = torch.zeros_like(self.called)
         self.recalled = torch.zeros_like(self.called)
@@ -256,11 +262,62 @@ class ActiveInfoEnv:
             confidence.fill_(.5)
         elif self.response_mode == "missing":
             confidence.fill_(0.)
+        if self.config.get("language_backend", "scripted") == "external":
+            # External mode never substitutes a latent-aware scripted answer.
+            fact = torch.zeros_like(fact)
+            confidence = torch.zeros_like(confidence)
+        fact = torch.where(self.external_response_ready, self.external_categories, fact)
+        confidence = torch.where(self.external_response_ready,
+                                 torch.where(self.external_valid, self.external_confidences, 0.), confidence)
         confidence = torch.where(self.scenario == 0, confidence, 0.)
         self.language_fact = torch.where(mask, fact, self.language_fact)
         self.language_confidence = torch.where(mask, confidence, self.language_confidence)
         self.delivered |= mask
         self.pending &= ~mask
+
+    def inject_language_response(self, indices, categories, confidences, valid):
+        """Supply parsed external facts only for episodes which selected CALL.
+
+        Injection before due time queues the result. For latency zero, the call
+        transition has already exposed a missing result; injection updates the
+        public current observation immediately, before the next Core forward.
+        No raw text is consumed and categories are not checked against truth.
+        Invalid schemas raise ValueError without mutating environment state.
+        """
+        if not self._initialized or self.t >= self.episode_length:
+            raise RuntimeError("injection requires an active episode")
+        index_raw = torch.as_tensor(indices, device=self.device)
+        category_raw = torch.as_tensor(categories, device=self.device)
+        confidence = torch.as_tensor(confidences, device=self.device, dtype=torch.float32)
+        valid_raw = torch.as_tensor(valid, device=self.device)
+        if index_raw.ndim != 1 or category_raw.shape != index_raw.shape or confidence.shape != index_raw.shape or valid_raw.shape != index_raw.shape:
+            raise ValueError("indices/categories/confidences/valid must have matching 1D shapes")
+        if index_raw.dtype not in (torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8):
+            raise ValueError("indices must be integers")
+        indices = index_raw.long()
+        if bool(((indices < 0) | (indices >= self.num_envs)).any()) or len(indices.unique()) != len(indices):
+            raise ValueError("indices must be unique and within the environment batch")
+        if category_raw.dtype not in (torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8, torch.bool) or not bool(((category_raw == 0) | (category_raw == 1)).all()):
+            raise ValueError("categories must contain strict binary integers")
+        if valid_raw.dtype != torch.bool:
+            raise ValueError("valid must contain booleans")
+        if not bool((torch.isfinite(confidence) & (confidence >= 0) & (confidence <= 1)).all()):
+            raise ValueError("confidences must be finite and within [0,1]")
+        if not bool(self.called[indices].all()):
+            raise ValueError("external information cannot be injected before CALL")
+        self.external_response_ready[indices] = True
+        self.external_categories[indices] = category_raw.long()
+        self.external_confidences[indices] = confidence
+        self.external_valid[indices] = valid_raw
+        arrived = torch.zeros_like(self.called)
+        arrived[indices] = self.due[indices] <= self.t
+        if bool(arrived.any()):
+            self._deliver(arrived)
+            previous_raw = self._previous_raw.clone()
+            self.observation = self._make_observation()
+            self._previous_raw = previous_raw
+            self._update_belief()
+        return self.observation.clone()
 
     def step(self, actions):
         if not self._initialized or self.t >= self.episode_length:

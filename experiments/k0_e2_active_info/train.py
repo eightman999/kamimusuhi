@@ -116,6 +116,7 @@ def ppo_update(model,optimizer,rollout,config,anchor):
 
 def critic_warmup(model,env,config):
     before={k:v.clone() for k,v in model.state_dict().items() if not k.startswith('critic.')}
+    began=time.perf_counter()
     saved=rng_state(env)
     warm_env=ActiveInfoEnv(env.num_envs,env.device,300000+config['seed'],env.config)
     for p in model.parameters():p.requires_grad_(False)
@@ -131,7 +132,7 @@ def critic_warmup(model,env,config):
     assert all(torch.equal(v,model.state_dict()[k]) for k,v in before.items())
     for p in model.parameters():p.requires_grad_(True)
     restore_rng(saved,env)
-    return {'losses':losses,'policy_unchanged':True,'common_rng_restored':True}
+    return {'losses':losses,'policy_unchanged':True,'common_rng_restored':True,'transitions':4*env.num_envs*env.episode_length,'wall_seconds':time.perf_counter()-began}
 
 
 def train(config,artifacts,run_id,parent=None):

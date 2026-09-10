@@ -195,6 +195,65 @@ class ActiveInfoTests(unittest.TestCase):
             total += ii["latency_cost"]
         self.assertTrue(torch.allclose(total, torch.full((64,), .008)))
 
+    def test_external_mode_never_falls_back_to_scripted_truth(self):
+        env = self.environment(language_backend="external", language_latency=0)
+        self.act(env, INVOKE_LANGUAGE)
+        self.assertTrue((env.observation[:, 10] == 0).all())
+        self.assertTrue((env.language_fact == 0).all())
+        for _ in range(3):
+            self.act(env, WAIT)
+            self.assertTrue((env.observation[:, 10] == 0).all())
+
+    def test_external_latency_zero_correct_and_inverted(self):
+        base = self.environment(language_backend="external", language_latency=0)
+        a, b = base.clone(), base.clone()
+        for env in (a, b):
+            self.act(env, INVOKE_LANGUAGE)
+        indices = torch.arange(64)
+        a.inject_language_response(indices, a.latent, torch.ones(64), torch.ones(64, dtype=torch.bool))
+        returned = b.inject_language_response(indices, 1 - b.latent, torch.ones(64), torch.ones(64, dtype=torch.bool))
+        self.assertTrue((a.observation[:, 9] != b.observation[:, 9]).all())
+        self.assertTrue(torch.equal(returned, b.observation))
+        self.assertTrue(torch.equal(b.language_fact, 1 - b.latent))
+        while a.t < a.episode_length - 1:
+            self.act(a, IGNORE)
+            self.act(b, IGNORE)
+        self.assertTrue((a.oracle_actions() != b.oracle_actions()).all())
+
+    def test_external_future_due_queue_unknown_and_restore(self):
+        env = self.environment(language_backend="external", language_latency=2)
+        self.act(env, INVOKE_LANGUAGE)
+        valid = torch.arange(64) % 2 == 0
+        env.inject_language_response(torch.arange(64), env.latent, torch.full((64,), .9), valid)
+        self.assertTrue((env.observation[:, 10] == 0).all())
+        fork = env.clone()
+        for _ in range(2):
+            self.act(env, WAIT)
+            self.act(fork, WAIT)
+        self.assertTrue(torch.equal(env.observation, fork.observation))
+        self.assertTrue((env.observation[valid, 10] == .9).all())
+        self.assertTrue((env.observation[~valid, 10] == 0).all())
+        self.assertTrue(torch.equal(env.language_fact, env.latent))
+
+    def test_external_rejects_precall_and_invalid_schema_atomically(self):
+        env = self.environment(language_backend="external", language_latency=0)
+        with self.assertRaisesRegex(ValueError, "before CALL"):
+            env.inject_language_response([0], [1], [1.], [True])
+        self.act(env, INVOKE_LANGUAGE)
+        original = env.observation.clone()
+        invalid = [([0], [2], [1.], [True]), ([0], [.5], [1.], [True]),
+                   ([0], [1], [float("nan")], [True]), ([0], [1], [1.2], [True]),
+                   ([0], [1], [1.], [1]), ([0, 0], [1, 1], [1., 1.], [True, True]),
+                   ([65], [1], [1.], [True]), ([0], [1, 0], [1.], [True])]
+        for args in invalid:
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                env.inject_language_response(*args)
+            self.assertTrue(torch.equal(env.observation, original))
+            self.assertFalse(env.external_response_ready.any())
+        # Caller converts invalid parser output to a valid unknown placeholder.
+        env.inject_language_response([0], [0], [0.], [False])
+        self.assertEqual(float(env.observation[0, 10]), 0.)
+
     def test_memory_delay_and_invalid_ood(self):
         env = self.environment("memory", memory_delay=640)
         self.assertEqual(env.episode_length, 641)
