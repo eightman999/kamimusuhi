@@ -38,3 +38,33 @@ def genome_hash(genome) -> str:
 
 def config_hash(config: dict) -> str:
     return hashlib.sha256(canonical_json(config).encode("utf-8")).hexdigest()
+
+
+# Config sections whose change alters the research result (same experiment
+# id must not silently continue). Everything else is operational: GUI,
+# heartbeat/checkpoint intervals, stop timeout, MIE collectors, traces, ...
+SCIENTIFIC_CONFIG_KEYS = ("population", "evolution", "evaluation", "fba",
+                          "env", "fitness", "environment", "dataset")
+# fba.data_dir is a filesystem path, not a research identity
+_SCIENTIFIC_EXCLUDE = {("fba", "data_dir")}
+
+
+def split_config(config: dict) -> tuple[dict, dict]:
+    sci, run = {}, {}
+    for k, v in config.items():
+        if k in SCIENTIFIC_CONFIG_KEYS:
+            if isinstance(v, dict):
+                v = {kk: vv for kk, vv in v.items()
+                     if (k, kk) not in _SCIENTIFIC_EXCLUDE}
+            sci[k] = v
+        else:
+            run[k] = v
+    return sci, run
+
+
+def scientific_config_hash(config: dict) -> str:
+    return config_hash(split_config(config)[0])
+
+
+def runtime_config_hash(config: dict) -> str:
+    return config_hash(split_config(config)[1])

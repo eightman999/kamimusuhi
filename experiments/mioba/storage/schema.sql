@@ -8,6 +8,10 @@ CREATE TABLE IF NOT EXISTS experiments (
     created_at      TEXT NOT NULL,
     config_json     TEXT NOT NULL,
     config_hash     TEXT NOT NULL,
+    -- hash of the result-affecting subset of the config (backend, env,
+    -- population, mutation, fba, evaluation, fitness) vs the operational rest
+    scientific_config_hash TEXT,
+    runtime_config_hash    TEXT,
     git_commit      TEXT,
     status          TEXT NOT NULL DEFAULT 'created',
     rng_state_json  TEXT,
@@ -109,11 +113,17 @@ CREATE TABLE IF NOT EXISTS evaluations (
     summary_json       TEXT NOT NULL DEFAULT '{}',
     runtime_info_json  TEXT NOT NULL DEFAULT '{}',
     config_hash        TEXT,
+    scientific_config_hash TEXT,
     genome_hash        TEXT,
     git_commit         TEXT,
     started_at         TEXT,
     finished_at        TEXT,
-    trace_path         TEXT
+    trace_path         TEXT,
+    environment_id     TEXT,
+    duration_ms        REAL,
+    -- logical dataset identity {dataset_id, version, manifest_hash, region_mode}
+    dataset_json       TEXT NOT NULL DEFAULT '{}',
+    device             TEXT
 );
 CREATE INDEX IF NOT EXISTS evals_genome ON evaluations(experiment_id, genome_id);
 

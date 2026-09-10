@@ -12,7 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..evolution.population import PopulationController, fitness_placeholder
-from ..genome.hashing import config_hash
+from ..genome.hashing import (config_hash, runtime_config_hash,
+                              scientific_config_hash)
 from ..genome.schema import utcnow
 from ..mie.registry import load_collectors
 from ..storage import models as M
@@ -21,9 +22,15 @@ from ..telemetry.recorder import TelemetryRecorder
 from . import jobs, lifecycle
 
 
+class ScientificConfigMismatch(RuntimeError):
+    """Resume was attempted with a config whose result-affecting sections
+    differ from the ones the experiment was created with."""
+
+
 class MiobaService:
     def __init__(self, config: dict, runs_dir: str | Path,
-                 experiment_id: str | None = None, resume: str | None = None):
+                 experiment_id: str | None = None, resume: str | None = None,
+                 allow_scientific_change: bool = False):
         self.config = config
         self.runs_dir = Path(runs_dir)
         exp_cfg = config.get("experiment", {})
@@ -50,6 +57,8 @@ class MiobaService:
 
         self.db = Database(self.db_path)
         self.config_hash = config_hash(config)
+        self.scientific_config_hash = scientific_config_hash(config)
+        self.runtime_config_hash = runtime_config_hash(config)
         from ..fba.runtime_info import collect_runtime_info
         self.runtime_info = collect_runtime_info(
             backend=config.get("evaluation", {}).get("backend"))
@@ -64,6 +73,7 @@ class MiobaService:
         self._counters = {"births": 0, "evaluations_succeeded": 0,
                           "evaluations_failed": 0}
         self._stored_config_hash = None
+        self._stored_scientific_hash = None
         self.anomaly_threshold = float(
             config.get("mie", {}).get("anomaly", {}).get("gpu_temp_c", 85))
 
@@ -80,24 +90,21 @@ class MiobaService:
                                           self.run_dir / "telemetry")
 
         if already:
-            exp = self.db.get_experiment(self.experiment_id)
-            self._stored_config_hash = (exp or {}).get("config_hash")
-            if (self._stored_config_hash and
-                    self._stored_config_hash != self.config_hash):
-                self.db.emit(self.experiment_id, "config_hash_mismatch",
-                             "warn",
-                             {"stored": self._stored_config_hash,
-                              "current": self.config_hash},
-                             "coordinator")
+            exp = self.db.get_experiment(self.experiment_id) or {}
+            self._stored_config_hash = exp.get("config_hash")
+            self._stored_scientific_hash = exp.get("scientific_config_hash")
+            self._check_config_on_resume(exp, allow_scientific_change)
             if exp and exp.get("rng_state_json"):
                 self.load_rng_state(exp["rng_state_json"])
             if exp and exp.get("counters_json"):
                 self._counters.update(json.loads(exp["counters_json"]))
             lifecycle.resume_experiment(self)
         else:
-            self.db.create_experiment(self.experiment_id, config,
-                                      self.config_hash, self.git_commit,
-                                      self.dump_rng_state())
+            self.db.create_experiment(
+                self.experiment_id, config, self.config_hash, self.git_commit,
+                self.dump_rng_state(),
+                scientific_config_hash=self.scientific_config_hash,
+                runtime_config_hash=self.runtime_config_hash)
             self.db.set_experiment_status(self.experiment_id, M.EXP_RUNNING)
             self.db.emit(self.experiment_id, M.EV_STARTED,
                          payload={"experiment_id": self.experiment_id},
@@ -110,6 +117,37 @@ class MiobaService:
             self._counters["births"] += n
 
     # ------------------------------------------------------------ helpers
+    def _check_config_on_resume(self, exp: dict, allow_scientific: bool):
+        """Operational (runtime) changes are recorded and allowed;
+        scientific changes stop the resume unless explicitly overridden,
+        in which case the override itself becomes part of the record."""
+        stored_sci = exp.get("scientific_config_hash")
+        stored_run = exp.get("runtime_config_hash")
+        stored_all = exp.get("config_hash")
+        if stored_all and stored_all != self.config_hash:
+            self.db.emit(self.experiment_id, "config_hash_mismatch", "warn",
+                         {"stored": stored_all, "current": self.config_hash},
+                         "coordinator")
+        if stored_run and stored_run != self.runtime_config_hash:
+            self.db.emit(self.experiment_id, M.EV_RUNTIME_CONFIG_CHANGED,
+                         "info", {"stored": stored_run,
+                                  "current": self.runtime_config_hash},
+                         "coordinator")
+        if stored_sci and stored_sci != self.scientific_config_hash:
+            payload = {"stored": stored_sci,
+                       "current": self.scientific_config_hash,
+                       "allowed": allow_scientific}
+            self.db.emit(self.experiment_id, M.EV_SCIENTIFIC_CONFIG_MISMATCH,
+                         "error", payload, "coordinator")
+            if not allow_scientific:
+                self.db.close()
+                raise ScientificConfigMismatch(
+                    f"experiment {self.experiment_id} was created with "
+                    f"scientific_config_hash {stored_sci[:12]} but the "
+                    f"current config hashes to "
+                    f"{self.scientific_config_hash[:12]}; start a new "
+                    "experiment or pass --allow-scientific-change")
+
     def fba_base_neurons(self) -> int | None:
         """FBA0 neuron count to use for ancestry_fraction: the synthetic-N
         when the backend runs synthetic, else the real data count."""
@@ -170,56 +208,78 @@ class MiobaService:
             "experiment_id": self.experiment_id,
         }
 
+    def _complete_evaluation(self, job: dict, worker_id: str,
+                             evaluation: dict) -> dict:
+        evaluation = dict(evaluation)
+        evaluation["worker_id"] = worker_id
+        target = float(self.config.get("evaluation", {})
+                       .get("target_rate_hz", 5.0))
+        evaluation["fitness"] = fitness_placeholder(
+            evaluation.get("summary") or {}, target)
+        if not evaluation.get("runtime_info"):
+            wr = self.db.get_worker(self.experiment_id, worker_id) or {}
+            try:
+                ri = json.loads(wr.get("runtime_info_json") or "{}")
+            except ValueError:
+                ri = {}
+            try:
+                ri["gpu"] = json.loads(wr.get("gpu_json") or "[]")
+            except ValueError:
+                ri["gpu"] = []
+            evaluation["runtime_info"] = ri
+        evaluation.setdefault("config_hash", self.config_hash)
+        evaluation.setdefault("scientific_config_hash",
+                              self.scientific_config_hash)
+        evaluation.setdefault("genome_hash", job["genome_id"])
+        evaluation.setdefault("git_commit", self.git_commit)
+        evaluation.setdefault("environment_id", job["environment_id"])
+        evaluation.setdefault("duration_ms", job["duration_ms"])
+        evaluation.setdefault("backend", job["backend"])
+        evaluation.setdefault("seed", job["seed"])
+        return evaluation
+
     def worker_result(self, job_id: str, worker_id: str, status: str,
                       evaluation: dict | None, error: str | None):
+        """Accept a worker's result. The success path (ownership check,
+        RUNNING->SUCCEEDED, evaluation row, worker counter, event) is one
+        SQLite transaction: a crash or exception anywhere leaves the job
+        RUNNING (recoverable), never SUCCEEDED-without-evaluation."""
         job = self.db.get_job(job_id)
         if job is None:
             raise KeyError(f"no such job {job_id}")
-        ok = status == M.JOB_SUCCEEDED
+        ok = status == M.JOB_SUCCEEDED and evaluation is not None
+        if status == M.JOB_SUCCEEDED and evaluation is None:
+            status, error = M.JOB_FAILED, error or "success without evaluation"
         try:
-            jobs.finish(self.db, self.experiment_id, job, status,
-                        worker_id, error)
+            with self.db.transaction():
+                jobs.finish(self.db, self.experiment_id, job, status,
+                            worker_id, error)
+                if ok:
+                    evaluation = self._complete_evaluation(job, worker_id,
+                                                           evaluation)
+                    self.db.insert_evaluation(self.experiment_id, job_id,
+                                              job["genome_id"], evaluation)
+                    self.db.emit(self.experiment_id, M.EV_EVALUATION_SUCCEEDED,
+                                 payload={"job_id": job_id,
+                                          "genome_id": job["genome_id"],
+                                          "worker_id": worker_id},
+                                 source="coordinator")
+                else:
+                    self.db.emit(self.experiment_id, M.EV_EVALUATION_FAILED,
+                                 "warn", {"job_id": job_id,
+                                          "worker_id": worker_id,
+                                          "error": error}, "coordinator")
         except InvalidTransition:
             self.db.emit(self.experiment_id, "stale_result_rejected", "warn",
                          {"job_id": job_id, "worker_id": worker_id,
                           "status": status}, "coordinator")
             raise
-        if ok and evaluation is not None:
-            evaluation = dict(evaluation)
-            evaluation["worker_id"] = worker_id
-            target = float(self.config.get("evaluation", {})
-                           .get("target_rate_hz", 5.0))
-            evaluation["fitness"] = fitness_placeholder(
-                evaluation.get("summary") or {}, target)
-            if not evaluation.get("runtime_info"):
-                wr = self.db.get_worker(self.experiment_id, worker_id) or {}
-                try:
-                    ri = json.loads(wr.get("runtime_info_json") or "{}")
-                except ValueError:
-                    ri = {}
-                try:
-                    ri["gpu"] = json.loads(wr.get("gpu_json") or "[]")
-                except ValueError:
-                    ri["gpu"] = []
-                evaluation["runtime_info"] = ri
-            evaluation.setdefault("config_hash", self.config_hash)
-            evaluation.setdefault("genome_hash", job["genome_id"])
-            evaluation.setdefault("git_commit", self.git_commit)
-            self.db.insert_evaluation(self.experiment_id, job_id,
-                                      job["genome_id"], evaluation)
+        if ok:
             self._counters["evaluations_succeeded"] += 1
-            self.db.emit(self.experiment_id, M.EV_EVALUATION_SUCCEEDED,
-                         payload={"job_id": job_id,
-                                  "genome_id": job["genome_id"],
-                                  "worker_id": worker_id},
-                         source="coordinator")
             self.population.record_fitness(job["genome_id"],
                                            evaluation["fitness"])
         else:
             self._counters["evaluations_failed"] += 1
-            self.db.emit(self.experiment_id, M.EV_EVALUATION_FAILED, "warn",
-                         {"job_id": job_id, "worker_id": worker_id,
-                          "error": error}, "coordinator")
         self.persist_state()
 
     # ------------------------------------------------------------ background
@@ -336,5 +396,7 @@ class MiobaService:
             "config_hash": self.config_hash,
             "config_hash_stored": (self._stored_config_hash or
                                    self.config_hash),
+            "scientific_config_hash": self.scientific_config_hash,
+            "runtime_config_hash": self.runtime_config_hash,
             "kind": "LIVE",
         }

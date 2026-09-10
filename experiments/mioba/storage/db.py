@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 import sqlite3
 import threading
 import uuid
@@ -10,7 +11,7 @@ from pathlib import Path
 
 from . import models as M
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text()
 
 
@@ -27,6 +28,7 @@ class Database:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._tx_depth = 0
         self.conn = sqlite3.connect(str(self.path), check_same_thread=False,
                                     timeout=30)
         self.conn.row_factory = sqlite3.Row
@@ -39,7 +41,7 @@ class Database:
             if row is None:
                 self.conn.execute("INSERT INTO schema_version(version) VALUES (?)",
                                   (SCHEMA_VERSION,))
-            self.conn.commit()
+            self._commit()
 
     def close(self):
         with self._lock:
@@ -49,6 +51,29 @@ class Database:
     def _q(self, sql, params=()):
         return self.conn.execute(sql, params)
 
+    def _commit(self) -> None:
+        if self._tx_depth == 0:
+            self.conn.commit()
+
+    @contextmanager
+    def transaction(self):
+        """Group several write methods into one SQLite transaction. Nested
+        method-level commits are suppressed; the outermost block commits,
+        any exception rolls everything back."""
+        with self._lock:
+            self._tx_depth += 1
+            try:
+                yield self
+            except BaseException:
+                self._tx_depth -= 1
+                if self._tx_depth == 0:
+                    self.conn.rollback()
+                raise
+            else:
+                self._tx_depth -= 1
+                if self._tx_depth == 0:
+                    self.conn.commit()
+
     @staticmethod
     def _now() -> str:
         from ..genome.schema import utcnow
@@ -57,14 +82,18 @@ class Database:
     # ------------------------------------------------------------ experiments
     def create_experiment(self, experiment_id: str, config: dict,
                           config_hash: str, git_commit: str | None,
-                          rng_state: str | None = None) -> None:
+                          rng_state: str | None = None,
+                          scientific_config_hash: str | None = None,
+                          runtime_config_hash: str | None = None) -> None:
         with self._lock:
             self._q("INSERT INTO experiments(experiment_id,created_at,config_json,"
-                    "config_hash,git_commit,status,rng_state_json,counters_json)"
-                    " VALUES(?,?,?,?,?,?,?,?)",
+                    "config_hash,scientific_config_hash,runtime_config_hash,"
+                    "git_commit,status,rng_state_json,counters_json)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (experiment_id, self._now(), json.dumps(config), config_hash,
+                     scientific_config_hash, runtime_config_hash,
                      git_commit, M.EXP_CREATED, rng_state, "{}"))
-            self.conn.commit()
+            self._commit()
 
     def get_experiment(self, experiment_id: str) -> dict | None:
         with self._lock:
@@ -76,19 +105,19 @@ class Database:
         with self._lock:
             self._q("UPDATE experiments SET status=? WHERE experiment_id=?",
                     (status, experiment_id))
-            self.conn.commit()
+            self._commit()
 
     def set_rng_state(self, experiment_id: str, rng_state_json: str) -> None:
         with self._lock:
             self._q("UPDATE experiments SET rng_state_json=? WHERE experiment_id=?",
                     (rng_state_json, experiment_id))
-            self.conn.commit()
+            self._commit()
 
     def set_counters(self, experiment_id: str, counters: dict) -> None:
         with self._lock:
             self._q("UPDATE experiments SET counters_json=? WHERE experiment_id=?",
                     (json.dumps(counters), experiment_id))
-            self.conn.commit()
+            self._commit()
 
     # ------------------------------------------------------------ genomes
     def insert_genome(self, experiment_id: str, genome, birth_kind: str,
@@ -139,7 +168,7 @@ class Database:
                 self._q("INSERT OR IGNORE INTO genome_clades(experiment_id,"
                         "genome_id,clade_id) VALUES(?,?,?)",
                         (experiment_id, g.genome_id, cid))
-            self.conn.commit()
+            self._commit()
         return g.genome_id
 
     def get_genome(self, genome_id: str) -> dict | None:
@@ -274,7 +303,7 @@ class Database:
             self._q("INSERT INTO clades(experiment_id,clade_id,name,"
                     "founder_genome_id,created_at) VALUES(?,?,?,?,?)",
                     (experiment_id, cid, name, founder_genome_id, self._now()))
-            self.conn.commit()
+            self._commit()
         return cid
 
     def get_clade_by_name(self, experiment_id: str, name: str) -> dict | None:
@@ -289,7 +318,7 @@ class Database:
             self._q("INSERT OR IGNORE INTO genome_clades(experiment_id,"
                     "genome_id,clade_id) VALUES(?,?,?)",
                     (experiment_id, genome_id, clade_id))
-            self.conn.commit()
+            self._commit()
 
     # ------------------------------------------------------------ jobs
     def enqueue_job(self, experiment_id: str, genome_id: str, environment_id: str,
@@ -305,7 +334,7 @@ class Database:
                     (experiment_id, jid, genome_id, environment_id, seed, tier,
                      backend, duration_ms, json.dumps(requested_traces),
                      priority, self._now()))
-            self.conn.commit()
+            self._commit()
         return jid
 
     def claim_job(self, experiment_id: str, worker_id: str) -> dict | None:
@@ -324,7 +353,7 @@ class Database:
             if cur.rowcount != 1:
                 self.conn.rollback()
                 return None
-            self.conn.commit()
+            self._commit()
             return self.get_job(row["job_id"])
 
     def get_job(self, job_id: str) -> dict | None:
@@ -364,7 +393,7 @@ class Database:
             self._q("UPDATE evaluation_jobs SET status=?, finished_at=?,"
                     " last_error=? WHERE job_id=?",
                     (status, self._now(), error, job_id))
-            self.conn.commit()
+            self._commit()
 
     def cancel_job(self, job_id: str) -> None:
         with self._lock:
@@ -376,7 +405,7 @@ class Database:
             self._q("UPDATE evaluation_jobs SET status='CANCELLED',"
                     " finished_at=? WHERE job_id=?",
                     (self._now(), job_id))
-            self.conn.commit()
+            self._commit()
 
     def mark_running_unknown(self, experiment_id: str,
                              job_ids: list[str] | None = None) -> list[str]:
@@ -396,7 +425,7 @@ class Database:
             for jid in ids:
                 self._q("UPDATE evaluation_jobs SET status='UNKNOWN' WHERE "
                         "job_id=? AND status='RUNNING'", (jid,))
-            self.conn.commit()
+            self._commit()
         return ids
 
     def requeue_unknown(self, experiment_id: str,
@@ -421,7 +450,7 @@ class Database:
                             " claimed_by_worker=NULL WHERE job_id=?",
                             (r["job_id"],))
                     out.append((r["job_id"], "requeued"))
-            self.conn.commit()
+            self._commit()
         return out
 
     def job_counts(self, experiment_id: str) -> dict:
@@ -445,9 +474,11 @@ class Database:
         with self._lock:
             self._q("INSERT INTO evaluations(experiment_id,evaluation_id,job_id,"
                     "genome_id,worker_id,backend,seed,batch_size,fitness,"
-                    "summary_json,runtime_info_json,config_hash,genome_hash,"
-                    "git_commit,started_at,finished_at,trace_path)"
-                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "summary_json,runtime_info_json,config_hash,"
+                    "scientific_config_hash,genome_hash,"
+                    "git_commit,started_at,finished_at,trace_path,"
+                    "environment_id,duration_ms,dataset_json,device)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (experiment_id, eid, job_id, genome_id,
                      evaluation.get("worker_id"), evaluation.get("backend"),
                      evaluation.get("seed"), evaluation.get("batch_size"),
@@ -455,11 +486,16 @@ class Database:
                      json.dumps(evaluation.get("summary") or {}),
                      json.dumps(evaluation.get("runtime_info") or {}),
                      evaluation.get("config_hash"),
+                     evaluation.get("scientific_config_hash"),
                      evaluation.get("genome_hash"),
                      evaluation.get("git_commit"),
                      evaluation.get("started_at"), evaluation.get("finished_at"),
-                     evaluation.get("trace_path")))
-            self.conn.commit()
+                     evaluation.get("trace_path"),
+                     evaluation.get("environment_id"),
+                     evaluation.get("duration_ms"),
+                     json.dumps(evaluation.get("dataset") or {}),
+                     evaluation.get("device")))
+            self._commit()
         return eid
 
     def get_evaluation(self, evaluation_id: str) -> dict | None:
@@ -496,7 +532,7 @@ class Database:
                      json.dumps(gpu or []), json.dumps(runtime_info or {}),
                      json.dumps(bench or []), self._now(), self._now(),
                      batch_size))
-            self.conn.commit()
+            self._commit()
         return wrid
 
     def heartbeat(self, experiment_id: str, worker_id: str, sample: dict) -> None:
@@ -516,7 +552,7 @@ class Database:
             # prune >24h
             self._q("DELETE FROM worker_heartbeats WHERE experiment_id=? AND "
                     "at < datetime('now','-1 day')", (experiment_id,))
-            self.conn.commit()
+            self._commit()
 
     def worker_finished_job(self, experiment_id: str, worker_id: str,
                             ok: bool) -> None:
@@ -525,7 +561,7 @@ class Database:
             self._q(f"UPDATE worker_runs SET {col}={col}+1, current_job_id=NULL "
                     f"WHERE experiment_id=? AND worker_id=?",
                     (experiment_id, worker_id))
-            self.conn.commit()
+            self._commit()
 
     def list_workers(self, experiment_id: str) -> list[dict]:
         with self._lock:
@@ -545,7 +581,7 @@ class Database:
         with self._lock:
             self._q("UPDATE worker_runs SET status=? WHERE experiment_id=? AND "
                     "worker_id=?", (status, experiment_id, worker_id))
-            self.conn.commit()
+            self._commit()
 
     # ------------------------------------------------------------ checkpoints
     def insert_checkpoint(self, experiment_id: str, reason: str,
@@ -556,7 +592,7 @@ class Database:
                     "created_at,reason,manifest_json,path) VALUES(?,?,?,?,?,?)",
                     (experiment_id, cid, self._now(), reason,
                      json.dumps(manifest), path))
-            self.conn.commit()
+            self._commit()
         return cid
 
     def list_checkpoints(self, experiment_id: str) -> list[dict]:
@@ -579,7 +615,7 @@ class Database:
                           "severity,payload_json,source) VALUES(?,?,?,?,?,?)",
                           (experiment_id, self._now(), type_, severity,
                            json.dumps(payload or {}), source))
-            self.conn.commit()
+            self._commit()
             return int(cur.lastrowid)
 
     def list_events(self, experiment_id: str, since_id: int = 0,
@@ -609,7 +645,7 @@ class Database:
                          s.get("value"), s.get("normalized_value"),
                          s.get("delta"), s.get("confidence", 1.0),
                          json.dumps(s.get("metadata") or {})))
-            self.conn.commit()
+            self._commit()
         return len(samples)
 
     def query_telemetry(self, experiment_id: str, domain=None,

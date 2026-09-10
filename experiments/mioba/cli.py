@@ -68,11 +68,17 @@ def cmd_start(args) -> int:
     config = load_config(args.config)
     runs_dir = _runs_dir(args, config)
     from .coordinator.app import create_app
-    from .coordinator.service import MiobaService
+    from .coordinator.service import (MiobaService,
+                                      ScientificConfigMismatch)
 
-    service = MiobaService(config, runs_dir,
-                           experiment_id=args.experiment_id,
-                           resume=args.resume)
+    try:
+        service = MiobaService(
+            config, runs_dir, experiment_id=args.experiment_id,
+            resume=args.resume,
+            allow_scientific_change=args.allow_scientific_change)
+    except ScientificConfigMismatch as exc:
+        print(f"ScientificConfigMismatch: {exc}", file=sys.stderr)
+        return 3
     (service.run_dir / "coordinator.json").write_text(json.dumps({
         "host": args.host, "port": args.port, "pid": os.getpid(),
         "token": service.token,
@@ -244,6 +250,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--experiment-id", default=None)
     p.add_argument("--resume", default=None, metavar="EXPERIMENT_ID")
+    p.add_argument("--allow-scientific-change", action="store_true",
+                   help="resume even if result-affecting config sections "
+                        "changed (recorded as scientific_config_mismatch)")
     p.add_argument("--workers", default=None,
                    help='e.g. "cuda:0:torch,cuda:1:torch"')
     p.set_defaults(fn=cmd_start)
