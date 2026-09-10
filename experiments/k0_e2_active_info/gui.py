@@ -20,7 +20,7 @@ SCENARIOS = {"language": "言語だけで判別できる課題", "memory": "遅�
 SENSORS = ("動き", "動きの変化", "音量", "明るさ", "近接", "接触", "温度の変化", "課題の関連度",
            "発話活動", "取得情報の値", "取得情報の信頼度", "資源", "言語呼び出し費用", "言語応答の信頼性",
            "最終判断の準備", "言語応答の遅延")
-STATUS = {"CALL": "言語呼び出し", "WAITING": "応答待ち", "RESPONSE": "情報受信", "NEXT_ACTION": "次の行動", "running": "学習中", "complete": "完了", "failed": "失敗", "queued": "待機中", "paused": "一時停止中",
+STATUS = {"CALL": "言語呼び出し", "WAITING": "応答待ち", "RESPONSE": "応答到着", "NEXT_ACTION": "次の行動", "running": "学習中", "complete": "完了", "failed": "失敗", "queued": "待機中", "paused": "一時停止中",
           "imitation": "教師模倣", "ppo": "PPO", "missing": "未取得", "pending": "応答待ち", "ok": "正常",
           "timeout": "時間切れ", "LANGUAGE_BACKEND_UNAVAILABLE": "言語器官を利用できません"}
 PLOTS = [("voi_cost_curve.png", "費用と呼び出し率"), ("voi_performance_curve.png", "費用と課題性能"),
@@ -96,7 +96,7 @@ class E2Dashboard(QtWidgets.QMainWindow):
         title = QtWidgets.QLabel("KAMIMUSUHI  /  K0-E2 能動的情報取得")
         title.setObjectName("title")
         layout.addWidget(title)
-        subtitle = QtWidgets.QLabel("同期済み成果物の閲覧専用  •  学習はリモート側で継続します")
+        subtitle = QtWidgets.QLabel("同期済み成果物の閲覧専用  •  リモートで保存した結果を表示します")
         layout.addWidget(subtitle)
         path_row = QtWidgets.QHBoxLayout()
         self.path_label = QtWidgets.QLabel(str(self.artifacts))
