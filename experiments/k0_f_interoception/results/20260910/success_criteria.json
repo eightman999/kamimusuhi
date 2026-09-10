@@ -1,0 +1,30 @@
+{
+  "schema_version": "k0f.success.v1",
+  "research_status": "FAIL",
+  "experiment_scope": "exploratory_after_failed_probe",
+  "gates": {
+    "A_telemetry": true,
+    "B_fixed_frame": true,
+    "C_BODY_vs_BLIND": true,
+    "D_BODY_vs_SHUFFLED": false,
+    "E_BODY_vs_STALE": true,
+    "F_counterfactual": true,
+    "G_live_BODY_vs_BLIND": true,
+    "G_live_BODY_vs_TRAINED_BLIND": false,
+    "H_safety": true,
+    "I_reproducibility": true,
+    "baseline_preservation": true,
+    "runtime_cleanup": true,
+    "probe_validation_gate": false,
+    "confirmatory_scope": false,
+    "evidence_readable": true
+  },
+  "unmet": [
+    "D_BODY_vs_SHUFFLED",
+    "G_live_BODY_vs_TRAINED_BLIND",
+    "probe_validation_gate",
+    "confirmatory_scope"
+  ],
+  "rule": "prespecified conjunction; missing evidence is not success; every paired gate requires n>=8, mean>0, 95% CI lower>0, exact sign p<=.05",
+  "live_scope": "new real jobs after frozen policy choices; separately reported from measured-cost replay"
+}

@@ -1,0 +1,37 @@
+{
+  "scope": "primary_v2 and llm_record raw telemetry only; no held-out task performance",
+  "baseline_files_checked": 589,
+  "baseline_hash_mismatches": 0,
+  "primary": {
+    "mac_samples": 1087,
+    "master_samples": 1085,
+    "frames": 1081,
+    "mac_max_gap_seconds": 1.0093,
+    "master_max_gap_seconds": 1.0027,
+    "max_temperatures_c": {
+      "cpu": 67,
+      "rtx3060": 65,
+      "p100": 45
+    },
+    "mac_thermal": "all nominal",
+    "minimum_free_ram_gib": 24.57
+  },
+  "llm": {
+    "rtx_requests": 17,
+    "p100_requests": 17,
+    "all_nonempty": true,
+    "generation_quality_or_actual_token_count_evaluated": false
+  },
+  "normalization": {
+    "max_cross_platform_roundoff": 2.22e-16,
+    "raw_references_masks_ages_quality_policy_inputs": "matched"
+  },
+  "optional_missing": [
+    "Mac raw CPU temperature",
+    "master-to-Mac RTT"
+  ],
+  "limitations": [
+    "daemon CPU is one-core basis; master peak RSS excludes helper RSS",
+    "sensor snapshots do not prove temperatures at every instant"
+  ]
+}

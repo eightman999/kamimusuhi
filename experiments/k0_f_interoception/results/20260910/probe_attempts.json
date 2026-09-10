@@ -1,0 +1,54 @@
+[
+  {
+    "artifact_directory": "primary_v2",
+    "schema_version": "k0-f-probe-v1",
+    "gate": {
+      "pass": false,
+      "split": "validation",
+      "threshold_relative_mae_improvement": 0.1,
+      "relative_mae_improvement": -1.180881322479466,
+      "targets": [
+        "future_rtx3060_util",
+        "future_p100_util",
+        "next_job_latency_seconds"
+      ],
+      "normalized_mae": {
+        "BODY": 1.3239459356164731,
+        "BLIND": 0.6070692256244671,
+        "SHUFFLED": 0.7140501288620142,
+        "STALE": 1.1469298668271364
+      },
+      "rule": "at least 2 nonconstant targets, BODY aggregate normalized MAE <= 0.9*BLIND; validation only",
+      "inferential_claim": false,
+      "independence_note": "descriptive probe gate; telemetry samples are not independent n for significance"
+    },
+    "test_evaluated": false,
+    "source_sha256": "473973655d1b4bd78e9858dfda526dced38cc6df41614ff481bbd56a03af5c85"
+  },
+  {
+    "artifact_directory": "analysis_v2",
+    "schema_version": "k0-f-probe-v2",
+    "gate": {
+      "pass": false,
+      "split": "validation",
+      "threshold_relative_mae_improvement": 0.1,
+      "relative_mae_improvement": -0.0016650756803269218,
+      "targets": [
+        "future_rtx3060_util",
+        "future_p100_util",
+        "next_job_latency_seconds"
+      ],
+      "normalized_mae": {
+        "BODY": 0.6080800418283293,
+        "BLIND": 0.6070692256244671,
+        "SHUFFLED": 0.5578533391981672,
+        "STALE": 0.78230046519274
+      },
+      "rule": "at least 2 nonconstant targets, BODY aggregate normalized MAE <= 0.9*BLIND; validation only",
+      "inferential_claim": false,
+      "independence_note": "descriptive probe gate; telemetry samples are not independent n for significance"
+    },
+    "test_evaluated": false,
+    "source_sha256": "75a47f08859468d6ca2e28a2dd3f62b18d1b4ab87d31333e756431ceacd08eef"
+  }
+]

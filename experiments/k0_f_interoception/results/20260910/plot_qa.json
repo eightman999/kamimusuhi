@@ -1,0 +1,82 @@
+{
+  "scope": "exploratory_after_failed_probe",
+  "research_status": "FAIL",
+  "real_artifact_inputs": {
+    "raw_mac_telemetry.jsonl": "542abe1cd4db669733bc7e87b061d9c3f96f95cebca71a449f8fb506f45926d6",
+    "raw_master_telemetry.jsonl": "6719d49deeab423d4a37aa8d1bb66f8b32b8e9cabb9a2987a8c0819c089fe042",
+    "interoceptive_frames.jsonl": "e2d22de665c7d6498c8b633d0269668c9d38bd901cfa6196c74ff11e2def99ef",
+    "policy_traces.jsonl": "d49d25b3d4d7cdfb6d5a5f617fecd830d489bdc4a63a9edc4e5a50b3bdc6c514",
+    "prediction_probe.json": "633ebbf624e114ea75473a5300f0c925960e0fe5a98aac0b272322897915dae1",
+    "ablation_results.json": "9cb87eab3e5d5b9415acb8a5789dae2c464b688d4f8a0157af40c4ac31ba4fa7",
+    "counterfactual_body.json": "5704f5bf755443018a754fdd1f3a78096aba1c23b25a586c91fe065f2b298fd2",
+    "ood_results.json": "a5a0f3707f678cfeb83ea06248cab1af0e64907b4c52dcc0bd7285abcf911672",
+    "run_summary.json": "50d032972dcd875acfaa690c88ed5c415c2c1e5cdae2f35773f6ef7885c376c9",
+    "training_config.json": "893af7d82fe504585d37861c090af28cfd3781504d5fbe5faaf3ab10aab2ab64"
+  },
+  "probe_split": "validation",
+  "probe_test_evaluated": false,
+  "plots": [
+    {
+      "name": "body_timeseries.png",
+      "width": 2193,
+      "height": 1679,
+      "sha256": "66160e8b8d7bf63c047cdd21a33cb2881cf291c8f427d9d518c64ee6fb5f7f0a"
+    },
+    {
+      "name": "thermal_load_relationship.png",
+      "width": 2194,
+      "height": 692,
+      "sha256": "51292ace7dd2c863df5cbdf955f53a1ab9bad6c8de64e25ae106c05b734dd49d"
+    },
+    {
+      "name": "resource_pressure.png",
+      "width": 2024,
+      "height": 1185,
+      "sha256": "10f2bc320ed34794ae248c0a239ad04b9d87b2f7bd43e50406121191ba788d37"
+    },
+    {
+      "name": "network_body_state.png",
+      "width": 2023,
+      "height": 1185,
+      "sha256": "45187be13927fe3800c30f48932d87b1fe2b2034e8818850a7198d4586e69683"
+    },
+    {
+      "name": "prediction_probe.png",
+      "width": 2024,
+      "height": 692,
+      "sha256": "4e1a973e7a8a3330a93d0a4c13b0f5396cd473cd39f32b7b026fb9cc72a79bde"
+    },
+    {
+      "name": "body_ablation.png",
+      "width": 2363,
+      "height": 807,
+      "sha256": "d52e9fe40b095c68085ffc2dd726c6ea2f1ca3a64214e9751a051638583204c5"
+    },
+    {
+      "name": "counterfactual_body.png",
+      "width": 2193,
+      "height": 774,
+      "sha256": "852ae02a51fa6fe093048722dfeb2ffcf559f25de038be278774aab6f38d583a"
+    },
+    {
+      "name": "ood_heatmap.png",
+      "width": 1840,
+      "height": 692,
+      "sha256": "d5333bdf3c3f4e1d91fdb2614ad060fd8a6789b725a46831b1b42ce15aad81ae"
+    },
+    {
+      "name": "policy_action_by_body_state.png",
+      "width": 2192,
+      "height": 807,
+      "sha256": "a204115f9986d129050a7a3bc3eb49815727c92d8016a4c87808c51e805b77e4"
+    },
+    {
+      "name": "pareto.png",
+      "width": 1343,
+      "height": 856,
+      "sha256": "0f7ae1e14669a59da3b7fe3f6574e90799496b2c10acd02fcd090399c909d4d6"
+    }
+  ],
+  "visual_inspection": "all_10_images_reviewed_no_major_clipping_or_unit_errors",
+  "fixture_data_used": false
+}
