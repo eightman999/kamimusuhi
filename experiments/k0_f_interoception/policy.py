@@ -45,6 +45,26 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def require_finite_tensors(values, description):
+    if not all(torch.isfinite(value).all().item() for value in values):
+        raise FloatingPointError(f"nonfinite {description}; run stopped without completion")
+
+
+def unique_integer_list(value: str, name: str, minimum: int = 0):
+    parsed = [int(item) for item in value.split(",")]
+    if len(set(parsed)) != len(parsed):
+        raise ValueError(f"duplicate {name} are not independent experiment units")
+    if not parsed or min(parsed) < minimum:
+        raise ValueError(f"{name} must be >= {minimum}")
+    return parsed
+
+
+def require_unique_seed_rows(rows):
+    keys = [(r["architecture"], r["training_mode"], r["checkpoint"], r["mode"], r["seed"]) for r in rows]
+    if len(set(keys)) != len(keys):
+        raise ValueError("duplicate architecture/training_mode/checkpoint/mode/seed result rows")
+
+
 def validate_rows(rows: list[dict], require_all_splits: bool = True) -> dict:
     blocks, ids, split_counts = {}, set(), {}
     for row in rows:
@@ -100,26 +120,28 @@ def utilities(row: dict) -> np.ndarray:
 
 
 def _shuffled_indices(rows: list[dict], seed: int) -> list[int]:
-    """A seeded bijection; every recipient receives a different workload block."""
-    if len(set(r["block_id"] for r in rows)) < 2:
-        raise ValueError("SHUFFLED requires at least two workload blocks in this split")
+    """Length-stratified bijection to different blocks; GRU update count is fixed."""
     rng = np.random.default_rng(seed + 7103)
     # Block-sorted cyclic rotations provide a derangement when arbitrary random
     # permutations would frequently leave same-block body/target correspondence.
-    groups = {}
+    strata = {}
     for i, row in enumerate(rows):
-        groups.setdefault(row["block_id"], []).append(i)
-    group_keys = sorted(groups)
-    rng.shuffle(group_keys)
-    order = [i for key in group_keys for i in groups[key]]
-    for shift in rng.permutation(np.arange(1, len(order))):
-        donor = np.roll(order, int(shift)).tolist()
-        if all(rows[a]["block_id"] != rows[b]["block_id"] for a, b in zip(order, donor)):
-            result = [0] * len(rows)
-            for a, b in zip(order, donor):
-                result[a] = b
-            return result
-    raise ValueError("cannot create cross-block bijective shuffle; balance block sizes")
+        strata.setdefault(len(row["body_sequence"]), {}).setdefault(row["block_id"], []).append(i)
+    result = [0] * len(rows)
+    for length in sorted(strata):
+        groups = strata[length]
+        group_keys = sorted(groups)
+        rng.shuffle(group_keys)
+        order = [i for key in group_keys for i in groups[key]]
+        for shift in rng.permutation(np.arange(1, len(order))):
+            donor = np.roll(order, int(shift)).tolist()
+            if all(rows[a]["block_id"] != rows[b]["block_id"] for a, b in zip(order, donor)):
+                for a, b in zip(order, donor):
+                    result[a] = b
+                break
+        else:
+            raise ValueError(f"SHUFFLED has no same-history-length cross-block bijection: length={length}, block_counts={dict((k, len(v)) for k, v in groups.items())}")
+    return result
 
 
 def body_arrays(row: dict, mode: str, rng: np.random.Generator):
@@ -202,6 +224,7 @@ def infer(model: BodyPolicy, inputs: list[torch.Tensor], batch_size: int = 128):
     with torch.no_grad():
         for start in range(0, len(inputs), batch_size):
             logits, hidden = model([x.to(device) for x in inputs[start:start + batch_size]])
+            require_finite_tensors([logits, hidden], "inference outputs")
             predictions.extend(logits.argmax(-1).cpu().tolist())
             norms.extend(hidden[-1].norm(dim=-1).cpu().tolist())
     return predictions, norms
@@ -237,6 +260,8 @@ def train_one(train_rows, validation_rows, output: Path, *, seed=0, hidden_size=
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
     model = BodyPolicy(hidden_size).to(device)
+    initial_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+    require_finite_tensors(initial_state.values(), "initial parameters")
     initial_hash = hashlib.sha256(b"".join(v.detach().cpu().numpy().tobytes() for v in model.state_dict().values())).hexdigest()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     inputs = encode_inputs(train_rows, mode, seed)
@@ -256,10 +281,13 @@ def train_one(train_rows, validation_rows, output: Path, *, seed=0, hidden_size=
             logits, _ = model([inputs[i].to(device) for i in idx])
             expected_regret = (utility_matrix[idx].max(-1).values - (logits.softmax(-1) * utility_matrix[idx]).sum(-1)).mean()
             loss = nn.functional.cross_entropy(logits, labels[idx]) + expected_regret
+            require_finite_tensors([loss], "training loss")
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            require_finite_tensors([p.grad for p in model.parameters() if p.grad is not None], "training gradients")
+            nn.utils.clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)
             optimizer.step()
+            require_finite_tensors(model.state_dict().values(), "updated parameters")
             losses.append(float(loss.detach().cpu()))
         actions, _ = infer(model, val_inputs)
         validation = score_actions(validation_rows, actions)
@@ -273,6 +301,9 @@ def train_one(train_rows, validation_rows, output: Path, *, seed=0, hidden_size=
             handle.write(json.dumps(entry) + "\n")
     if best_state is None:
         raise ValueError("epochs must be positive")
+    final_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+    for stage, state in (("initial", initial_state), ("best", best_state), ("final", final_state)):
+        require_finite_tensors(state.values(), f"{stage} checkpoint parameters")
     metadata = {"schema_version": SCHEMA, "architecture": f"GRU{hidden_size}", "seed": seed,
                 "parent": None, "training_stage": "supervised_measured_cost_imitation",
                 "training_mode": mode, "source_commit": source_commit,
@@ -284,7 +315,7 @@ def train_one(train_rows, validation_rows, output: Path, *, seed=0, hidden_size=
                 "elapsed_seconds": time.monotonic() - started,
                 "train_episode_ids": [r["episode_id"] for r in train_rows],
                 "validation_episode_ids": [r["episode_id"] for r in validation_rows]}
-    for stage, state in (("best", best_state), ("final", {k: v.detach().cpu() for k, v in model.state_dict().items()})):
+    for stage, state in (("best", best_state), ("final", final_state)):
         torch.save({"metadata": dict(metadata, checkpoint_stage=stage), "state_dict": state}, output / f"{stage}.pt")
     latency_model = copy.deepcopy(model).cpu().eval()
     latency_input = [val_inputs[0].cpu()]
@@ -300,7 +331,8 @@ def train_one(train_rows, validation_rows, output: Path, *, seed=0, hidden_size=
     metadata["cpu_inference_ms"] = float(np.median(measurements))
     metadata["cpu_inference_protocol"] = {"batch_size": 1, "sequence_length": len(val_inputs[0]), "warmups": 3, "repeats": 30, "torch_threads": torch.get_num_threads(), "checkpoint_stage": "final"}
     metadata["checkpoint_sha256"] = {stage: sha256(output / f"{stage}.pt") for stage in ("best", "final")}
-    json_write(output / "status.json", dict(metadata, complete=True, finite_parameters=all(torch.isfinite(v).all().item() for v in best_state.values())))
+    json_write(output / "status.json", dict(metadata, complete=True, finite_parameters=True,
+        finite_checkpoints={"initial": True, "best": True, "final": True}, finite_loss_and_gradients_every_update=True))
     return metadata
 
 
@@ -360,14 +392,27 @@ def counterfactual(model: BodyPolicy, rows: list[dict], seed: int) -> dict:
 
 def evaluate_models(rows, run_paths, output: Path):
     test = [r for r in rows if r["split"] == "test"]
-    ablations, ood, counter, traces, forks, input_traces = [], [], [], [], [], []
+    if len(set(Path(p).resolve() for p in run_paths)) != len(run_paths):
+        raise ValueError("duplicate run paths are not independent seeds")
+    ablations, ood, counter, traces, forks, input_traces, final_results = [], [], [], [], [], [], []
+    run_identities = set()
     for run in run_paths:
         model, meta = load_model(run / "best.pt")
         seed, training_mode = meta["seed"], meta["training_mode"]
+        run_identity = (meta["architecture"], training_mode, seed)
+        if run_identity in run_identities:
+            raise ValueError("duplicate architecture/training_mode/seed checkpoints")
+        run_identities.add(run_identity)
         modes = PRIMARY_MODES if training_mode == "BODY" else ("BLIND",)
+        final_model, final_meta = load_model(run / "final.pt")
+        if final_meta["checkpoint_stage"] != "final" or final_meta["seed"] != seed or final_meta["training_mode"] != training_mode:
+            raise ValueError("final checkpoint stage/seed/mode mismatch")
         for mode in modes:
             encoded = encode_inputs(test, mode, seed)
             actions, norms = infer(model, encoded)
+            final_actions, _ = infer(final_model, encoded)
+            final_results.append(dict(seed=seed, architecture=meta["architecture"], training_mode=training_mode,
+                checkpoint="final", mode=mode, checkpoint_sha256=sha256(run / "final.pt"), **score_actions(test, final_actions)))
             ablations.append(dict(seed=seed, architecture=meta["architecture"], training_mode=training_mode,
                 checkpoint="best", mode=mode, **score_actions(test, actions)))
             for row, action, norm, sequence in zip(test, actions, norms, encoded):
@@ -398,6 +443,8 @@ def evaluate_models(rows, run_paths, output: Path):
                     kind="synthetic_resource_failure_simulation" if mode == "controlled_resource_unavailable" else "synthetic_observation_perturbation",
                     outcome_provenance="RTX_selection_failure_simulated; other_actions_measured_cost" if mode == "controlled_resource_unavailable" else "measured_action_cost_replay",
                     **score_actions(outcomes, actions)))
+    require_unique_seed_rows(ablations)
+    require_unique_seed_rows(final_results)
     primary = [r for r in ablations if r["training_mode"] == "BODY"]
     comparisons, aggregates = {}, {}
     for architecture in sorted(set(r["architecture"] for r in primary)):
@@ -414,6 +461,20 @@ def evaluate_models(rows, run_paths, output: Path):
             comparisons[f"{architecture}_BODY_vs_independently_trained_BLIND"] = paired_comparison([r["utility"] for r in table["BODY"]], [r["utility"] for r in independent])
     json_write(output / "ablation_results.json", {"schema_version": SCHEMA, "rows": ablations, "comparisons": comparisons, "statistics": aggregates,
         "primary_control": "same BODY checkpoint; independent BLIND training is secondary", "outcome_provenance": "measured_action_cost_replay"})
+    final_statistics, final_vs_best = {}, {}
+    for architecture, training_mode, mode in sorted(set((r["architecture"], r["training_mode"], r["mode"]) for r in final_results)):
+        final_rows = sorted([r for r in final_results if (r["architecture"], r["training_mode"], r["mode"]) == (architecture, training_mode, mode)], key=lambda r: r["seed"])
+        best_rows = sorted([r for r in ablations if (r["architecture"], r["training_mode"], r["mode"]) == (architecture, training_mode, mode)], key=lambda r: r["seed"])
+        if [r["seed"] for r in final_rows] != [r["seed"] for r in best_rows]:
+            raise ValueError("best/final comparison seed mismatch")
+        key = f"{architecture}_trained_{training_mode}_input_{mode}"
+        final_statistics[key] = {metric: describe([r[metric] for r in final_rows]) for metric in
+            ("utility", "latency_seconds", "deadline_success_rate", "failure_rate", "oracle_match_rate")}
+        final_vs_best[key] = paired_comparison([r["utility"] for r in final_rows], [r["utility"] for r in best_rows])
+    json_write(output / "final_checkpoint_results.json", {"schema_version": SCHEMA, "rows": final_results,
+        "statistics": final_statistics, "final_vs_best_utility": final_vs_best,
+        "checkpoint": "final", "primary": False, "outcome_provenance": "measured_action_cost_replay",
+        "selection_note": "Final checkpoint is reported separately; validation-best remains the frozen primary choice."})
     counter_stats = {arch: paired_comparison([r["matched_utility"] for r in counter if r.get("available") and r["architecture"] == arch],
         [r["frozen_utility"] for r in counter if r.get("available") and r["architecture"] == arch]) for arch in sorted(set(r["architecture"] for r in counter if r.get("available")))}
     counter_descriptive = {arch: {metric: describe([r[metric] for r in counter if r.get("available") and r["architecture"] == arch])
@@ -477,8 +538,8 @@ def main():
                   "raw_sensor_schema_identity": normalization_config["raw_schema"],
                   "normalization_identity": canonical_identity(normalization_config),
                   "normalization_file_sha256": sha256(args.normalization_config)}
-    seeds = [int(x) for x in args.seeds.split(",")]
-    hidden_sizes = [int(x) for x in args.hidden_sizes.split(",")]
+    seeds = unique_integer_list(args.seeds, "seeds")
+    hidden_sizes = unique_integer_list(args.hidden_sizes, "hidden_sizes", minimum=1)
     config = {"schema_version": SCHEMA, "seeds": seeds, "hidden_sizes": hidden_sizes, "epochs": args.epochs,
               "batch_size": args.batch_size, "learning_rate": args.learning_rate, "device": args.device,
               "reward": "1-min(measured_latency/deadline,2); measured failure=-1",

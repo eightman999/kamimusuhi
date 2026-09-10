@@ -58,6 +58,7 @@ validation gate は事前固定する。
 - BODY が BLIND より 10% 以上低いときのみ policy 学習へ進む。
 - この記述的 screening を因果的研究成功や telemetry point の有意差と呼ばない。
 - 最初は validation のみ出力。held-out は gate 固定後に `--include-test` で追加し、旧 gate を保存する。
+- held-out の dataset 読取・probe 呼出の前に、既存 validation gate の存在・PASS、dataset/source hash と seed の一致を検証する。欠落・FAIL の gate では probe 自体を呼ばない。
 
 ```sh
 python -m experiments.k0_f_interoception.probe --dataset DATASET --output OUTPUT
@@ -79,6 +80,8 @@ validation の平均 utility 最大を best に選び、同点は最初の check
 best と final を分離して保存し、上書きを拒否する。
 同じ凍結 training_config で再実行した場合だけ、status・source/data/normalization・checkpoint hash の一致する完了 run を再利用する。中断した未完了 run は上書きせず停止する。
 checkpoint に architecture、seed、parent=null、stage、source commit、source/data/normalization identity を保存する。
+全 update の loss・gradient・更新後parameter、保存前の initial/best/final parameter、推論 logits/hidden の finite を検証し、異常時は complete と checkpoint 保存を禁止する。
+seed と hidden size の重複指定、および architecture/training mode/checkpoint/input mode/seed の重複集計を拒否する。
 
 1 episode は 1 回の資源選択で、replay の action は次 row の状態を変えないため DAgger は実施しない。
 PPO は実施しない。これは closed-loop 環境 RL の代替的証拠ではない。
@@ -86,8 +89,9 @@ PPO は実施しない。これは closed-loop 環境 RL の代替的証拠で�
 ## Primary と secondary
 
 Primary は同じ BODY-best checkpoint の BODY / BLIND / SHUFFLED / STALE 入力介入。
-SHUFFLED は同 split 内の別 workload block との body 履歴の全単射で、body 周辺分布を保存する。
-task と evaluation row 順は保持する。seed ごとに決定的 shuffle を用いる。
+SHUFFLED は同 split・同履歴長の stratum 内に限定し、別 workload block との body 履歴の全単射で、stratum ごとの body 周辺分布を保存する。
+task、evaluation row 順、受け手の GRU update 数は保持する。seed ごとに決定的 shuffle を用いる。
+同履歴長の別 block donor による全単射が存在しなければ明示失敗し、履歴長変更・切り詰め等へ fallback しない。
 独立 BLIND の最良 checkpoint 比較は secondary。情報除去による分布外入力と、最初から情報のない学習を区別する。
 
 各 seed の同じ held-out row 平均を独立単位とする。
@@ -123,8 +127,9 @@ sensor permutation 等で崩壊した場合も mode ごとの数値を残す。
 
 `training_config.json`, `run_summary.json`, `runs/*/{metrics.jsonl,status.json,best.pt,final.pt}`、
 `prediction_probe.json`, `prediction_probe_models.json`, `prediction_probe_predictions.jsonl`、
-`ablation_results.json`, `counterfactual_body.json`, `counterfactual_pairs.jsonl`、
+`ablation_results.json`, `final_checkpoint_results.json`, `counterfactual_body.json`, `counterfactual_pairs.jsonl`、
 `ood_results.json`, `policy_traces.jsonl`, `policy_input_traces.jsonl` を保存する。
 policy traces は action、hidden norm、元 body、実測 latency/utility、provenance を持つ。
 policy input traces は seed/mode ごとに介入後の実際の 44float sequence を保存する。
+final checkpoint も同じ held-out row・介入で評価し、`final_checkpoint_results.json` へ別保存する。primary は validation-best のまま。final を primary の最高値に置き換えない。
 チェックポイントのバイナリは raw data と同様、無条件に Git へ追加しない。

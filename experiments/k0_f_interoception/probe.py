@@ -105,23 +105,28 @@ def main():
     parser.add_argument("--include-test", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
+    result_path = args.output / "prediction_probe.json"
+    previous = None
+    if result_path.exists():
+        previous = json.loads(result_path.read_text())
+        if not args.include_test or previous.get("test_evaluated"):
+            raise FileExistsError("probe result already exists")
+        if not previous["gate"]["pass"]:
+            raise RuntimeError("validation gate failed; held-out probe remains unexamined")
+        if previous["dataset_sha256"] != sha256(args.dataset) or previous["source_sha256"] != sha256(Path(__file__)) or previous["seed"] != args.seed:
+            raise ValueError("held-out evaluation may not change frozen dataset, source or seed")
+    elif args.include_test:
+        raise RuntimeError("first run and freeze validation-only probe before evaluating test")
+    # No dataset targets or run_probe calls occur until the saved gate above passes.
     rows = load_dataset(args.dataset)
     args.output.mkdir(parents=True, exist_ok=True)
     result, models, predictions = run_probe(rows, include_test=args.include_test, seed=args.seed)
     result["dataset_sha256"] = sha256(args.dataset)
     result["source_sha256"] = sha256(Path(__file__))
-    result_path = args.output / "prediction_probe.json"
-    if result_path.exists():
-        previous = json.loads(result_path.read_text())
-        if not args.include_test or previous.get("test_evaluated"):
-            raise FileExistsError("probe result already exists")
-        if previous["dataset_sha256"] != result["dataset_sha256"] or previous["gate"] != result["gate"] or previous["source_sha256"] != result["source_sha256"]:
-            raise ValueError("held-out evaluation may not change dataset or validation gate")
-        if not previous["gate"]["pass"]:
-            raise RuntimeError("validation gate failed; held-out probe remains unexamined")
+    if previous is not None:
+        if previous["gate"] != result["gate"]:
+            raise ValueError("held-out evaluation may not change validation gate")
         json_write(args.output / "prediction_probe_validation_gate.json", previous)
-    elif args.include_test:
-        raise RuntimeError("first run and freeze validation-only probe before evaluating test")
     json_write(result_path, result)
     json_write(args.output / "prediction_probe_models.json", models)
     (args.output / "prediction_probe_predictions.jsonl").write_text("".join(json.dumps(r, allow_nan=False) + "\n" for r in predictions))

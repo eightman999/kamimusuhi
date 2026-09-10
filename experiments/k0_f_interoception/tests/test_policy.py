@@ -1,15 +1,18 @@
 import copy
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import torch
 from torch import nn
 
 from experiments.k0_f_interoception.policy import (
-    ACTION_NAMES, BodyPolicy, SENSOR_OOD, TEMPORAL_OOD, counterfactual,
-    encode_inputs, infer, load_model, score_actions, train_one, utilities, validate_rows,
+    ACTION_NAMES, BodyPolicy, SENSOR_OOD, TEMPORAL_OOD, counterfactual, evaluate_models,
+    encode_inputs, infer, load_model, require_unique_seed_rows, score_actions, train_one,
+    unique_integer_list, utilities, validate_rows,
 )
 from experiments.k0_f_interoception.statistics import describe, exact_sign_test, paired_comparison
 
@@ -91,7 +94,19 @@ class PolicyTests(unittest.TestCase):
         for row, x in zip(rows, shuffled):
             donor = round(float(x[-1, 4]) * len(rows))
             self.assertNotEqual(row["block_id"], rows[donor]["block_id"])
+            self.assertEqual(len(x), len(row["body_sequence"]))
             np.testing.assert_array_equal(x[-1, :4], np.asarray(row["task_features"], dtype=np.float32))
+        for length in range(1, 5):
+            before = sorted(x[:, 4:].numpy().tobytes() for x in ordinary if len(x) == length)
+            after = sorted(x[:, 4:].numpy().tobytes() for x in shuffled if len(x) == length)
+            self.assertEqual(before, after)
+
+    def test_shuffle_impossible_length_stratum_fails_without_fallback(self):
+        rows = [copy.deepcopy(fixture_rows()[0]), copy.deepcopy(fixture_rows()[5])]
+        self.assertNotEqual(rows[0]["block_id"], rows[1]["block_id"])
+        self.assertNotEqual(len(rows[0]["body_sequence"]), len(rows[1]["body_sequence"]))
+        with self.assertRaisesRegex(ValueError, "same-history-length"):
+            encode_inputs(rows, "SHUFFLED")
 
     def test_ood_finite_masked_inputs(self):
         rows = fixture_rows()[:4]
@@ -131,10 +146,56 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(meta["checkpoint_stage"], "best")
             self.assertEqual(meta["best_validation_utility"], result["best_validation_utility"])
             self.assertTrue(all(torch.isfinite(v).all() for v in model.parameters()))
+            evaluate_models(rows, [path], Path(temporary) / "evaluation")
+            best = json.loads((Path(temporary) / "evaluation/ablation_results.json").read_text())
+            final = json.loads((Path(temporary) / "evaluation/final_checkpoint_results.json").read_text())
+            self.assertEqual(len(final["rows"]), 4)
+            self.assertTrue(all(r["checkpoint"] == "final" for r in final["rows"]))
+            self.assertTrue(all(r["checkpoint"] == "best" for r in best["rows"]))
+            self.assertFalse(final["primary"])
             with self.assertRaises(FileExistsError):
                 train_one(train, validation, path, epochs=1)
             with self.assertRaises(ValueError):
                 train_one([rows[-1]], validation, Path(temporary) / "leak", epochs=1)
+
+    def test_duplicate_seeds_and_result_rows_rejected(self):
+        for value, name in (("0,1,0", "seeds"), ("128,128", "hidden_sizes")):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "duplicate"):
+                unique_integer_list(value, name)
+        row = dict(architecture="GRU128", training_mode="BODY", checkpoint="best", mode="BODY", seed=0)
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            require_unique_seed_rows([row, dict(row)])
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            evaluate_models(fixture_rows(), [Path("same-run"), Path("same-run")], Path("unused"))
+
+    def test_nonfinite_loss_gradient_and_final_update_stop_completion(self):
+        torch.set_num_threads(1)
+        rows = fixture_rows()
+        train = [r for r in rows if r["split"] == "train"]
+        validation = [r for r in rows if r["split"] == "validation"]
+
+        class BadGradientPolicy(BodyPolicy):
+            def __init__(self, hidden_size):
+                super().__init__(hidden_size)
+                next(self.parameters()).register_hook(lambda grad: torch.full_like(grad, float("nan")))
+
+        def corrupt_update(optimizer, *args, **kwargs):
+            with torch.no_grad():
+                optimizer.param_groups[0]["params"][0].fill_(float("inf"))
+
+        patches = {
+            "loss": mock.patch("experiments.k0_f_interoception.policy.nn.functional.cross_entropy", return_value=torch.tensor(float("nan"), requires_grad=True)),
+            "gradient": mock.patch("experiments.k0_f_interoception.policy.BodyPolicy", BadGradientPolicy),
+            "final_update": mock.patch("experiments.k0_f_interoception.policy.torch.optim.Adam.step", corrupt_update),
+        }
+        for condition, patch in patches.items():
+            with self.subTest(condition=condition), tempfile.TemporaryDirectory() as temporary, patch:
+                path = Path(temporary) / "run"
+                with self.assertRaises(FloatingPointError):
+                    train_one(train, validation, path, epochs=1, hidden_size=8)
+                self.assertFalse((path / "status.json").exists())
+                self.assertFalse((path / "best.pt").exists())
+                self.assertFalse((path / "final.pt").exists())
 
     def test_seed_statistics_no_episode_n(self):
         self.assertEqual(exact_sign_test([1.] * 8), .0078125)

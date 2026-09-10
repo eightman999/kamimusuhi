@@ -1,9 +1,14 @@
 import copy
+import json
+from pathlib import Path
+import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
 from experiments.k0_f_interoception.probe import features, fit_ridge, predict, run_probe
+from experiments.k0_f_interoception import probe
 from experiments.k0_f_interoception.tests.test_policy import fixture_rows
 
 
@@ -42,6 +47,19 @@ class ProbeTests(unittest.TestCase):
             row.update(timestamp=1234567, workload_label="secret", costs_seconds=[10, 20, 30])
             row["probe_targets"] = {"future_rtx3060_util": 999}
         np.testing.assert_array_equal(features(rows, "BODY"), features(changed, "BODY"))
+
+    def test_heldout_probe_never_called_without_prevalidated_gate(self):
+        for gate_kind in ("missing", "failed"):
+            with self.subTest(gate_kind=gate_kind), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary)
+                if gate_kind == "failed":
+                    (output / "prediction_probe.json").write_text(json.dumps({"gate": {"pass": False}, "test_evaluated": False}))
+                argv = ["probe", "--dataset", str(output / "unreadable-dataset.jsonl"), "--output", str(output), "--include-test"]
+                with mock.patch("sys.argv", argv), mock.patch.object(probe, "run_probe") as run, mock.patch.object(probe, "load_dataset") as load:
+                    with self.assertRaises(RuntimeError):
+                        probe.main()
+                    run.assert_not_called()
+                    load.assert_not_called()
 
 
 if __name__ == "__main__":
