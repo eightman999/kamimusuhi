@@ -66,8 +66,16 @@ Heuristics (`agents/heuristics.py`): `prior` (occluder-mid guess),
 `lastobs`, `constvel`, `corridor` (constvel clipped to the occluder
 bounds — the honest strong baseline), `openloop` (true dynamics,
 open-loop integration — a reference point, *not* a Bayes-optimal
-ceiling), `kalman` (linear Kalman filter over [x, v, a] with true noise
-statistics — the closest available optimal-filter approximation).
+ceiling), `corridordyn` (openloop + bound clip — the strongest
+hand-crafted tracker), `kalman` (linear Kalman filter over [x, v, a]
+with *approximate* noise statistics — diagonal Q; accel modeled as a
+random walk though the true accel is per-episode constant).
+
+`analysis/extras.py` adds the round-2 reviewer extras without
+retraining: post-window none baselines for the causal table, takeover
+episode stats, paired episode-resampled bootstrap CIs for close calls,
+and a linear probe decoding pos/vel/exist from the recurrent state per
+occlusion depth (`reports/extras.json`, `probe_pos_r2.png`).
 
 ## Causal tests & OOD
 
