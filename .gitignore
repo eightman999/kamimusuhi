@@ -4,15 +4,31 @@
 # Local runtime state: databases, JSONL traces, demo artifacts
 /.local/
 
+# Research data: keep policies/manifests in git, payloads local by default
+/data/raw/
+/data/vendor/
+/data/private/
+/data/cache/
+
+# Large/generated research artifacts should be archived deliberately
+/artifacts/
+/papers/**/build/
+
 # Editor / OS noise
 .DS_Store
 
 # MIOBA experiment runtime
 /experiments/mioba/.runs/
+
+# R0 experiment runtime
+/experiments/r0/artifacts/
 __pycache__/
 *.pyc
 /.venv*/
 
-# T0 experiment runtime artifacts (checkpoints, run state)
-/experiments/t0/artifacts/*/runs/
-/experiments/t0/artifacts/*/generated_configs/
+# H0 experiment runtime
+/experiments/h0/runs/
+/experiments/h0/results/
+
+# T0 experiment runtime artifacts (checkpoints, eval outputs, run state)
+/experiments/t0/artifacts/

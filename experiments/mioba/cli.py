@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -275,40 +276,156 @@ def cmd_profile(args) -> int:
 
 
 def cmd_rank_check(args) -> int:
-    """M1 §2.3: does a cheaper evaluator rank individuals like the gold
-    one? Accepts only at Spearman rho >= 0.85 and top-8 overlap >= 6/8.
+    """M1 §2.3/§21: which cheap evaluator ranks individuals like gold?
+
+    Selection consumes ranks, so the question is not whether the cheap
+    evaluator agrees on scores but whether it orders the population the
+    same way. The lightest candidate meeting rho >= 0.85 and top-8
+    overlap >= 6/8 is adopted; anything else is refused with its numbers.
     """
-    from .evolution.population import fitness_placeholder
+    from .evolution import fitness as F
+    from .genome.structure import analyse
     from .perf.evalbench import founder_population
-    from .perf.rank_agreement import compare_evaluators
+    from .perf.rank_agreement import (compare_evaluators, parse_candidate,
+                                      search_cheap_evaluator)
     config = load_config(getattr(args, "config", None))
     ev = config.get("evaluation", {})
     target = float(ev.get("target_rate_hz", 5.0))
     genomes = founder_population(args.population,
                                  base_seed=int(config.get("evolution", {})
                                                .get("mutation_seed", 0)))
+    structures = {g.genome_id: analyse(g).to_dict() for g in genomes}
+
+    def score(summary):
+        # rank on what the run actually selects on, not on the M0
+        # placeholder: a cheap evaluator that preserves the placeholder's
+        # order but scrambles the disturbance response is not usable
+        gid = (summary or {}).get("genome_id")
+        metrics = F.compute_metrics(summary, structures.get(gid), config,
+                                    target)
+        value = F.selection_score(metrics, config)
+        return value if value is not None else float("-inf")
+
     gold = {"duration_ms": args.gold_duration_ms or ev.get("duration_ms", 500),
             "replicates": args.gold_replicates or ev.get("replicates", 8)}
-    cheap = {"duration_ms": args.cheap_duration_ms,
-             "replicates": args.cheap_replicates}
-    report = compare_evaluators(
-        genomes, config, args.device, gold, cheap,
-        score=lambda s: fitness_placeholder(s, target) or float("-inf"),
-        execution_batch=args.execution_batch, data_dir=args.data_dir,
-        k=args.top_k, min_rho=args.min_rho, min_overlap=args.min_overlap)
-    print(f"gold  {gold}  {report['gold_wall_s']}s")
-    print(f"cheap {cheap}  {report['cheap_wall_s']}s  "
-          f"speedup x{report['speedup']}")
-    print(f"spearman_rho={report['spearman_rho']} "
-          f"top{report['top_k']['k']}_overlap="
-          f"{report['top_k']['overlap']}/{report['top_k']['k']}")
-    print("ACCEPTED" if report["accepted"]
-          else "REJECTED: " + "; ".join(report["rejected_because"]))
+    if args.candidates:
+        report = search_cheap_evaluator(
+            genomes, config, args.device, gold,
+            [parse_candidate(c) for c in args.candidates.split(",")],
+            score=score, execution_batch=args.execution_batch,
+            data_dir=args.data_dir, k=args.top_k, min_rho=args.min_rho,
+            min_overlap=args.min_overlap)
+        print(f"gold {gold}")
+        for a in report["attempts"]:
+            if a.get("skipped"):
+                print(f"  {a['candidate']}  skipped: {a['reason']}")
+                continue
+            print(f"  {a['cheap']}  x{a['speedup']} faster  "
+                  f"rho={a['spearman_rho']} "
+                  f"top{a['top_k']['k']}={a['top_k']['overlap']}  "
+                  + ("ACCEPTED" if a["accepted"]
+                     else "rejected: " + "; ".join(a["rejected_because"])))
+        print(f"chosen: {report['chosen']} ({report['note']})")
+        accepted = report["chosen"] is not None
+    else:
+        cheap = {"duration_ms": args.cheap_duration_ms,
+                 "replicates": args.cheap_replicates}
+        report = compare_evaluators(
+            genomes, config, args.device, gold, cheap, score=score,
+            execution_batch=args.execution_batch, data_dir=args.data_dir,
+            k=args.top_k, min_rho=args.min_rho,
+            min_overlap=args.min_overlap)
+        print(f"gold  {gold}  {report['gold_wall_s']}s")
+        print(f"cheap {cheap}  {report['cheap_wall_s']}s  "
+              f"speedup x{report['speedup']}")
+        print(f"spearman_rho={report['spearman_rho']} "
+              f"top{report['top_k']['k']}_overlap="
+              f"{report['top_k']['overlap']}/{report['top_k']['k']}")
+        print("ACCEPTED" if report["accepted"]
+              else "REJECTED: " + "; ".join(report["rejected_because"]))
+        accepted = report["accepted"]
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(report, indent=2, default=str))
         print(f"wrote {args.out}")
-    return 0 if report["accepted"] else 6
+    return 0 if accepted else 6
+
+
+def cmd_sensitivity(args) -> int:
+    """M1 §10: which mutations actually move the phenotype.
+
+    Sweeps each mutable quantity alone and prints a sensitivity number
+    plus the `evolution.mutation` fragment to paste into the run config.
+    """
+    from .perf.sensitivity import DEFAULT_FACTORS, DEFAULT_TARGETS, sweep
+    config = load_config(getattr(args, "config", None))
+    factors = (tuple(float(f) for f in args.factors.split(","))
+               if args.factors else DEFAULT_FACTORS)
+    targets = (tuple(t.strip() for t in args.targets.split(","))
+               if args.targets else DEFAULT_TARGETS)
+    report = sweep(config, args.device, targets=targets, factors=factors,
+                   duration_ms=args.duration_ms, replicates=args.replicates,
+                   base_size=args.organ_size, data_dir=args.data_dir)
+    print(f"device={args.device} factors={list(factors)}")
+    print(f"{'target':22s} {'sensitivity':>12s} {'max move':>10s}")
+    for row in sorted(report["rows"],
+                      key=lambda r: -(r["sensitivity"] or 0.0)):
+        print(f"{row['target']:22s} {str(row['sensitivity']):>12s} "
+              f"{str(row['max_move']):>10s}")
+    rec = report["recommendation"]
+    print("\nevolution.mutation:")
+    print(f"  parameter_weights: {rec['parameter_weights']}")
+    print(f"  parameter_scale_by_path: {rec['parameter_scale_by_path']}")
+    if rec["insensitive_parameters"]:
+        print(f"  # barely move the phenotype: "
+              f"{rec['insensitive_parameters']}")
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(json.dumps(report, indent=2, default=str))
+        print(f"wrote {args.out}")
+    return 0
+
+
+def cmd_device_bench(args) -> int:
+    """M1 §20: compare CPU / each GPU on identical scientific conditions.
+
+    Event-driven propagation made the fastest device an open question:
+    gathering the edges of ~130 spiking neurons is small, latency-bound
+    work. Using a GPU is not the goal — finishing generations is.
+    """
+    from .fba.runtime_info import collect_runtime_info
+    from .perf.evalbench import device_benchmark
+    config = load_config(getattr(args, "config", None))
+    devices = tuple(d.strip() for d in args.devices.split(","))
+    slots = tuple(int(s) for s in str(args.slots).split(","))
+    report = device_benchmark(config, devices, evaluations=args.evaluations,
+                              slot_candidates=slots,
+                              execution_batch=args.execution_batch,
+                              duration_ms=args.duration_ms,
+                              replicates=args.replicates,
+                              data_dir=args.data_dir)
+    report["runtime"] = {d: collect_runtime_info(device=d) for d in devices}
+    print(f"{'device':12s} {'slots':>5s} {'evals/min':>10s} {'p50 s':>8s} "
+          f"{'p95 s':>8s} {'edge ratio':>12s}")
+    for row in report["rows"]:
+        if not row.get("ok"):
+            print(f"{row['device']:12s}   failed: {row['error']}")
+            continue
+        print(f"{row['device']:12s} {row['selected_slots']:>5} "
+              f"{row['evaluations_per_minute']:>10} "
+              f"{str(row['p50_latency_s']):>8s} "
+              f"{str(row['p95_latency_s']):>8s} "
+              f"{str(row['active_edge_ratio']):>12s}")
+    print(f"recommended: {report['recommended_device']} "
+          f"slots={report['recommended_slots']} "
+          f"({report['recommended_evaluations_per_minute']} evals/min)")
+    if not report["devices_agree_on_results"]:
+        print(f"WARNING: {report['note']}")
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(json.dumps(report, indent=2, default=str))
+        print(f"wrote {args.out}")
+    return 0 if report["devices_agree_on_results"] else 7
 
 
 def cmd_env_info(args) -> int:
@@ -346,10 +463,23 @@ def cmd_replay(args) -> int:
     except ReplayConfigMismatch as exc:
         print(f"ReplayConfigMismatch (strict): {exc}", file=sys.stderr)
         return 5
-    out = exp_dir / "replays" / f"{args.evaluation_id}.json"
-    out.write_text(json.dumps(result, indent=2, default=str))
+    payload = json.dumps(result, indent=2, default=str)
+    # Every replay of one evaluation is kept: strict / --allow-device-drift /
+    # --execution-batch runs of the same evaluation_id each record different
+    # device_warnings, and overwriting one file loses them. The archived copy
+    # is timestamped; <evaluation_id>.json stays as the "latest" pointer.
+    replays = exp_dir / "replays"
+    replays.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    archived = replays / f"{args.evaluation_id}.{stamp}.json"
+    archived.write_text(payload)
+    out = Path(args.out) if getattr(args, "out", None) else (
+        replays / f"{args.evaluation_id}.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(payload)
     print(json.dumps(result["diff"], indent=2))
     print(f"wrote {out}")
+    print(f"archived {archived}")
     return 0
 
 
@@ -408,6 +538,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--execution-batch", type=int, default=None,
                    help="lanes per chunk for the replay (operational; "
                         "default: recorded execution batch)")
+    p.add_argument("--out", default=None,
+                   help="write the report here instead of "
+                        "<run>/replays/<evaluation_id>.json (a timestamped "
+                        "copy is archived under <run>/replays/ either way)")
     p.set_defaults(fn=cmd_replay)
 
     p = sub.add_parser("bench")
@@ -455,6 +589,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--gold-replicates", type=int, default=None)
     p.add_argument("--cheap-duration-ms", type=float, default=250.0)
     p.add_argument("--cheap-replicates", type=int, default=2)
+    p.add_argument("--candidates", default=None,
+                   help="comma-separated <duration_ms>x<replicates> "
+                        "candidates, cheapest accepted wins "
+                        "(e.g. 250x2,500x2,500x4)")
     p.add_argument("--execution-batch", type=int, default=1)
     p.add_argument("--top-k", type=int, default=8)
     p.add_argument("--min-rho", type=float, default=0.85)
@@ -462,6 +600,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data-dir", default=None)
     p.add_argument("--out", default=None)
     p.set_defaults(fn=cmd_rank_check)
+
+    p = sub.add_parser("sensitivity",
+                       help="M1 mutation sensitivity sweep")
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--targets", default=None,
+                   help="comma-separated quantities (default: all)")
+    p.add_argument("--factors", default=None,
+                   help="comma-separated multipliers "
+                        "(default: 0.6,0.8,0.9,1.1,1.2,1.4)")
+    p.add_argument("--duration-ms", type=float, default=None)
+    p.add_argument("--replicates", type=int, default=None)
+    p.add_argument("--organ-size", type=int, default=32)
+    p.add_argument("--data-dir", default=None)
+    p.add_argument("--out", default=None)
+    p.set_defaults(fn=cmd_sensitivity)
+
+    p = sub.add_parser("device-bench",
+                       help="M1 CPU/GPU comparison on identical conditions")
+    p.add_argument("--devices", default="cpu",
+                   help="comma-separated, e.g. cpu,cuda:0,cuda:1")
+    p.add_argument("--slots", default="1,2,3")
+    p.add_argument("--evaluations", type=int, default=6)
+    p.add_argument("--execution-batch", type=int, default=1)
+    p.add_argument("--duration-ms", type=float, default=None)
+    p.add_argument("--replicates", type=int, default=None)
+    p.add_argument("--data-dir", default=None)
+    p.add_argument("--out", default=None)
+    p.set_defaults(fn=cmd_device_bench)
 
     p = sub.add_parser("worker", add_help=False)
     p.add_argument("worker_args", nargs=argparse.REMAINDER)

@@ -2,7 +2,9 @@
 
 > 外部時計を持たないエージェント内部に、未知の時間間隔にも利用可能な「経過時間」の表現は形成されるか。
 
-本ファイルは `experiments/t0/artifacts/primary/` の実測値から転記した判定記録です。集計元: `eval/*_ppo_best.json`, `consolidated.json` (3 seed 平均・SD・median・bootstrap 95% CI)。実装と条件の正典は [../README.md](../README.md)。
+本ファイルは `experiments/t0/artifacts/primary/` (Git 管理外) の実測値から転記した判定記録です。集約統計は [consolidated.json](consolidated.json) にコミット済み。実装と条件の正典は [../README.md](../README.md)。
+
+**適用範囲**: 以下の全数値・判定は主実験 **T0-A (interval production)** のものです。T0-B/C/D は現時点で env + oracle + smoke test のみで、学習済み実験結果ではありません。
 
 ## 条件
 

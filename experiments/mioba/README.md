@@ -10,12 +10,22 @@ Observatory GUI.
 This package is *infrastructure only* — phase 1 ships the coordinator,
 storage, backends, worker protocol, MIE collectors, E-adapter contract,
 checkpoint/resume and smoke tests. It is not validated for long evolution
-runs and has not been run on GPU hardware.
+runs. The GPU path *has* been validated once on real hardware (RTX 3060 +
+Tesla P100, CUDA 12.6) — see
+[`docs/experiments/mioba-gpu-validation-2026-09-11.md`](../../docs/experiments/mioba-gpu-validation-2026-09-11.md).
 
 ## Install
 
+**Supported Python: 3.10 – 3.13.** Python 3.14 does not work with the GPU
+requirements: `requirements-gpu-cu126.txt` pins `numpy<2.3`, which has no
+cp314 wheel, so pip falls back to a source build and fails with
+`Python dependency not found` (torch 2.9.1+cu126 itself does ship a cp314
+wheel — numpy is the blocker). On hosts whose system Python is 3.14 only
+(e.g. Ubuntu 26.04), install an interpreter in range first, for example
+`uv python install 3.12 && uv venv --python 3.12 ~/mioba-venv`.
+
 ```bash
-python3.10 -m venv ~/mioba-venv
+python3.12 -m venv ~/mioba-venv   # any of 3.10–3.13
 ~/mioba-venv/bin/pip install -r experiments/mioba/requirements.txt   # dev/CPU box
 # GPU host (RTX 3060 / P100, sm_60 kept by cu126 wheels):
 ~/mioba-venv/bin/pip install -r experiments/mioba/requirements-gpu-cu126.txt
@@ -367,20 +377,154 @@ worker's own GPU). Also 個体群・系譜, 個体インスペクター, MIE / �
 イベント. Closing the tab must not affect `/api/status`; the GUI has no
 controls.
 
+## M1: fast evolution, structural growth, disturbance
+
+M0 proved the infrastructure survives a multi-generation run. It also found
+that nothing evolved: ~50 s per evaluation, one mutation per child, a constant
+environment, and a fitness that every individual sat on. M1 addresses each.
+
+### What changed scientifically
+
+M1 is **not** a continuation of M0. `scientific_config_hash` now includes the
+simulator's own semantics, and all three of these changed:
+
+| | M0 | M1 |
+|---|---|---|
+| FBA0 base graph | re-sampled per genome seed | one graph per run (`fba.base_seed`), resident on the device |
+| dataset identity | `v0-n…-e…` | `v1-n…-e…-s<base_seed>` |
+| delay line | arrival at `t + D + 2` (2.0 ms for `tDelay=1.8`) | `t + D` exactly |
+| Poisson drive | one uniform per neuron per step | one per *driven* neuron |
+| propagation | `torch.sparse.mm` over all 14M edges | event-driven CSC gather (`fba/eventgraph.py`) |
+| `simulator_semantics_version` / `rng_protocol_version` | 1 / 1 (inferred) | 2 / 2 |
+
+An M0 recording is therefore **not replayable by this build**: `replay` refuses
+it explicitly rather than re-running it on a different network. Use the M0
+commit for M0 data.
+
+One evaluation at FlyWire scale (139k neurons / 14M edges, CPU) went from
+10.2 s to 0.32 s with the base graph warm.
+
+### Evolution
+
+`1 + Poisson(1.5)` mutations per child (cap 4, mean ≈2.4), weighted structural
+55% / parameter 35% / prune 10%, over nine operators: `NEW_ORGAN`,
+`GROW_ORGAN`, `DUPLICATE_ORGAN`, `ADD_ATTACHMENT`, `REWIRE_ATTACHMENT`,
+`ADD_INTER_ORGAN_EDGE`, `PRUNE_EDGE`, `PRUNE_ORGAN`, `DISABLE_ORGAN`. Caps
+(512 artificial neurons / 8 organs / 24 attachments) are config, and a mutation
+that hits one is recorded as `at_limit` rather than silently skipped.
+
+Every organ this code creates is wired `input → organ → output`.
+`genome/structure.py` classifies each as `functional` (on a path between FBA0
+and FBA0), `neutral_structure`, `invalid_structure` or `disabled`. Growing
+neurons earns nothing; only the *share* that is functional does.
+
+### Environment
+
+An episode is a sequence of slices against a seeded virtual environment
+(`mie/disturbance.py`, `mie/virtual_env.py`, `mie/episode.py`). Thermal,
+memory-squeeze, sensor-dropout, sensor-noise and latency-spike disturbances fire
+at onsets drawn from the middle 20–80% of the episode, singly, compounded, or
+not at all — a quarter of episodes are undisturbed controls.
+
+Crises cost something: sensor noise, dropped channels, perception delivered
+from a stale buffer, a shrinking compute budget. Five interoceptive channels
+are fed to the network as firing rates on reserved input neurons, so the
+organism can see its own state — and nothing tells it what that state means.
+`homeostatic_debt` accumulates as `decay*debt + violation`, feeds back into
+sensor quality and compute budget, and past a threshold ends the episode; the
+lost slices are scored as failures, so terminating early is never a way to win.
+
+**The environment never reads the host.** Real GPU temperature and RAM are
+telemetry and appear on the Infrastructure page; using them as a scientific
+input requires an explicit opt-in *and* a trace path, because otherwise fitness
+would depend on which GPU ran the job.
+
+### Selection
+
+`task_score`, `homeostasis_score`, `disturbance_recovery_score`,
+`resource_efficiency_score`, `structural_functionality`, `novelty` and
+`raw_firing_metrics` are computed and stored separately (`metrics_json`);
+`selection_score` combines the normalised ones with weights renormalised over
+the components that apply, so an undisturbed episode is not scored as having
+failed to recover from a disturbance. `fitness` keeps the M0 placeholder
+unchanged so the runs stay comparable, and every raw component is persisted, so
+weights can be changed and the whole run re-scored without re-simulating.
+
+Efficiency is performance-gated: below `fitness.minimum_viable_task_score` the
+bonus is exactly zero, and the cost counted is the genome's *marginal* cost
+(its own neurons, edges, buffers, genome bytes) — never worker RSS or the
+shared 139k/14M base.
+
+### Measurement tools
+
+```bash
+mioba --config configs/m1_pilot.yaml profile --device cuda:0 --slots 1,2,3 [--activity-sweep]
+mioba --config configs/m1_pilot.yaml device-bench --devices cpu,cuda:0,cuda:1
+mioba --config configs/m1_pilot.yaml sensitivity --device cuda:0
+mioba --config configs/m1_pilot.yaml rank-check --device cuda:0 --candidates 250x2,500x2,500x4
+```
+
+`profile` reports the 11-phase breakdown and picks the slot count on
+*successful evaluations per minute*, not latency. `device-bench` compares CPU
+and each GPU on identical genomes and seeds and refuses to recommend one if the
+devices disagree on the resulting firing rates. `sensitivity` sweeps each
+mutable quantity alone and prints the `evolution.mutation` fragment.
+`rank-check` adopts the cheapest evaluator that still ranks like gold
+(rho ≥ 0.85, top-8 overlap ≥ 6/8) and exits 6 if none does.
+
+M1 run parameters are **derived from these measurements**, not fixed in
+advance: see [`docs/experiments/m1-preflight-runbook.md`](../../docs/experiments/m1-preflight-runbook.md).
+
+### Observatory
+
+The top page is now the Live Observatory: a population terrarium (glyph size =
+selection score, outline = lineage, inner ring = artificial neurons, dots =
+organs, blink = still evaluating), a live event feed with `NEW ORGAN` /
+`FIRST OF LINEAGE` / `FITNESS RECORD` highlighted, the current virtual
+environment, structural innovations, living vs extinct lineages, and a notable
+organism list that surfaces the smallest *successful* circuit as well as the
+largest one. GPU cards moved to the Infrastructure page.
+
+The firing rate shown is the one fitness consumed: one pipeline
+(spike count → population size → duration → `mean_rate_hz`), one row, and
+`/api/gui/rate/{evaluation_id}` returns the number with the inputs it was
+computed from. The M0 GUI's 0.50 Hz vs fitness's 9.5 Hz cannot recur.
+
+### Worker
+
+```bash
+python -m experiments.mioba.workers.worker --coordinator http://host:8870 \
+    --backend torch --device cuda:0 --execution-batch 1 --slots 2
+```
+
+`--slots N` runs N concurrent evaluations in one process, sharing the resident
+base graph. It is operational: slots, execution batch and worker identity never
+change a result (pinned by test). A GPU OOM narrows the worker's concurrency,
+returns the job to the queue with its evaluation seed intact, and records
+`runtime_resource_retry` — never a FAILED evaluation and never a fitness
+penalty.
+
 ## Known limitations
 
-- **No GPU validation by the authors.** Everything CUDA-related (cu126
-  wheels on sm_60, VRAM at FlyWire scale, CUDA determinism, two-GPU
-  throughput) is pending the section above.
 - CUDA `torch.sparse.mm` uses atomics; bit-exact replay on GPU is not
-  guaranteed even with identical RNG state. CPU replay is bit-exact.
+  guaranteed even with identical RNG state. CPU replay is bit-exact. In
+  the 2026-09-11 validation no nondeterminism was observed on either GPU
+  (including 3060-recorded → P100-replayed parity), but this is a
+  measurement, not a guarantee.
+- `execution_batch >= 2` measured *lower* throughput than batch 1 at
+  FlyWire scale on both GPUs (spmv vs spmm kernel paths), so `auto`
+  selects batch 1 there. The mechanism is correct but currently buys
+  nothing at 139k/14M.
 - The `genn` backend is a guarded adapter; unverified without PyGeNN.
 - Real FBA0 data has no region→neuron mapping yet: `fba0:<region>`
   attachments raise `UnsupportedAttachmentRegion` on real data. On
   synthetic data they use the explicit `synthetic-region-v0` partition
   (recorded in `dataset_json.region_mode`) — this is *not* FlyWire
   anatomy.
-- `fitness` is a placeholder (`-|mean_rate_hz - target|`).
+- `fitness` is still the M0 placeholder (`-|mean_rate_hz - target|`),
+  kept for comparability; M1 selects on `selection_score`.
+- The M1 run itself has not been executed: every GPU number in the
+  preflight runbook is a placeholder until it is run on the GPU host.
 - Full spike traces are only stored when `requested_traces` is non-empty.
 - Crash safety covers the coordinator's SQLite writes (job success +
   evaluation insert are one transaction; one generation — elites, parents,

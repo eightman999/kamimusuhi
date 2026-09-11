@@ -4,6 +4,8 @@
 
 実測結果と仮説判定は [reports/T0_RESULTS.md](reports/T0_RESULTS.md) に集約します。
 
+**スコープ**: 主実験 T0-A は学習・評価・介入・probe まで実測済みです。T0-B/C/D は環境・oracle・smoke test の実装がある段階で、学習済み実験結果はありません。判定表の PASS/FAIL は T0-A にのみ適用されます。
+
 ## 時間情報の非リーク条件
 
 agent の観測には以下を一切含みません。
@@ -88,7 +90,7 @@ primary metrics: `timing error`, `mean |error|`, `success rate`, `early/late act
 
 ## 判定
 
-spec §13/§14 に従い、PASS 条件 (recurrent > MLP、unseen interpolation 成功、hidden reset で性能低下、hidden から elapsed time probe 可能、複数 seed で再現) と Strong PASS (extrapolation、2倍転移、distractor 耐性、temporal scaling 適応、SSM の線形時間表現) を測定値からのみ判定します。
+spec §13/§14 に従い、PASS 条件 (recurrent > MLP、unseen interpolation 成功、hidden reset で性能低下、hidden から elapsed time probe 可能、複数 seed で再現) と Strong PASS (extrapolation、2倍転移、distractor 耐性、temporal scaling 適応、SSM の線形時間表現) を測定値からのみ判定します。これらの判定は主実験 T0-A に対するもので、aux task には適用しません。
 
 ## テスト
 

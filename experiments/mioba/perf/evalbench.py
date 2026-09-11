@@ -33,6 +33,26 @@ from ..genome.schema import Genome, fba0_genome
 from .profile import PhaseTimer, merge_timings
 
 
+def _percentile(sorted_values: list[float], pct: float):
+    if not sorted_values:
+        return None
+    k = min(len(sorted_values) - 1,
+            max(0, int(round((pct / 100.0) * (len(sorted_values) - 1)))))
+    return round(sorted_values[k], 4)
+
+
+def _mean_of(rows, get):
+    vals = [get(r) for r in rows]
+    vals = [v for v in vals if v is not None]
+    return round(sum(vals) / len(vals), 8) if vals else None
+
+
+def _max_of(rows, get):
+    vals = [get(r) for r in rows]
+    vals = [v for v in vals if v is not None]
+    return max(vals) if vals else None
+
+
 def job_for(genome: Genome, config: dict, seed: int | None = None,
             duration_ms: float | None = None,
             replicates: int | None = None) -> dict:
@@ -149,6 +169,17 @@ def run_slots(genomes: list[Genome], config: dict, device: str, slots: int,
             (round(len(ok) * 60.0 / wall, 3) if wall > 0 else None),
         "mean_latency_s": (round(sum(lat) / len(lat), 4) if lat else None),
         "median_latency_s": (round(lat[len(lat) // 2], 4) if lat else None),
+        "p50_latency_s": _percentile(lat, 50),
+        "p95_latency_s": _percentile(lat, 95),
+        "active_edge_ratio": _mean_of(
+            ok, lambda r: ((r["summary"] or {}).get("propagation_activity")
+                           or {}).get("active_edge_ratio")),
+        "active_edges_per_step": _mean_of(
+            ok, lambda r: ((r["summary"] or {}).get("propagation_activity")
+                           or {}).get("active_edges_per_step")),
+        "peak_vram_bytes": _max_of(
+            ok, lambda r: ((r["summary"] or {}).get("vram") or {})
+            .get("reserved")),
         "errors": sorted({r["error"] for r in failed if r["error"]}),
         "timing": merge_timings([r["timing"] for r in ok]),
         "per_evaluation": [
@@ -188,13 +219,14 @@ def founder_population(n: int, base_seed: int = 0) -> list[Genome]:
     """``n`` distinct founder genomes for a benchmark: the pure FBA0 root
     plus parameter-mutated variants, so the run exercises the
     parameter-only cache path the real loop uses."""
-    from ..genome.mutation import mutate
     import random
+
+    from ..genome.mutation import mutate_child
     rng = random.Random(base_seed)
     base = fba0_genome(seed=base_seed)
     out = [base]
     for i in range(1, max(1, n)):
-        out.append(mutate(base, rng, birth_index=i, generation=0))
+        out.append(mutate_child(base, rng, birth_index=i, generation=0))
     return out
 
 
@@ -280,4 +312,82 @@ def activity_break_even(config: dict, device: str,
         "note": ("event-driven propagation won at every sampled rate"
                  if not losing else
                  "dense propagation won above the break-even ratio"),
+    }
+
+
+def device_benchmark(config: dict, devices: tuple[str, ...],
+                     evaluations: int = 6,
+                     slot_candidates: tuple[int, ...] = (1, 2, 3),
+                     execution_batch: int = 1,
+                     duration_ms: float | None = None,
+                     replicates: int | None = None,
+                     data_dir: str | None = None) -> dict:
+    """Which device configuration should the real run use? (M1 §20)
+
+    Event-driven propagation changed the answer: the dense product was
+    bandwidth-bound work a GPU is very good at, while gathering the edges
+    of ~130 spiking neurons is small, latency-sensitive work a CPU may win
+    outright. So the choice is measured on identical scientific
+    conditions, per device, rather than assumed.
+
+    Every device runs the *same* genomes with the *same* seeds, so a
+    difference in evaluations/minute is a difference in the machine and
+    not in what was asked of it — and the mean firing rates are reported
+    side by side to show that the science did not change with the
+    hardware.
+    """
+    genomes = founder_population(evaluations)
+    rows = []
+    for device in devices:
+        try:
+            sweep = slot_sweep(genomes, config, device,
+                               slot_candidates=slot_candidates,
+                               execution_batch=execution_batch,
+                               duration_ms=duration_ms,
+                               replicates=replicates, data_dir=data_dir)
+        except Exception as exc:
+            rows.append({"device": device, "ok": False,
+                         "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        best = next((r for r in sweep["rows"]
+                     if r["slots"] == sweep["selected_slots"]), None) or {}
+        rows.append({
+            "device": device, "ok": True,
+            "selected_slots": sweep["selected_slots"],
+            "evaluations_per_minute":
+                best.get("successful_evaluations_per_minute"),
+            "p50_latency_s": best.get("p50_latency_s"),
+            "p95_latency_s": best.get("p95_latency_s"),
+            "peak_vram_bytes": best.get("peak_vram_bytes"),
+            "active_edge_ratio": best.get("active_edge_ratio"),
+            "active_edges_per_step": best.get("active_edges_per_step"),
+            "mean_rate_hz": [e["mean_rate_hz"]
+                             for e in best.get("per_evaluation", [])],
+            "slot_rows": [{k: r[k] for k in
+                           ("slots", "succeeded", "failed", "oom", "wall_s",
+                            "successful_evaluations_per_minute",
+                            "p50_latency_s", "p95_latency_s")}
+                          for r in sweep["rows"]],
+        })
+    usable = [r for r in rows if r.get("ok")
+              and r.get("evaluations_per_minute")]
+    best = max(usable, key=lambda r: r["evaluations_per_minute"],
+               default=None)
+    # do the devices agree on the science? they must, or one of them is
+    # not running the experiment that was asked for
+    rate_sets = [tuple(round(x, 6) for x in (r.get("mean_rate_hz") or [])
+                       if x is not None) for r in usable]
+    agree = len({rs for rs in rate_sets if rs}) <= 1
+    return {
+        "evaluations": evaluations,
+        "rows": rows,
+        "recommended_device": (best or {}).get("device"),
+        "recommended_slots": (best or {}).get("selected_slots"),
+        "recommended_evaluations_per_minute":
+            (best or {}).get("evaluations_per_minute"),
+        "devices_agree_on_results": agree,
+        "note": ("devices disagree on mean firing rate: investigate before "
+                 "using any of them" if not agree else
+                 "identical results across devices; the choice is purely "
+                 "operational"),
     }

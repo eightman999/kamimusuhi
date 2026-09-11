@@ -22,18 +22,17 @@ import random
 from contextlib import contextmanager
 from typing import Callable
 
-from ..genome.mutation import mutate
+from . import fitness as F
+from ..genome.mutation import (OUTCOME_APPLIED, merged_config,
+                               mutate, structural_summary)
 from ..genome.schema import Genome, fba0_genome
 from ..storage import models as M
 
 ROOT_CLADE = "fba0-root"
 
 
-def fitness_placeholder(summary: dict, target_rate: float) -> float | None:
-    rate = (summary or {}).get("mean_rate_hz")
-    if rate is None:
-        return None
-    return -abs(rate - target_rate)
+# kept importable from here for M0-comparable call sites
+fitness_placeholder = F.fitness_placeholder
 
 
 class PopulationController:
@@ -48,6 +47,13 @@ class PopulationController:
         # generation transaction so they commit together with the children
         self._persist = persist or (lambda born: None)
         self._best_fitness: float | None = None
+        self._best_selection: float | None = None
+        # behavioural descriptors seen so far, for the novelty component
+        # (M1 §9). Bounded: novelty is "unlike what is around", not
+        # "unlike everything that has ever lived".
+        self._archive: list[list[float]] = []
+        self._archive_max = int((config.get("fitness") or {})
+                                .get("novelty_archive", 512))
         clade = db.get_clade_by_name(experiment_id, ROOT_CLADE)
         self.root_clade_id = (clade["clade_id"] if clade else
                               db.create_clade(experiment_id, ROOT_CLADE, None))
@@ -82,12 +88,13 @@ class PopulationController:
         with self._atomic_generation():
             for i in range(target):
                 if i == 0:
-                    g = base
+                    g, records = base, []
                     kind = "initial"
                 else:
-                    g = mutate(base, self.rng, birth_index=i, generation=0)
+                    g, records = mutate(base, self.rng, birth_index=i,
+                                        generation=0, config=self.config)
                     kind = "mutation"
-                self._birth(g, kind)
+                self._birth(g, kind, records)
                 self._enqueue_eval(g)
                 born += 1
             self._persist(born)
@@ -114,7 +121,7 @@ class PopulationController:
                 pass
         return False
 
-    def _birth(self, genome: Genome, kind: str) -> str:
+    def _birth(self, genome: Genome, kind: str, records=None) -> str:
         """Clade rule: the genome in which an artificial organ first
         appears founds a new clade; descendants inherit the parent's
         clade unless they found a new one."""
@@ -129,15 +136,56 @@ class PopulationController:
                          source="population")
         else:
             clade_id = parent_clade or self.root_clade_id
+        structure = structural_summary(genome, records)
         self.db.insert_genome(self.experiment_id, genome, kind,
-                              clade_id=clade_id)
+                              clade_id=clade_id,
+                              mutations=records, structure=structure)
         self.db.emit(self.experiment_id, M.EV_GENOME_BORN,
                      payload={"genome_id": genome.genome_id,
                               "generation": genome.generation,
                               "birth_index": genome.birth_index,
-                              "kind": kind},
+                              "kind": kind,
+                              "artificial_neurons":
+                                  structure["n_artificial_neurons"],
+                              "organ_classes": structure["counts"]},
                      source="population")
+        self._emit_structural_events(genome, records or [], structure)
         return genome.genome_id
+
+    def _emit_structural_events(self, genome: Genome, records,
+                                structure: dict) -> None:
+        """Structural change and its consequence are separate facts.
+
+        ``structural_mutation`` says what the birth did; the neutral /
+        invalid events say where the resulting organ sits in the graph.
+        A prune that orphans a sibling organ shows up as the second
+        without the first, which is exactly the case that is easy to miss
+        when only mutations are logged.
+        """
+        applied = [r for r in records
+                   if r.outcome == OUTCOME_APPLIED
+                   and r.category in ("structural", "prune")]
+        for rec in applied:
+            self.db.emit(self.experiment_id, M.EV_STRUCTURAL_MUTATION,
+                         payload={"genome_id": genome.genome_id,
+                                  "generation": genome.generation,
+                                  **rec.to_dict()},
+                         source="population")
+        for organ_id, cls in (structure.get("organs") or {}).items():
+            if cls == "invalid_structure":
+                self.db.emit(self.experiment_id, M.EV_INVALID_STRUCTURE, "warn",
+                             {"genome_id": genome.genome_id,
+                              "organ_id": organ_id,
+                              "reason": "organ has no incoming or no outgoing "
+                                        "attachment"},
+                             "population")
+            elif cls == "neutral_structure":
+                self.db.emit(self.experiment_id, M.EV_NEUTRAL_STRUCTURE, "info",
+                             {"genome_id": genome.genome_id,
+                              "organ_id": organ_id,
+                              "reason": "organ is not on a path between FBA0 "
+                                        "and FBA0"},
+                             "population")
 
     def _enqueue_eval(self, genome: Genome) -> str:
         from ..coordinator import jobs
@@ -154,7 +202,18 @@ class PopulationController:
             replicates=int(eval_cfg.get("replicates", 1)))
 
     # ------------------------------------------------------------- fitness
-    def record_fitness(self, genome_id: str, fitness: float | None) -> None:
+    def novelty_archive(self) -> list[list[float]]:
+        return list(self._archive)
+
+    def record_descriptor(self, genome_id: str, desc) -> None:
+        if not desc:
+            return
+        self._archive.append([float(x) for x in desc])
+        if len(self._archive) > self._archive_max:
+            del self._archive[0]
+
+    def record_fitness(self, genome_id: str, fitness: float | None,
+                       selection_score: float | None = None) -> None:
         if fitness is not None and (self._best_fitness is None or
                                     fitness > self._best_fitness):
             self._best_fitness = fitness
@@ -162,6 +221,58 @@ class PopulationController:
                          payload={"genome_id": genome_id,
                                   "fitness_placeholder": fitness},
                          source="population")
+        if selection_score is not None and (self._best_selection is None or
+                                            selection_score >
+                                            self._best_selection):
+            self._best_selection = selection_score
+            self.db.emit(self.experiment_id, M.EV_NEW_BEST_SELECTION,
+                         payload={"genome_id": genome_id,
+                                  "selection_score": selection_score},
+                         source="population")
+
+    def _check_efficiency_gate(self, generation_rows, generation: int) -> None:
+        """Warn when the whole generation was below the viability gate.
+
+        ``fitness.minimum_viable_task_score`` exists so that an organism
+        which does nothing cannot win on cheapness (M1 §9). If *every*
+        individual is below it, the gate is no longer protecting the
+        efficiency term — it is switching it off, and the run is
+        selecting on fewer objectives than it says it is. That is a
+        calibration fact about the target rate and the gate, and it has
+        to be visible rather than showing up as a column of zeros.
+        """
+        qualities, gated = [], 0
+        for g in generation_rows:
+            evs = self.db.list_evaluations(self.experiment_id,
+                                           genome_id=g["genome_id"], limit=1)
+            if not evs:
+                continue
+            try:
+                metrics = json.loads(evs[0].get("metrics_json") or "{}")
+            except ValueError:
+                continue
+            if metrics.get("task_quality") is not None:
+                qualities.append(metrics["task_quality"])
+            if metrics.get("resource_efficiency_gated"):
+                gated += 1
+        if not qualities or gated < len(qualities):
+            return
+        gate = float((self.config.get("fitness") or {})
+                     .get("minimum_viable_task_score", 0.35))
+        self.db.emit(
+            self.experiment_id, M.EV_EFFICIENCY_GATE_INERT, "warn",
+            {"generation": generation, "gated": gated,
+             "evaluated": len(qualities),
+             "minimum_viable_task_score": gate,
+             "max_task_quality": round(max(qualities), 4),
+             "median_task_quality": round(
+                 sorted(qualities)[len(qualities) // 2], 4),
+             "reason": "no individual reached the viability gate, so the "
+                       "resource-efficiency component contributed nothing; "
+                       "calibrate fitness.minimum_viable_task_score or "
+                       "evaluation.target_rate_hz from the measured rate "
+                       "distribution"},
+            "population")
 
     # ------------------------------------------------------------- advance
     def maybe_advance(self) -> int:
@@ -186,17 +297,23 @@ class PopulationController:
         target_rate = float(self.config.get("evaluation", {})
                             .get("target_rate_hz", 5.0))
         elite_k = int(self.config.get("evolution", {}).get("elite_k", 4))
+        # M1 selects on selection_score (the combined, component-wise
+        # value); the M0 placeholder is the fallback for rows that predate
+        # it, so a resumed or mixed run still orders deterministically.
         scored = []
         for g in current:
             evs = self.db.list_evaluations(self.experiment_id,
                                            genome_id=g["genome_id"], limit=1)
-            fit = None
+            score = None
             if evs:
-                fit = fitness_placeholder(
-                    json.loads(evs[0]["summary_json"]), target_rate)
-            scored.append((fit if fit is not None else float("-inf"),
+                score = evs[0].get("selection_score")
+                if score is None:
+                    score = fitness_placeholder(
+                        json.loads(evs[0]["summary_json"]), target_rate)
+            scored.append((score if score is not None else float("-inf"),
                            g["genome_id"]))
-        scored.sort(key=lambda t: t[0], reverse=True)
+        scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+        self._check_efficiency_gate(current, current_gen)
         elites = [gid for _, gid in scored[:elite_k]] or [current[0]["genome_id"]]
         target = int(self.config.get("population", {}).get("target_size", 8))
         born = 0
@@ -209,9 +326,10 @@ class PopulationController:
             for i in range(target):
                 parent_row = self.db.get_genome(self.rng.choice(elites))
                 parent = Genome.from_json(parent_row["genome_json"])
-                g = mutate(parent, self.rng, birth_index=i,
-                           generation=current_gen + 1)
-                self._birth(g, "mutation")
+                g, records = mutate(parent, self.rng, birth_index=i,
+                                    generation=current_gen + 1,
+                                    config=self.config)
+                self._birth(g, "mutation", records)
                 self._enqueue_eval(g)
                 born += 1
             self._persist(born)

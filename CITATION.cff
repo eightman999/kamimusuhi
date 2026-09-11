@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: >-
+  If you use Kamimusuhi in academic work, cite the archived release DOI when
+  one is available. Until then, cite this repository and the exact version,
+  tag, or commit used.
+title: Kamimusuhi
+type: software
+authors:
+  - alias: eightman999
+version: 0.1.0
+repository-code: "https://github.com/eightman999/kamimusuhi"
+url: "https://github.com/eightman999/kamimusuhi"
+license: MIT
+keywords:
+  - artificial cognition
+  - persistent agents
+  - artificial life
+  - cognitive architecture
+  - agent memory
+  - computational embodiment

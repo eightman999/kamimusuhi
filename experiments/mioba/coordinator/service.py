@@ -11,7 +11,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from ..evolution.population import PopulationController, fitness_placeholder
+from ..evolution import fitness as F
+from ..evolution.population import PopulationController
 from ..fba.replicates import replicate_seeds
 from ..genome.hashing import (config_hash, runtime_config_hash,
                               scientific_config_hash)
@@ -264,8 +265,19 @@ class MiobaService:
         evaluation["worker_id"] = worker_id
         target = float(self.config.get("evaluation", {})
                        .get("target_rate_hz", 5.0))
-        evaluation["fitness"] = fitness_placeholder(
-            evaluation.get("summary") or {}, target)
+        summary = evaluation.get("summary") or {}
+        # `fitness` stays the M0 placeholder so the two runs remain
+        # comparable; M1 selection happens on selection_score, and every
+        # raw component is stored so weights can be re-derived later
+        # without re-simulating anything (M1 §9).
+        evaluation["fitness"] = F.fitness_placeholder(summary, target)
+        structure = self._structure_of(job["genome_id"], summary)
+        metrics = F.compute_metrics(summary, structure, self.config, target,
+                                    archive=self.population.novelty_archive())
+        evaluation["metrics"] = metrics
+        evaluation["selection_score"] = F.selection_score(metrics, self.config)
+        self.population.record_descriptor(job["genome_id"],
+                                          metrics.get("descriptor"))
         if not evaluation.get("runtime_info"):
             wr = self.db.get_worker(self.experiment_id, worker_id) or {}
             try:
@@ -371,11 +383,27 @@ class MiobaService:
             raise
         if ok:
             self._warn_on_high_activity(job["genome_id"], evaluation)
-            self.population.record_fitness(job["genome_id"],
-                                           evaluation["fitness"])
+            self.population.record_fitness(
+                job["genome_id"], evaluation["fitness"],
+                selection_score=evaluation.get("selection_score"))
         return {"ok": True, "duplicate": False, "job_status": status,
                 "evaluation_id": (evaluation or {}).get("evaluation_id")
                 if ok else None}
+
+    def _structure_of(self, genome_id: str, summary: dict) -> dict:
+        """Where this organism's organs sit in the graph.
+
+        Recorded at birth (genomes.structure_json); the summary's copy is
+        the fallback for rows written before that column existed."""
+        row = self.db.get_genome(genome_id) or {}
+        try:
+            stored = json.loads(row.get("structure_json") or "{}")
+        except ValueError:
+            stored = {}
+        if stored:
+            return stored
+        return (summary.get("structure")
+                or (summary.get("circuit") or {}).get("structure") or {})
 
     def _warn_on_high_activity(self, genome_id: str, evaluation: dict) -> None:
         """Event-driven propagation costs what the organism activates.
@@ -386,7 +414,9 @@ class MiobaService:
         visible, because it is the condition under which the event path
         stops being the right one (M1 §2.4-4).
         """
-        act = evaluation.get("activity") or {}
+        act = (evaluation.get("activity")
+               or (evaluation.get("summary") or {})
+               .get("propagation_activity") or {})
         ratio = act.get("active_edge_ratio")
         if ratio is None:
             return

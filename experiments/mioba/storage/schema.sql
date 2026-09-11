@@ -28,7 +28,10 @@ CREATE TABLE IF NOT EXISTS genomes (
     random_seed     INTEGER NOT NULL,
     genome_json     TEXT NOT NULL,
     content_hash    TEXT NOT NULL,
-    created_at      TEXT NOT NULL
+    created_at      TEXT NOT NULL,
+    -- M1 section 4: where each artificial organ sits in the graph
+    -- (functional / neutral_structure / invalid_structure / disabled)
+    structure_json  TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS genomes_exp ON genomes(experiment_id, generation);
 
@@ -60,7 +63,12 @@ CREATE TABLE IF NOT EXISTS mutations (
     op              TEXT,
     value           REAL,
     scope           TEXT,
-    provenance_json TEXT NOT NULL DEFAULT '{}'
+    provenance_json TEXT NOT NULL DEFAULT '{}',
+    -- M1 section 3: which operator this birth ran, and whether it landed
+    -- (applied / at_limit / no_target)
+    operator        TEXT,
+    outcome         TEXT,
+    detail_json     TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS clades (

@@ -1,0 +1,14 @@
+# OOD-B: energy consumption 1.5x
+name: ood_energy
+seed: 0
+
+env:
+  episode_length: 1024
+  energy_cost_mult: 1.5
+
+eval:
+  episodes: 20
+
+agent:
+  kind: gru
+  hidden: 64

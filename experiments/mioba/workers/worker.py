@@ -41,6 +41,7 @@ from ..perf import PhaseTimer
 from ..fba.replicates import chunk_indices, replicate_seeds
 from ..genome.schema import Genome, utcnow
 from ..mie.environments import make_drive
+from ..mie.episode import run_episode
 from ..storage import models as M
 from . import gpu_info
 from .bench import (DEFAULT_CANDIDATES, DEFAULT_VRAM_HEADROOM, bench_phenotype,
@@ -194,6 +195,41 @@ def _stack(per_lane: dict[str, list], key: str, values) -> None:
     per_lane.setdefault(key, []).extend(values)
 
 
+def environment_enabled(config: dict) -> bool:
+    """M1 §5: run episodes against a virtual environment unless the
+    experiment explicitly opts out (M0-style constant conditions)."""
+    env = (config or {}).get("environment") or {}
+    if not env:
+        return False
+    if env.get("enabled") is False:
+        return False
+    return bool((env.get("disturbance") or {}).get("enabled", True)
+                or (env.get("virtual") or {}).get("enabled", True))
+
+
+def task_rate_hz(config: dict) -> float:
+    return float(((config or {}).get("env") or {}).get("stim_rate_hz", 50.0))
+
+
+def task_range(config: dict, n_base: int) -> tuple[int, int]:
+    frac = float(((config or {}).get("env") or {}).get("stim_fraction", 0.01))
+    return 0, max(1, int(round(n_base * frac)))
+
+
+def make_environment(job: dict, config: dict, n_base: int,
+                     replicate_index: int):
+    """One lane's environment, seeded from that replicate's disturbance
+    stream so lanes sample different crises while any replay of this
+    evaluation meets the same ones (fba/seeds.py)."""
+    from ..fba.seeds import disturbance_seed
+    from ..mie.virtual_env import VirtualEnvironment
+
+    return VirtualEnvironment(
+        seed=disturbance_seed(int(job["seed"]), int(replicate_index)),
+        config=config, n_base=n_base,
+        task_neurons=task_range(config, n_base))
+
+
 def make_timer(device: str, enabled: bool = True) -> PhaseTimer:
     """Phase timer for one evaluation; on CUDA it synchronises at phase
     boundaries so asynchronous kernel time is attributed correctly."""
@@ -238,25 +274,45 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
     t_ms = 0.0
     completed = 0
     state: dict = {}
+    env_enabled = environment_enabled(config)
+    target_rate = float((config.get("evaluation") or {})
+                        .get("target_rate_hz", 5.0))
+    episodes: list[dict] = []
+    lane_reports: dict[int, dict] = {}
     for lanes in chunks:
         backend.initialize(phenotype, batch_size=len(lanes), seed=job["seed"],
                            device=device,
                            replicate_seeds=[seeds[i] for i in lanes],
                            timer=timer)
         n_drive = backend.n_base if hasattr(backend, "n_base") else 512
-        with timer.phase("state_init"):
-            backend.set_inputs(make_drive(job["environment_id"], n_drive,
-                                          config))
-        remaining = duration
-        with timer.phase("simulation_loop"):
-            while remaining > 1e-9:
-                if _stop.is_set() and deadline_started is not None and \
-                        time.time() - deadline_started > grace_s:
-                    raise RuntimeError("interrupted")
-                chunk = min(50.0, remaining)
-                stats = backend.run(chunk)
-                total_wall += float(stats.get("wall_s", 0.0))
-                remaining -= chunk
+        t_chunk = time.perf_counter()
+        if env_enabled:
+            # M1 §5-§7: the episode is run slice by slice against a
+            # seeded virtual environment, so crises land at reproducible
+            # but non-fixed times and their consequences are felt
+            envs = [make_environment(job, config, n_drive, i)
+                    for i in lanes]
+            with timer.phase("state_init"):
+                pass
+            ep = run_episode(backend, envs, duration, target_rate,
+                             task_rate_hz(config), timer=timer)
+            episodes.append(ep)
+            for lane_idx, lane in enumerate(lanes):
+                lane_reports[lane] = ep["per_lane"][lane_idx]
+        else:
+            with timer.phase("state_init"):
+                backend.set_inputs(make_drive(job["environment_id"], n_drive,
+                                              config))
+            remaining = duration
+            with timer.phase("simulation_loop"):
+                while remaining > 1e-9:
+                    if _stop.is_set() and deadline_started is not None and \
+                            time.time() - deadline_started > grace_s:
+                        raise RuntimeError("interrupted")
+                    chunk = min(50.0, remaining)
+                    backend.run(chunk)
+                    remaining -= chunk
+        total_wall += time.perf_counter() - t_chunk
         with timer.phase("metrics"):
             s = backend.get_state_summary()
             state = s
@@ -266,8 +322,12 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
             _stack(per_rep, "seeds", list(s.get("replicate_seeds") or
                                           [seeds[i] for i in lanes]))
             _stack(per_rep, "index", lanes)
-            for g, vals in backend.get_population_activity(
-                    ["all", "fba0"]).items():
+            # per-region / per-organ rates for the Observatory's circuit
+            # activity view (M1 §17): the base, and each organ separately
+            groups = ["all", "fba0"] + [
+                f"organ:{o['organ_id']}"
+                for o in (phenotype.get("artificial_organs") or [])]
+            for g, vals in backend.get_population_activity(groups).items():
                 _stack(activity, g, vals)
         completed += len(lanes)
     rates = per_rep["mean_rate_hz"]
@@ -300,9 +360,20 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
             "nnz_artificial": state.get("nnz_artificial"),
         },
         "topology": state.get("topology"),
+        # M1 §5-§7 / §9.1: per-slice performance under the seeded virtual
+        # environment, and the response to each disturbance
+        "episode": ({"slices": episodes[0]["slices"],
+                     "slice_ms": episodes[0]["slice_ms"],
+                     "simulated_ms": sum(e["simulated_ms"] for e in episodes),
+                     "per_lane": [lane_reports[i] for i in sorted(lane_reports)],
+                     "environments": [env for e in episodes
+                                      for env in e["environments"]]}
+                    if episodes else None),
         # how much of the network was actually touched (M1 §2.4-4) and what
-        # this individual cost on top of the shared base (M1 §8)
-        "activity": state.get("activity"),
+        # this individual cost on top of the shared base (M1 §8).
+        # NOTE: distinct from "activity" above, which is the per-group
+        # population firing rate the region views read.
+        "propagation_activity": state.get("activity"),
         "resource": state.get("resource"),
         "semantics": (state.get("semantics")
                       or (backend.semantics()
@@ -411,7 +482,7 @@ def run_job(client, worker_id: str, job: dict, device: str,
             "duration_ms": float(job["duration_ms"]),
             "dataset": backend.dataset_identity(),
             "semantics": summary.get("semantics"),
-            "activity": summary.get("activity"),
+            "activity": summary.get("propagation_activity"),
             "resource": summary.get("resource"),
             "summary": summary,
             "started_at": started,

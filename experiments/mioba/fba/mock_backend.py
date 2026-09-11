@@ -145,6 +145,11 @@ class MockBackend(FbaBackend):
             "vram_bytes": None,
             "vram": {"allocated": None, "reserved": None, "total": None},
             "replicate_seeds": list(self.replicate_seeds),
+            # the canonical rate pipeline (M1 §18) needs the population
+            # size and duration alongside the spike count, so the
+            # displayed rate can be recomputed and checked on any backend
+            "n_neurons": self.n,
+            "n_base": getattr(self, "n_base", self.n),
         }
 
     def get_population_activity(self, groups: list[str]) -> dict[str, list[float]]:

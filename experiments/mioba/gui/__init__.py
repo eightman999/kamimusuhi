@@ -6,6 +6,16 @@ coordinator and tagged ``kind: LIVE | RECORDED | DERIVED``:
 - LIVE      current runtime view (workers, queue counts, status)
 - RECORDED  rows persisted in the lineage / telemetry DB
 - DERIVED   values computed on request from recorded rows (throughput, ranks)
+
+M1 §11 split the GUI in two. ``/api/gui/dashboard`` is unchanged and now
+backs the **Infrastructure** page — GPU cards, queue depth, throughput,
+checkpoints. The top page is the **Live Observatory**
+(``/api/gui/live`` and friends, see gui/observatory.py), which shows the
+population rather than the machines: who was born, what grew, which
+crisis is running, who recovered, which branch died.
+
+Nothing here is called from a simulation loop (§19): every endpoint reads
+the lineage DB on request, and the page polls on a timer.
 """
 from __future__ import annotations
 
@@ -51,9 +61,57 @@ def _throughput(db, experiment_id, minutes: float) -> dict:
     }
 
 
+def _physical_gpu_key(w: dict) -> str:
+    """Identity of the physical device a worker run used. A restarted
+    worker creates a new ``worker_runs`` row for the same GPU; the GUI
+    groups by this key so two GPUs stay two cards however often the
+    workers are restarted."""
+    if w.get("gpu_uuid"):
+        return f"uuid:{w['gpu_uuid']}"
+    if w.get("device"):
+        return f"host:{w.get('hostname') or '?'}|dev:{w['device']}"
+    return f"worker:{w['worker_id']}"
+
+
+def _group_by_physical_gpu(workers: list[dict]) -> list[dict]:
+    """One entry per physical GPU: the current (or most recent) run, plus
+    the superseded runs as history and job totals across all of them."""
+    groups: dict[str, list[dict]] = {}
+    for w in workers:
+        groups.setdefault(_physical_gpu_key(w), []).append(w)
+    out = []
+    for key, runs in groups.items():
+        ordered = sorted(runs, key=lambda r: (r.get("status") == "online",
+                                              r.get("started_at") or "",
+                                              r.get("worker_run_id") or ""))
+        current = dict(ordered[-1])
+        past = ordered[:-1]
+        current["kind"] = "DERIVED"
+        current["gpu_key"] = key
+        current["run_count"] = len(ordered)
+        current["completed_jobs_total"] = sum(r.get("completed_jobs") or 0
+                                              for r in ordered)
+        current["failed_jobs_total"] = sum(r.get("failed_jobs") or 0
+                                           for r in ordered)
+        current["past_runs"] = [{
+            "worker_run_id": r.get("worker_run_id"),
+            "worker_id": r.get("worker_id"),
+            "status": r.get("status"),
+            "started_at": r.get("started_at"),
+            "last_heartbeat_at": r.get("last_heartbeat_at"),
+            "completed_jobs": r.get("completed_jobs"),
+            "failed_jobs": r.get("failed_jobs"),
+        } for r in reversed(past)]
+        out.append(current)
+    out.sort(key=lambda g: (g.get("gpu_index") if g.get("gpu_index")
+                            is not None else 99, g.get("worker_id") or ""))
+    return out
+
+
 def mount_gui(app, service) -> None:
     db = service.db
     exp = service.experiment_id
+    from . import observatory as OBS
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def index():
@@ -92,6 +150,8 @@ def mount_gui(app, service) -> None:
             workers.append({
                 "kind": "LIVE",
                 "worker_id": w["worker_id"],
+                "worker_run_id": w.get("worker_run_id"),
+                "started_at": w.get("started_at"),
                 "hostname": w.get("hostname"),
                 "status": w.get("status"),
                 "gpu_name": ri.get("gpu_model") or
@@ -126,6 +186,7 @@ def mount_gui(app, service) -> None:
         return {
             "status": service.status(),
             "workers": workers,
+            "gpu_workers": _group_by_physical_gpu(workers),
             "throughput": _throughput(db, exp, minutes),
             "recent_events": {"kind": "RECORDED", "rows": events[-30:]},
             "runtime": dict(service.runtime_info, kind="LIVE"),
@@ -166,6 +227,49 @@ def mount_gui(app, service) -> None:
                           "params": phen["params"],
                           "ancestry_fraction": phen["ancestry_fraction"]},
         }
+
+    # ----------------------------------------------------- Live Observatory
+    @app.get("/api/gui/live")
+    def live(since_id: int = 0):
+        """Everything the top page shows, in one poll (M1 §12)."""
+        return OBS.live_view(db, exp, service=service, since_id=since_id)
+
+    @app.get("/api/gui/population")
+    def population(generation: int | None = None):
+        return {"kind": "DERIVED",
+                **OBS.population_view(db, exp, generation=generation)}
+
+    @app.get("/api/gui/lineage")
+    def lineage(limit: int = 4000):
+        return {"kind": "DERIVED", **OBS.lineage_view(db, exp, limit=limit)}
+
+    @app.get("/api/gui/feed")
+    def feed(since_id: int = 0, limit: int = 200):
+        return {"kind": "RECORDED",
+                **OBS.event_feed(db, exp, since_id=since_id, limit=limit)}
+
+    @app.get("/api/gui/notable")
+    def notable():
+        return {"kind": "DERIVED", **OBS.notable_organisms(db, exp)}
+
+    @app.get("/api/gui/individual/{genome_id}")
+    def individual(genome_id: str):
+        view = OBS.individual_view(db, exp, genome_id)
+        if not view:
+            raise HTTPException(404, "no such genome")
+        return {"kind": "DERIVED", **view}
+
+    @app.get("/api/gui/rate/{evaluation_id}")
+    def rate(evaluation_id: str):
+        """The canonical firing rate of one evaluation (M1 §18).
+
+        The GUI displays this; fitness consumed the same field of the same
+        row. If they ever differ again, this endpoint is where it shows.
+        """
+        ev = db.get_evaluation(evaluation_id)
+        if ev is None:
+            raise HTTPException(404, "no such evaluation")
+        return {"kind": "DERIVED", **OBS.canonical_rate(ev)}
 
     @app.get("/api/gui/telemetry")
     def telemetry(minutes: float = 30.0, limit: int = 5000):

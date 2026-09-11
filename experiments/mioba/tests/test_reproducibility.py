@@ -10,7 +10,7 @@ from experiments.mioba.coordinator.service import (MiobaService,
                                                    ScientificConfigMismatch)
 from experiments.mioba.genome.hashing import (runtime_config_hash,
                                               scientific_config_hash)
-from experiments.mioba.genome.mutation import mutate
+from experiments.mioba.genome.mutation import mutate_child as mutate
 from experiments.mioba.genome.schema import fba0_genome
 from experiments.mioba.storage import models as M
 from experiments.mioba.tests.conftest import run_worker_once

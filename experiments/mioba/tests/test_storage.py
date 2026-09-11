@@ -2,7 +2,7 @@ import random
 
 import pytest
 
-from experiments.mioba.genome.mutation import mutate
+from experiments.mioba.genome.mutation import mutate_child as mutate
 from experiments.mioba.genome.schema import fba0_genome
 from experiments.mioba.storage.db import Database, InvalidTransition
 

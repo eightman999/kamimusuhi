@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import datetime, timezone
 from typing import Literal
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Name of the immutable FBA0 reference base (see fba/fba0.py).
 FBA0_BASE_NAME = "flywire-v783-shiu-lif"
@@ -39,6 +39,11 @@ class ArtificialOrgan:
     size: int
     params: dict = field(default_factory=dict)
     provenance: OrganProvenance = field(default_factory=OrganProvenance)
+    # DISABLE_ORGAN keeps the organ in the genome (it is part of the
+    # lineage and can be re-enabled by a later mutation) but development
+    # does not build it, so a disabled organ costs nothing to simulate
+    # and contributes nothing. Removal is PRUNE_ORGAN.
+    enabled: bool = True
 
 
 @dataclass
@@ -50,6 +55,7 @@ class Attachment:
     direction: Literal["forward", "bidirectional"] = "forward"
     weight_scale: float = 1.0
     provenance: OrganProvenance = field(default_factory=OrganProvenance)
+    enabled: bool = True
 
 
 @dataclass
