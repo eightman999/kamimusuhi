@@ -25,6 +25,7 @@
 
 **この端末を Kamimusuhi のノードとして稼働させたわけではない。** 本文書は素体の実測であり、
 organ 実装・event bus 接続・稼働実績は一切含まない。
+推論スループットは §3.3 で実測したが、それは素体の能力測定であって role の付与ではない。
 
 ## 2. 対象個体
 
@@ -48,12 +49,12 @@ organ 実装・event bus 接続・稼働実績は一切含まない。
 
 | §5 の項目 | 実測値 | 測定状況 |
 |---|---|---|
-| backend | ARM64 Cortex-A55 × 8 / Mali 系 GPU (詳細未同定) | 部分実測 |
-| supported kernels / dtypes | — | **未測定** |
+| backend | ARM64 Cortex-A55 × 8。llama.cpp は `libggml-cpu-android_armv8.2_2.so` を自動選択。GPU backend は未使用・未同定 | 部分実測 |
+| supported kernels / dtypes | GGUF Q8_0 の実行を確認。他 dtype は未確認 | 部分実測 |
 | usable memory | MemTotal **2,896,204 kB (2.76 GiB)** / MemAvailable **912,684 kB** (整理後・アイドル時) | 実測 |
-| transfer cost | — | **未測定** |
+| transfer cost | adb over Wi-Fi: 155 MB のライブラリ群 **46.7 MB/s** (burst) / 610 MB のモデル **18.6 MB/s** (sustained, 32.7 s) | 実測 |
 | startup cost | OS cold boot → mDNS 再出現まで **約 100 秒** | 実測(OS のみ。workload 起動は未測定) |
-| throughput vs batch/context | — | **未測定。推論 benchmark を一切実行していない** |
+| throughput vs batch/context | 下記 §3.3。Qwen3-0.6B-Q8_0 で `pp512` 最大 **50.58 t/s** / `tg128` 最大 **4.52 t/s** | 実測 |
 | energy / wall-power delta | — | **未測定** |
 | reliability / thermal | 下記 §4 | 実測 |
 
@@ -83,6 +84,68 @@ HAL が公開する cooling device は `cpufreq-cpu0` のみ。
 
 センサー融合は全て無効 (`9-axis fusion disabled`, `geomag fusion (no gyro) disabled`)。
 **この body は「自分の姿勢を 1 軸の粗い加速度計でしか知らない」個体である。**
+
+### 3.3 スループット実測
+
+`llama.cpp` 公式 Android arm64 prebuilt (`b10909`, build `a2878d30d`) を
+`/data/local/tmp` へ push して実行。非 root、GPU 非使用、CPU backend のみ。
+モデルは `Qwen3-0.6B-Q8_0.gguf` (604.15 MiB / 596.05 M params)。`-r 3`。
+
+| threads | pp512 (t/s) | tg128 (t/s) |
+|---:|---:|---:|
+| 1 | 12.54 ± 0.10 | 4.01 ± 0.00 |
+| 2 | 25.52 ± 0.36 | **4.52 ± 0.03** |
+| 4 | 36.68 ± 0.09 | 4.47 ± 0.01 |
+| 8 | **50.58 ± 0.17** | 4.26 ± 0.02 |
+
+**prompt processing と token generation で挙動が完全に分かれる。**
+
+- `pp512` は thread 数にほぼ比例して伸びる (1→8 で **4.03 倍**)。compute bound。
+- `tg128` は **まったくスケールしない**。最速は `t=2` の 4.52 t/s で、
+  `t=8` では 4.26 t/s へ**低下する**。memory bandwidth bound であり、
+  コアを足しても改善しない。
+
+観測された peak RSS は **988 MB** (model 604 MiB + KV cache + runtime)。
+測定時の MemAvailable は約 1.37 GiB で、この構成は収まった。
+
+#### 比較対象 (同一モデル・同一ツール)
+
+| 機体 | backend | threads | pp512 (t/s) | tg128 (t/s) |
+|---|---|---:|---:|---:|
+| PRITOM P7 / A523 | CPU (armv8.2) | 8 / 2 | 50.58 | 4.52 |
+| Apple M2 Max | CPU only (`-ngl 0`) | 8 | 596.08 ± 20.85 | 109.94 ± 1.23 |
+| Apple M2 Max | Metal + BLAS | 8 | 8361.75 ± 23.96 | 278.45 ± 0.25 |
+
+| 比 | pp512 | tg128 |
+|---|---:|---:|
+| M2 Max (CPU) / P7 | **11.8×** | **24.3×** |
+| M2 Max (Metal) / P7 | **165×** | **61.6×** |
+
+CPU 同士でも tg で 24 倍の差がある。**`latency-architecture.md` の観点での実効値**は、
+512 token の prompt に対し 128 token を生成する 1 ターンで
+prefill 約 **10.1 s** + decode 約 **28.3 s** = **約 38 s**。
+
+注意: Mac 側は homebrew の `b10621` (`c1d0e7a00`)、端末側は `b10909` (`a2878d30d`) で
+**build が一致していない**。厳密な同一条件比較ではない。
+
+#### 持続負荷時の周波数と温度
+
+benchmark 実行中、8〜10 秒間隔で 83 サンプル取得。
+
+```text
+温度  min 58.4 ℃ / max 70.9 ℃ / avg 65.5 ℃
+cpu4  1.800 GHz: 33 サンプル / 1.680: 6 / 1.584: 10 / 1.488: 1 / 1.344: 6 / 1.200: 26
+cpu0  1.416 GHz: 30 サンプル / 1.320: 1 / 1.008: 14 / 0.936: 2 / 0.408: 36
+```
+
+**cpu4 は最大周波数を維持せず、1.200 GHz まで落ちる時間帯が全体の約 3 割ある。**
+アイドル時 46.8 ℃ に対し、持続負荷では 70.9 ℃ まで上昇した。
+
+ただしこれが thermal throttling か、test phase 間の通常の DVFS かは**判別できていない**。
+`scaling_governor` と thermal trip point は非 root では読めない
+(`/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor` → `Permission denied`)。
+`cpu0` が 408 MHz に落ちている 36 サンプルは、`-t 1` / `-t 2` 実行中に
+little cluster がアイドル化したものであり、熱制限ではない。
 
 ## 4. 主要な発見: swap が存在しない (ROM のビルド不良)
 
@@ -178,8 +241,10 @@ CPU:          443% nice / 29% idle
 - この個体は §5 が想定する「非対称な organ candidate」の典型例である。
   全コア A55・swap 不在・センサー 1 種という構成は、GPU farm 側の前提と共有できる部分が少ない。
 - §5 の結論「A card earns a cognitive role from **measured end-to-end usefulness**」に従うなら、
-  **本文書は端末に役割を与えていない。** throughput / energy / transfer cost が未測定である以上、
-  cognitive role の判定材料は揃っていない。
+  throughput と transfer cost は §3.3 で実測した。**しかし energy / wall-power delta は依然未測定**であり、
+  role 判定の材料は揃っていない。本文書は端末に役割を与えない。
+- §3.3 の分離は routing に直接効く。**pp はコアを足せば伸び、tg は伸びない。**
+  この body に長い生成を投げるのは、コア数を増やしても無意味である。
 - 一方で reliability / thermal / usable memory / 感覚器 は実測できた。
   これらは「何をさせられないか」を先に確定させる材料になる。
 
@@ -195,6 +260,10 @@ CPU:          443% nice / 29% idle
   **デバイスの自己申告を信用してはならない実例。**
 - **仮説 H3**: 加速度計 1 種・GPS 無し・clock 校正不明というこの body は、
   T05 (時刻誤差の大きい音声・映像、校正失効) の自然な fixture になりうる。
+- **仮説 H4**: K-Edge の scheduler contract (§8) は、device の能力を単一のスカラーで
+  持ってはならない。§3.3 の実測では、同じ device・同じ model で
+  **pp が 11.8× 差、tg が 24.3× 差**と、負荷の種類によって M2 Max との比が 2 倍以上変わる。
+  「この device は N 倍遅い」という表現は、どちらの負荷を指すか明示しなければ意味を持たない。
 
 ## 7. 未実施 / 今後の検証
 
@@ -202,9 +271,10 @@ CPU:          443% nice / 29% idle
 
 | 項目 | 対応する未実施テスト |
 |---|---|
-| 推論 throughput / tokens-per-second の実測 | — (§5 の routing 判断に必須) |
-| 消費電力・transfer cost の実測 | — |
-| 持続負荷時の thermal throttling 曲線 | — |
+| 消費電力 / wall-power delta の実測 | — (role 判定に残る最後の未測定項目) |
+| throttling と DVFS の判別 (governor / trip point が非 root で読めない) | — |
+| Q4 等の他 dtype、長 context (4K/8K) での throughput | — |
+| GPU backend の同定と利用可否 | — |
 | usable memory 枯渇時の safe mode 挙動 | **T12** (GPU 不在、stale telemetry → 欠測を healthy としない) |
 | 有限 queue / drop・coalesce の実挙動 | **T14** |
 | 2 ノード同時所有と旧 owner の fencing | **T20** (G4。物理 2 台目が必要) |
@@ -235,10 +305,34 @@ $ADB -s <IP>:<PORT> shell 'dumpsys sensorservice | sed -n "/Sensor List/,/^$/p"'
 $ADB -s <IP>:<PORT> shell 'pm list features'
 ```
 
+§3.3 の throughput 再現（NDK 不要。公式 prebuilt を使う）:
+
+```bash
+gh release download b10909 --repo ggml-org/llama.cpp \
+  --pattern 'llama-b10909-bin-android-arm64.tar.gz'
+tar xzf llama-b10909-bin-android-arm64.tar.gz
+
+# llama-bench に必要なのは以下のみ (計 155 MB)
+#   llama-bench libllama-bench-impl.so libllama-common.so libllama.so
+#   libggml.so libggml-base.so libggml-cpu-android_armv8.{0_1,2_1,2_2}.so
+$ADB -s <IP>:<PORT> shell 'mkdir -p /data/local/tmp/llama'
+$ADB -s <IP>:<PORT> push <上記> /data/local/tmp/llama/
+$ADB -s <IP>:<PORT> push Qwen3-0.6B-Q8_0.gguf /data/local/tmp/llama/
+
+$ADB -s <IP>:<PORT> shell 'cd /data/local/tmp/llama && chmod 755 llama-bench && \
+  LD_LIBRARY_PATH=. ./llama-bench -m Qwen3-0.6B-Q8_0.gguf -t 1,2,4,8 -p 512 -n 128 -r 3 -o md'
+```
+
+`/data/local/tmp` からの ELF 実行は非 root の `shell` uid で可能であることを確認済み。
+CPU backend は `libggml-cpu-android_armv8.2_2.so` が自動選択される。
+
 ## 9. 確認の限界
 
-- 非 root のため、`/proc/swaps`、ブロックデバイス、電力計測値は取得できていない。
-- GPU の型番・対応 dtype・利用可能な compute backend を同定していない。
-- 推論性能を一切測っていないため、**本機に cognitive role を与える根拠は本文書には無い。**
+- 非 root のため、`/proc/swaps`、ブロックデバイス、`scaling_governor`、電力計測値は取得できていない。
+- GPU の型番・利用可能な compute backend を同定していない。§3.3 は CPU backend のみの測定である。
+- 推論スループットは測ったが **消費電力を測っていない**ため、
+  §5 が求める end-to-end usefulness は未完であり、**本機に cognitive role を与える根拠は本文書には無い。**
+- §3.3 の Mac 比較は build 版が一致していない (`b10621` 対 `b10909`)。桁の比較には使えるが厳密ではない。
+- throughput は 1 モデル (0.6B Q8_0)・1 context 長でのみ測定した。他の規模へ外挿できない。
 - 測定は 1 個体・1 回の観測であり、同型機で再現するかは未確認。
 - §5 への登録可否は未判断。本文書は登録提案ではなく素体の記録である。
