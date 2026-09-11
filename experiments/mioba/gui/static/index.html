@@ -99,7 +99,8 @@ const I18N = {
          noWorkers:'登録されたワーカーはありません', recentEvents:'最近のイベント', time:'時刻', type:'種別', severity:'重要度', payload:'内容', alerts:'重要警告', noAlerts:'直近の警告はありません' },
     w: { worker:'ワーカーID', gpu:'GPU', device:'デバイス', cc:'CC', vram:'VRAM', util:'GPU使用率', temp:'GPU温度', batch:'実行バッチ', job:'実行中ジョブ', completed:'完了ジョブ', failed:'失敗ジョブ',
          compFailed:'完了 / 失敗ジョブ', hb:'最終ハートビート', bench:'ベンチマーク', benchTp:'処理量 (バッチ×sim-s/wall-s)', uuid:'GPU UUID', driver:'ドライバ / CUDA / Torch', host:'ホスト',
-         chart:'GPU温度 ℃ / GPU使用率 % (10分)', idle:'待機中', unknownGpu:'GPU情報なし' },
+         chart:'GPU温度 ℃ / GPU使用率 % (10分)', idle:'待機中', unknownGpu:'GPU情報なし',
+         runs:'登録回数', totalJobs:'累計 完了 / 失敗ジョブ', pastRuns:'過去の登録', noPastRuns:'再登録なし' },
     p: { filter:'ゲノムID / 系統で絞り込み', genomes:'個体', list:'個体一覧', tree:'系譜ツリー（根 = FBA0）', empty:'個体はありません', genome:'ゲノムID', gen:'世代', birth:'出生番号', parents:'親個体',
          children:'子個体', clade:'系統', fitness:'適応度（暫定）', ancestry:'FBA0由来率', organs:'人工器官', mutations:'変異', born:'誕生時刻', root:'FBA0 根個体', organ:'器官' },
     o: { select:'個体を選択', none:'個体はまだありません', identity:'識別情報', hash:'ハッシュ', genBirth:'世代 / 出生番号', seed:'シード', base:'基盤', clades:'系統', created:'作成時刻', schema:'スキーマ',
@@ -131,7 +132,8 @@ const I18N = {
          noWorkers:'No workers registered', recentEvents:'Recent events', time:'Time', type:'Type', severity:'Severity', payload:'Payload', alerts:'Alerts', noAlerts:'No recent warnings' },
     w: { worker:'Worker ID', gpu:'GPU', device:'Device', cc:'CC', vram:'VRAM', util:'GPU Utilization', temp:'Temperature', batch:'Execution batch', job:'Current Job', completed:'Completed Jobs', failed:'Failed Jobs',
          compFailed:'Completed / Failed Jobs', hb:'Last Heartbeat', bench:'Benchmark', benchTp:'Throughput (batch × sim-s/wall-s)', uuid:'GPU UUID', driver:'Driver / CUDA / Torch', host:'Host',
-         chart:'Temperature °C / Utilization % (10 min)', idle:'idle', unknownGpu:'No GPU info' },
+         chart:'Temperature °C / Utilization % (10 min)', idle:'idle', unknownGpu:'No GPU info',
+         runs:'Registrations', totalJobs:'Total completed / failed jobs', pastRuns:'Previous registrations', noPastRuns:'no re-registration' },
     sig: { cpu_percent:'CPU usage %', ram_percent:'RAM usage %', latency_ms:'Network latency ms', temperature_c:'GPU temperature °C', utilization_pct:'GPU utilization %', vram_used_fraction:'VRAM used fraction', collector_error:'collector error' },
     p: { filter:'filter genome id / clade', genomes:'genomes', list:'Genome list', mutations:'Mutations', tree:'Lineage tree (root = FBA0)', empty:'empty', genome:'Genome ID', gen:'Generation', birth:'Birth Index', parents:'Parents',
          children:'Children', clade:'Clade', fitness:'Fitness (placeholder)', ancestry:'Ancestry Fraction', organs:'Artificial Organs', born:'Born', root:'FBA0 root', organ:'organ' },
@@ -256,10 +258,18 @@ function workerCard(w, i) {
         <div>${t('w','batch')}</div><div>${esc(w.batch_size ?? 'auto')}</div>
         <div>${t('w','job')}</div><div class="mono">${w.current_job_id ? esc(w.current_job_id) : `<span class="muted">${t('w','idle')}</span>`}</div>
         <div>${t('w','compFailed')}</div><div>${w.completed_jobs ?? 0} / <span class="${w.failed_jobs ? 'sev-error' : ''}">${w.failed_jobs ?? 0}</span></div>
+        ${(w.run_count ?? 1) > 1 ? `<div>${t('w','totalJobs')}</div><div>${w.completed_jobs_total ?? 0} / <span class="${w.failed_jobs_total ? 'sev-error' : ''}">${w.failed_jobs_total ?? 0}</span></div>
+        <div>${t('w','runs')}</div><div>${w.run_count}</div>` : ''}
         <div>${t('w','bench')}</div><div>${w.bench_sim_seconds_per_wall_second != null ? `${num(w.bench_sim_seconds_per_wall_second,3)} sim-s/wall-s · ${num(w.bench_throughput,2)}` : `<span class="muted">${t('misc','none')}</span>`}</div>
         <div>${t('w','hb')}</div><div>${fmtTime(w.last_heartbeat_at)}</div>
         <div>${t('w','host')}</div><div>${esc(w.hostname || t('misc','none'))}</div>
       </div>
+      ${(w.past_runs && w.past_runs.length) ? `<div class="chart-title">${t('w','pastRuns')} (${w.past_runs.length})</div>
+      <div class="xscroll"><table><tbody>${w.past_runs.map(r => `<tr>
+        <td class="mono">${esc(r.worker_run_id || '')}</td><td>${pill(r.status)}</td>
+        <td class="muted">${fmtTime(r.last_heartbeat_at || r.started_at)}</td>
+        <td>${r.completed_jobs ?? 0} / <span class="${r.failed_jobs ? 'sev-error' : ''}">${r.failed_jobs ?? 0}</span></td>
+      </tr>`).join('')}</tbody></table></div>` : ''}
       <div class="chart-title">${t('w','chart')} ${kind(w.heartbeats.kind)}</div>
       <canvas id="wc${i}"></canvas>
     </div>`;
@@ -288,7 +298,9 @@ async function dashboard() {
   const d = await api('/api/gui/dashboard?minutes=10');
   const s = d.status, c = s.counters || {};
   $('#exp').textContent = `${s.experiment_id} · ${s.git_commit ? s.git_commit.slice(0,8) : '?'} · cfg ${(s.config_hash||'').slice(0,8)}`;
-  const ws = d.workers;
+  // one card / column per physical GPU, not per worker registration: a
+  // restarted worker must not add a second card for the same device.
+  const ws = d.gpu_workers || d.workers;
   $('#main').innerHTML = `
     ${alertsHtml(d.recent_events.rows)}
     <div class="grid g4">

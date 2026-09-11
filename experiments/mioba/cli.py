@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -249,10 +250,23 @@ def cmd_replay(args) -> int:
     except ReplayConfigMismatch as exc:
         print(f"ReplayConfigMismatch (strict): {exc}", file=sys.stderr)
         return 5
-    out = exp_dir / "replays" / f"{args.evaluation_id}.json"
-    out.write_text(json.dumps(result, indent=2, default=str))
+    payload = json.dumps(result, indent=2, default=str)
+    # Every replay of one evaluation is kept: strict / --allow-device-drift /
+    # --execution-batch runs of the same evaluation_id each record different
+    # device_warnings, and overwriting one file loses them. The archived copy
+    # is timestamped; <evaluation_id>.json stays as the "latest" pointer.
+    replays = exp_dir / "replays"
+    replays.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    archived = replays / f"{args.evaluation_id}.{stamp}.json"
+    archived.write_text(payload)
+    out = Path(args.out) if getattr(args, "out", None) else (
+        replays / f"{args.evaluation_id}.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(payload)
     print(json.dumps(result["diff"], indent=2))
     print(f"wrote {out}")
+    print(f"archived {archived}")
     return 0
 
 
@@ -311,6 +325,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--execution-batch", type=int, default=None,
                    help="lanes per chunk for the replay (operational; "
                         "default: recorded execution batch)")
+    p.add_argument("--out", default=None,
+                   help="write the report here instead of "
+                        "<run>/replays/<evaluation_id>.json (a timestamped "
+                        "copy is archived under <run>/replays/ either way)")
     p.set_defaults(fn=cmd_replay)
 
     p = sub.add_parser("bench")

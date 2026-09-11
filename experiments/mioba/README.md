@@ -10,12 +10,22 @@ Observatory GUI.
 This package is *infrastructure only* — phase 1 ships the coordinator,
 storage, backends, worker protocol, MIE collectors, E-adapter contract,
 checkpoint/resume and smoke tests. It is not validated for long evolution
-runs and has not been run on GPU hardware.
+runs. The GPU path *has* been validated once on real hardware (RTX 3060 +
+Tesla P100, CUDA 12.6) — see
+[`docs/experiments/mioba-gpu-validation-2026-09-11.md`](../../docs/experiments/mioba-gpu-validation-2026-09-11.md).
 
 ## Install
 
+**Supported Python: 3.10 – 3.13.** Python 3.14 does not work with the GPU
+requirements: `requirements-gpu-cu126.txt` pins `numpy<2.3`, which has no
+cp314 wheel, so pip falls back to a source build and fails with
+`Python dependency not found` (torch 2.9.1+cu126 itself does ship a cp314
+wheel — numpy is the blocker). On hosts whose system Python is 3.14 only
+(e.g. Ubuntu 26.04), install an interpreter in range first, for example
+`uv python install 3.12 && uv venv --python 3.12 ~/mioba-venv`.
+
 ```bash
-python3.10 -m venv ~/mioba-venv
+python3.12 -m venv ~/mioba-venv   # any of 3.10–3.13
 ~/mioba-venv/bin/pip install -r experiments/mioba/requirements.txt   # dev/CPU box
 # GPU host (RTX 3060 / P100, sm_60 kept by cu126 wheels):
 ~/mioba-venv/bin/pip install -r experiments/mioba/requirements-gpu-cu126.txt
@@ -369,11 +379,15 @@ controls.
 
 ## Known limitations
 
-- **No GPU validation by the authors.** Everything CUDA-related (cu126
-  wheels on sm_60, VRAM at FlyWire scale, CUDA determinism, two-GPU
-  throughput) is pending the section above.
 - CUDA `torch.sparse.mm` uses atomics; bit-exact replay on GPU is not
-  guaranteed even with identical RNG state. CPU replay is bit-exact.
+  guaranteed even with identical RNG state. CPU replay is bit-exact. In
+  the 2026-09-11 validation no nondeterminism was observed on either GPU
+  (including 3060-recorded → P100-replayed parity), but this is a
+  measurement, not a guarantee.
+- `execution_batch >= 2` measured *lower* throughput than batch 1 at
+  FlyWire scale on both GPUs (spmv vs spmm kernel paths), so `auto`
+  selects batch 1 there. The mechanism is correct but currently buys
+  nothing at 139k/14M.
 - The `genn` backend is a guarded adapter; unverified without PyGeNN.
 - Real FBA0 data has no region→neuron mapping yet: `fba0:<region>`
   attachments raise `UnsupportedAttachmentRegion` on real data. On
