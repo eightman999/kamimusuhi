@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Thin wrapper for `python -m experiments.mioba.cli`.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+PY="${MIOBA_PYTHON:-python3}"
+cd "$REPO_ROOT" && exec "$PY" -m experiments.mioba.cli "$@"

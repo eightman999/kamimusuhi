@@ -6,3 +6,9 @@
 
 # Editor / OS noise
 .DS_Store
+
+# MIOBA experiment runtime
+/experiments/mioba/.runs/
+__pycache__/
+*.pyc
+/.venv*/
