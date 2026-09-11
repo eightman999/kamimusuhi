@@ -1,0 +1,857 @@
+[mlp_state s0] step 100 train 0.06930 val 0.07488
+[mlp_state s0] step 200 train 0.06784 val 0.07431
+[mlp_state s0] step 300 train 0.06497 val 0.07427
+[mlp_state s0] step 400 train 0.06559 val 0.07417
+[mlp_state s0] step 500 train 0.06655 val 0.07415
+[mlp_state s0] step 600 train 0.06575 val 0.07446
+[mlp_state s0] step 700 train 0.06564 val 0.07425
+[mlp_state s0] step 800 train 0.06774 val 0.07428
+[mlp_state s0] step 900 train 0.06562 val 0.07445
+[mlp_state s0] step 1000 train 0.06503 val 0.07446
+[mlp_state s0] step 1100 train 0.06577 val 0.07454
+[mlp_state s0] step 1200 train 0.06521 val 0.07470
+[mlp_state s0] step 1300 train 0.06486 val 0.07471
+[mlp_state s0] step 1400 train 0.06500 val 0.07501
+[mlp_state s0] step 1500 train 0.06544 val 0.07512
+[mlp_state s0] step 1600 train 0.06552 val 0.07514
+[mlp_state s0] step 1700 train 0.06481 val 0.07535
+[mlp_state s0] step 1800 train 0.06340 val 0.07546
+[mlp_state s0] step 1900 train 0.06447 val 0.07547
+[mlp_state s0] step 2000 train 0.06479 val 0.07580
+== mlp_state seed 0: base 0.0752 cf_cos 0.000 attr_auc 0.500
+[mlp_state s1] step 100 train 0.06187 val 0.06312
+[mlp_state s1] step 200 train 0.06109 val 0.06285
+[mlp_state s1] step 300 train 0.06126 val 0.06273
+[mlp_state s1] step 400 train 0.06367 val 0.06255
+[mlp_state s1] step 500 train 0.06253 val 0.06256
+[mlp_state s1] step 600 train 0.06241 val 0.06261
+[mlp_state s1] step 700 train 0.06347 val 0.06271
+[mlp_state s1] step 800 train 0.06178 val 0.06278
+[mlp_state s1] step 900 train 0.06311 val 0.06285
+[mlp_state s1] step 1000 train 0.06210 val 0.06306
+[mlp_state s1] step 1100 train 0.06219 val 0.06306
+[mlp_state s1] step 1200 train 0.06266 val 0.06321
+[mlp_state s1] step 1300 train 0.06211 val 0.06331
+[mlp_state s1] step 1400 train 0.06084 val 0.06351
+[mlp_state s1] step 1500 train 0.05719 val 0.06360
+[mlp_state s1] step 1600 train 0.05988 val 0.06369
+[mlp_state s1] step 1700 train 0.06130 val 0.06376
+[mlp_state s1] step 1800 train 0.06086 val 0.06397
+[mlp_state s1] step 1900 train 0.05950 val 0.06412
+[mlp_state s1] step 2000 train 0.06216 val 0.06406
+== mlp_state seed 1: base 0.0637 cf_cos 0.000 attr_auc 0.500
+[mlp_state s2] step 100 train 0.06291 val 0.06325
+[mlp_state s2] step 200 train 0.06478 val 0.06292
+[mlp_state s2] step 300 train 0.06171 val 0.06285
+[mlp_state s2] step 400 train 0.06007 val 0.06295
+[mlp_state s2] step 500 train 0.06078 val 0.06283
+[mlp_state s2] step 600 train 0.06195 val 0.06296
+[mlp_state s2] step 700 train 0.06108 val 0.06309
+[mlp_state s2] step 800 train 0.05986 val 0.06311
+[mlp_state s2] step 900 train 0.06324 val 0.06321
+[mlp_state s2] step 1000 train 0.05691 val 0.06323
+[mlp_state s2] step 1100 train 0.05945 val 0.06337
+[mlp_state s2] step 1200 train 0.06227 val 0.06348
+[mlp_state s2] step 1300 train 0.06155 val 0.06360
+[mlp_state s2] step 1400 train 0.05948 val 0.06362
+[mlp_state s2] step 1500 train 0.05798 val 0.06380
+[mlp_state s2] step 1600 train 0.05707 val 0.06382
+[mlp_state s2] step 1700 train 0.05877 val 0.06413
+[mlp_state s2] step 1800 train 0.05921 val 0.06409
+[mlp_state s2] step 1900 train 0.05819 val 0.06424
+[mlp_state s2] step 2000 train 0.06061 val 0.06440
+== mlp_state seed 2: base 0.0627 cf_cos 0.000 attr_auc 0.500
+[mlp_state_action s0] step 100 train 0.05839 val 0.06411
+[mlp_state_action s0] step 200 train 0.05678 val 0.06344
+[mlp_state_action s0] step 300 train 0.05372 val 0.06329
+[mlp_state_action s0] step 400 train 0.05449 val 0.06328
+[mlp_state_action s0] step 500 train 0.05536 val 0.06309
+[mlp_state_action s0] step 600 train 0.05488 val 0.06328
+[mlp_state_action s0] step 700 train 0.05455 val 0.06319
+[mlp_state_action s0] step 800 train 0.05695 val 0.06313
+[mlp_state_action s0] step 900 train 0.05474 val 0.06332
+[mlp_state_action s0] step 1000 train 0.05430 val 0.06325
+[mlp_state_action s0] step 1100 train 0.05518 val 0.06318
+[mlp_state_action s0] step 1200 train 0.05425 val 0.06335
+[mlp_state_action s0] step 1300 train 0.05423 val 0.06338
+[mlp_state_action s0] step 1400 train 0.05442 val 0.06360
+[mlp_state_action s0] step 1500 train 0.05490 val 0.06352
+[mlp_state_action s0] step 1600 train 0.05484 val 0.06368
+[mlp_state_action s0] step 1700 train 0.05370 val 0.06384
+[mlp_state_action s0] step 1800 train 0.05254 val 0.06396
+[mlp_state_action s0] step 1900 train 0.05426 val 0.06394
+[mlp_state_action s0] step 2000 train 0.05445 val 0.06424
+== mlp_state_action seed 0: base 0.0631 cf_cos 0.994 attr_auc 0.968
+[mlp_state_action s1] step 100 train 0.05318 val 0.05450
+[mlp_state_action s1] step 200 train 0.05232 val 0.05423
+[mlp_state_action s1] step 300 train 0.05230 val 0.05411
+[mlp_state_action s1] step 400 train 0.05471 val 0.05405
+[mlp_state_action s1] step 500 train 0.05371 val 0.05400
+[mlp_state_action s1] step 600 train 0.05352 val 0.05413
+[mlp_state_action s1] step 700 train 0.05445 val 0.05422
+[mlp_state_action s1] step 800 train 0.05282 val 0.05423
+[mlp_state_action s1] step 900 train 0.05398 val 0.05443
+[mlp_state_action s1] step 1000 train 0.05307 val 0.05449
+[mlp_state_action s1] step 1100 train 0.05285 val 0.05458
+[mlp_state_action s1] step 1200 train 0.05394 val 0.05459
+[mlp_state_action s1] step 1300 train 0.05312 val 0.05473
+[mlp_state_action s1] step 1400 train 0.05161 val 0.05493
+[mlp_state_action s1] step 1500 train 0.04828 val 0.05504
+[mlp_state_action s1] step 1600 train 0.05063 val 0.05530
+[mlp_state_action s1] step 1700 train 0.05200 val 0.05532
+[mlp_state_action s1] step 1800 train 0.05184 val 0.05579
+[mlp_state_action s1] step 1900 train 0.05072 val 0.05553
+[mlp_state_action s1] step 2000 train 0.05299 val 0.05556
+== mlp_state_action seed 1: base 0.0551 cf_cos 0.991 attr_auc 0.921
+[mlp_state_action s2] step 100 train 0.05667 val 0.05733
+[mlp_state_action s2] step 200 train 0.05853 val 0.05700
+[mlp_state_action s2] step 300 train 0.05519 val 0.05690
+[mlp_state_action s2] step 400 train 0.05374 val 0.05693
+[mlp_state_action s2] step 500 train 0.05425 val 0.05687
+[mlp_state_action s2] step 600 train 0.05539 val 0.05702
+[mlp_state_action s2] step 700 train 0.05443 val 0.05716
+[mlp_state_action s2] step 800 train 0.05346 val 0.05740
+[mlp_state_action s2] step 900 train 0.05686 val 0.05736
+[mlp_state_action s2] step 1000 train 0.05043 val 0.05742
+[mlp_state_action s2] step 1100 train 0.05261 val 0.05765
+[mlp_state_action s2] step 1200 train 0.05552 val 0.05779
+[mlp_state_action s2] step 1300 train 0.05491 val 0.05808
+[mlp_state_action s2] step 1400 train 0.05286 val 0.05802
+[mlp_state_action s2] step 1500 train 0.05104 val 0.05838
+[mlp_state_action s2] step 1600 train 0.04999 val 0.05839
+[mlp_state_action s2] step 1700 train 0.05219 val 0.05859
+[mlp_state_action s2] step 1800 train 0.05256 val 0.05868
+[mlp_state_action s2] step 1900 train 0.05159 val 0.05883
+[mlp_state_action s2] step 2000 train 0.05393 val 0.05895
+== mlp_state_action seed 2: base 0.0562 cf_cos 0.989 attr_auc 0.825
+[gru_state s0] step 100 train 0.07250 val 0.07876
+[gru_state s0] step 200 train 0.06943 val 0.07544
+[gru_state s0] step 300 train 0.06575 val 0.07474
+[gru_state s0] step 400 train 0.06706 val 0.07448
+[gru_state s0] step 500 train 0.06774 val 0.07427
+[gru_state s0] step 600 train 0.06704 val 0.07419
+[gru_state s0] step 700 train 0.06694 val 0.07404
+[gru_state s0] step 800 train 0.06918 val 0.07394
+[gru_state s0] step 900 train 0.06708 val 0.07381
+[gru_state s0] step 1000 train 0.06670 val 0.07382
+[gru_state s0] step 1100 train 0.06758 val 0.07380
+[gru_state s0] step 1200 train 0.06688 val 0.07376
+[gru_state s0] step 1300 train 0.06667 val 0.07375
+[gru_state s0] step 1400 train 0.06697 val 0.07378
+[gru_state s0] step 1500 train 0.06749 val 0.07387
+[gru_state s0] step 1600 train 0.06753 val 0.07395
+[gru_state s0] step 1700 train 0.06647 val 0.07397
+[gru_state s0] step 1800 train 0.06507 val 0.07402
+[gru_state s0] step 1900 train 0.06660 val 0.07412
+[gru_state s0] step 2000 train 0.06699 val 0.07423
+== gru_state seed 0: base 0.0740 cf_cos 0.000 attr_auc 0.500
+[gru_state s1] step 100 train 0.06384 val 0.06397
+[gru_state s1] step 200 train 0.06195 val 0.06306
+[gru_state s1] step 300 train 0.06229 val 0.06288
+[gru_state s1] step 400 train 0.06466 val 0.06273
+[gru_state s1] step 500 train 0.06347 val 0.06263
+[gru_state s1] step 600 train 0.06337 val 0.06256
+[gru_state s1] step 700 train 0.06461 val 0.06246
+[gru_state s1] step 800 train 0.06305 val 0.06244
+[gru_state s1] step 900 train 0.06412 val 0.06234
+[gru_state s1] step 1000 train 0.06318 val 0.06246
+[gru_state s1] step 1100 train 0.06343 val 0.06234
+[gru_state s1] step 1200 train 0.06438 val 0.06241
+[gru_state s1] step 1300 train 0.06363 val 0.06241
+[gru_state s1] step 1400 train 0.06226 val 0.06242
+[gru_state s1] step 1500 train 0.05849 val 0.06242
+[gru_state s1] step 1600 train 0.06123 val 0.06254
+[gru_state s1] step 1700 train 0.06329 val 0.06262
+[gru_state s1] step 1800 train 0.06264 val 0.06258
+[gru_state s1] step 1900 train 0.06112 val 0.06267
+[gru_state s1] step 2000 train 0.06365 val 0.06276
+== gru_state seed 1: base 0.0621 cf_cos 0.000 attr_auc 0.500
+[gru_state s2] step 100 train 0.06489 val 0.06490
+[gru_state s2] step 200 train 0.06581 val 0.06351
+[gru_state s2] step 300 train 0.06242 val 0.06327
+[gru_state s2] step 400 train 0.06122 val 0.06316
+[gru_state s2] step 500 train 0.06195 val 0.06299
+[gru_state s2] step 600 train 0.06310 val 0.06297
+[gru_state s2] step 700 train 0.06204 val 0.06291
+[gru_state s2] step 800 train 0.06106 val 0.06283
+[gru_state s2] step 900 train 0.06470 val 0.06283
+[gru_state s2] step 1000 train 0.05807 val 0.06280
+[gru_state s2] step 1100 train 0.06063 val 0.06284
+[gru_state s2] step 1200 train 0.06349 val 0.06285
+[gru_state s2] step 1300 train 0.06300 val 0.06287
+[gru_state s2] step 1400 train 0.06109 val 0.06291
+[gru_state s2] step 1500 train 0.05937 val 0.06301
+[gru_state s2] step 1600 train 0.05850 val 0.06315
+[gru_state s2] step 1700 train 0.06038 val 0.06316
+[gru_state s2] step 1800 train 0.06089 val 0.06326
+[gru_state s2] step 1900 train 0.06008 val 0.06335
+[gru_state s2] step 2000 train 0.06214 val 0.06349
+== gru_state seed 2: base 0.0612 cf_cos 0.000 attr_auc 0.500
+[gru_state_action s0] step 100 train 0.06169 val 0.06770
+[gru_state_action s0] step 200 train 0.05782 val 0.06407
+[gru_state_action s0] step 300 train 0.05440 val 0.06353
+[gru_state_action s0] step 400 train 0.05560 val 0.06328
+[gru_state_action s0] step 500 train 0.05617 val 0.06308
+[gru_state_action s0] step 600 train 0.05575 val 0.06303
+[gru_state_action s0] step 700 train 0.05534 val 0.06288
+[gru_state_action s0] step 800 train 0.05783 val 0.06278
+[gru_state_action s0] step 900 train 0.05554 val 0.06269
+[gru_state_action s0] step 1000 train 0.05527 val 0.06273
+[gru_state_action s0] step 1100 train 0.05640 val 0.06265
+[gru_state_action s0] step 1200 train 0.05535 val 0.06270
+[gru_state_action s0] step 1300 train 0.05525 val 0.06272
+[gru_state_action s0] step 1400 train 0.05567 val 0.06272
+[gru_state_action s0] step 1500 train 0.05594 val 0.06280
+[gru_state_action s0] step 1600 train 0.05602 val 0.06290
+[gru_state_action s0] step 1700 train 0.05477 val 0.06303
+[gru_state_action s0] step 1800 train 0.05346 val 0.06313
+[gru_state_action s0] step 1900 train 0.05508 val 0.06323
+[gru_state_action s0] step 2000 train 0.05529 val 0.06338
+== gru_state_action seed 0: base 0.0629 cf_cos 0.998 attr_auc 1.000
+[gru_state_action s1] step 100 train 0.05497 val 0.05518
+[gru_state_action s1] step 200 train 0.05294 val 0.05413
+[gru_state_action s1] step 300 train 0.05299 val 0.05391
+[gru_state_action s1] step 400 train 0.05558 val 0.05375
+[gru_state_action s1] step 500 train 0.05456 val 0.05364
+[gru_state_action s1] step 600 train 0.05438 val 0.05359
+[gru_state_action s1] step 700 train 0.05548 val 0.05351
+[gru_state_action s1] step 800 train 0.05389 val 0.05352
+[gru_state_action s1] step 900 train 0.05485 val 0.05345
+[gru_state_action s1] step 1000 train 0.05403 val 0.05364
+[gru_state_action s1] step 1100 train 0.05415 val 0.05359
+[gru_state_action s1] step 1200 train 0.05531 val 0.05360
+[gru_state_action s1] step 1300 train 0.05443 val 0.05381
+[gru_state_action s1] step 1400 train 0.05276 val 0.05387
+[gru_state_action s1] step 1500 train 0.04914 val 0.05392
+[gru_state_action s1] step 1600 train 0.05163 val 0.05407
+[gru_state_action s1] step 1700 train 0.05348 val 0.05427
+[gru_state_action s1] step 1800 train 0.05319 val 0.05432
+[gru_state_action s1] step 1900 train 0.05182 val 0.05462
+[gru_state_action s1] step 2000 train 0.05367 val 0.05486
+== gru_state_action seed 1: base 0.0541 cf_cos 0.996 attr_auc 0.984
+[gru_state_action s2] step 100 train 0.05959 val 0.05933
+[gru_state_action s2] step 200 train 0.05940 val 0.05702
+[gru_state_action s2] step 300 train 0.05588 val 0.05681
+[gru_state_action s2] step 400 train 0.05471 val 0.05671
+[gru_state_action s2] step 500 train 0.05545 val 0.05657
+[gru_state_action s2] step 600 train 0.05672 val 0.05657
+[gru_state_action s2] step 700 train 0.05543 val 0.05646
+[gru_state_action s2] step 800 train 0.05459 val 0.05643
+[gru_state_action s2] step 900 train 0.05809 val 0.05645
+[gru_state_action s2] step 1000 train 0.05125 val 0.05645
+[gru_state_action s2] step 1100 train 0.05389 val 0.05652
+[gru_state_action s2] step 1200 train 0.05676 val 0.05659
+[gru_state_action s2] step 1300 train 0.05626 val 0.05674
+[gru_state_action s2] step 1400 train 0.05432 val 0.05676
+[gru_state_action s2] step 1500 train 0.05266 val 0.05697
+[gru_state_action s2] step 1600 train 0.05143 val 0.05714
+[gru_state_action s2] step 1700 train 0.05333 val 0.05725
+[gru_state_action s2] step 1800 train 0.05369 val 0.05738
+[gru_state_action s2] step 1900 train 0.05283 val 0.05758
+[gru_state_action s2] step 2000 train 0.05473 val 0.05780
+== gru_state_action seed 2: base 0.0556 cf_cos 0.995 attr_auc 0.937
+[gru128_state_action s0] step 100 train 0.05908 val 0.06472
+[gru128_state_action s0] step 200 train 0.05736 val 0.06347
+[gru128_state_action s0] step 300 train 0.05408 val 0.06317
+[gru128_state_action s0] step 400 train 0.05516 val 0.06295
+[gru128_state_action s0] step 500 train 0.05584 val 0.06279
+[gru128_state_action s0] step 600 train 0.05529 val 0.06284
+[gru128_state_action s0] step 700 train 0.05486 val 0.06271
+[gru128_state_action s0] step 800 train 0.05728 val 0.06272
+[gru128_state_action s0] step 900 train 0.05496 val 0.06278
+[gru128_state_action s0] step 1000 train 0.05451 val 0.06288
+[gru128_state_action s0] step 1100 train 0.05530 val 0.06316
+[gru128_state_action s0] step 1200 train 0.05427 val 0.06353
+[gru128_state_action s0] step 1300 train 0.05386 val 0.06385
+[gru128_state_action s0] step 1400 train 0.05373 val 0.06446
+[gru128_state_action s0] step 1500 train 0.05338 val 0.06519
+[gru128_state_action s0] step 1600 train 0.05279 val 0.06612
+[gru128_state_action s0] step 1700 train 0.05066 val 0.06787
+[gru128_state_action s0] step 1800 train 0.04784 val 0.06965
+[gru128_state_action s0] step 1900 train 0.04709 val 0.07219
+[gru128_state_action s0] step 2000 train 0.04530 val 0.07577
+== gru128_state_action seed 0: base 0.0759 cf_cos 0.995 attr_auc 0.968
+[gru128_state_action s1] step 100 train 0.05350 val 0.05440
+[gru128_state_action s1] step 200 train 0.05272 val 0.05405
+[gru128_state_action s1] step 300 train 0.05293 val 0.05375
+[gru128_state_action s1] step 400 train 0.05530 val 0.05360
+[gru128_state_action s1] step 500 train 0.05429 val 0.05352
+[gru128_state_action s1] step 600 train 0.05405 val 0.05353
+[gru128_state_action s1] step 700 train 0.05518 val 0.05350
+[gru128_state_action s1] step 800 train 0.05349 val 0.05358
+[gru128_state_action s1] step 900 train 0.05433 val 0.05368
+[gru128_state_action s1] step 1000 train 0.05337 val 0.05388
+[gru128_state_action s1] step 1100 train 0.05317 val 0.05406
+[gru128_state_action s1] step 1200 train 0.05403 val 0.05440
+[gru128_state_action s1] step 1300 train 0.05284 val 0.05503
+[gru128_state_action s1] step 1400 train 0.05091 val 0.05583
+[gru128_state_action s1] step 1500 train 0.04656 val 0.05708
+[gru128_state_action s1] step 1600 train 0.04796 val 0.05846
+[gru128_state_action s1] step 1700 train 0.04693 val 0.06094
+[gru128_state_action s1] step 1800 train 0.04495 val 0.06403
+[gru128_state_action s1] step 1900 train 0.04150 val 0.06794
+[gru128_state_action s1] step 2000 train 0.04003 val 0.07234
+== gru128_state_action seed 1: base 0.0723 cf_cos 0.993 attr_auc 0.968
+[gru128_state_action s2] step 100 train 0.05717 val 0.05737
+[gru128_state_action s2] step 200 train 0.05906 val 0.05689
+[gru128_state_action s2] step 300 train 0.05557 val 0.05664
+[gru128_state_action s2] step 400 train 0.05431 val 0.05652
+[gru128_state_action s2] step 500 train 0.05496 val 0.05652
+[gru128_state_action s2] step 600 train 0.05604 val 0.05654
+[gru128_state_action s2] step 700 train 0.05464 val 0.05675
+[gru128_state_action s2] step 800 train 0.05380 val 0.05677
+[gru128_state_action s2] step 900 train 0.05705 val 0.05698
+[gru128_state_action s2] step 1000 train 0.05021 val 0.05714
+[gru128_state_action s2] step 1100 train 0.05226 val 0.05769
+[gru128_state_action s2] step 1200 train 0.05437 val 0.05846
+[gru128_state_action s2] step 1300 train 0.05304 val 0.05959
+[gru128_state_action s2] step 1400 train 0.04989 val 0.06101
+[gru128_state_action s2] step 1500 train 0.04717 val 0.06330
+[gru128_state_action s2] step 1600 train 0.04320 val 0.06753
+[gru128_state_action s2] step 1700 train 0.04188 val 0.07360
+[gru128_state_action s2] step 1800 train 0.03940 val 0.08164
+[gru128_state_action s2] step 1900 train 0.03632 val 0.09167
+[gru128_state_action s2] step 2000 train 0.03543 val 0.09790
+== gru128_state_action seed 2: base 0.0948 cf_cos 0.992 attr_auc 0.762
+{
+  "mlp_state": {
+    "n_seeds": 3,
+    "base_mse_overall": {
+      "mean": 0.06720983237028122,
+      "std": 0.005687745762196324,
+      "n": 3
+    },
+    "base_mse_self": {
+      "mean": 0.026661284267902374,
+      "std": 0.005760856931960067,
+      "n": 3
+    },
+    "base_mse_external": {
+      "mean": 0.05907852575182915,
+      "std": 0.006755385061776443,
+      "n": 3
+    },
+    "base_mse_mixed": {
+      "mean": 0.031061307216684025,
+      "std": 0.008014004867182997,
+      "n": 3
+    },
+    "base_mse_noise": {
+      "mean": 0.2612065076828003,
+      "std": 0.0026341770649134072,
+      "n": 3
+    },
+    "sc1_self_ratio": {
+      "mean": 1.0,
+      "std": 0.0,
+      "n": 3
+    },
+    "sc5_self_ratio": {
+      "mean": 1.0,
+      "std": 0.0,
+      "n": 3
+    },
+    "cf_cos": {
+      "mean": 0.0,
+      "std": 0.0,
+      "n": 3
+    },
+    "attr_auc_self_or_mix": {
+      "mean": 0.5,
+      "std": 0.0,
+      "n": 3
+    },
+    "probe_self_r2_self_dims": {
+      "mean": 0.6734294976323424,
+      "std": 0.020634414761013384,
+      "n": 3
+    },
+    "probe_action_acc": {
+      "mean": 0.24683315058549246,
+      "std": 0.008044195276851218,
+      "n": 3
+    },
+    "probe_disturbance_auc": {
+      "mean": 0.9316891021874537,
+      "std": 0.0186592552492781,
+      "n": 3
+    },
+    "ood_disturbance_self_mse": {
+      "mean": 0.04372026895483335,
+      "std": 0.013015265402858115,
+      "n": 3
+    },
+    "sc4_self_mse_before": {
+      "mean": 0.02676951264341672,
+      "std": 0.005655423116887281,
+      "n": 3
+    },
+    "sc4_self_mse_after": {
+      "mean": 0.028291352714101475,
+      "std": 0.0060784237399928425,
+      "n": 3
+    },
+    "sc4_self_mse_scratch": {
+      "mean": 0.027525174121061962,
+      "std": 0.005763555099378592,
+      "n": 3
+    },
+    "xw_self_mse_before": {
+      "mean": 0.1709459995230039,
+      "std": 0.10606367741923683,
+      "n": 3
+    },
+    "xw_self_mse_after": {
+      "mean": 0.04166096821427345,
+      "std": 0.008320677679031043,
+      "n": 3
+    },
+    "xw_self_mse_scratch": {
+      "mean": 0.038463301956653595,
+      "std": 0.01132604999257239,
+      "n": 3
+    },
+    "xw_attr_auc": {
+      "mean": 0.5,
+      "std": 0.0,
+      "n": 3
+    },
+    "ood_delay_self_mse": {
+      "mean": 0.025602300340930622,
+      "std": 0.005364430937448719,
+      "n": 3
+    }
+  },
+  "mlp_state_action": {
+    "n_seeds": 3,
+    "base_mse_overall": {
+      "mean": 0.05812831223011017,
+      "std": 0.003573530572867108,
+      "n": 3
+    },
+    "base_mse_self": {
+      "mean": 0.004332129067430894,
+      "std": 2.188476698987766e-05,
+      "n": 3
+    },
+    "base_mse_external": {
+      "mean": 0.05935614059368769,
+      "std": 0.006690447156456259,
+      "n": 3
+    },
+    "base_mse_mixed": {
+      "mean": 0.02227456991871198,
+      "std": 0.007949611239820317,
+      "n": 3
+    },
+    "base_mse_noise": {
+      "mean": 0.26125667492548627,
+      "std": 0.003679447101324587,
+      "n": 3
+    },
+    "sc1_self_ratio": {
+      "mean": 10.818016330993748,
+      "std": 2.5536203316799795,
+      "n": 3
+    },
+    "sc5_self_ratio": {
+      "mean": 6.562565476673593,
+      "std": 1.3211355134496476,
+      "n": 3
+    },
+    "cf_cos": {
+      "mean": 0.9911892480978528,
+      "std": 0.0021078448314226068,
+      "n": 3
+    },
+    "attr_auc_self_or_mix": {
+      "mean": 0.9047619047619048,
+      "std": 0.05939138709164988,
+      "n": 3
+    },
+    "probe_self_r2_self_dims": {
+      "mean": 0.8910846056410066,
+      "std": 0.044364026387640344,
+      "n": 3
+    },
+    "probe_action_acc": {
+      "mean": 1.0,
+      "std": 0.0,
+      "n": 3
+    },
+    "probe_disturbance_auc": {
+      "mean": 0.9025592205587875,
+      "std": 0.028853113907925203,
+      "n": 3
+    },
+    "ood_disturbance_self_mse": {
+      "mean": 0.009509983472526073,
+      "std": 0.0011648578740139856,
+      "n": 3
+    },
+    "sc4_self_mse_before": {
+      "mean": 0.06735645731290181,
+      "std": 0.016397087179269573,
+      "n": 3
+    },
+    "sc4_self_mse_after": {
+      "mean": 0.00481403386220336,
+      "std": 0.00011685319685053057,
+      "n": 3
+    },
+    "sc4_self_mse_scratch": {
+      "mean": 0.005513744118312995,
+      "std": 4.916357727397171e-05,
+      "n": 3
+    },
+    "xw_self_mse_before": {
+      "mean": 0.15359182407458624,
+      "std": 0.059027902885698445,
+      "n": 3
+    },
+    "xw_self_mse_after": {
+      "mean": 0.007693225362648566,
+      "std": 0.0024534695290192024,
+      "n": 3
+    },
+    "xw_self_mse_scratch": {
+      "mean": 0.0057170698419213295,
+      "std": 7.824220476312285e-05,
+      "n": 3
+    },
+    "xw_attr_auc": {
+      "mean": 0.37566137566137564,
+      "std": 0.11616136719629708,
+      "n": 3
+    },
+    "ood_delay_self_mse": {
+      "mean": 0.04614198083678881,
+      "std": 0.01066664758729315,
+      "n": 3
+    }
+  },
+  "gru_state": {
+    "n_seeds": 3,
+    "base_mse_overall": {
+      "mean": 0.06578196336825688,
+      "std": 0.005855220813286935,
+      "n": 3
+    },
+    "base_mse_self": {
+      "mean": 0.026000481098890305,
+      "std": 0.005636928258048619,
+      "n": 3
+    },
+    "base_mse_external": {
+      "mean": 0.05808674544095993,
+      "std": 0.006708535091438787,
+      "n": 3
+    },
+    "base_mse_mixed": {
+      "mean": 0.030317289133866627,
+      "std": 0.008036960349739294,
+      "n": 3
+    },
+    "base_mse_noise": {
+      "mean": 0.2554030517737071,
+      "std": 0.0012783101639253437,
+      "n": 3
+    },
+    "sc1_self_ratio": {
+      "mean": 1.0,
+      "std": 0.0,
+      "n": 3
+    },
+    "sc5_self_ratio": {
+      "mean": 1.0,
+      "std": 0.0,
+      "n": 3
+    },
+    "cf_cos": {
+      "mean": 0.0,
+      "std": 0.0,
+      "n": 3
+    },
+    "attr_auc_self_or_mix": {
+      "mean": 0.5,
+      "std": 0.0,
+      "n": 3
+    },
+    "probe_self_r2_self_dims": {
+      "mean": 0.6886615630846199,
+      "std": 0.008968430331314585,
+      "n": 3
+    },
+    "probe_action_acc": {
+      "mean": 0.24972856044769287,
+      "std": 0.0044326623282294675,
+      "n": 3
+    },
+    "probe_disturbance_auc": {
+      "mean": 0.797753405982225,
+      "std": 0.031981463964638635,
+      "n": 3
+    },
+    "ood_disturbance_self_mse": {
+      "mean": 0.03807656901578108,
+      "std": 0.008974299865440075,
+      "n": 3
+    },
+    "sc4_self_mse_before": {
+      "mean": 0.026255290334423382,
+      "std": 0.005577935762916086,
+      "n": 3
+    },
+    "sc4_self_mse_after": {
+      "mean": 0.026959293832381565,
+      "std": 0.005726717789161166,
+      "n": 3
+    },
+    "sc4_self_mse_scratch": {
+      "mean": 0.0277233241746823,
+      "std": 0.0056946940085448716,
+      "n": 3
+    },
+    "xw_self_mse_before": {
+      "mean": 0.18568608164787292,
+      "std": 0.09166469968261107,
+      "n": 3
+    },
+    "xw_self_mse_after": {
+      "mean": 0.03984087581435839,
+      "std": 0.009569308770311319,
+      "n": 3
+    },
+    "xw_self_mse_scratch": {
+      "mean": 0.038284819573163986,
+      "std": 0.01121491467671431,
+      "n": 3
+    },
+    "xw_attr_auc": {
+      "mean": 0.5,
+      "std": 0.0,
+      "n": 3
+    },
+    "ood_delay_self_mse": {
+      "mean": 0.025182293107112248,
+      "std": 0.005447797883357721,
+      "n": 3
+    }
+  },
+  "gru_state_action": {
+    "n_seeds": 3,
+    "base_mse_overall": {
+      "mean": 0.057493055860201515,
+      "std": 0.0038435859695610777,
+      "n": 3
+    },
+    "base_mse_self": {
+      "mean": 0.0041129752062261105,
+      "std": 4.3330890820150725e-05,
+      "n": 3
+    },
+    "base_mse_external": {
+      "mean": 0.05845791598161062,
+      "std": 0.006607247045235317,
+      "n": 3
+    },
+    "base_mse_mixed": {
+      "mean": 0.021918391498426597,
+      "std": 0.007807763180109098,
+      "n": 3
+    },
+    "base_mse_noise": {
+      "mean": 0.25968043009440106,
+      "std": 0.001468692608532947,
+      "n": 3
+    },
+    "sc1_self_ratio": {
+      "mean": 12.020090232976395,
+      "std": 3.1492026765373944,
+      "n": 3
+    },
+    "sc5_self_ratio": {
+      "mean": 7.851463881351212,
+      "std": 1.6650768479383105,
+      "n": 3
+    },
+    "cf_cos": {
+      "mean": 0.9964187723987586,
+      "std": 0.0012003102809636816,
+      "n": 3
+    },
+    "attr_auc_self_or_mix": {
+      "mean": 0.9735449735449736,
+      "std": 0.026978939225358642,
+      "n": 3
+    },
+    "probe_self_r2_self_dims": {
+      "mean": 0.923133852085804,
+      "std": 0.02939118230680364,
+      "n": 3
+    },
+    "probe_action_acc": {
+      "mean": 1.0,
+      "std": 0.0,
+      "n": 3
+    },
+    "probe_disturbance_auc": {
+      "mean": 0.6989674107304503,
+      "std": 0.011322821625772366,
+      "n": 3
+    },
+    "ood_disturbance_self_mse": {
+      "mean": 0.01490277424454689,
+      "std": 0.002103376408155853,
+      "n": 3
+    },
+    "sc4_self_mse_before": {
+      "mean": 0.0720649001499017,
+      "std": 0.018458792748191226,
+      "n": 3
+    },
+    "sc4_self_mse_after": {
+      "mean": 0.005650231459488471,
+      "std": 0.00036268517350391557,
+      "n": 3
+    },
+    "sc4_self_mse_scratch": {
+      "mean": 0.005806952870140473,
+      "std": 0.00014607394317576203,
+      "n": 3
+    },
+    "xw_self_mse_before": {
+      "mean": 0.17604480932156244,
+      "std": 0.10204903576991746,
+      "n": 3
+    },
+    "xw_self_mse_after": {
+      "mean": 0.007971493992954493,
+      "std": 0.0024163411045519953,
+      "n": 3
+    },
+    "xw_self_mse_scratch": {
+      "mean": 0.006094766935954492,
+      "std": 0.00020861396117968862,
+      "n": 3
+    },
+    "xw_attr_auc": {
+      "mean": 0.4603174603174603,
+      "std": 0.038880789567986955,
+      "n": 3
+    },
+    "ood_delay_self_mse": {
+      "mean": 0.04522489383816719,
+      "std": 0.010357217338585583,
+      "n": 3
+    }
+  },
+  "gru128_state_action": {
+    "n_seeds": 3,
+    "base_mse_overall": {
+      "mean": 0.08102480322122574,
+      "std": 0.00987599788051618,
+      "n": 3
+    },
+    "base_mse_self": {
+      "mean": 0.005191020822773377,
+      "std": 0.00015495375025733032,
+      "n": 3
+    },
+    "base_mse_external": {
+      "mean": 0.06839017445842425,
+      "std": 0.006780864795377517,
+      "n": 3
+    },
+    "base_mse_mixed": {
+      "mean": 0.024538326387604077,
+      "std": 0.008049965099021348,
+      "n": 3
+    },
+    "base_mse_noise": {
+      "mean": 0.41516878207524616,
+      "std": 0.0797501476345413,
+      "n": 3
+    },
+    "sc1_self_ratio": {
+      "mean": 9.329840931720385,
+      "std": 2.5518306478293837,
+      "n": 3
+    },
+    "sc5_self_ratio": {
+      "mean": 5.898369063003116,
+      "std": 1.3541189156912417,
+      "n": 3
+    },
+    "cf_cos": {
+      "mean": 0.9929763063470368,
+      "std": 0.0011304483682177211,
+      "n": 3
+    },
+    "attr_auc_self_or_mix": {
+      "mean": 0.8994708994708995,
+      "std": 0.09727394873465736,
+      "n": 3
+    },
+    "probe_self_r2_self_dims": {
+      "mean": 0.895113539396435,
+      "std": 0.042161239657515295,
+      "n": 3
+    },
+    "probe_action_acc": {
+      "mean": 1.0,
+      "std": 0.0,
+      "n": 3
+    },
+    "probe_disturbance_auc": {
+      "mean": 0.6625488577225753,
+      "std": 0.037389484090085016,
+      "n": 3
+    },
+    "ood_disturbance_self_mse": {
+      "mean": 0.01604413116971652,
+      "std": 0.0037455696176955187,
+      "n": 3
+    },
+    "sc4_self_mse_before": {
+      "mean": 0.06962718442082405,
+      "std": 0.01783365660762076,
+      "n": 3
+    },
+    "sc4_self_mse_after": {
+      "mean": 0.007504883998384078,
+      "std": 0.0005882044970503102,
+      "n": 3
+    },
+    "sc4_self_mse_scratch": {
+      "mean": 0.005394080653786659,
+      "std": 1.6071227910481776e-05,
+      "n": 3
+    },
+    "xw_self_mse_before": {
+      "mean": 0.19123459855715433,
+      "std": 0.15937003525156554,
+      "n": 3
+    },
+    "xw_self_mse_after": {
+      "mean": 0.010505131911486387,
+      "std": 0.00327014897384801,
+      "n": 3
+    },
+    "xw_self_mse_scratch": {
+      "mean": 0.005757804960012436,
+      "std": 9.654568915590944e-05,
+      "n": 3
+    },
+    "xw_attr_auc": {
+      "mean": 0.45502645502645506,
+      "std": 0.026978939225358652,
+      "n": 3
+    },
+    "ood_delay_self_mse": {
+      "mean": 0.04494070137540499,
+      "std": 0.010504421459890409,
+      "n": 3
+    }
+  }
+}
