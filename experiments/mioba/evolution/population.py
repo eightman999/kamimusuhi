@@ -22,7 +22,8 @@ import random
 from contextlib import contextmanager
 from typing import Callable
 
-from ..genome.mutation import mutate
+from ..genome.mutation import (OUTCOME_APPLIED, merged_config,
+                               mutate, structural_summary)
 from ..genome.schema import Genome, fba0_genome
 from ..storage import models as M
 
@@ -82,12 +83,13 @@ class PopulationController:
         with self._atomic_generation():
             for i in range(target):
                 if i == 0:
-                    g = base
+                    g, records = base, []
                     kind = "initial"
                 else:
-                    g = mutate(base, self.rng, birth_index=i, generation=0)
+                    g, records = mutate(base, self.rng, birth_index=i,
+                                        generation=0, config=self.config)
                     kind = "mutation"
-                self._birth(g, kind)
+                self._birth(g, kind, records)
                 self._enqueue_eval(g)
                 born += 1
             self._persist(born)
@@ -114,7 +116,7 @@ class PopulationController:
                 pass
         return False
 
-    def _birth(self, genome: Genome, kind: str) -> str:
+    def _birth(self, genome: Genome, kind: str, records=None) -> str:
         """Clade rule: the genome in which an artificial organ first
         appears founds a new clade; descendants inherit the parent's
         clade unless they found a new one."""
@@ -129,15 +131,56 @@ class PopulationController:
                          source="population")
         else:
             clade_id = parent_clade or self.root_clade_id
+        structure = structural_summary(genome, records)
         self.db.insert_genome(self.experiment_id, genome, kind,
-                              clade_id=clade_id)
+                              clade_id=clade_id,
+                              mutations=records, structure=structure)
         self.db.emit(self.experiment_id, M.EV_GENOME_BORN,
                      payload={"genome_id": genome.genome_id,
                               "generation": genome.generation,
                               "birth_index": genome.birth_index,
-                              "kind": kind},
+                              "kind": kind,
+                              "artificial_neurons":
+                                  structure["n_artificial_neurons"],
+                              "organ_classes": structure["counts"]},
                      source="population")
+        self._emit_structural_events(genome, records or [], structure)
         return genome.genome_id
+
+    def _emit_structural_events(self, genome: Genome, records,
+                                structure: dict) -> None:
+        """Structural change and its consequence are separate facts.
+
+        ``structural_mutation`` says what the birth did; the neutral /
+        invalid events say where the resulting organ sits in the graph.
+        A prune that orphans a sibling organ shows up as the second
+        without the first, which is exactly the case that is easy to miss
+        when only mutations are logged.
+        """
+        applied = [r for r in records
+                   if r.outcome == OUTCOME_APPLIED
+                   and r.category in ("structural", "prune")]
+        for rec in applied:
+            self.db.emit(self.experiment_id, M.EV_STRUCTURAL_MUTATION,
+                         payload={"genome_id": genome.genome_id,
+                                  "generation": genome.generation,
+                                  **rec.to_dict()},
+                         source="population")
+        for organ_id, cls in (structure.get("organs") or {}).items():
+            if cls == "invalid_structure":
+                self.db.emit(self.experiment_id, M.EV_INVALID_STRUCTURE, "warn",
+                             {"genome_id": genome.genome_id,
+                              "organ_id": organ_id,
+                              "reason": "organ has no incoming or no outgoing "
+                                        "attachment"},
+                             "population")
+            elif cls == "neutral_structure":
+                self.db.emit(self.experiment_id, M.EV_NEUTRAL_STRUCTURE, "info",
+                             {"genome_id": genome.genome_id,
+                              "organ_id": organ_id,
+                              "reason": "organ is not on a path between FBA0 "
+                                        "and FBA0"},
+                             "population")
 
     def _enqueue_eval(self, genome: Genome) -> str:
         from ..coordinator import jobs
@@ -209,9 +252,10 @@ class PopulationController:
             for i in range(target):
                 parent_row = self.db.get_genome(self.rng.choice(elites))
                 parent = Genome.from_json(parent_row["genome_json"])
-                g = mutate(parent, self.rng, birth_index=i,
-                           generation=current_gen + 1)
-                self._birth(g, "mutation")
+                g, records = mutate(parent, self.rng, birth_index=i,
+                                    generation=current_gen + 1,
+                                    config=self.config)
+                self._birth(g, "mutation", records)
                 self._enqueue_eval(g)
                 born += 1
             self._persist(born)

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import models as M
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text()
 
 # columns added after v2; applied with ALTER TABLE when opening an older DB.
@@ -35,6 +35,11 @@ _ADDED_COLUMNS = (
     ("evaluations", "resource_json", "TEXT NOT NULL DEFAULT '{}'"),
     ("evaluations", "activity_json", "TEXT NOT NULL DEFAULT '{}'"),
     ("worker_runs", "slots", "INTEGER"),
+    # v5: M1 structural evolution
+    ("mutations", "operator", "TEXT"),
+    ("mutations", "outcome", "TEXT"),
+    ("mutations", "detail_json", "TEXT NOT NULL DEFAULT '{}'"),
+    ("genomes", "structure_json", "TEXT NOT NULL DEFAULT '{}'"),
 )
 
 
@@ -156,35 +161,61 @@ class Database:
     # ------------------------------------------------------------ genomes
     def insert_genome(self, experiment_id: str, genome, birth_kind: str,
                       clade_id: str | None = None,
-                      default_clade_id: str | None = None) -> str:
-        """Insert genome + parents + birth + mutation rows. Returns genome_id."""
+                      default_clade_id: str | None = None,
+                      mutations=None, structure: dict | None = None) -> str:
+        """Insert genome + parents + birth + mutation rows. Returns genome_id.
+
+        ``mutations`` (M1) is the list of MutationRecords this *birth*
+        applied — including the ones that hit a structural cap or found
+        no target. Passing it is how a structural operator gets recorded
+        as itself rather than being re-derived from the genome contents,
+        which cannot distinguish "this child grew an organ" from "this
+        child inherited one".
+        """
         g = genome
         gj = g.to_json()
         with self._lock:
             self._q("INSERT OR IGNORE INTO genomes(experiment_id,genome_id,"
                     "parent_ids_json,species_base,generation,birth_index,"
-                    "random_seed,genome_json,content_hash,created_at)"
-                    " VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    "random_seed,genome_json,content_hash,created_at,"
+                    "structure_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (experiment_id, g.genome_id, json.dumps(g.parent_ids),
                      g.species_base, g.generation, g.birth_index,
-                     g.random_seed, gj, g.genome_id, g.created_at))
+                     g.random_seed, gj, g.genome_id, g.created_at,
+                     json.dumps(structure or {})))
             for pid in g.parent_ids:
                 self._q("INSERT OR IGNORE INTO parents(experiment_id,child_id,"
                         "parent_id) VALUES(?,?,?)",
                         (experiment_id, g.genome_id, pid))
             mutation_ids = []
-            for pm in g.parameter_mutations:
-                mutation_ids.append(pm.mutation_id)
-                self._q("INSERT OR IGNORE INTO mutations(experiment_id,"
-                        "mutation_id,genome_id,kind,path,op,value,scope,"
-                        "provenance_json) VALUES(?,?,?,?,?,?,?,?,?)",
-                        (experiment_id, pm.mutation_id, g.genome_id,
-                         "parameter", pm.path, pm.op, pm.value, pm.scope,
-                         "{}"))
-            for organ in g.artificial_organs:
-                if organ.provenance.birth_mutation_id:
-                    mutation_ids.append(organ.provenance.birth_mutation_id)
+            if mutations is not None:
+                for rec in mutations:
+                    r = rec.to_dict() if hasattr(rec, "to_dict") else dict(rec)
+                    mutation_ids.append(r["mutation_id"])
                     self._q("INSERT OR IGNORE INTO mutations(experiment_id,"
+                            "mutation_id,genome_id,kind,path,op,value,scope,"
+                            "provenance_json,operator,outcome,detail_json)"
+                            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                            (experiment_id, r["mutation_id"], g.genome_id,
+                             r.get("category"), r.get("target"), r.get("op"),
+                             r.get("value"), r.get("scope"), "{}",
+                             r.get("operator"), r.get("outcome"),
+                             json.dumps(r.get("detail") or {})))
+            else:
+                # legacy path: re-derive what can be seen in the genome
+                for pm in g.parameter_mutations:
+                    mutation_ids.append(pm.mutation_id)
+                    self._q("INSERT OR IGNORE INTO mutations(experiment_id,"
+                            "mutation_id,genome_id,kind,path,op,value,scope,"
+                            "provenance_json) VALUES(?,?,?,?,?,?,?,?,?)",
+                            (experiment_id, pm.mutation_id, g.genome_id,
+                             "parameter", pm.path, pm.op, pm.value, pm.scope,
+                             "{}"))
+                for organ in g.artificial_organs:
+                    if organ.provenance.birth_mutation_id:
+                        mutation_ids.append(organ.provenance.birth_mutation_id)
+                        self._q(
+                            "INSERT OR IGNORE INTO mutations(experiment_id,"
                             "mutation_id,genome_id,kind,path,op,value,scope,"
                             "provenance_json) VALUES(?,?,?,?,?,?,?,?,?)",
                             (experiment_id, organ.provenance.birth_mutation_id,

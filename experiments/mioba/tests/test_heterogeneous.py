@@ -405,12 +405,12 @@ def _run_generation(db_path, cfg, crash_at=None):
     real_mutate = pop_mod.mutate
     calls = {"n": 0}
 
-    def crashing(parent, r, birth_index, generation):
-        g = real_mutate(parent, r, birth_index=birth_index,
-                        generation=generation)
+    def crashing(parent, r, birth_index, generation, config=None):
+        out = real_mutate(parent, r, birth_index=birth_index,
+                          generation=generation, config=config)
         if crash_at is not None and birth_index == crash_at:
             raise RuntimeError(f"simulated crash at child {birth_index}")
-        return g
+        return out
 
     pop_mod.mutate = crashing
     try:
