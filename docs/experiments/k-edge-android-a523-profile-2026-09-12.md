@@ -101,9 +101,10 @@ HAL が公開する cooling device は `cpufreq-cpu0` のみ。
 **prompt processing と token generation で挙動が完全に分かれる。**
 
 - `pp512` は thread 数にほぼ比例して伸びる (1→8 で **4.03 倍**)。compute bound。
-- `tg128` は **まったくスケールしない**。最速は `t=2` の 4.52 t/s で、
-  `t=8` では 4.26 t/s へ**低下する**。memory bandwidth bound であり、
-  コアを足しても改善しない。
+- `tg128` は **まったくスケールしない**。`t=2` の 4.52 t/s が最速で、
+  `t=4` でも 4.47 t/s と平坦。memory bandwidth bound であり、コアを足しても改善しない。
+  `t=8` の 4.26 t/s への低下は、後述の thermal throttling 区間で測定されているため
+  **bandwidth 単独の効果とは言えない**。
 
 観測された peak RSS は **988 MB** (model 604 MiB + KV cache + runtime)。
 測定時の MemAvailable は約 1.37 GiB で、この構成は収まった。
@@ -130,22 +131,45 @@ prefill 約 **10.1 s** + decode 約 **28.3 s** = **約 38 s**。
 
 #### 持続負荷時の周波数と温度
 
-benchmark 実行中、8〜10 秒間隔で 83 サンプル取得。
+benchmark の**負荷区間のみ** (終了時刻 00:27:58 を境に切り出し) を 8〜10 秒間隔で 80 サンプル取得。
 
 ```text
-温度  min 58.4 ℃ / max 70.9 ℃ / avg 65.5 ℃
-cpu4  1.800 GHz: 33 サンプル / 1.680: 6 / 1.584: 10 / 1.488: 1 / 1.344: 6 / 1.200: 26
-cpu0  1.416 GHz: 30 サンプル / 1.320: 1 / 1.008: 14 / 0.936: 2 / 0.408: 36
+温度  min 58.6 ℃ / max 70.9 ℃ / avg 65.7 ℃   (アイドル時は 46.8 ℃)
+cpu4  1.800 GHz: 33 / 1.680: 5 / 1.584: 9 / 1.488: 1 / 1.344: 6 / 1.200: 26
+cpu0  1.416 GHz: 28 / 1.320: 1 / 1.008: 14 / 0.936: 2 / 0.408: 35
 ```
 
-**cpu4 は最大周波数を維持せず、1.200 GHz まで落ちる時間帯が全体の約 3 割ある。**
-アイドル時 46.8 ℃ に対し、持続負荷では 70.9 ℃ まで上昇した。
+**負荷末尾で cpu4 は 1.200 GHz に 19 サンプル連続 (約 2.5 分) 張り付き、
+その間の温度は 69.8〜70.5 ℃ で頭打ちになった。**
 
-ただしこれが thermal throttling か、test phase 間の通常の DVFS かは**判別できていない**。
-`scaling_governor` と thermal trip point は非 root では読めない
-(`/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor` → `Permission denied`)。
-`cpu0` が 408 MHz に落ちている 36 サンプルは、`-t 1` / `-t 2` 実行中に
+温度の plateau と周波数の固定値クランプが同時に起きているため、
+これは test phase 間の DVFS 揺らぎではなく **thermal throttling と判断する**。
+DVFS であれば phase に応じて周波数が上下するが、実測は 1.200 GHz の一点に固定されている。
+
+ただし `scaling_governor` と thermal trip point は非 root では読めず
+(`/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor` → `Permission denied`)、
+**trip point の値そのものは未確認**である。判断は挙動からの推定にとどまる。
+
+`cpu0` が 408 MHz に落ちている 35 サンプルは、`-t 1` / `-t 2` 実行中に
 little cluster がアイドル化したものであり、熱制限ではない。
+
+#### この throttling が測定値を汚染している
+
+`llama-bench` は thread 数の小さい順に実行するため、**`t=8` のテストが最後、
+すなわち上記の 1.200 GHz クランプ区間と重なる。**
+
+```text
+実行順: t=1(pp,tg) -> t=2(pp,tg) -> t=4(pp,tg) -> t=8(pp,tg)
+                                                   ~~~~~~~~ 70℃ / 1.2GHz クランプ下
+```
+
+したがって **`t=8` の `pp512` 50.58 t/s と `tg128` 4.26 t/s は、
+クロックが絞られた状態での値**である。冷却下ではいずれも高く出る可能性がある。
+
+この交絡は §3.3 の結論の一部に影響する。**`tg` が memory bandwidth bound である
+という判断の根拠は `t=2` → `t=4` の平坦さ (4.52 → 4.47、いずれも 70 ℃ 到達前) に置くべきで、
+`t=8` での低下 (4.26) を bandwidth だけに帰属させてはならない。**
+`t=8` の低下には thermal の寄与が含まれる。
 
 ## 4. 主要な発見: swap が存在しない (ROM のビルド不良)
 
@@ -272,7 +296,7 @@ CPU:          443% nice / 29% idle
 | 項目 | 対応する未実施テスト |
 |---|---|
 | 消費電力 / wall-power delta の実測 | — (role 判定に残る最後の未測定項目) |
-| throttling と DVFS の判別 (governor / trip point が非 root で読めない) | — |
+| thermal trip point の実値確認と、冷却下での `t=8` 再測定 | — |
 | Q4 等の他 dtype、長 context (4K/8K) での throughput | — |
 | GPU backend の同定と利用可否 | — |
 | usable memory 枯渇時の safe mode 挙動 | **T12** (GPU 不在、stale telemetry → 欠測を healthy としない) |
@@ -334,5 +358,6 @@ CPU backend は `libggml-cpu-android_armv8.2_2.so` が自動選択される。
   §5 が求める end-to-end usefulness は未完であり、**本機に cognitive role を与える根拠は本文書には無い。**
 - §3.3 の Mac 比較は build 版が一致していない (`b10621` 対 `b10909`)。桁の比較には使えるが厳密ではない。
 - throughput は 1 モデル (0.6B Q8_0)・1 context 長でのみ測定した。他の規模へ外挿できない。
+- `t=8` の値は thermal throttling 区間で測定された交絡がある。冷却下での再測定をしていない。
 - 測定は 1 個体・1 回の観測であり、同型機で再現するかは未確認。
 - §5 への登録可否は未判断。本文書は登録提案ではなく素体の記録である。
