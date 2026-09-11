@@ -64,6 +64,21 @@ def summarize(all_results: dict) -> dict:
             [r["sc4_permutation"]["mse_before"]["self"] for r in res])
         s["sc4_self_mse_after"] = mean_std(
             [r["sc4_permutation"]["mse_after"]["self"] for r in res])
+        s["sc4_self_mse_scratch"] = mean_std(
+            [r["sc4_permutation"].get("mse_scratch", {}).get("self")
+             for r in res])
+        if "cross_world" in res[0]:
+            s["xw_self_mse_before"] = mean_std(
+                [r["cross_world"]["mse_before"]["self"] for r in res])
+            s["xw_self_mse_after"] = mean_std(
+                [r["cross_world"]["mse_after"]["self"] for r in res])
+            s["xw_self_mse_scratch"] = mean_std(
+                [r["cross_world"].get("mse_scratch", {}).get("self")
+                 for r in res])
+            s["xw_attr_auc"] = mean_std(
+                [r["cross_world"]["attr_auc_before"] for r in res])
+        s["ood_delay_self_mse"] = mean_std(
+            [r["ood"]["action_delay"]["self"] for r in res])
         summary[model] = s
     return summary
 

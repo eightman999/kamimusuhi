@@ -99,8 +99,13 @@ def probe_action(latents: np.ndarray, actions: np.ndarray,
 def probe_disturbance(latents: np.ndarray, dist_flags: np.ndarray,
                       steps: int = 1500, val_frac: float = 0.3,
                       seed: int = 0) -> dict:
-    """Binary probe: was this step's observation hit by an external
-    disturbance impulse?"""
+    """Binary probe: was the observation feeding this latent hit by an
+    external disturbance impulse?
+
+    Alignment: latent_t is computed from (obs_t, a_t). The disturbance
+    flag recorded at step t-1 is what is visible inside obs_t, so
+    callers must pass flags shifted back by one step (done in
+    run_probes)."""
     if dist_flags.sum() == 0:
         return {"disturbance_probe_auc": float("nan")}
     rng = np.random.default_rng(seed)
@@ -137,5 +142,10 @@ def run_probes(model, ds: dict, device: str = "cpu", seed: int = 0) -> dict:
     out.update(probe_components(lat, flat(ds["action_comp"]),
                                 flat(ds["world"]), ds["cause_labels"], seed=seed))
     out.update(probe_action(lat, flat(ds["actions"]), seed=seed))
-    out.update(probe_disturbance(lat, flat(ds["disturbance"]), seed=seed))
+    # latent_t encodes obs_t, which contains the disturbance fired at
+    # step t-1 -> shift flags back one step for correct alignment
+    lat3 = lat.reshape(e, t, -1)
+    lat_shift = lat3[:, 1:].reshape(-1, lat3.shape[2])
+    dist_prev = ds["disturbance"][:, :-1].reshape(-1)
+    out.update(probe_disturbance(lat_shift, dist_prev, seed=seed))
     return out

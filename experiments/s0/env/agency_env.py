@@ -40,10 +40,16 @@ class StepInfo:
 
 
 class AgencyEnv:
-    def __init__(self, cfg: Optional[EnvConfig] = None, seed: int = 0):
+    def __init__(self, cfg: Optional[EnvConfig] = None, seed: int = 0,
+                 noise_seed: Optional[int] = None):
+        """seed: dynamics parameters (the world). noise_seed: the process/
+        read-noise stream. Train and eval MUST use different noise_seeds
+        on the same world seed so evaluation noise is independent."""
         self.cfg = cfg or EnvConfig()
         self.params: DynamicsParams = make_dynamics_params(self.cfg, seed)
-        self.rng = np.random.default_rng(seed + 1_000_003)
+        self.env_seed = seed
+        self.rng = np.random.default_rng(
+            noise_seed if noise_seed is not None else seed + 1_000_003)
         # sensor coupling mixer: zero-diagonal random matrix, only used
         # when cfg.sensor_coupling > 0
         c_rng = np.random.default_rng(seed + 2_000_003)

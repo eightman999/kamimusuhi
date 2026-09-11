@@ -80,7 +80,7 @@ def eval_sc2_counterfactual(model, env_cfg, env_seed, labels, device,
                             n_episodes=8, seed=0) -> dict:
     """S-C2: same state, alternative action. Compare the model's
     predicted difference to the env's true action-effect difference."""
-    env = AgencyEnv(env_cfg, seed=env_seed)
+    env = AgencyEnv(env_cfg, seed=env_seed, noise_seed=seed + 700_031)
     rng = np.random.default_rng(seed + 31_000)
     affected = np.isin(labels, [CauseLabels.SELF, CauseLabels.MIXED])
 
@@ -153,11 +153,31 @@ def eval_ood(model, cfg, env_seed, seed, device) -> dict:
     return out
 
 
-def eval_sc4_perm(model, cfg, env_seed, seed, device) -> dict:
+def _finetune(model, adapt: dict, steps: int, lr: float,
+              device: str) -> None:
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    obs = torch.as_tensor(adapt["obs"], dtype=torch.float32, device=device)
+    nxt = torch.as_tensor(adapt["next_obs"], dtype=torch.float32,
+                          device=device)
+    act = torch.as_tensor(adapt["actions"], dtype=torch.long,
+                          device=device)
+    loss_fn = torch.nn.MSELoss()
+    n = obs.shape[0]
+    model.train()
+    for _ in range(steps):
+        idx = torch.randint(0, n, (min(32, n),), device=device)
+        loss = loss_fn(model(obs[idx], act[idx])[0], nxt[idx])
+        opt.zero_grad(); loss.backward(); opt.step()
+    model.eval()
+
+
+def eval_sc4_perm(model, cfg, env_seed, seed, device,
+                  model_name=None, target_delta=True) -> dict:
     """S-C4: permute actuator effects; measure degradation, then
-    readapt on a small budget (S0-H5)."""
+    readapt on a small budget (S0-H5). A scratch control trained on the
+    same budget shows whether recovery uses transferred structure."""
     ec = make_env_config(cfg["env"])
-    env = AgencyEnv(ec, seed=env_seed)
+    env = AgencyEnv(ec, seed=env_seed, noise_seed=seed + 710_037)
     perm = np.array([1, 2, 0, 3])  # MOVE_A<->MOVE_B etc., NOOP fixed
     env.set_action_permutation(perm)
 
@@ -170,23 +190,68 @@ def eval_sc4_perm(model, cfg, env_seed, seed, device) -> dict:
     # small-budget readaptation on the permuted actuator
     adapt = collect_dataset(ec, cfg["eval"]["adapt"]["episodes"],
                             seed + EVAL_SEED_OFFSET + 6_000, env=env)
+    steps = cfg["eval"]["adapt"]["steps"]
+    lr = cfg["eval"]["adapt"]["lr"]
+    tgt = target_tensor(ds, device)
+
     m2 = copy.deepcopy(model).to(device)
-    opt = torch.optim.Adam(m2.parameters(), lr=cfg["eval"]["adapt"]["lr"])
-    obs = torch.as_tensor(adapt["obs"], dtype=torch.float32, device=device)
-    nxt = torch.as_tensor(adapt["next_obs"], dtype=torch.float32,
-                          device=device)
-    act = torch.as_tensor(adapt["actions"], dtype=torch.long, device=device)
-    loss_fn = torch.nn.MSELoss()
-    n = obs.shape[0]
-    m2.train()
-    for _ in range(cfg["eval"]["adapt"]["steps"]):
-        idx = torch.randint(0, n, (min(32, n),), device=device)
-        loss = loss_fn(m2(obs[idx], act[idx])[0], nxt[idx])
-        opt.zero_grad(); loss.backward(); opt.step()
-    m2.eval()
-    pred2 = predict(m2, ds, device)
-    after = per_group_mse(pred2, target_tensor(ds, device), labels)
-    return {"perm": perm.tolist(), "mse_before": before, "mse_after": after}
+    _finetune(m2, adapt, steps, lr, device)
+    after = per_group_mse(predict(m2, ds, device), tgt, labels)
+
+    # scratch control: fresh model, same data budget — isolates how much
+    # of the recovery is transferred structure vs just "200 steps suffice"
+    out = {"perm": perm.tolist(), "mse_before": before,
+           "mse_after": after}
+    if model_name is not None:
+        torch.manual_seed(seed + 9_000)
+        m3 = build_model(model_name, model.obs_dim, model.n_actions,
+                         target_delta).to(device)
+        _finetune(m3, adapt, steps, lr, device)
+        out["mse_scratch"] = per_group_mse(predict(m3, ds, device),
+                                           tgt, labels)
+    return out
+
+
+def eval_cross_world(model, cfg, env_seed, seed, device,
+                     model_name=None, target_delta=True) -> dict:
+    """Cross-world test: same EnvConfig but a different env_seed → new
+    obs permutation, new sensor mixing (W), new action maps, new AR.
+    Measures transfer + small-budget readaptation on the new world."""
+    ec = make_env_config(cfg["env"])
+    new_seed = env_seed + 999_331
+    env = AgencyEnv(ec, seed=new_seed, noise_seed=seed + 720_043)
+
+    ds = collect_dataset(ec, cfg["eval"]["episodes"],
+                         seed + EVAL_SEED_OFFSET + 7_000, env=env)
+    labels = ds["cause_labels"]
+    tgt = target_tensor(ds, device)
+    before = per_group_mse(predict(model, ds, device), tgt, labels)
+
+    sens = last_action_sensitivity(
+        model,
+        torch.as_tensor(ds["obs"], dtype=torch.float32, device=device),
+        torch.as_tensor(ds["actions"], dtype=torch.long, device=device),
+        N_ACTIONS)
+    attr = attribution_auc(sens, labels)
+
+    adapt = collect_dataset(ec, cfg["eval"]["adapt"]["episodes"],
+                            seed + EVAL_SEED_OFFSET + 8_000, env=env)
+    m2 = copy.deepcopy(model).to(device)
+    _finetune(m2, adapt, cfg["eval"]["adapt"]["steps"],
+              cfg["eval"]["adapt"]["lr"], device)
+    after = per_group_mse(predict(m2, ds, device), tgt, labels)
+
+    out = {"new_env_seed": new_seed, "mse_before": before,
+           "mse_after": after, "attr_auc_before": attr["auc_self_or_mix"]}
+    if model_name is not None:
+        torch.manual_seed(seed + 9_500)
+        m3 = build_model(model_name, model.obs_dim, model.n_actions,
+                         target_delta).to(device)
+        _finetune(m3, adapt, cfg["eval"]["adapt"]["steps"],
+                  cfg["eval"]["adapt"]["lr"], device)
+        out["mse_scratch"] = per_group_mse(predict(m3, ds, device),
+                                           tgt, labels)
+    return out
 
 
 def eval_battery(ckpt_path: str | Path, config_path: str | Path | None = None,
@@ -210,8 +275,13 @@ def eval_battery(ckpt_path: str | Path, config_path: str | Path | None = None,
     out["sc5_mask"] = eval_sc5_mask(model, ds, labels, device)
     out["sc2_counterfactual"] = eval_sc2_counterfactual(
         model, env_cfg, env_seed, labels, device, seed=seed)
-    out["sc4_permutation"] = eval_sc4_perm(model, cfg, env_seed, seed, device)
+    out["sc4_permutation"] = eval_sc4_perm(
+        model, cfg, env_seed, seed, device,
+        model_name=ck["model_name"], target_delta=ck["target_delta"])
     out["ood"] = eval_ood(model, cfg, env_seed, seed, device)
+    out["cross_world"] = eval_cross_world(
+        model, cfg, env_seed, seed, device,
+        model_name=ck["model_name"], target_delta=ck["target_delta"])
 
     sens = last_action_sensitivity(
         model,

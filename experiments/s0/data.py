@@ -33,15 +33,21 @@ def make_env_config(cfg_dict: dict, **overrides) -> EnvConfig:
 def collect_dataset(env_cfg: EnvConfig, n_episodes: int, seed: int,
                     policy: str = "random",
                     env_seed: Optional[int] = None,
+                    noise_seed: Optional[int] = None,
                     env: Optional[AgencyEnv] = None) -> dict:
     """Roll out episodes; returns stacked arrays.
 
-    env_seed: dynamics parameter seed. Defaults to `seed`. Data noise is
-    driven by DATA_SEED_OFFSET + seed so train/eval differ. If `env` is
-    given it is used directly (for runtime interventions like S-C4).
+    env_seed: dynamics parameter seed (the world). Defaults to `seed`.
+    noise_seed: env process/read-noise stream; defaults to
+    DATA_SEED_OFFSET + seed so every collection on the same world gets
+    an independent noise stream. If `env` is given it is used directly
+    (for runtime interventions like S-C4) and noise_seed is ignored.
     """
-    env = env or AgencyEnv(env_cfg,
-                           seed=env_seed if env_seed is not None else seed)
+    env = env or AgencyEnv(
+        env_cfg,
+        seed=env_seed if env_seed is not None else seed,
+        noise_seed=noise_seed if noise_seed is not None
+        else seed + DATA_SEED_OFFSET)
     pol = POLICIES[policy]
     eps = []
     for i in range(n_episodes):
@@ -51,5 +57,5 @@ def collect_dataset(env_cfg: EnvConfig, n_episodes: int, seed: int,
             "disturbance")
     out = {k: np.stack([e[k] for e in eps]) for k in keys}
     out["cause_labels"] = env.cause_labels
-    out["env_seed"] = env_seed if env_seed is not None else seed
+    out["env_seed"] = env.env_seed
     return out

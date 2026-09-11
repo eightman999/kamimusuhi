@@ -53,11 +53,27 @@ def last_action_sensitivity(model, obs: torch.Tensor, act: torch.Tensor,
     return p.std(dim=0).mean(dim=0).cpu().numpy()  # (D,)
 
 
+def _avg_ranks(x: np.ndarray) -> np.ndarray:
+    """Average (tie-aware) ranks, 1-based."""
+    order = np.argsort(x, kind="stable")
+    ranks = np.empty(len(x), dtype=np.float64)
+    xs = x[order]
+    i = 0
+    while i < len(x):
+        j = i
+        while j + 1 < len(x) and xs[j + 1] == xs[i]:
+            j += 1
+        ranks[order[i:j + 1]] = (i + j) / 2.0 + 1.0
+        i = j + 1
+    return ranks
+
+
 def auc_score(labels_pos: np.ndarray, scores: np.ndarray) -> float:
-    """Rank-based AUC of `scores` for binary `labels_pos`."""
-    order = np.argsort(scores)
-    ranks = np.empty_like(order, dtype=np.float64)
-    ranks[order] = np.arange(1, len(scores) + 1)
+    """Rank-based AUC of `scores` for binary `labels_pos`.
+    Tie-aware: constant scores (e.g. zero sensitivity of an action-blind
+    model) correctly yield 0.5."""
+    scores = np.asarray(scores, dtype=np.float64)
+    ranks = _avg_ranks(scores)
     pos = labels_pos.astype(bool)
     n_pos, n_neg = pos.sum(), (~pos).sum()
     if n_pos == 0 or n_neg == 0:
