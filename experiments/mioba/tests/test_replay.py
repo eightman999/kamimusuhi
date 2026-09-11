@@ -187,8 +187,8 @@ def test_repeated_replays_are_archived_not_overwritten(tmp_path, smoke_config):
     archived = sorted(replays.glob(f"{ev['evaluation_id']}.*.json"))
     assert len(archived) == 2, [p.name for p in archived]
     latest = json.loads((replays / f"{ev['evaluation_id']}.json").read_text())
-    assert latest["execution_batch"] == 1
-    assert json.loads(archived[-1].read_text())["execution_batch"] == 1
+    assert latest["conditions"]["execution_batch"] == 1
+    assert json.loads(archived[-1].read_text())["conditions"]["execution_batch"] == 1
 
 
 def test_replay_out_option(tmp_path, smoke_config):
