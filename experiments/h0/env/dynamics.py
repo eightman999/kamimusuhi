@@ -121,8 +121,8 @@ class EnvParams:
     hazard_temp_jolt: float = 0.10
 
     # --- endogenous resource coupling ---
-    rest_resource_drain: float = 0.03     # REST depletes local resource
-    explore_resource_gain: float = 0.04   # EXPLORE finds new resource
+    rest_resource_drain: float = 0.025    # REST depletes local resource
+    explore_resource_gain: float = 0.05   # EXPLORE finds new resource
 
     # --- external dynamics ---
     ambient_mean: float = 0.5
@@ -132,10 +132,11 @@ class EnvParams:
     ambient_noise: float = 0.01
 
     novelty_mean: float = 0.4
-    resource_mean: float = 0.55
+    resource_mean: float = 0.65
     obs_quality_mean: float = 0.7
     hazard_mean: float = 0.15
     ou_relax: float = 0.02                # mean reversion for OU processes
+    resource_ou_relax: float = 0.03       # resource recovers a bit faster
     ou_noise: float = 0.02
     hazard_ou_relax: float = 0.05
     hazard_ou_noise: float = 0.03
@@ -145,7 +146,12 @@ class EnvParams:
 
     # --- noise / reward ---
     state_noise: float = 0.005            # additive internal noise per step
-    death_penalty: float = 2.0            # terminal -survival_violation
+    death_penalty: float = 2.0            # terminal -survival_violation (flat)
+    # Additional per-remaining-step forfeit: dying at step t costs
+    # death_penalty + death_forfeit_rate * (episode_length - t).
+    # Equivalent to an alive bonus; prevents suicide being optimal when
+    # sustained error exceeds ~death_forfeit_rate.
+    death_forfeit_rate: float = 0.05
 
     # --- OOD multipliers (1.0 = ID) ---
     energy_cost_mult: float = 1.0         # OOD-energy: 1.5
@@ -234,7 +240,7 @@ def update_external(
     )
     # OU mean-reverting processes
     e[ENV_NOV] += p.ou_relax * (p.novelty_mean - e[ENV_NOV]) + rng.normal(0.0, p.ou_noise)
-    e[RESOURCE] += p.ou_relax * (p.resource_mean - e[RESOURCE]) + rng.normal(0.0, p.ou_noise)
+    e[RESOURCE] += p.resource_ou_relax * (p.resource_mean - e[RESOURCE]) + rng.normal(0.0, p.ou_noise)
     e[OBS_QUAL] += p.ou_relax * (p.obs_quality_mean - e[OBS_QUAL]) + rng.normal(0.0, p.ou_noise)
     e[HAZARD] += p.hazard_ou_relax * (p.hazard_mean - e[HAZARD]) + rng.normal(
         0.0, p.hazard_ou_noise

@@ -109,12 +109,19 @@ class MutationRecord:
         return asdict(self)
 
 
+# see the note in mie/disturbance.py: weight maps are distributions and
+# are replaced wholesale rather than merged key by key
+_REPLACED_KEYS = ("weights", "parameter_weights")
+
+
 def merged_config(config: dict | None) -> dict:
     """``evolution.mutation`` merged over the defaults, one level deep."""
-    cfg = dict(DEFAULTS)
+    cfg = {k: (dict(v) if isinstance(v, dict) else v)
+           for k, v in DEFAULTS.items()}
     user = ((config or {}).get("evolution") or {}).get("mutation") or {}
     for key, value in user.items():
-        if isinstance(value, dict) and isinstance(cfg.get(key), dict):
+        if (isinstance(value, dict) and isinstance(cfg.get(key), dict)
+                and key not in _REPLACED_KEYS):
             cfg[key] = {**cfg[key], **value}
         else:
             cfg[key] = value

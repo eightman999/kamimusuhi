@@ -86,8 +86,17 @@ def episode_metrics(
     errors = np.array([dyn.homeostatic_error(s) for s in internals])
     stable = np.array([dyn.stable_mask(s) for s in internals])
     mi = state_action_mi(internals, actions)
+    # Full-episode error: steps after death count at the final (death-state)
+    # error, so a policy cannot look good by dying early in a good state.
+    if len(errors) and survived_steps < episode_length:
+        full = np.concatenate(
+            [errors, np.full(episode_length - survived_steps, errors[-1])]
+        )
+    else:
+        full = errors
     return {
         "homeostatic_error": float(np.mean(errors)) if len(errors) else float("nan"),
+        "homeostatic_error_full": float(np.mean(full)) if len(full) else float("nan"),
         "survival_time": int(survived_steps),
         "survival_fraction": float(survived_steps / episode_length),
         "died": death_cause is not None,
@@ -105,6 +114,7 @@ def aggregate(episodes: List[Dict]) -> Dict:
     """Aggregate per-episode metric dicts into mean/std summaries."""
     keys = [
         "homeostatic_error",
+        "homeostatic_error_full",
         "survival_time",
         "survival_fraction",
         "stable_fraction",
@@ -116,7 +126,11 @@ def aggregate(episodes: List[Dict]) -> Dict:
     out: Dict = {"n_episodes": len(episodes)}
     for k in keys:
         vals = np.array([ep[k] for ep in episodes], dtype=np.float64)
-        out[k] = {"mean": float(np.nanmean(vals)), "std": float(np.nanstd(vals))}
+        vals = vals[~np.isnan(vals)]
+        if len(vals):
+            out[k] = {"mean": float(np.mean(vals)), "std": float(np.std(vals))}
+        else:
+            out[k] = {"mean": float("nan"), "std": float("nan")}
     out["death_rate"] = float(np.mean([ep["died"] for ep in episodes]))
     mi_names = dyn.INTERNAL_NAMES
     out["state_action_mi"] = {

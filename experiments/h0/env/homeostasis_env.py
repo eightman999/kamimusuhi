@@ -77,7 +77,9 @@ class HomeostasisEnv:
         if cause is not None:
             self.done = True
             self.death_cause = cause
-            reward -= p.death_penalty
+            reward -= p.death_penalty + p.death_forfeit_rate * (
+                p.episode_length - self.t
+            )
         elif self.t >= p.episode_length:
             self.done = True
 

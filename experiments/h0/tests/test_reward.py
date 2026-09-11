@@ -45,9 +45,30 @@ def test_no_action_specific_reward():
 
 
 def test_death_adds_penalty():
-    env = HomeostasisEnv(dyn.EnvParams(death_penalty=2.0), seed=0)
+    p = dyn.EnvParams(death_penalty=2.0, death_forfeit_rate=0.05,
+                      episode_length=100)
+    env = HomeostasisEnv(p, seed=0)
     env.reset()
-    env.internal[dyn.TEMPERATURE] = 0.99
+    env.internal[dyn.TEMPERATURE] = 0.999
     _, reward, done, info = env.step(dyn.WAIT)
     assert done
-    assert reward == -info["homeostatic_error"] - 2.0
+    expected = -info["homeostatic_error"] - 2.0 - 0.05 * (100 - env.t)
+    assert abs(reward - expected) < 1e-9
+
+
+def test_early_death_costs_more_than_late_death():
+    """The forfeit term makes the death-step reward smaller for early death."""
+    p = dyn.EnvParams(death_penalty=2.0, death_forfeit_rate=0.05,
+                      episode_length=100, state_noise=0.0)
+    death_rewards = []
+    for kill_at in (1, 50):
+        env = HomeostasisEnv(p, seed=3)
+        env.reset()
+        r_death = None
+        for t in range(kill_at):
+            if t == kill_at - 1:
+                env.internal[dyn.TEMPERATURE] = 0.999
+            _, r, done, _ = env.step(dyn.WAIT)
+            r_death = r
+        death_rewards.append(r_death)
+    assert death_rewards[0] < death_rewards[1]

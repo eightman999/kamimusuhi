@@ -29,6 +29,10 @@ EV_EVALUATION_FAILED = "evaluation_failed"
 EV_JOB_MARKED_UNKNOWN = "job_marked_unknown"
 EV_JOB_REQUEUED = "job_requeued"
 EV_NEW_BEST = "new_best_candidate"
+# M1: best by the combined selection score, which is what the
+# population is actually selected on (EV_NEW_BEST stays the
+# M0-comparable placeholder so the two runs remain comparable)
+EV_NEW_BEST_SELECTION = "new_best_selection_score"
 EV_NEW_CLADE = "new_clade_detected"
 EV_SENSOR_ANOMALY = "sensor_anomaly"
 EV_PAUSED = "experiment_paused"

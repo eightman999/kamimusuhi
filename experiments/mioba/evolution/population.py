@@ -22,6 +22,7 @@ import random
 from contextlib import contextmanager
 from typing import Callable
 
+from . import fitness as F
 from ..genome.mutation import (OUTCOME_APPLIED, merged_config,
                                mutate, structural_summary)
 from ..genome.schema import Genome, fba0_genome
@@ -30,11 +31,8 @@ from ..storage import models as M
 ROOT_CLADE = "fba0-root"
 
 
-def fitness_placeholder(summary: dict, target_rate: float) -> float | None:
-    rate = (summary or {}).get("mean_rate_hz")
-    if rate is None:
-        return None
-    return -abs(rate - target_rate)
+# kept importable from here for M0-comparable call sites
+fitness_placeholder = F.fitness_placeholder
 
 
 class PopulationController:
@@ -49,6 +47,13 @@ class PopulationController:
         # generation transaction so they commit together with the children
         self._persist = persist or (lambda born: None)
         self._best_fitness: float | None = None
+        self._best_selection: float | None = None
+        # behavioural descriptors seen so far, for the novelty component
+        # (M1 §9). Bounded: novelty is "unlike what is around", not
+        # "unlike everything that has ever lived".
+        self._archive: list[list[float]] = []
+        self._archive_max = int((config.get("fitness") or {})
+                                .get("novelty_archive", 512))
         clade = db.get_clade_by_name(experiment_id, ROOT_CLADE)
         self.root_clade_id = (clade["clade_id"] if clade else
                               db.create_clade(experiment_id, ROOT_CLADE, None))
@@ -197,13 +202,32 @@ class PopulationController:
             replicates=int(eval_cfg.get("replicates", 1)))
 
     # ------------------------------------------------------------- fitness
-    def record_fitness(self, genome_id: str, fitness: float | None) -> None:
+    def novelty_archive(self) -> list[list[float]]:
+        return list(self._archive)
+
+    def record_descriptor(self, genome_id: str, desc) -> None:
+        if not desc:
+            return
+        self._archive.append([float(x) for x in desc])
+        if len(self._archive) > self._archive_max:
+            del self._archive[0]
+
+    def record_fitness(self, genome_id: str, fitness: float | None,
+                       selection_score: float | None = None) -> None:
         if fitness is not None and (self._best_fitness is None or
                                     fitness > self._best_fitness):
             self._best_fitness = fitness
             self.db.emit(self.experiment_id, M.EV_NEW_BEST,
                          payload={"genome_id": genome_id,
                                   "fitness_placeholder": fitness},
+                         source="population")
+        if selection_score is not None and (self._best_selection is None or
+                                            selection_score >
+                                            self._best_selection):
+            self._best_selection = selection_score
+            self.db.emit(self.experiment_id, M.EV_NEW_BEST_SELECTION,
+                         payload={"genome_id": genome_id,
+                                  "selection_score": selection_score},
                          source="population")
 
     # ------------------------------------------------------------- advance
@@ -229,17 +253,22 @@ class PopulationController:
         target_rate = float(self.config.get("evaluation", {})
                             .get("target_rate_hz", 5.0))
         elite_k = int(self.config.get("evolution", {}).get("elite_k", 4))
+        # M1 selects on selection_score (the combined, component-wise
+        # value); the M0 placeholder is the fallback for rows that predate
+        # it, so a resumed or mixed run still orders deterministically.
         scored = []
         for g in current:
             evs = self.db.list_evaluations(self.experiment_id,
                                            genome_id=g["genome_id"], limit=1)
-            fit = None
+            score = None
             if evs:
-                fit = fitness_placeholder(
-                    json.loads(evs[0]["summary_json"]), target_rate)
-            scored.append((fit if fit is not None else float("-inf"),
+                score = evs[0].get("selection_score")
+                if score is None:
+                    score = fitness_placeholder(
+                        json.loads(evs[0]["summary_json"]), target_rate)
+            scored.append((score if score is not None else float("-inf"),
                            g["genome_id"]))
-        scored.sort(key=lambda t: t[0], reverse=True)
+        scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
         elites = [gid for _, gid in scored[:elite_k]] or [current[0]["genome_id"]]
         target = int(self.config.get("population", {}).get("target_size", 8))
         born = 0
