@@ -14,12 +14,13 @@ import time
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from .analysis.plots import make_report_plots
 from .config import load_config
 from .data import train_val_datasets
-from .evaluate import _eval_datasets, eval_representation
-from .models import MODEL_REGISTRY
+from .evaluate import _eval_datasets, eval_dynfeat, eval_representation
+from .models import MODEL_REGISTRY, build_model
 from .representations import (TorchRep, build_analytic_rep,
                               build_kmeans_rep)
 from .train import RUNS_DIR, train_one
@@ -39,6 +40,11 @@ METRIC_PATHS = {
     "seg_acc_in": ("probes", "seg_acc_in"),
     "seg_acc_loco": ("probes", "seg_acc_loco"),
     "seg_acc_ood_ctx": ("probes", "seg_acc_ood_ctx"),
+    "seg_acc_dense_ctx": ("probes", "seg_acc_dense_ctx"),
+    "dynseg_acc_in": ("probes", "dynseg_acc_in"),
+    "dynseg_acc_loco": ("probes", "dynseg_acc_loco"),
+    "dynseg_acc_ood_ctx": ("probes", "dynseg_acc_ood_ctx"),
+    "dynseg_acc_dense_ctx": ("probes", "dynseg_acc_dense_ctx"),
     "fewshot5_in": ("probes", "fewshot_in", "5"),
     "fewshot5_ood": ("probes", "fewshot_ood", "5"),
     "best_action": ("probes", "best_action_acc"),
@@ -64,6 +70,7 @@ METRIC_PATHS = {
     "ood_noise": ("ood", "acc_noise"),
     "ood_gain": ("ood", "acc_gain"),
     "combo_auc": ("ood", "combo_presence_auc"),
+    "combo_oodctx_auc": ("ood", "combo_oodctx_auc"),
     "combo_set": ("ood", "combo_set_acc"),
     "base_mse": ("base_mse",),
 }
@@ -121,6 +128,9 @@ def main() -> None:
     ap.add_argument("--seeds", type=int, nargs="+", default=[0])
     ap.add_argument("--models", nargs="+", default=list(TRAINED))
     ap.add_argument("--analytic", nargs="+", default=list(ANALYTIC))
+    ap.add_argument("--untrained", nargs="+", default=["gru", "ae"],
+                    help="models to also evaluate WITHOUT training "
+                         "(reservoir controls)")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--max-steps", type=int, default=None)
     ap.add_argument("--time-budget", type=float, default=0.0)
@@ -149,6 +159,18 @@ def main() -> None:
                   f"{ev['probes']['acc_in']:.3f} ood "
                   f"{ev['probes']['acc_ood_ctx']:.3f} nmi "
                   f"{ev['clustering']['nmi_pooled']:.3f}", flush=True)
+
+        # dynamical-signature references: "canonical" = headroom bound
+        # (eval-only true signal), "obs" = no-learning baseline
+        for source in ("canonical", "obs"):
+            name = f"dynfeat_{source}"
+            evd = eval_dynfeat(cfg, seed, seed, dss, source)
+            all_results.setdefault(name, {})[seed] = evd
+            print(f"== {name} s{seed}: seg_acc "
+                  f"{evd['probes'].get('seg_acc_in', float('nan')):.3f} "
+                  f"loco {evd['probes'].get('seg_acc_loco', float('nan')):.3f} "
+                  f"ood {evd['probes'].get('seg_acc_ood_ctx', float('nan')):.3f}",
+                  flush=True)
 
         for model_name in args.models:
             out_dir = RUNS_DIR / f"{model_name}__seed{seed}"
@@ -184,6 +206,22 @@ def main() -> None:
                 print(f"== {km.name} s{seed}: acc_in "
                       f"{ev2['probes']['acc_in']:.3f} ood "
                       f"{ev2['probes']['acc_ood_ctx']:.3f}", flush=True)
+
+        # untrained reservoir controls: same arch, random init, same
+        # eval battery — attributes learned-vs-random-feature content
+        for mname in args.untrained:
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+            m = build_model(mname, cfg.env.obs_dim, 4, cfg.model,
+                            cfg.train.target_delta)
+            rep = TorchRep(f"{mname}_untrained", m, args.device)
+            evu = eval_representation(rep, cfg, seed, args.device,
+                                      model=m, train_ds=train_ds,
+                                      env_seed=seed, dss=dss)
+            all_results.setdefault(rep.name, {})[seed] = evu
+            print(f"== {rep.name} s{seed}: acc_in "
+                  f"{evu['probes']['acc_in']:.3f} ood "
+                  f"{evu['probes']['acc_ood_ctx']:.3f}", flush=True)
 
     summary = summarize(all_results)
     REPORTS.mkdir(exist_ok=True)

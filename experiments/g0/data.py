@@ -12,9 +12,11 @@ from typing import Optional, Sequence
 
 import numpy as np
 
-from .env import LatentCauseEnv, explore_policy, random_policy, rollout
+from .env import ExplorePolicy, LatentCauseEnv, random_policy, rollout
 
-POLICIES = {"random": random_policy, "explore": explore_policy}
+# factories: a fresh policy per collection so no state leaks between
+# episodes/datasets
+POLICIES = {"random": lambda: random_policy, "explore": ExplorePolicy}
 
 # seeds used for data/eval must not collide with env param seeds
 DATA_SEED_OFFSET = 100_000
@@ -34,9 +36,11 @@ def collect_dataset(env_cfg, n_episodes: int, seed: int,
                     ctx_switch_frac: float = 0.0) -> dict:
     """Roll out episodes; returns stacked arrays.
 
-    env_seed: dynamics parameter seed (defaults to `seed`). Data noise is
-    driven by DATA_SEED_OFFSET + seed so train/eval differ. If `env` is
-    given it is used directly (runtime hooks already applied).
+    env_seed: dynamics parameter seed (defaults to `seed`). The env's
+    noise/schedule rng is seeded from the DATA seed (`seed`), so datasets
+    sharing an env_seed are the same world but independent episode rolls
+    (train/val/eval are decorrelated). If `env` is given it is used
+    directly (runtime hooks already applied).
     ctx_ids: optional per-episode context assignment; if None, contexts
     are assigned round-robin over the env's context pool so every
     context is covered deterministically.
@@ -47,10 +51,11 @@ def collect_dataset(env_cfg, n_episodes: int, seed: int,
     appearance discontinuity.
     """
     env = env or LatentCauseEnv(
-        env_cfg, seed=env_seed if env_seed is not None else seed)
+        env_cfg, seed=env_seed if env_seed is not None else seed,
+        rng_seed=seed * 1_000_033 + 811)
     if pair_set is not None:
         env.set_pair_set(pair_set)
-    pol = POLICIES[policy]
+    pol = POLICIES[policy]()
 
     pool = (env._ctx_pool if env._ctx_pool is not None
             else list(range(env_cfg.n_train_contexts)))
@@ -86,10 +91,13 @@ def collect_dataset(env_cfg, n_episodes: int, seed: int,
 
 
 def train_val_datasets(cfg, seed: int) -> tuple[dict, dict]:
+    """Train + val share the same env_seed: val is a held-out set of
+    episodes IN THE SAME WORLD (same W, contexts, dim layout) — not a
+    different environment. Data/noise seeds still differ."""
     train_ds = collect_dataset(cfg.env, cfg.data.episodes, seed,
-                               cfg.data.policy,
+                               cfg.data.policy, env_seed=seed,
                                ctx_switch_frac=cfg.data.ctx_switch_frac)
     val_ds = collect_dataset(cfg.env, cfg.data.val_episodes,
-                             seed + 777, cfg.data.policy,
+                             seed + 777, cfg.data.policy, env_seed=seed,
                              ctx_switch_frac=cfg.data.ctx_switch_frac)
     return train_ds, val_ds

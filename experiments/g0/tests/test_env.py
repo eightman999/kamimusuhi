@@ -185,6 +185,34 @@ def test_mid_episode_context_switch_hook():
     assert info["ctx_id"] == 4
 
 
+def test_set_context_does_not_leak_into_next_episode():
+    """C1 regression: a mid-episode eval-time context switch must not
+    persist into the following episode."""
+    env = LatentCauseEnv(EnvConfig(), seed=10)
+    env.reset(ctx_id=0)
+    for _ in range(5):
+        env.step(3)
+    env.set_context(6)                    # mid-episode switch
+    env.step(3)
+    env.reset(ctx_id=1)                   # next episode honours its arg
+    assert env.ctx_id == 1
+
+
+def test_collect_dataset_ctx_schedule_no_leak():
+    """End-to-end: episodes following a ctx_schedule episode start in
+    their assigned context, not the switched-to one."""
+    from ..data import collect_dataset
+    cfg = EnvConfig()
+    T = cfg.episode_len
+    ds = collect_dataset(cfg, 4, 0, ctx_ids=[0, 1, 2, 3],
+                         ctx_schedule={T // 2: 6})
+    # every episode starts in its assigned context (pre-switch steps)
+    for e in range(4):
+        assert (ds["ctx"][e, : T // 2 - 1] == e).all(), \
+            f"episode {e} leaked context"
+        assert (ds["ctx"][e, T // 2:] == 6).all()
+
+
 def test_params_deterministic_per_seed():
     p1 = make_dynamics_params(EnvConfig(), 17)
     p2 = make_dynamics_params(EnvConfig(), 17)

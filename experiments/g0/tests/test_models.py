@@ -1,5 +1,7 @@
 """Model + representation shape/sanity tests."""
 
+from pathlib import Path
+
 import numpy as np
 import torch
 
@@ -66,3 +68,30 @@ def test_window_left_pad_zero():
     # at t=0 the window contains 3 zero-pad slots + obs[0]
     assert np.allclose(z[0, : 3 * 16], 0.0)
     assert np.allclose(z[0, -16:], obs[0, 0])
+
+
+def test_dyn_features_signed_perm_invariant():
+    """Dynamical features must be identical under permuting/sign-
+    flipping the input dims (they use norms and per-dim-mean stats)."""
+    from ..probes.dynamical import dyn_features
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(30, 8))
+    a = rng.integers(4, size=30)
+    P = np.eye(8)[rng.permutation(8)] \
+        * rng.choice([-1.0, 1.0], 8)[None]
+    f1 = dyn_features(x, a)
+    f2 = dyn_features(x @ P.T, a)
+    np.testing.assert_allclose(f1, f2, rtol=1e-8, atol=1e-8)
+
+
+def test_val_split_same_environment():
+    """C2 regression: val must be held-out episodes of the SAME world
+    (same env_seed => same dynamics params), not a different env."""
+    from ..config import load_config
+    from ..data import train_val_datasets
+    cfg = load_config(Path(__file__).parent.parent
+                    / "configs/smoke.yaml")
+    tr, va = train_val_datasets(cfg, 0)
+    assert tr["env_seed"] == va["env_seed"] == 0
+    # but the episode rolls differ (independent noise stream)
+    assert not np.allclose(tr["obs"][: va["obs"].shape[0]], va["obs"])

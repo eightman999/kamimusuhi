@@ -11,7 +11,7 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 
-from ..env.dynamics import CAUSE_TABLE, N_ACTIONS, N_CAUSES, NOOP
+from ..env.dynamics import CAUSE_TABLE, N_ACTIONS, N_CAUSES, NOOP, TAP
 
 EPS = 1e-12
 
@@ -33,7 +33,9 @@ def best_action_labels(cause_a: np.ndarray) -> np.ndarray:
     active cause (NOOP if the cause barely responds)."""
     tab = np.zeros((N_CAUSES, N_ACTIONS))
     for c, spec in enumerate(CAUSE_TABLE):
-        tab[c] = np.abs(spec.resp) + spec.tap_spike_p * spec.spike_amp
+        # |per-action drive|; TAP additionally triggers spikes for PULSE
+        tab[c] = np.abs(spec.resp)
+        tab[c, TAP] += spec.tap_spike_p * spec.spike_amp
         if tab[c].max() < 0.05:
             tab[c, NOOP] = 1.0  # NEUTRAL -> "no action matters"
     return tab[cause_a].argmax(axis=1)

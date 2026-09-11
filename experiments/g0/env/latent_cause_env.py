@@ -44,10 +44,15 @@ PAIR_SETS = {"train": TRAIN_PAIRS, "ood": OOD_PAIRS,
 
 
 class LatentCauseEnv:
-    def __init__(self, cfg: Optional[EnvConfig] = None, seed: int = 0):
+    def __init__(self, cfg: Optional[EnvConfig] = None, seed: int = 0,
+                 rng_seed: Optional[int] = None):
         self.cfg = cfg or EnvConfig()
         self.params: DynamicsParams = make_dynamics_params(self.cfg, seed)
-        self.rng = np.random.default_rng(seed + 1_000_003)
+        # rng_seed lets data collection decorrelate the noise/schedule
+        # stream from the dynamics-parameter seed, so datasets that share
+        # an env_seed (same world) are still independent episode rolls
+        self.rng = np.random.default_rng(
+            seed + 1_000_003 if rng_seed is None else rng_seed)
         # runtime hooks
         self._ctx_pool: Optional[List[int]] = None     # sampled at reset
         self._ctx_forced: Optional[int] = None         # set_context
@@ -58,9 +63,13 @@ class LatentCauseEnv:
     # ---------------- runtime intervention hooks (eval only) ----------
 
     def set_context(self, ctx_id: int) -> None:
-        """Switch the sensor context immediately (mid-episode allowed)."""
+        """Switch the sensor context immediately (mid-episode allowed).
+
+        Does NOT persist across reset(): the next episode's context is
+        chosen by reset(ctx_id=...) / the context pool. Persisting it
+        (via _ctx_forced) leaked an eval-time mid-episode switch into
+        the entire following episode — see C1 regression test."""
         assert 0 <= int(ctx_id) < len(self.params.contexts)
-        self._ctx_forced = int(ctx_id)
         self.ctx_id = int(ctx_id)
 
     def set_context_pool(self, ids: Sequence[int]) -> None:
@@ -96,6 +105,8 @@ class LatentCauseEnv:
         self.seg = dict(s["seg"])
         self.ar_state = s["ar"].copy()
         self.ctx_id = int(s["ctx_id"])
+        # snapshot semantics: a reset() after restore keeps the saved
+        # context (this is the ONLY remaining user of _ctx_forced)
         self._ctx_forced = self.ctx_id
         self.t = int(s["t"])
         self.seg_counter = int(s["seg_counter"])
@@ -293,11 +304,23 @@ def random_policy(rng: np.random.Generator, t: int, obs: np.ndarray) -> int:
     return int(rng.integers(N_ACTIONS))
 
 
-def explore_policy(rng: np.random.Generator, t: int, obs: np.ndarray,
-                   lo: int = 4, hi: int = 10) -> int:
+class ExplorePolicy:
     """Temporally blocked policy: holds each action for a few steps so
-    per-action response signatures are expressed clearly."""
-    if t == 0 or t >= getattr(explore_policy, "_until", 0):
-        explore_policy._last = int(rng.integers(N_ACTIONS))
-        explore_policy._until = t + int(rng.integers(lo, hi + 1))
-    return explore_policy._last
+    per-action response signatures are expressed clearly.
+
+    Replaces the old function-attribute state (which leaked `_last`/
+    `_until` across episodes and datasets). Instantiate one per dataset
+    collection; state also resets at t == 0.
+    """
+
+    def __init__(self, lo: int = 4, hi: int = 10):
+        self.lo, self.hi = lo, hi
+        self._last: Optional[int] = None
+        self._until: int = 0
+
+    def __call__(self, rng: np.random.Generator, t: int,
+                 obs: np.ndarray) -> int:
+        if t == 0 or t >= self._until:
+            self._last = int(rng.integers(N_ACTIONS))
+            self._until = t + int(rng.integers(self.lo, self.hi + 1))
+        return self._last

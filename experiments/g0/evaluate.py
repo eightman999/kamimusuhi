@@ -42,8 +42,9 @@ from .data import EVAL_SEED_OFFSET, collect_dataset
 from .env import LatentCauseEnv, N_CAUSES
 from .env.dynamics import NEUTRAL
 from .models import build_model
-from .probes import (best_match_acc, centroid_margin, fewshot_probe,
-                     kmeans, logistic_probe, mutual_info, nmi, purity,
+from .probes import (FEAT_NAMES, best_match_acc, centroid_margin,
+                     dynseg_dataset, fewshot_probe, kmeans,
+                     logistic_probe, mutual_info, nmi, purity,
                      ridge_probe)
 from .representations import (KMeansRep, TorchRep, build_analytic_rep,
                               build_kmeans_rep)
@@ -88,7 +89,8 @@ def _eval_datasets(cfg: Config, seed: int, env_seed: int):
     out["noise"] = collect_dataset(ec_noise, n_ep, s + 400,
                                    cfg.data.policy, env_seed=env_seed,
                                    ctx_ids=train_ctx)
-    env_gain = LatentCauseEnv(ec, seed=env_seed)
+    env_gain = LatentCauseEnv(ec, seed=env_seed,
+                              rng_seed=(s + 500) * 1_000_033 + 811)
     env_gain.set_action_gain(ood.action_gain_mul)
     out["gain"] = collect_dataset(ec, n_ep, s + 500, cfg.data.policy,
                                   env=env_gain, ctx_ids=train_ctx)
@@ -96,6 +98,12 @@ def _eval_datasets(cfg: Config, seed: int, env_seed: int):
     out["midctx"] = collect_dataset(
         ec, n_ep, s + 600, cfg.data.policy, env_seed=env_seed,
         ctx_ids=[0], ctx_schedule={half: ood.ood_ctx_id})
+    # true compositional-OOD: held-out cause pairs rendered in the
+    # held-out context (within-ctx combo presence can be answered by
+    # per-cause appearance detectors; this cannot)
+    out["combo_oodctx"] = collect_dataset(
+        ec_combo, n_ep, s + 700, cfg.data.policy, env_seed=env_seed,
+        ctx_ids=[ood.ood_ctx_id], pair_set="ood")
     return out
 
 
@@ -204,33 +212,15 @@ def eval_representation(rep, cfg: Config, seed: int, device: str = "cpu",
 
     # ---- segment-level ("concept") probes: pool each single-cause
     # segment's latents, classify the segment's cause -------------------
+    # two poolings: mean (linear-ish) and dynamical-signature features
+    # (nonlinear; answers "the linear probe lacked power" objections)
     from .analysis.metrics import segment_means
     seg = {k: segment_means(Z[k], dss[k], warm)
            for k in ("main", "ood_ctx", "dense_ctx")}
-    sX, sy, sctx, sep = (seg["main"]["Z"], seg["main"]["cause"],
-                         seg["main"]["ctx"], seg["main"]["ep"])
-    if len(sy) >= 40:
-        s_tr_ep, s_te_ep = episode_split(int(sep.max()) + 1)
-        str_ = np.isin(sep, np.where(s_tr_ep)[0])
-        ste = np.isin(sep, np.where(s_te_ep)[0])
-        p["seg_acc_in"] = _acc(sX, sy, str_, ste, N_CAUSES, ev, seed)
-        sloco = {}
-        for j in range(ec.n_train_contexts):
-            mte, mtr = sctx == j, sctx != j
-            if mte.sum() < N_CAUSES or mtr.sum() < 20:
-                continue
-            sloco[str(j)] = _acc(sX, sy, mtr, mte, N_CAUSES, ev, seed)
-        p["seg_loco"] = sloco
-        p["seg_acc_loco"] = float(np.mean(list(sloco.values()))) \
-            if sloco else float("nan")
-        for key, tag in (("ood_ctx", "seg_acc_ood_ctx"),
-                         ("dense_ctx", "seg_acc_dense_ctx")):
-            sZ, sY = seg[key]["Z"], seg[key]["cause"]
-            if len(sY) >= N_CAUSES:
-                r = logistic_probe(sX, sy, sZ, sY, n_classes=N_CAUSES,
-                                   steps=ev.probe_steps, lr=ev.probe_lr,
-                                   seed=seed)
-                p[tag] = r["acc"]
+    p.update(_seg_probes(seg, ec.n_train_contexts, ev, seed, "seg_"))
+    dseg = {k: dynseg_dataset(Z[k], dss[k]["actions"], dss[k], warm)
+            for k in ("main", "ood_ctx", "dense_ctx")}
+    p.update(_seg_probes(dseg, ec.n_train_contexts, ev, seed, "dynseg_"))
     out["probes"] = p
 
     # ---- clustering ----------------------------------------------------
@@ -266,8 +256,11 @@ def eval_representation(rep, cfg: Config, seed: int, device: str = "cpu",
     cents, cents_dm = {}, {}
     for j in ctx_ids_all:
         key = _key(j)
-        # -1 labels on pair steps keep them out of the centroids
-        lab_single = np.where(lab[key]["single"], lab[key]["cause_a"], -1)
+        # -1 labels on pair steps AND the first seg_warmup steps keep
+        # them out of the centroids (same masking as the step probes)
+        lab_single = np.where(
+            lab[key]["single"] & (lab[key]["seg_pos"] >= ev.seg_warmup),
+            lab[key]["cause_a"], -1)
         cc, ids = cause_centroids(X[key], lab_single,
                                   lab[key]["ctx"], j)
         cents[j] = (cc, ids)
@@ -463,6 +456,25 @@ def eval_representation(rep, cfg: Config, seed: int, device: str = "cpu",
         od["combo_set_acc"] = float(np.mean(hit))
     else:
         od["combo_set_acc"] = float("nan")
+
+    # held-out pairs rendered in the HELD-OUT context: within-context
+    # presence probing can be answered by per-cause appearance
+    # detectors; this version additionally requires appearance transfer
+    cb2 = lab["combo_oodctx"]
+    pres_te2 = np.zeros((len(cb2["cause_a"]), N_CAUSES))
+    for c in range(N_CAUSES):
+        pres_te2[:, c] = ((cb2["cause_a"] == c) | (cb2["cause_b"] == c))
+    aucs2 = []
+    for c in range(1, N_CAUSES):
+        if pres_tr[:, c].sum() < 10:
+            continue
+        r = logistic_probe(X["main"], pres_tr[:, c].astype(int),
+                           X["combo_oodctx"], pres_te2[:, c].astype(int),
+                           n_classes=2, steps=ev.probe_steps,
+                           lr=ev.probe_lr, seed=seed)
+        aucs2.append(r.get("auc", float("nan")))
+    od["combo_oodctx_auc"] = float(np.nanmean(aucs2)) \
+        if aucs2 else float("nan")
     out["ood"] = od
 
     # ---- discrete-code analysis ---------------------------------------
@@ -511,6 +523,69 @@ def eval_representation(rep, cfg: Config, seed: int, device: str = "cpu",
     if model is not None:
         out["base_mse"] = _base_mse(model, dss["main"], device)
     return out
+
+
+def _seg_probes(seg: dict, n_train_ctx: int, ev, seed: int,
+                prefix: str) -> dict:
+    """Shared segment-level probe block. `seg` maps dataset key ->
+    {"Z","cause","ctx","ep"} as produced by segment_means or
+    dynseg_dataset. Emits <prefix>acc_in / loco / acc_ood_ctx /
+    acc_dense_ctx."""
+    out = {}
+    sX, sy = seg["main"]["Z"], seg["main"]["cause"]
+    sctx, sep = seg["main"]["ctx"], seg["main"]["ep"]
+    if len(sy) < 40:
+        return out
+    s_tr_ep, s_te_ep = episode_split(int(sep.max()) + 1)
+    str_ = np.isin(sep, np.where(s_tr_ep)[0])
+    ste = np.isin(sep, np.where(s_te_ep)[0])
+    out[prefix + "acc_in"] = _acc(sX, sy, str_, ste, N_CAUSES, ev, seed)
+    sloco = {}
+    for j in range(n_train_ctx):
+        mte, mtr = sctx == j, sctx != j
+        if mte.sum() < N_CAUSES or mtr.sum() < 20:
+            continue
+        sloco[str(j)] = _acc(sX, sy, mtr, mte, N_CAUSES, ev, seed)
+    out[prefix + "loco"] = sloco
+    out[prefix + "acc_loco"] = float(np.mean(list(sloco.values()))) \
+        if sloco else float("nan")
+    for key, tag in (("ood_ctx", "acc_ood_ctx"),
+                     ("dense_ctx", "acc_dense_ctx")):
+        sZ, sY = seg[key]["Z"], seg[key]["cause"]
+        if len(sY) >= N_CAUSES:
+            r = logistic_probe(sX, sy, sZ, sY, n_classes=N_CAUSES,
+                               steps=ev.probe_steps, lr=ev.probe_lr,
+                               seed=seed)
+            out[prefix + tag] = r["acc"]
+    return out
+
+
+def eval_dynfeat(cfg: Config, seed: int, env_seed: int, dss: dict,
+                 source: str = "canonical") -> dict:
+    """Handcrafted dynamical-signature features as a pseudo-rep.
+
+    source="canonical": headroom reference — the true pre-context signal
+    (eval-only) reduced to dynamical features; shows what a perfect
+    invariant concept rep could linearly expose.
+    source="obs": no-learning baseline on raw observations.
+    Results occupy the same probes.seg_* slots so they slot into the
+    summary table next to the real representations."""
+    ec, ev = cfg.env, cfg.eval
+    assert source in ("canonical", "obs")
+    seg = {}
+    for key in ("main", "ood_ctx", "dense_ctx"):
+        Xsrc = dss[key]["canonical"] if source == "canonical" \
+            else dss[key]["obs"]
+        nsrc = None if source == "canonical" else dss[key]["next_obs"]
+        seg[key] = dynseg_dataset(Xsrc, dss[key]["actions"], dss[key],
+                                  ev.warmup, next_X=nsrc)
+    res = {"rep": f"dynfeat_{source}", "seed": seed,
+           "env_seed": env_seed, "latent_dim": len(FEAT_NAMES),
+           "probes": {}, "clustering": None, "matching": None,
+           "causal": None, "ood": None, "discrete": None}
+    res["probes"].update(
+        _seg_probes(seg, ec.n_train_contexts, ev, seed, "seg_"))
+    return res
 
 
 N_ACTIONS_ = 4

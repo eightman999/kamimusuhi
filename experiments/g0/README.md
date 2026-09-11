@@ -43,6 +43,8 @@ cause-independent distractor dims:
     tests/                  env / model / pipeline tests
     runs/<model>__seed<i>/  ckpt.pt (gitignored), eval.json, metrics.json
     reports/                sweep_summary.json, figs/, G0_RESULTS.md
+    archive/v1/             first-round results (pre-review; eval-harness
+                            bugs C1/C2 still present — kept for audit)
 
 ## Representations compared
 
@@ -75,7 +77,15 @@ cause-independent distractor dims:
   (pre->post probe transfer + carryover by lag), decoy confusion rate.
 - **ood**: unseen context, unseen dense context, noise shift, action-gain
   shift, novel cause compositions (held-out pairs -> per-cause presence
-  AUC + exact pair-set accuracy).
+  AUC + exact pair-set accuracy), and held-out pairs rendered in the
+  held-out context (true compositional + appearance transfer).
+- **dynamical probes**: per-segment dynamical-signature features
+  (autocorr/spectrum/action-conditional response/spike stats — all
+  permutation- and sign-invariant) probed per rep (`dynseg_*`), plus
+  `dynfeat_canonical` (true-signal headroom) and `dynfeat_obs`
+  (no-learning baseline) pseudo-reps in the sweep.
+- **controls**: `gru_untrained` / `ae_untrained` reservoir controls are
+  evaluated by the sweep per seed.
 - **discrete**: code usage, MI(cause; code), within-segment stability.
 - **intervention**: decode-delta directions vs true per-context cause
   prototypes (selectivity = diag - max off-diag cosine).

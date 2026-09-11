@@ -18,8 +18,8 @@ from .dynamics import (
 )
 from .latent_cause_env import (
     PAIR_SETS,
+    ExplorePolicy,
     LatentCauseEnv,
-    explore_policy,
     random_policy,
     rollout,
 )
@@ -29,5 +29,5 @@ __all__ = [
     "NEUTRAL", "NOOP", "OOD_PAIRS", "TAP", "TRAIN_PAIRS", "WITHDRAW",
     "CauseSpec", "DynamicsParams", "EnvConfig", "cause_names",
     "make_dynamics_params", "PAIR_SETS", "LatentCauseEnv",
-    "explore_policy", "random_policy", "rollout",
+    "ExplorePolicy", "random_policy", "rollout",
 ]
