@@ -1,0 +1,17 @@
+{
+  "task": "interval",
+  "architecture": "gru64",
+  "seed": 0,
+  "num_envs": 64,
+  "minibatch_envs": 64,
+  "imitation_updates": 4,
+  "ppo_updates": 2,
+  "ppo_epochs": 2,
+  "validation_envs": 32,
+  "env": {
+    "delay_distribution": "mixed",
+    "delays": [8, 16, 24, 32, 48, 64],
+    "horizon": 96,
+    "window": 2
+  }
+}

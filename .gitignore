@@ -12,3 +12,7 @@
 __pycache__/
 *.pyc
 /.venv*/
+
+# T0 experiment runtime artifacts (checkpoints, run state)
+/experiments/t0/artifacts/*/runs/
+/experiments/t0/artifacts/*/generated_configs/

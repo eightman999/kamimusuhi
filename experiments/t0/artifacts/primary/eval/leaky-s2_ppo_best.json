@@ -1,0 +1,397 @@
+{
+  "checkpoint": "experiments/t0/artifacts/primary/runs/leaky-s2/ppo_best.pt",
+  "seed": 2,
+  "architecture": "leaky",
+  "model_sha256": "9a1745452c83dc172b57decd44e5146c7fbb822608d3f74559cec5d4ec867c43",
+  "episodes": 128,
+  "seen": {
+    "8": {
+      "success": 0.0859375,
+      "act_rate": 1.0,
+      "mean_timing_error": -9.171875,
+      "mean_abs_error": 18.140625,
+      "early_rate": 0.59375,
+      "late_rate": 0.3203125,
+      "reward": -0.7276952862739563,
+      "delay": 8,
+      "episodes": 128
+    },
+    "16": {
+      "success": 0.09375,
+      "act_rate": 1.0,
+      "mean_timing_error": -9.3515625,
+      "mean_abs_error": 16.6640625,
+      "early_rate": 0.609375,
+      "late_rate": 0.296875,
+      "reward": -0.6732421517372131,
+      "delay": 16,
+      "episodes": 128
+    },
+    "24": {
+      "success": 0.09375,
+      "act_rate": 1.0,
+      "mean_timing_error": -8.734375,
+      "mean_abs_error": 17.5,
+      "early_rate": 0.5859375,
+      "late_rate": 0.3203125,
+      "reward": -0.6854296922683716,
+      "delay": 24,
+      "episodes": 128
+    },
+    "32": {
+      "success": 0.0859375,
+      "act_rate": 1.0,
+      "mean_timing_error": -6.34375,
+      "mean_abs_error": 16.65625,
+      "early_rate": 0.53125,
+      "late_rate": 0.3828125,
+      "reward": -0.6814843416213989,
+      "delay": 32,
+      "episodes": 128
+    },
+    "48": {
+      "success": 0.109375,
+      "act_rate": 1.0,
+      "mean_timing_error": -6.265625,
+      "mean_abs_error": 16.6875,
+      "early_rate": 0.5390625,
+      "late_rate": 0.3515625,
+      "reward": -0.6543359160423279,
+      "delay": 48,
+      "episodes": 128
+    },
+    "64": {
+      "success": 0.0703125,
+      "act_rate": 1.0,
+      "mean_timing_error": -11.25,
+      "mean_abs_error": 19.34375,
+      "early_rate": 0.65625,
+      "late_rate": 0.2734375,
+      "reward": -0.8128124475479126,
+      "delay": 64,
+      "episodes": 128
+    }
+  },
+  "seen_mean_success": 0.08984375,
+  "interpolation": {
+    "40": {
+      "success": 0.1484375,
+      "act_rate": 1.0,
+      "mean_timing_error": -5.3046875,
+      "mean_abs_error": 15.3046875,
+      "early_rate": 0.5078125,
+      "late_rate": 0.34375,
+      "reward": -0.6224218606948853,
+      "delay": 40,
+      "episodes": 128
+    },
+    "56": {
+      "success": 0.140625,
+      "act_rate": 1.0,
+      "mean_timing_error": -7.7109375,
+      "mean_abs_error": 17.1484375,
+      "early_rate": 0.5234375,
+      "late_rate": 0.3359375,
+      "reward": -0.6342968940734863,
+      "delay": 56,
+      "episodes": 128
+    }
+  },
+  "interpolation_mean_success": 0.14453125,
+  "extrapolation": {
+    "80": {
+      "success": 0.0625,
+      "act_rate": 1.0,
+      "mean_timing_error": -10.75,
+      "mean_abs_error": 19.4375,
+      "early_rate": 0.6328125,
+      "late_rate": 0.3046875,
+      "reward": -0.8447265625,
+      "delay": 80,
+      "episodes": 128
+    },
+    "96": {
+      "success": 0.140625,
+      "act_rate": 1.0,
+      "mean_timing_error": -9.546875,
+      "mean_abs_error": 17.640625,
+      "early_rate": 0.5625,
+      "late_rate": 0.296875,
+      "reward": -0.6715624332427979,
+      "delay": 96,
+      "episodes": 128
+    },
+    "128": {
+      "success": 0.0703125,
+      "act_rate": 1.0,
+      "mean_timing_error": -7.3671875,
+      "mean_abs_error": 18.8515625,
+      "early_rate": 0.5546875,
+      "late_rate": 0.375,
+      "reward": -0.7789453268051147,
+      "delay": 128,
+      "episodes": 128
+    }
+  },
+  "extrapolation_mean_success": 0.09114583333333333,
+  "distractor": {
+    "8": {
+      "success": 0.0703125,
+      "act_rate": 1.0,
+      "mean_timing_error": -7.203125,
+      "mean_abs_error": 17.859375,
+      "early_rate": 0.578125,
+      "late_rate": 0.3515625,
+      "reward": -0.7503125071525574,
+      "delay": 8,
+      "episodes": 128
+    },
+    "16": {
+      "success": 0.0859375,
+      "act_rate": 1.0,
+      "mean_timing_error": -7.546875,
+      "mean_abs_error": 16.21875,
+      "early_rate": 0.5859375,
+      "late_rate": 0.328125,
+      "reward": -0.6903125047683716,
+      "delay": 16,
+      "episodes": 128
+    },
+    "24": {
+      "success": 0.109375,
+      "act_rate": 1.0,
+      "mean_timing_error": -6.9296875,
+      "mean_abs_error": 17.6171875,
+      "early_rate": 0.5390625,
+      "late_rate": 0.3515625,
+      "reward": -0.7230077981948853,
+      "delay": 24,
+      "episodes": 128
+    },
+    "32": {
+      "success": 0.0859375,
+      "act_rate": 1.0,
+      "mean_timing_error": -4.96875,
+      "mean_abs_error": 16.296875,
+      "early_rate": 0.515625,
+      "late_rate": 0.3984375,
+      "reward": -0.6962109208106995,
+      "delay": 32,
+      "episodes": 128
+    },
+    "48": {
+      "success": 0.1171875,
+      "act_rate": 1.0,
+      "mean_timing_error": -4.546875,
+      "mean_abs_error": 17.09375,
+      "early_rate": 0.5,
+      "late_rate": 0.3828125,
+      "reward": -0.72914057970047,
+      "delay": 48,
+      "episodes": 128
+    },
+    "64": {
+      "success": 0.0703125,
+      "act_rate": 1.0,
+      "mean_timing_error": -9.890625,
+      "mean_abs_error": 18.90625,
+      "early_rate": 0.640625,
+      "late_rate": 0.2890625,
+      "reward": -0.8156639933586121,
+      "delay": 64,
+      "episodes": 128
+    }
+  },
+  "scaled": {
+    "0.5": {
+      "8": {
+        "success": 0.0546875,
+        "act_rate": 1.0,
+        "mean_timing_error": -34.640625,
+        "mean_abs_error": 37.875,
+        "early_rate": 0.8203125,
+        "late_rate": 0.125,
+        "reward": -1.0009764432907104,
+        "delay": 8,
+        "episodes": 128
+      },
+      "16": {
+        "success": 0.046875,
+        "act_rate": 1.0,
+        "mean_timing_error": -33.3359375,
+        "mean_abs_error": 36.5234375,
+        "early_rate": 0.828125,
+        "late_rate": 0.125,
+        "reward": -1.0569921731948853,
+        "delay": 16,
+        "episodes": 128
+      },
+      "24": {
+        "success": 0.0546875,
+        "act_rate": 1.0,
+        "mean_timing_error": -34.921875,
+        "mean_abs_error": 38.0625,
+        "early_rate": 0.8203125,
+        "late_rate": 0.125,
+        "reward": -1.0121874809265137,
+        "delay": 24,
+        "episodes": 128
+      },
+      "32": {
+        "success": 0.0859375,
+        "act_rate": 1.0,
+        "mean_timing_error": -31.6328125,
+        "mean_abs_error": 35.7578125,
+        "early_rate": 0.7734375,
+        "late_rate": 0.140625,
+        "reward": -0.9805859327316284,
+        "delay": 32,
+        "episodes": 128
+      },
+      "48": {
+        "success": 0.0546875,
+        "act_rate": 1.0,
+        "mean_timing_error": -32.2109375,
+        "mean_abs_error": 38.6796875,
+        "early_rate": 0.7734375,
+        "late_rate": 0.171875,
+        "reward": -1.0453124046325684,
+        "delay": 48,
+        "episodes": 128
+      },
+      "64": {
+        "success": 0.0546875,
+        "act_rate": 1.0,
+        "mean_timing_error": -43.1875,
+        "mean_abs_error": 47.546875,
+        "early_rate": 0.8125,
+        "late_rate": 0.1328125,
+        "reward": -1.0486328601837158,
+        "delay": 64,
+        "episodes": 128
+      }
+    },
+    "2.0": {
+      "8": {
+        "success": 0.1640625,
+        "act_rate": 1.0,
+        "mean_timing_error": 5.140625,
+        "mean_abs_error": 9.703125,
+        "early_rate": 0.2734375,
+        "late_rate": 0.5625,
+        "reward": -0.33156248927116394,
+        "delay": 8,
+        "episodes": 128
+      },
+      "16": {
+        "success": 0.140625,
+        "act_rate": 1.0,
+        "mean_timing_error": 5.8828125,
+        "mean_abs_error": 9.2265625,
+        "early_rate": 0.1875,
+        "late_rate": 0.671875,
+        "reward": -0.31566405296325684,
+        "delay": 16,
+        "episodes": 128
+      },
+      "24": {
+        "success": 0.1484375,
+        "act_rate": 1.0,
+        "mean_timing_error": 6.1875,
+        "mean_abs_error": 10.125,
+        "early_rate": 0.21875,
+        "late_rate": 0.6328125,
+        "reward": -0.3599609434604645,
+        "delay": 24,
+        "episodes": 128
+      },
+      "32": {
+        "success": 0.1484375,
+        "act_rate": 1.0,
+        "mean_timing_error": 6.8125,
+        "mean_abs_error": 9.703125,
+        "early_rate": 0.2109375,
+        "late_rate": 0.640625,
+        "reward": -0.3019140660762787,
+        "delay": 32,
+        "episodes": 128
+      },
+      "48": {
+        "success": 0.109375,
+        "act_rate": 1.0,
+        "mean_timing_error": 7.6796875,
+        "mean_abs_error": 10.3046875,
+        "early_rate": 0.203125,
+        "late_rate": 0.6875,
+        "reward": -0.3930078148841858,
+        "delay": 48,
+        "episodes": 128
+      },
+      "64": {
+        "success": 0.125,
+        "act_rate": 1.0,
+        "mean_timing_error": 3.7734375,
+        "mean_abs_error": 9.6484375,
+        "early_rate": 0.3203125,
+        "late_rate": 0.5546875,
+        "reward": -0.35023438930511475,
+        "delay": 64,
+        "episodes": 128
+      }
+    }
+  },
+  "interventions": {
+    "baseline": {
+      "success": 0.0859375,
+      "act_rate": 1.0,
+      "mean_timing_error": -6.34375,
+      "mean_abs_error": 16.65625,
+      "early_rate": 0.53125,
+      "late_rate": 0.3828125,
+      "reward": -0.6814843416213989,
+      "delay": 32,
+      "episodes": 128
+    },
+    "hidden_reset": {
+      "success": 0.078125,
+      "act_rate": 1.0,
+      "mean_timing_error": 1.125,
+      "mean_abs_error": 17.171875,
+      "early_rate": 0.359375,
+      "late_rate": 0.5625,
+      "reward": -0.7757030725479126,
+      "delay": 32,
+      "episodes": 128
+    },
+    "hidden_noise": {
+      "success": 0.0234375,
+      "act_rate": 0.9921875,
+      "mean_timing_error": -3.952755928039551,
+      "mean_abs_error": 23.196849822998047,
+      "early_rate": 0.6640625,
+      "late_rate": 0.3046875,
+      "reward": -0.957460880279541,
+      "delay": 32,
+      "episodes": 128
+    },
+    "obs_blank": {
+      "success": 0.0546875,
+      "act_rate": 1.0,
+      "mean_timing_error": 9.359375,
+      "mean_abs_error": 9.359375,
+      "early_rate": 0.0,
+      "late_rate": 0.9453125,
+      "reward": -0.46351557970046997,
+      "delay": 32,
+      "episodes": 128
+    }
+  },
+  "probes": {
+    "elapsed_r2": 0.9999303817749023,
+    "remaining_r2": 0.9125032424926758,
+    "phase_r2": 0.6094184517860413,
+    "shuffle_max_r2": -0.5516884326934814,
+    "n_train_rows": 8031,
+    "n_test_rows": 2742
+  }
+}
