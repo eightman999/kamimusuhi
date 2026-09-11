@@ -617,7 +617,13 @@ def main() -> None:
         out_path = Path(args.out) if args.out else \
             REPORTS / f"eval_{args.rep}__seed{args.seed}.json"
     else:
-        model, ck = load_ckpt(Path(args.run_dir) / "ckpt.pt", args.device)
+        # prefer the best-val checkpoint (final ckpt.pt is often overfit
+        # on this noise-dominated prediction loss)
+        run_dir = Path(args.run_dir)
+        ckpt_path = run_dir / "ckpt_best.pt"
+        if not ckpt_path.exists():
+            ckpt_path = run_dir / "ckpt.pt"
+        model, ck = load_ckpt(ckpt_path, args.device)
         env_seed = ck["env_seed"]
         if args.kmeans:
             rep = build_kmeans_rep(ck["model_name"], model, args.device,

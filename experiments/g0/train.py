@@ -90,6 +90,7 @@ def train_one(model_name: str, seed: int, cfg: Config, device: str = "cpu",
     hist = []
     best_val = np.inf
     best_state = None
+    best_step = 0
     gen = torch.Generator().manual_seed(seed)
     while step < max_steps:
         idx = torch.randint(0, n_ep, (bs,), generator=gen).to(device)
@@ -107,6 +108,7 @@ def train_one(model_name: str, seed: int, cfg: Config, device: str = "cpu",
                          "val": vloss})
             if vloss < best_val:
                 best_val = vloss
+                best_step = step
                 best_state = {k: v.detach().clone()
                               for k, v in model.state_dict().items()}
             if not quiet:
@@ -115,6 +117,11 @@ def train_one(model_name: str, seed: int, cfg: Config, device: str = "cpu",
         if budget and time.time() - t0 > budget:
             break
 
+    # restore best-val weights: the prediction loss is noise-dominated
+    # and long training memorizes episodes, so the *best* checkpoint is
+    # the meaningful model to evaluate
+    if best_state is not None:
+        model.load_state_dict(best_state)
     model.eval()
     with torch.no_grad():
         val_loss = batch_loss(model, vobs, vnxt, vact).item()
@@ -139,12 +146,13 @@ def train_one(model_name: str, seed: int, cfg: Config, device: str = "cpu",
                        out_dir / "ckpt_best.pt")
         with open(out_dir / "metrics.json", "w") as f:
             json.dump({"val_loss": val_loss, "best_val_loss": best_val,
-                       "steps": step, "wall_sec": wall,
-                       "history": hist}, f)
+                       "best_step": best_step, "steps": step,
+                       "wall_sec": wall, "history": hist}, f)
         with open(out_dir / "run.json", "w") as f:
             json.dump({"model": model_name, "seed": seed,
                        "env_seed": env_seed, "git": git_commit(),
                        "device": device, "steps": step,
+                       "best_step": best_step,
                        "wall_sec": wall,
                        "config_name": cfg.name}, f, indent=2)
 
