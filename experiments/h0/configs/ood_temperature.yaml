@@ -1,0 +1,15 @@
+# OOD-C: larger ambient temperature amplitude
+name: ood_temperature
+seed: 0
+
+env:
+  episode_length: 1024
+  ambient_amp: 0.22
+  ambient_noise: 0.02
+
+eval:
+  episodes: 20
+
+agent:
+  kind: gru
+  hidden: 64

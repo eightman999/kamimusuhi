@@ -1,0 +1,14 @@
+# OOD-E: resource availability reduced (REST recovers less energy)
+name: ood_resource
+seed: 0
+
+env:
+  episode_length: 1024
+  resource_mean: 0.35
+
+eval:
+  episodes: 20
+
+agent:
+  kind: gru
+  hidden: 64

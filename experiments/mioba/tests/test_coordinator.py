@@ -134,7 +134,7 @@ def test_clade_inheritance(service):
     """First organ founds a clade; descendants inherit it unless they
     found a new one."""
     import random
-    from experiments.mioba.genome.mutation import mutate
+    from experiments.mioba.genome.mutation import mutate_child as mutate
     from experiments.mioba.genome.schema import fba0_genome
 
     db, exp, pop = service.db, service.experiment_id, service.population

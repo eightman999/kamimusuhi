@@ -188,13 +188,14 @@ def founder_population(n: int, base_seed: int = 0) -> list[Genome]:
     """``n`` distinct founder genomes for a benchmark: the pure FBA0 root
     plus parameter-mutated variants, so the run exercises the
     parameter-only cache path the real loop uses."""
-    from ..genome.mutation import mutate
     import random
+
+    from ..genome.mutation import mutate_child
     rng = random.Random(base_seed)
     base = fba0_genome(seed=base_seed)
     out = [base]
     for i in range(1, max(1, n)):
-        out.append(mutate(base, rng, birth_index=i, generation=0))
+        out.append(mutate_child(base, rng, birth_index=i, generation=0))
     return out
 
 

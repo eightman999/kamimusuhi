@@ -1,0 +1,16 @@
+# OOD-D: EXPLORE risk increased (higher hazard level + exposure)
+name: ood_risk
+seed: 0
+
+env:
+  episode_length: 1024
+  hazard_mean: 0.35
+  hazard_spike_prob: 0.03
+  explore_hazard_mult: 0.9
+
+eval:
+  episodes: 20
+
+agent:
+  kind: gru
+  hidden: 64

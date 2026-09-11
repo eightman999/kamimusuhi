@@ -51,6 +51,53 @@ def _throughput(db, experiment_id, minutes: float) -> dict:
     }
 
 
+def _physical_gpu_key(w: dict) -> str:
+    """Identity of the physical device a worker run used. A restarted
+    worker creates a new ``worker_runs`` row for the same GPU; the GUI
+    groups by this key so two GPUs stay two cards however often the
+    workers are restarted."""
+    if w.get("gpu_uuid"):
+        return f"uuid:{w['gpu_uuid']}"
+    if w.get("device"):
+        return f"host:{w.get('hostname') or '?'}|dev:{w['device']}"
+    return f"worker:{w['worker_id']}"
+
+
+def _group_by_physical_gpu(workers: list[dict]) -> list[dict]:
+    """One entry per physical GPU: the current (or most recent) run, plus
+    the superseded runs as history and job totals across all of them."""
+    groups: dict[str, list[dict]] = {}
+    for w in workers:
+        groups.setdefault(_physical_gpu_key(w), []).append(w)
+    out = []
+    for key, runs in groups.items():
+        ordered = sorted(runs, key=lambda r: (r.get("status") == "online",
+                                              r.get("started_at") or "",
+                                              r.get("worker_run_id") or ""))
+        current = dict(ordered[-1])
+        past = ordered[:-1]
+        current["kind"] = "DERIVED"
+        current["gpu_key"] = key
+        current["run_count"] = len(ordered)
+        current["completed_jobs_total"] = sum(r.get("completed_jobs") or 0
+                                              for r in ordered)
+        current["failed_jobs_total"] = sum(r.get("failed_jobs") or 0
+                                           for r in ordered)
+        current["past_runs"] = [{
+            "worker_run_id": r.get("worker_run_id"),
+            "worker_id": r.get("worker_id"),
+            "status": r.get("status"),
+            "started_at": r.get("started_at"),
+            "last_heartbeat_at": r.get("last_heartbeat_at"),
+            "completed_jobs": r.get("completed_jobs"),
+            "failed_jobs": r.get("failed_jobs"),
+        } for r in reversed(past)]
+        out.append(current)
+    out.sort(key=lambda g: (g.get("gpu_index") if g.get("gpu_index")
+                            is not None else 99, g.get("worker_id") or ""))
+    return out
+
+
 def mount_gui(app, service) -> None:
     db = service.db
     exp = service.experiment_id
@@ -92,6 +139,8 @@ def mount_gui(app, service) -> None:
             workers.append({
                 "kind": "LIVE",
                 "worker_id": w["worker_id"],
+                "worker_run_id": w.get("worker_run_id"),
+                "started_at": w.get("started_at"),
                 "hostname": w.get("hostname"),
                 "status": w.get("status"),
                 "gpu_name": ri.get("gpu_model") or
@@ -126,6 +175,7 @@ def mount_gui(app, service) -> None:
         return {
             "status": service.status(),
             "workers": workers,
+            "gpu_workers": _group_by_physical_gpu(workers),
             "throughput": _throughput(db, exp, minutes),
             "recent_events": {"kind": "RECORDED", "rows": events[-30:]},
             "runtime": dict(service.runtime_info, kind="LIVE"),

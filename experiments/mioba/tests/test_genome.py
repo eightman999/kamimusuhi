@@ -2,7 +2,7 @@ import json
 import random
 
 from experiments.mioba.genome.hashing import canonical_json, genome_hash
-from experiments.mioba.genome.mutation import mutate
+from experiments.mioba.genome.mutation import mutate_child as mutate
 from experiments.mioba.genome.schema import Genome, fba0_genome
 
 
