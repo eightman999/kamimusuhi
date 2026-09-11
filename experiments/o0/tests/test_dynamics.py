@@ -43,7 +43,9 @@ def test_reappearance_after_occlusion():
 
 
 def test_gone_episodes_get_absorbed_while_hidden():
-    p, d = make(seed=1)
+    # p_gone defaults to 0 in the training distribution (reviewer C1/C2);
+    # enable it explicitly here.
+    p, d = make(seed=1, p_gone=0.3)
     g = d["gone"]
     assert g.mean() > 0.1
     # most gone-geometry episodes are absorbed without reappearing
@@ -92,3 +94,25 @@ def test_swap_label_consistency():
         # same label flips to 0 at reappearance
         assert d["same"][tr, b] == 0
         assert d["same"][tr - 1, b] == 1
+
+
+def test_decoy_takeover_occupies_target_channel():
+    """Reviewer M2 mechanism: with takeover enabled, a decoy can be
+    reported on the target channel while the true target is hidden."""
+    p, d = make(seed=4, distractor_probs=(0.0, 0.0, 0.0, 0.0, 1.0),
+                ambush_prob=1.0, decoy_takeover_prob=1.0)
+    tk = d["decoy"]
+    assert tk.sum() > 50, "takeover should fire on a decent number of steps"
+    # during takeover the target channel is active (sensor locked on decoy)
+    assert (d["obs"][tk][:, dyn.T_VIS] > 0.5).all()
+    # but the TRUE target is still physically inside the occluder
+    assert d["occluded"][tk].all()
+    # labels mark it as a different object, and the identity check applies
+    assert (d["same"][tk] == 0).all()
+    assert d["id_mask"][tk].all()
+    # the decoy does not also appear in distractor slot 0 while taking over
+    assert (d["obs"][tk][:, dyn.D0] < 0.5).all()
+    # no takeover without the parameter
+    _, d0 = make(seed=4, distractor_probs=(0.0, 0.0, 0.0, 0.0, 1.0),
+                 ambush_prob=1.0)
+    assert not d0["decoy"].any()
