@@ -52,6 +52,32 @@ def state_action_mi(internals: np.ndarray, actions: np.ndarray, bins: int = 4) -
     return out
 
 
+def conditional_action_shift(internals: np.ndarray, actions: np.ndarray) -> Dict[str, float]:
+    """Max change in any action's frequency when an internal var is low vs high.
+
+    For each internal variable, split steps at its median and compute the
+    largest per-action frequency difference between the two halves. Robust to
+    narrow-band states where MI is limited by low marginal entropy.
+    """
+    T = min(len(internals), len(actions))
+    actions = actions[:T]
+    out = {}
+    for i, name in enumerate(dyn.INTERNAL_NAMES):
+        x = internals[:T, i]
+        med = np.median(x)
+        lo_mask, hi_mask = x <= med, x > med
+        if lo_mask.sum() < 5 or hi_mask.sum() < 5:
+            out[name] = 0.0
+            continue
+        shift = 0.0
+        for a in range(dyn.N_ACTIONS):
+            p_lo = np.mean(actions[lo_mask] == a)
+            p_hi = np.mean(actions[hi_mask] == a)
+            shift = max(shift, abs(p_lo - p_hi))
+        out[name] = float(shift)
+    return out
+
+
 def recovery_time(stable: np.ndarray) -> float:
     """Mean number of steps to re-enter the stable region after leaving it."""
     times: List[int] = []
@@ -135,6 +161,10 @@ def aggregate(episodes: List[Dict]) -> Dict:
     mi_names = dyn.INTERNAL_NAMES
     out["state_action_mi"] = {
         n: float(np.mean([ep["state_action_mi"][n] for ep in episodes]))
+        for n in mi_names
+    }
+    out["action_shift"] = {
+        n: float(np.mean([ep["action_shift"][n] for ep in episodes]))
         for n in mi_names
     }
     return out

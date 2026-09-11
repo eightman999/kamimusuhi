@@ -322,8 +322,12 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
             _stack(per_rep, "seeds", list(s.get("replicate_seeds") or
                                           [seeds[i] for i in lanes]))
             _stack(per_rep, "index", lanes)
-            for g, vals in backend.get_population_activity(
-                    ["all", "fba0"]).items():
+            # per-region / per-organ rates for the Observatory's circuit
+            # activity view (M1 §17): the base, and each organ separately
+            groups = ["all", "fba0"] + [
+                f"organ:{o['organ_id']}"
+                for o in (phenotype.get("artificial_organs") or [])]
+            for g, vals in backend.get_population_activity(groups).items():
                 _stack(activity, g, vals)
         completed += len(lanes)
     rates = per_rep["mean_rate_hz"]
@@ -366,8 +370,10 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
                                       for env in e["environments"]]}
                     if episodes else None),
         # how much of the network was actually touched (M1 §2.4-4) and what
-        # this individual cost on top of the shared base (M1 §8)
-        "activity": state.get("activity"),
+        # this individual cost on top of the shared base (M1 §8).
+        # NOTE: distinct from "activity" above, which is the per-group
+        # population firing rate the region views read.
+        "propagation_activity": state.get("activity"),
         "resource": state.get("resource"),
         "semantics": (state.get("semantics")
                       or (backend.semantics()
@@ -476,7 +482,7 @@ def run_job(client, worker_id: str, job: dict, device: str,
             "duration_ms": float(job["duration_ms"]),
             "dataset": backend.dataset_identity(),
             "semantics": summary.get("semantics"),
-            "activity": summary.get("activity"),
+            "activity": summary.get("propagation_activity"),
             "resource": summary.get("resource"),
             "summary": summary,
             "started_at": started,

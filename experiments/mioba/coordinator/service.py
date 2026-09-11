@@ -414,7 +414,9 @@ class MiobaService:
         visible, because it is the condition under which the event path
         stops being the right one (M1 §2.4-4).
         """
-        act = evaluation.get("activity") or {}
+        act = (evaluation.get("activity")
+               or (evaluation.get("summary") or {})
+               .get("propagation_activity") or {})
         ratio = act.get("active_edge_ratio")
         if ratio is None:
             return

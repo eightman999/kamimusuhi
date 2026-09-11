@@ -63,6 +63,24 @@
   .gpu-title { font-size:15px; color:var(--fg); letter-spacing:0; }
   .gpu-sub { font-size:12px; color:var(--dim); font-family:ui-monospace,Menlo,monospace; }
   .ro { color:var(--dim); font-size:11px; white-space:nowrap; }
+  .terr { width:100%; height:340px; display:block; background:#10151d; border-radius:6px; }
+  .terr circle.sel { cursor:pointer; }
+  @keyframes blip { 0%,100%{opacity:.25} 50%{opacity:1} }
+  .blink { animation:blip 1.1s ease-in-out infinite; }
+  .feed { max-height:420px; overflow:auto; font-size:12.5px; }
+  .feed .row { display:flex; gap:8px; padding:3px 0; border-bottom:1px solid #212836; align-items:baseline; }
+  .feed .row .ts { color:var(--dim); font-size:11px; white-space:nowrap; font-family:ui-monospace,Menlo,monospace; }
+  .feed .hl { color:#0f1218; background:var(--der); border-radius:3px; padding:0 6px; font-size:10px; font-weight:600; letter-spacing:.04em; white-space:nowrap; }
+  .feed .hl.organ { background:var(--live); } .feed .hl.rec { background:var(--rec); } .feed .hl.warn { background:var(--warn); }
+  .note { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:3px 10px; font-size:12.5px; align-items:baseline; }
+  .note .lb { color:var(--dim); white-space:nowrap; }
+  .hist { display:flex; align-items:flex-end; gap:3px; height:64px; }
+  .hist i { flex:1; background:var(--rec); border-radius:2px 2px 0 0; min-height:1px; display:block; }
+  .rbar { display:grid; grid-template-columns:110px minmax(0,1fr) auto; gap:4px 8px; font-size:12px; align-items:center; }
+  .rbar b { font-weight:400; color:var(--dim); overflow:hidden; text-overflow:ellipsis; }
+  .spark { display:flex; align-items:flex-end; gap:1px; height:44px; }
+  .spark i { flex:1; display:block; background:var(--live); min-height:1px; }
+  .spark i.d { background:var(--warn); }
 </style>
 </head>
 <body>
@@ -78,7 +96,7 @@
 // ---- i18n (presentation layer only; API keys, enums, event types stay English) ----
 const I18N = {
   ja: {
-    nav: { dashboard:'ダッシュボード', population:'個体群・系譜', organism:'個体インスペクター', telemetry:'MIE / テレメトリ', events:'イベント' },
+    nav: { live:'ライブ観測', population:'個体群・系譜', organism:'個体インスペクター', dashboard:'インフラ / ダッシュボード', telemetry:'MIE / テレメトリ', events:'イベント' },
     readonly: '監視専用（操作不可）',
     kind: { LIVE:'ライブ', RECORDED:'記録済み', DERIVED:'算出値' },
     kindTip: { LIVE:'現在の実行状態', RECORDED:'データベースに保存された実測・履歴データ', DERIVED:'保存データから計算された値' },
@@ -116,11 +134,28 @@ const I18N = {
     sig: { cpu_percent:'CPU使用率 %', ram_percent:'RAM使用率 %', latency_ms:'ネットワーク遅延 ms', temperature_c:'GPU温度 ℃', utilization_pct:'GPU使用率 %', vram_used_fraction:'VRAM使用率', collector_error:'収集エラー' },
     e: { type:'種別', all:'すべて', count:'件のイベント', n:'#', time:'時刻', message:'内容', severity:'重要度', source:'発生源', payload:'詳細' },
     u: { sec:'秒', min:'分', hour:'時間', day:'日' },
+    l: { gen:'世代', pop:'個体群', evaluated:'評価済み', pending:'評価待ち', births:'出生数', extinct:'絶滅系統',
+         alive:'生存系統', best:'最良個体', selection:'選択スコア', task:'課題スコア', homeo:'恒常性',
+         recovery:'外乱回復', efficiency:'資源効率', novelty:'新規性', debt:'恒常性負債',
+         terrarium:'個体群テラリウム', glyph:'大きさ=選択スコア / 外枠=系統 / 内輪=人工ニューロン / 点=人工器官 / 点滅=評価中',
+         feed:'ライブイベント', notable:'注目個体（珍獣）', envnow:'現在の環境', disturbance:'外乱',
+         disturbed:'外乱ありエピソード', nodisturb:'外乱なし', peakDebt:'負債ピーク', meanDebt:'負債平均',
+         innovations:'構造革新', neuronDist:'人工ニューロン数分布', organClass:'器官の種類',
+         functional:'機能的', neutral:'中立構造', invalid:'無効構造', disabled:'無効化', none2:'該当なし',
+         circuit:'回路活動', region:'領域', rate:'発火率 Hz', homeoTl:'恒常性タイムライン',
+         slice:'スライス', score:'スコア', before:'外乱前', during:'外乱中', after:'外乱後',
+         recovered:'回復済み', notRecovered:'未回復', recoverySlices:'回復スライス数',
+         resource:'資源コスト', margMem:'追加メモリ', margCompute:'追加計算', artNeurons:'人工ニューロン',
+         artEdges:'人工エッジ', genomeBytes:'ゲノムサイズ', neurons:'ニューロン', organs:'器官',
+         viable:'有効個体', threshold:'有効判定しきい値', canonical:'正準発火率',
+         canonicalNote:'fitness入力とGUI表示は同一の evaluation 行の同一フィールドを参照します',
+         spikes:'スパイク数', popsize:'母集団', simms:'シミュレーション時間', recomputed:'再計算値',
+         terminated:'早期終了', activity:'活動率', edgeRatio:'活性エッジ率' },
     misc: { none:'—', title:'MIOBA Observatory', fetchErr:'取得に失敗しました' },
   },
   /* i18n-en-start */
   en: {
-    nav: { dashboard:'Dashboard', population:'Population / Lineage', organism:'Organism Inspector', telemetry:'MIE / Telemetry', events:'Events' },
+    nav: { live:'Live Observatory', population:'Population / Lineage', organism:'Organism Inspector', dashboard:'Infrastructure / Dashboard', telemetry:'MIE / Telemetry', events:'Events' },
     readonly: 'read-only observatory',
     kind: { LIVE:'LIVE', RECORDED:'RECORDED', DERIVED:'DERIVED' },
     kindTip: { LIVE:'current runtime state', RECORDED:'rows persisted in the database', DERIVED:'computed from recorded rows' },
@@ -149,6 +184,25 @@ const I18N = {
          stream:'Sensory / event stream', time:'Timestamp', kind:'Kind', signal:'Type / Signal', source:'Source', value:'Value', event:'event', sensor:'sensor', nodata:'No data', min:'min' },
     e: { type:'Type', all:'all', count:'events', n:'#', time:'Time', message:'Message', severity:'Severity', source:'Source', payload:'Payload' },
     u: { sec:'s', min:'min', hour:'h', day:'d' },
+    l: { gen:'Generation', pop:'Population', evaluated:'Evaluated', pending:'Pending', births:'Births',
+         extinct:'Extinct lineages', alive:'Living lineages', best:'Best organism', selection:'Selection score',
+         task:'Task', homeo:'Homeostasis', recovery:'Recovery', efficiency:'Efficiency', novelty:'Novelty',
+         debt:'Homeostatic debt', terrarium:'Population terrarium',
+         glyph:'size = selection score / outline = lineage / inner ring = artificial neurons / dots = organs / blink = evaluating',
+         feed:'Live events', notable:'Notable organisms', envnow:'Current environment', disturbance:'Disturbance',
+         disturbed:'Disturbed episodes', nodisturb:'undisturbed', peakDebt:'Peak debt', meanDebt:'Mean debt',
+         innovations:'Structural innovations', neuronDist:'Artificial neuron distribution', organClass:'Organ classes',
+         functional:'functional', neutral:'neutral', invalid:'invalid', disabled:'disabled', none2:'none',
+         circuit:'Circuit activity', region:'Region', rate:'Rate Hz', homeoTl:'Homeostasis timeline',
+         slice:'slice', score:'score', before:'before', during:'during', after:'after',
+         recovered:'recovered', notRecovered:'not recovered', recoverySlices:'recovery slices',
+         resource:'Resource cost', margMem:'Marginal memory', margCompute:'Marginal compute',
+         artNeurons:'Artificial neurons', artEdges:'Artificial edges', genomeBytes:'Genome bytes',
+         neurons:'neurons', organs:'organs', viable:'viable', threshold:'viability threshold',
+         canonical:'Canonical rate',
+         canonicalNote:'the fitness input and this display read the same field of the same evaluation row',
+         spikes:'spikes', popsize:'population size', simms:'simulated ms', recomputed:'recomputed',
+         terminated:'terminated early', activity:'activity', edgeRatio:'active edge ratio' },
     misc: { none:'—', title:'MIOBA Observatory', fetchErr:'fetch failed' },
   },
   /* i18n-en-end */
@@ -223,7 +277,7 @@ const legend = series => `<div class="legend">${series.map((s,i)=>`<span><i styl
 const pts = (rows, key) => rows.filter(r => r[key] !== null && r[key] !== undefined).map(r => ({t: Date.parse(r.at), v: Number(r[key])}));
 
 // ---- routes -----------------------------------------------------------------
-const routes = { dashboard, population, organism, telemetry, events };
+const routes = { live, population, organism, dashboard, telemetry, events };
 function renderChrome() {
   document.documentElement.lang = LANG;
   $('#nav').innerHTML = Object.keys(routes).map(r => `<a href="#/${r}" data-r="${r}">${esc(t('nav', r))}</a>`).join('');
@@ -234,12 +288,126 @@ function renderChrome() {
 function route() {
   clearTimeout(timer);
   const parts = location.hash.replace(/^#\/?/, '').split('/');
-  const name = routes[parts[0]] ? parts[0] : 'dashboard';
+  const name = routes[parts[0]] ? parts[0] : 'live';
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.r === name));
   routes[name](decodeURIComponent(parts[1] || '')).catch(e => { $('#main').innerHTML = `<p id="err">${esc(e.message)}</p>`; });
 }
 window.addEventListener('hashchange', route);
 window.addEventListener('load', () => { renderChrome(); route(); });
+
+// ---- Live Observatory (M1) ---------------------------------------------------
+const hueOf = id => { let h = 0; const v = String(id || ''); for (let i=0;i<v.length;i++) h = (h*31 + v.charCodeAt(i)) % 360; return h; };
+const lineageOf = ind => (ind.parent_ids && ind.parent_ids.length) ? ind.parent_ids[0] : ind.genome_id;
+function terrarium(pop) {
+  const inds = pop.individuals || [];
+  if (!inds.length) return `<div class="muted">${t('l','none2')}</div>`;
+  const scores = inds.map(i => i.selection_score).filter(v => v != null);
+  const lo = scores.length ? Math.min(...scores) : 0, hi = scores.length ? Math.max(...scores) : 1;
+  const maxN = Math.max(1, ...inds.map(i => i.artificial_neurons || 0));
+  const cols = Math.ceil(Math.sqrt(inds.length * 1.9)) || 1;
+  const rows = Math.ceil(inds.length / cols);
+  const cw = 1000 / cols, ch = 340 / Math.max(1, rows);
+  const body = inds.map((ind, i) => {
+    const cx = (i % cols) * cw + cw/2, cy = Math.floor(i / cols) * ch + ch/2;
+    const norm = (hi > lo && ind.selection_score != null) ? (ind.selection_score - lo)/(hi - lo) : 0.5;
+    const r = 6 + 13*norm;
+    const hue = hueOf(lineageOf(ind));
+    const inner = 2 + 0.75*r*Math.sqrt((ind.artificial_neurons||0)/maxN);
+    const dots = Array.from({length: Math.min(8, ind.artificial_organs||0)}, (_, k) => {
+      const a = (2*Math.PI*k)/Math.max(1, ind.artificial_organs);
+      return `<circle cx="${(cx + (r+5)*Math.cos(a)).toFixed(1)}" cy="${(cy + (r+5)*Math.sin(a)).toFixed(1)}" r="1.8" fill="hsl(${hue} 70% 72%)"/>`;
+    }).join('');
+    const cls = ind.evaluated ? '' : ' blink';
+    const tip = `${ind.genome_id.slice(0,16)}… g${ind.generation}#${ind.birth_index} / ${t('l','selection')} ${num(ind.selection_score,3)} / ${ind.artificial_neurons} ${t('l','neurons')} / ${ind.artificial_organs} ${t('l','organs')}`;
+    return `<g class="sel${cls}" onclick="location.hash='#/organism/${encodeURIComponent(ind.genome_id)}'"><title>${esc(tip)}</title>
+      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="hsl(${hue} 55% 22%)" stroke="hsl(${hue} 75% 60%)" stroke-width="1.6"/>
+      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${inner.toFixed(1)}" fill="none" stroke="hsl(${hue} 85% 75%)" stroke-width="1.2"/>
+      ${dots}</g>`;
+  }).join('');
+  return `<svg class="terr" viewBox="0 0 1000 340" preserveAspectRatio="xMidYMid meet">${body}</svg>
+    <div class="muted" style="font-size:11px;margin-top:4px">${t('l','glyph')}</div>`;
+}
+const HL_CLASS = { structural_mutation:'organ', new_clade_detected:'organ', new_best_selection_score:'rec', high_activity_individual:'warn' };
+function feedHtml(feed) {
+  const rows = (feed.events || []).slice().reverse();
+  if (!rows.length) return `<div class="muted">${t('t','nodata')}</div>`;
+  return `<div class="feed">${rows.map(e => {
+    const pl = e.payload || {};
+    const who = pl.genome_id ? short(pl.genome_id) : '';
+    const extra = [pl.operator ? esc(pl.operator) : '', pl.target ? `<span class="mono">${esc(pl.target)}</span>` : '',
+                   pl.value != null ? `+${esc(pl.value)}` : '', pl.organ_id ? `<span class="mono">${esc(pl.organ_id)}</span>` : '',
+                   pl.selection_score != null ? `${num(pl.selection_score,4)}` : ''].filter(Boolean).join(' ');
+    const hl = e.highlight ? `<span class="hl ${HL_CLASS[e.type] || ''}">${esc(e.highlight)}</span>` : '';
+    return `<div class="row"><span class="ts">${esc(jst(e.at,false))}</span>${hl}<span>${esc(tEvent(e.type))}</span>${who}<span class="muted mono" style="font-size:11px">${extra}</span></div>`;
+  }).join('')}</div>`;
+}
+function notableHtml(n) {
+  if (!n.entries || !n.entries.length) return `<div class="muted">${t('l','none2')}</div>`;
+  return `<div class="note">${n.entries.map(e => `
+    <span class="lb">${esc(e.label)}</span>
+    <span>${short(e.individual.genome_id)} <span class="muted">g${e.individual.generation}#${e.individual.birth_index}</span></span>
+    <span class="mono">${typeof e.value === 'number' ? num(e.value, 3) : esc(e.value)}</span>`).join('')}</div>
+    <div class="muted" style="font-size:11px;margin-top:6px">${t('l','viable')} ${n.viable}/${n.evaluated} · ${t('l','threshold')} ${num(n.viability_threshold,3)}</div>`;
+}
+function histHtml(h) {
+  if (!h || !h.counts || !h.counts.length) return `<div class="muted">${t('t','nodata')}</div>`;
+  const mx = Math.max(1, ...h.counts);
+  return `<div class="hist">${h.counts.map((c,i) => `<i style="height:${Math.round(100*c/mx)}%" title="${esc(h.bins[i])}+ : ${c}"></i>`).join('')}</div>
+    <div class="muted" style="font-size:11px">${h.min ?? 0} – ${h.max ?? 0} ${t('l','neurons')}</div>`;
+}
+async function live() {
+  const d = await api('/api/gui/live');
+  const s = d.status || {}, c = s.counters || {}, pop = d.population, env = d.environment, ls = d.lineage_summary;
+  $('#exp').textContent = `${s.experiment_id || ''} · ${s.git_commit ? s.git_commit.slice(0,8) : '?'} · cfg ${(s.config_hash||'').slice(0,8)}`;
+  const best = (d.notable.entries || []).find(e => e.key === 'most_efficient') || (d.notable.entries || [])[0];
+  const champ = pop.individuals.filter(i => i.selection_score != null).sort((a,b) => b.selection_score - a.selection_score)[0];
+  const kinds = Object.entries(env.active_kinds || {});
+  $('#main').innerHTML = `
+    <div class="grid g4">
+      <div class="panel"><h2>${t('l','gen')} ${kind('DERIVED')}</h2>
+        <div class="big">g${pop.generation ?? 0}</div>
+        <div class="kv"><div>${t('l','pop')}</div><div>${pop.population}</div>
+        <div>${t('l','evaluated')}</div><div>${pop.evaluated} / <span class="sev-warn">${pop.pending}</span> ${t('l','pending')}</div>
+        <div>${t('l','births')}</div><div>${c.births ?? 0}</div></div></div>
+      <div class="panel"><h2>${t('p','clade')} ${kind('DERIVED')}</h2>
+        <div class="big">${ls.alive} <span class="muted" style="font-size:14px">${t('l','alive')}</span></div>
+        <div class="kv"><div>${t('l','extinct')}</div><div class="${ls.extinct ? 'sev-warn' : ''}">${ls.extinct}</div>
+        <div>${t('p','gen')}</div><div>${ls.generations}</div></div></div>
+      <div class="panel"><h2>${t('l','best')} ${kind('DERIVED')}</h2>
+        <div class="big">${num(champ?.selection_score, 4)}</div>
+        <div class="kv"><div>${t('l','selection')}</div><div>${champ ? short(champ.genome_id) : t('misc','none')}</div>
+        <div>${t('l','task')}</div><div>${num(champ?.task_score,3)}</div>
+        <div>${t('l','recovery')}</div><div>${num(champ?.recovery_score,3)}</div></div></div>
+      <div class="panel"><h2>${t('l','envnow')} ${kind(env.kind)}</h2>
+        <div class="big">${kinds.length ? esc(kinds.map(([k,v]) => `${k}×${v}`).join(' ')) : `<span class="muted" style="font-size:16px">${t('l','nodisturb')}</span>`}</div>
+        <div class="kv"><div>${t('l','disturbed')}</div><div>${env.disturbed_episodes} / ${env.episodes_sampled}</div>
+        <div>${t('l','peakDebt')}</div><div>${num(env.max_peak_debt,2)}</div>
+        <div>${t('l','meanDebt')}</div><div>${num(env.mean_peak_debt,2)}</div></div></div>
+    </div>
+    <div class="grid g21" style="margin-top:12px">
+      <div>
+        <div class="panel"><h2>${t('l','terrarium')} ${kind('DERIVED')}</h2>${terrarium(pop)}</div>
+        <div class="grid g2" style="margin-top:12px">
+          <div class="panel"><h2>${t('l','neuronDist')} ${kind('DERIVED')}</h2>${histHtml(pop.neuron_histogram)}</div>
+          <div class="panel"><h2>${t('l','organClass')} ${kind('DERIVED')}</h2><div class="kv">
+            <div>${t('l','functional')}</div><div>${pop.counts.functional_organs}</div>
+            <div>${t('l','neutral')}</div><div class="sev-warn">${pop.counts.neutral_organs}</div>
+            <div>${t('l','invalid')}</div><div class="sev-error">${pop.counts.invalid_organs}</div>
+            <div>${t('l','disabled')}</div><div class="muted">${pop.counts.disabled_organs}</div></div></div>
+        </div>
+        <div class="panel" style="margin-top:12px"><h2>${t('l','innovations')} (${d.innovations.length}) ${kind('RECORDED')}</h2>
+          ${d.innovations.length ? `<div class="xscroll"><table><tbody>${d.innovations.slice().reverse().map(i => `<tr>
+            <td>${fmtTime(i.at)}</td><td><span class="hl">${esc(i.operator||'')}</span></td><td>${short(i.genome_id)}</td>
+            <td class="mono">${esc(i.target||'')}</td><td>${i.value != null ? '+'+esc(i.value) : ''}</td></tr>`).join('')}</tbody></table></div>`
+            : `<span class="muted">${t('l','none2')}</span>`}</div>
+      </div>
+      <div>
+        <div class="panel"><h2>${t('l','feed')} ${kind('RECORDED')}</h2>${feedHtml(d.feed)}</div>
+        <div class="panel" style="margin-top:12px"><h2>${t('l','notable')} ${kind('DERIVED')}</h2>${notableHtml(d.notable)}</div>
+      </div>
+    </div>`;
+  schedule(live, 2000);
+}
 
 // ---- Dashboard ---------------------------------------------------------------
 function workerCard(w, i) {
@@ -361,6 +529,73 @@ async function population() {
   schedule(population, 10000);
 }
 
+// ---- Organism inspector: M1 panels ------------------------------------------
+function circuitHtml(m) {
+  const act = m.region_activity || {};
+  const rows = Object.entries(act).map(([g, vals]) => {
+    const nums = (vals || []).filter(v => v != null);
+    return [g, nums.length ? nums.reduce((a,b)=>a+b,0)/nums.length : null];
+  }).filter(r => r[1] != null);
+  if (!rows.length) return `<div class="muted">${t('t','nodata')}</div>`;
+  const mx = Math.max(...rows.map(r => r[1]), 1e-9);
+  return `<div class="rbar">${rows.map(([g,v]) => `
+    <b title="${esc(g)}">${esc(g)}</b>
+    <span class="bar"><i style="width:${Math.round(100*v/mx)}%"></i></span>
+    <span class="mono">${num(v,3)}</span>`).join('')}</div>`;
+}
+function homeoHtml(m) {
+  const lanes = m.homeostasis || [];
+  if (!lanes.length) return `<div class="muted">${t('t','nodata')}</div>`;
+  return lanes.map((lane, i) => {
+    const tr = lane.trace || [];
+    const scores = tr.map(x => x.score).filter(v => v != null);
+    const lo = Math.min(...scores, 0), hi = Math.max(...scores, 0.0001);
+    const bars = tr.map(x => {
+      const h = Math.max(2, Math.round(100 * ((x.score ?? lo) - lo) / Math.max(1e-9, hi - lo)));
+      return `<i class="${x.disturbed ? 'd' : ''}" style="height:${h}%" title="${t('l','slice')} ${x.slice} / ${t('l','score')} ${num(x.score,3)} / ${t('l','debt')} ${num(x.debt,2)} ${esc((x.kinds||[]).join(','))}"></i>`;
+    }).join('');
+    const w = (lane.disturbances || []).map(d => `<tr>
+      <td>${esc(d.kind)}</td><td class="muted">${esc(d.severity||'')}</td>
+      <td>${num(d.performance_before,3)}</td><td>${num(d.performance_during,3)}</td><td>${num(d.performance_after,3)}</td>
+      <td class="${d.recovered ? 'st-running' : 'sev-error'}">${d.recovered ? `${t('l','recovered')} (${d.recovery_slices})` : t('l','notRecovered')}</td></tr>`).join('');
+    return `<div style="margin-bottom:10px"><div class="chart-title">#${i} · ${t('l','peakDebt')} ${num(lane.peak_debt,2)}${lane.terminated_early ? ` · <span class="sev-error">${t('l','terminated')}</span>` : ''}</div>
+      <div class="spark">${bars}</div>
+      ${w ? `<div class="xscroll"><table><thead><tr><th>${t('l','disturbance')}</th><th></th><th>${t('l','before')}</th><th>${t('l','during')}</th><th>${t('l','after')}</th><th>${t('l','recoverySlices')}</th></tr></thead><tbody>${w}</tbody></table></div>` : ''}</div>`;
+  }).join('');
+}
+function m1Panels(m) {
+  const r = m.resource || {}, rate = m.rate || {}, pa = m.propagation_activity || {}, mt = m.metrics || {};
+  return `
+    <div class="grid g3" style="margin-top:12px">
+      <div class="panel"><h2>${t('l','canonical')} ${kind('DERIVED')}</h2>
+        <div class="big">${num(rate.mean_rate_hz,3)} <span class="muted" style="font-size:14px">Hz</span></div>
+        <div class="kv"><div>${t('l','spikes')}</div><div>${esc(rate.spikes_total ?? t('misc','none'))}</div>
+        <div>${t('l','popsize')}</div><div>${esc(rate.population_size ?? t('misc','none'))}</div>
+        <div>${t('l','simms')}</div><div>${fmtMs(rate.simulated_ms)}</div>
+        <div>${t('o','replicates')}</div><div>${esc(rate.replicates ?? t('misc','none'))}</div>
+        <div>${t('l','recomputed')}</div><div>${num(rate.recomputed_mean_rate_hz,3)}</div></div>
+        <div class="muted" style="font-size:11px;margin-top:6px">${t('l','canonicalNote')}<br><span class="mono">${esc(rate.source || '')}</span></div></div>
+      <div class="panel"><h2>${t('l','resource')} ${kind('RECORDED')}</h2><div class="kv">
+        <div>${t('l','margMem')}</div><div>${fmtBytes(r.marginal_memory_cost_bytes)}</div>
+        <div>${t('l','margCompute')}</div><div>${num(r.marginal_compute_cost,1)}</div>
+        <div>${t('l','artNeurons')}</div><div>${esc(r.artificial_neuron_count ?? 0)}</div>
+        <div>${t('l','artEdges')}</div><div>${esc(r.artificial_edge_count ?? 0)}</div>
+        <div>${t('l','genomeBytes')}</div><div>${fmtBytes(r.genome_bytes)}</div>
+        <div>${t('l','edgeRatio')}</div><div>${num(pa.active_edge_ratio, 6)}</div></div></div>
+      <div class="panel"><h2>${t('l','selection')} ${kind('DERIVED')}</h2><div class="kv">
+        <div>${t('l','task')}</div><div>${num(mt.task_score,3)}</div>
+        <div>${t('l','homeo')}</div><div>${num(mt.homeostasis_score,3)}</div>
+        <div>${t('l','recovery')}</div><div>${num(mt.disturbance_recovery_score,3)}</div>
+        <div>${t('l','efficiency')}</div><div>${num(mt.resource_efficiency_score,3)}</div>
+        <div>${t('l','novelty')}</div><div>${num(mt.novelty,3)}</div>
+        <div>${t('l','peakDebt')}</div><div>${num(mt.peak_debt,2)}</div></div></div>
+    </div>
+    <div class="grid g2" style="margin-top:12px">
+      <div class="panel"><h2>${t('l','circuit')} ${kind('RECORDED')}</h2>${circuitHtml(m)}</div>
+      <div class="panel"><h2>${t('l','homeoTl')} ${kind('RECORDED')}</h2>${homeoHtml(m)}</div>
+    </div>`;
+}
+
 // ---- Organism inspector -----------------------------------------------------
 const tDirection = d => ({forward: t('o','forward'), bidirectional: t('o','bidirectional')})[d] ?? (d || t('o','forward'));
 async function organism(id) {
@@ -405,6 +640,12 @@ async function organism(id) {
       <div class="scroll xscroll" style="max-height:300px"><table><thead><tr><th>${t('o','evaluation')}</th><th>${t('o','worker')}</th><th>${t('o','backend')}</th><th>${t('o','seed')}</th><th>${t('o','replicates')}</th><th>${t('o','batch')}</th><th>${t('o','fitness')}</th><th>${t('o','rate')}</th><th>${t('o','active')}</th><th>${t('o','sim')}</th><th>${t('o','wall')}</th><th>${t('o','finished')}</th><th>${t('o','trace')}</th></tr></thead><tbody>
       ${d.evaluations.map(e => { const s = pj(e.summary_json); return `<tr><td class="mono">${esc(e.evaluation_id.slice(0,14))}…</td><td class="mono">${esc(e.worker_id)}</td><td>${esc(e.backend)}</td><td>${e.seed}</td><td>${e.completed_replicates ?? t('misc','none')} / ${e.requested_replicates ?? t('misc','none')}</td><td>${e.execution_batch_size ?? e.batch_size ?? t('misc','none')}</td><td>${num(e.fitness,3)}</td><td>${num(s.mean_rate_hz,2)}</td><td>${fmtPct(100*(s.active_fraction||0))}</td><td>${fmtMs(s.t_ms)}</td><td>${e.started_at && e.finished_at ? fmtDur((Date.parse(e.finished_at)-Date.parse(e.started_at))/1000) : t('misc','none')}</td><td>${fmtDateTime(e.finished_at)}</td><td>${e.trace_path ? t('o','full') : t('o','summary')}</td></tr>`; }).join('')}
       </tbody></table></div></div>`;
+  // M1 panels come from the observatory endpoint: homeostasis timeline,
+  // circuit activity, marginal resource cost and the canonical rate
+  try {
+    const m = await api(`/api/gui/individual/${encodeURIComponent(id)}`);
+    $('#main').insertAdjacentHTML('beforeend', m1Panels(m));
+  } catch (err) { /* older rows have no M1 metrics; the page still works */ }
 }
 
 // ---- MIE / Telemetry --------------------------------------------------------

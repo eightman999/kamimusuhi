@@ -312,6 +312,83 @@ def cmd_rank_check(args) -> int:
     return 0 if report["accepted"] else 6
 
 
+def cmd_sensitivity(args) -> int:
+    """M1 §10: which mutations actually move the phenotype.
+
+    Sweeps each mutable quantity alone and prints a sensitivity number
+    plus the `evolution.mutation` fragment to paste into the run config.
+    """
+    from .perf.sensitivity import DEFAULT_FACTORS, DEFAULT_TARGETS, sweep
+    config = load_config(getattr(args, "config", None))
+    factors = (tuple(float(f) for f in args.factors.split(","))
+               if args.factors else DEFAULT_FACTORS)
+    targets = (tuple(t.strip() for t in args.targets.split(","))
+               if args.targets else DEFAULT_TARGETS)
+    report = sweep(config, args.device, targets=targets, factors=factors,
+                   duration_ms=args.duration_ms, replicates=args.replicates,
+                   base_size=args.organ_size, data_dir=args.data_dir)
+    print(f"device={args.device} factors={list(factors)}")
+    print(f"{'target':22s} {'sensitivity':>12s} {'max move':>10s}")
+    for row in sorted(report["rows"],
+                      key=lambda r: -(r["sensitivity"] or 0.0)):
+        print(f"{row['target']:22s} {str(row['sensitivity']):>12s} "
+              f"{str(row['max_move']):>10s}")
+    rec = report["recommendation"]
+    print("\nevolution.mutation:")
+    print(f"  parameter_weights: {rec['parameter_weights']}")
+    print(f"  parameter_scale_by_path: {rec['parameter_scale_by_path']}")
+    if rec["insensitive_parameters"]:
+        print(f"  # barely move the phenotype: "
+              f"{rec['insensitive_parameters']}")
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(json.dumps(report, indent=2, default=str))
+        print(f"wrote {args.out}")
+    return 0
+
+
+def cmd_device_bench(args) -> int:
+    """M1 §20: compare CPU / each GPU on identical scientific conditions.
+
+    Event-driven propagation made the fastest device an open question:
+    gathering the edges of ~130 spiking neurons is small, latency-bound
+    work. Using a GPU is not the goal — finishing generations is.
+    """
+    from .fba.runtime_info import collect_runtime_info
+    from .perf.evalbench import device_benchmark
+    config = load_config(getattr(args, "config", None))
+    devices = tuple(d.strip() for d in args.devices.split(","))
+    slots = tuple(int(s) for s in str(args.slots).split(","))
+    report = device_benchmark(config, devices, evaluations=args.evaluations,
+                              slot_candidates=slots,
+                              execution_batch=args.execution_batch,
+                              duration_ms=args.duration_ms,
+                              replicates=args.replicates,
+                              data_dir=args.data_dir)
+    report["runtime"] = {d: collect_runtime_info(device=d) for d in devices}
+    print(f"{'device':12s} {'slots':>5s} {'evals/min':>10s} {'p50 s':>8s} "
+          f"{'p95 s':>8s} {'edge ratio':>12s}")
+    for row in report["rows"]:
+        if not row.get("ok"):
+            print(f"{row['device']:12s}   failed: {row['error']}")
+            continue
+        print(f"{row['device']:12s} {row['selected_slots']:>5} "
+              f"{row['evaluations_per_minute']:>10} "
+              f"{str(row['p50_latency_s']):>8s} "
+              f"{str(row['p95_latency_s']):>8s} "
+              f"{str(row['active_edge_ratio']):>12s}")
+    print(f"recommended: {report['recommended_device']} "
+          f"slots={report['recommended_slots']} "
+          f"({report['recommended_evaluations_per_minute']} evals/min)")
+    if not report["devices_agree_on_results"]:
+        print(f"WARNING: {report['note']}")
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(json.dumps(report, indent=2, default=str))
+        print(f"wrote {args.out}")
+    return 0 if report["devices_agree_on_results"] else 7
+
+
 def cmd_env_info(args) -> int:
     from .fba.runtime_info import collect_runtime_info
     print(json.dumps(collect_runtime_info(device=args.device), indent=2))
@@ -480,6 +557,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data-dir", default=None)
     p.add_argument("--out", default=None)
     p.set_defaults(fn=cmd_rank_check)
+
+    p = sub.add_parser("sensitivity",
+                       help="M1 mutation sensitivity sweep")
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--targets", default=None,
+                   help="comma-separated quantities (default: all)")
+    p.add_argument("--factors", default=None,
+                   help="comma-separated multipliers "
+                        "(default: 0.6,0.8,0.9,1.1,1.2,1.4)")
+    p.add_argument("--duration-ms", type=float, default=None)
+    p.add_argument("--replicates", type=int, default=None)
+    p.add_argument("--organ-size", type=int, default=32)
+    p.add_argument("--data-dir", default=None)
+    p.add_argument("--out", default=None)
+    p.set_defaults(fn=cmd_sensitivity)
+
+    p = sub.add_parser("device-bench",
+                       help="M1 CPU/GPU comparison on identical conditions")
+    p.add_argument("--devices", default="cpu",
+                   help="comma-separated, e.g. cpu,cuda:0,cuda:1")
+    p.add_argument("--slots", default="1,2,3")
+    p.add_argument("--evaluations", type=int, default=6)
+    p.add_argument("--execution-batch", type=int, default=1)
+    p.add_argument("--duration-ms", type=float, default=None)
+    p.add_argument("--replicates", type=int, default=None)
+    p.add_argument("--data-dir", default=None)
+    p.add_argument("--out", default=None)
+    p.set_defaults(fn=cmd_device_bench)
 
     p = sub.add_parser("worker", add_help=False)
     p.add_argument("worker_args", nargs=argparse.REMAINDER)

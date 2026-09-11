@@ -177,8 +177,8 @@ def descriptor(summary: dict, structure: dict | None) -> list[float]:
         float(s.get("mean_rate_hz") or 0.0),
         float(s.get("rate_std_hz") or 0.0),
         float(s.get("active_fraction") or 0.0),
-        float((s.get("activity") or {}).get("active_presynaptic_ratio") or 0.0)
-        * 1000.0,
+        float((s.get("propagation_activity") or {})
+              .get("active_presynaptic_ratio") or 0.0) * 1000.0,
         float(st.get("counts", {}).get("functional", 0)),
     ]
 

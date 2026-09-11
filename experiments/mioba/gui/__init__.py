@@ -6,6 +6,16 @@ coordinator and tagged ``kind: LIVE | RECORDED | DERIVED``:
 - LIVE      current runtime view (workers, queue counts, status)
 - RECORDED  rows persisted in the lineage / telemetry DB
 - DERIVED   values computed on request from recorded rows (throughput, ranks)
+
+M1 §11 split the GUI in two. ``/api/gui/dashboard`` is unchanged and now
+backs the **Infrastructure** page — GPU cards, queue depth, throughput,
+checkpoints. The top page is the **Live Observatory**
+(``/api/gui/live`` and friends, see gui/observatory.py), which shows the
+population rather than the machines: who was born, what grew, which
+crisis is running, who recovered, which branch died.
+
+Nothing here is called from a simulation loop (§19): every endpoint reads
+the lineage DB on request, and the page polls on a timer.
 """
 from __future__ import annotations
 
@@ -101,6 +111,7 @@ def _group_by_physical_gpu(workers: list[dict]) -> list[dict]:
 def mount_gui(app, service) -> None:
     db = service.db
     exp = service.experiment_id
+    from . import observatory as OBS
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def index():
@@ -216,6 +227,49 @@ def mount_gui(app, service) -> None:
                           "params": phen["params"],
                           "ancestry_fraction": phen["ancestry_fraction"]},
         }
+
+    # ----------------------------------------------------- Live Observatory
+    @app.get("/api/gui/live")
+    def live(since_id: int = 0):
+        """Everything the top page shows, in one poll (M1 §12)."""
+        return OBS.live_view(db, exp, service=service, since_id=since_id)
+
+    @app.get("/api/gui/population")
+    def population(generation: int | None = None):
+        return {"kind": "DERIVED",
+                **OBS.population_view(db, exp, generation=generation)}
+
+    @app.get("/api/gui/lineage")
+    def lineage(limit: int = 4000):
+        return {"kind": "DERIVED", **OBS.lineage_view(db, exp, limit=limit)}
+
+    @app.get("/api/gui/feed")
+    def feed(since_id: int = 0, limit: int = 200):
+        return {"kind": "RECORDED",
+                **OBS.event_feed(db, exp, since_id=since_id, limit=limit)}
+
+    @app.get("/api/gui/notable")
+    def notable():
+        return {"kind": "DERIVED", **OBS.notable_organisms(db, exp)}
+
+    @app.get("/api/gui/individual/{genome_id}")
+    def individual(genome_id: str):
+        view = OBS.individual_view(db, exp, genome_id)
+        if not view:
+            raise HTTPException(404, "no such genome")
+        return {"kind": "DERIVED", **view}
+
+    @app.get("/api/gui/rate/{evaluation_id}")
+    def rate(evaluation_id: str):
+        """The canonical firing rate of one evaluation (M1 §18).
+
+        The GUI displays this; fitness consumed the same field of the same
+        row. If they ever differ again, this endpoint is where it shows.
+        """
+        ev = db.get_evaluation(evaluation_id)
+        if ev is None:
+            raise HTTPException(404, "no such evaluation")
+        return {"kind": "DERIVED", **OBS.canonical_rate(ev)}
 
     @app.get("/api/gui/telemetry")
     def telemetry(minutes: float = 30.0, limit: int = 5000):

@@ -6,12 +6,12 @@ env:
   episode_length: 1024
 
 train:
-  total_steps: 200000
+  total_steps: 300000
   rollout_steps: 2048
   num_envs: 8
   ppo_epochs: 4
   minibatch_size: 256
-  lr: 0.0003
+  lr: 0.001
   gamma: 0.99
   gae_lambda: 0.95
   clip_coef: 0.2

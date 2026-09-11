@@ -22,3 +22,7 @@
 __pycache__/
 *.pyc
 /.venv*/
+
+# H0 experiment runtime
+/experiments/h0/runs/
+/experiments/h0/results/

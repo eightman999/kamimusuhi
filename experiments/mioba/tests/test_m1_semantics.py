@@ -312,10 +312,11 @@ def test_high_activity_individual_is_flagged_not_penalised(client, service,
 
     def loud(*a, **k):
         rep = real(*a, **k)
-        rep["summary"]["activity"] = {"active_edge_ratio": 0.9,
-                                      "active_edges_per_step": 1e6,
-                                      "active_neurons_per_step": 5000,
-                                      "propagation_backend": "event_csc"}
+        rep["summary"]["propagation_activity"] = {
+            "active_edge_ratio": 0.9,
+            "active_edges_per_step": 1e6,
+            "active_neurons_per_step": 5000,
+            "propagation_backend": "event_csc"}
         return rep
 
     monkeypatch.setattr(W, "evaluate_replicates", loud)
