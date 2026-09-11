@@ -1,0 +1,21 @@
+# O0 smoke config: runs end-to-end in <60s on CPU
+name: smoke
+seed: 0
+
+env:
+  occ_lo: 4
+  occ_hi: 12
+
+train:
+  updates: 150
+  batch_size: 32
+  val_every: 50
+  val_episodes: 64
+  device: cpu
+
+eval:
+  episodes: 96
+  seed: 910000
+
+model:
+  arch: gru64
