@@ -4,6 +4,16 @@
 # Local runtime state: databases, JSONL traces, demo artifacts
 /.local/
 
+# Research data: keep policies/manifests in git, payloads local by default
+/data/raw/
+/data/vendor/
+/data/private/
+/data/cache/
+
+# Large/generated research artifacts should be archived deliberately
+/artifacts/
+/papers/**/build/
+
 # Editor / OS noise
 .DS_Store
 
