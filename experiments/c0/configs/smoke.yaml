@@ -1,0 +1,35 @@
+env:
+  episode_len: 96
+  num_keys: 8
+  num_values: 8
+  num_queryable: 6
+  n_pre: 1
+  n_bridge: 1
+  n_mid: 0
+  n_ctrl: 1
+  stops: [[44, 0]]
+  item_lo: 4
+  item_hi_margin: 6
+  pre_delay_min: 10
+  post_q_lo: 12
+  ctrl_item_lo: 4
+  ctrl_item_hi: 24
+  ctrl_delay_min: 10
+  num_distractors: 6
+  noise_rate: 0.4
+  query_window: 4
+  noise_dim: 8
+  memory_slots: 16
+  seed: 0
+
+train:
+  iters: 20
+  num_envs: 24
+  lr: 0.001
+  ans_coef: 1.0
+  aux_span: 10
+  reset_prob: 0.6
+  max_grad_norm: 0.5
+  eval_every: 10
+  eval_episodes: 24
+  val_seed: 700001

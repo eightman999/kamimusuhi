@@ -58,7 +58,7 @@ class Runner:
         return torch.as_tensor(obs, dtype=torch.float32, device=self.device)
 
     def act(self, obs: np.ndarray, greedy: bool = False,
-            rng: np.random.Generator | None = None):
+            rng: np.random.Generator | None = None, envs=None):
         """One batched step. Applies STORE writes to the agent memory."""
         x = self._input(obs)
         with torch.no_grad():

@@ -338,10 +338,15 @@ class C0Env:
 
     # -- interruption support -------------------------------------------
     def advance_to(self, t: int) -> np.ndarray:
-        """Fast-forward to a resume step; only NULL/NOISE may be skipped."""
-        for s in range(self.t, t):
-            if self.schedule[s].kind in (ITEM, QUERY):
-                raise RuntimeError(f"gap skips event at t={s}")
+        """Fast-forward to a resume step. Steps before a stop were seen by
+        the previous process; only gap subranges must be free of events."""
+        for s, g in self.cfg.stops:
+            lo, hi = max(self.t, s), min(t, s + g)
+            for u in range(lo, hi):
+                if self.schedule[u].kind in (ITEM, QUERY):
+                    raise RuntimeError(f"gap skips event at t={u}")
+        assert self.pending is None or t > self.pending["deadline"]
+        self.pending = None
         self.t = t
         return self._obs()
 

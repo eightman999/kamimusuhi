@@ -1,0 +1,41 @@
+env:
+  episode_len: 160
+  num_keys: 8
+  num_values: 8
+  num_queryable: 6
+  n_pre: 1
+  n_bridge: 2
+  n_mid: 0
+  n_ctrl: 2
+  stops: [[80, 0]]
+  item_lo: 6
+  item_hi_margin: 8
+  pre_delay_min: 12
+  post_q_lo: 20
+  ctrl_item_lo: 4
+  ctrl_item_hi: 44
+  ctrl_delay_min: 16
+  num_distractors: 8
+  noise_rate: 0.4
+  query_window: 4
+  noise_dim: 8
+  memory_slots: 16
+  reward_correct: 1.0
+  reward_wrong: -0.3
+  reward_answered: 0.2
+  reward_expire: -0.25
+  cost_store: 0.01
+  cost_bad_answer: 0.1
+  seed: 0
+
+train:
+  iters: 300
+  num_envs: 64
+  lr: 0.001
+  ans_coef: 1.0
+  aux_span: 12
+  reset_prob: 0.6
+  max_grad_norm: 0.5
+  eval_every: 20
+  eval_episodes: 64
+  val_seed: 700001

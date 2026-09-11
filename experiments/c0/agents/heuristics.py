@@ -83,3 +83,51 @@ class StoreAllAgent:
 
 HEURISTICS = {"random": RandomAgent, "oracle": OracleAgent,
               "storeall": StoreAllAgent}
+
+
+class HeuristicRunner:
+    """Runner-interface wrapper letting heuristics flow through the same
+    interruption engine / phase scripts as learned policies."""
+
+    def __init__(self, name: str, env_cfg, seed: int = 0):
+        self.name = name
+        self.cfg = env_cfg
+        self.seed = seed
+        self.n = 0
+        self.agents: list = []
+
+    @property
+    def has_memory(self) -> bool:
+        return self.name == "storeall"
+
+    def reset(self, n: int) -> None:
+        self.n = n
+        self.agents = [HEURISTICS[self.name](self.cfg, self.seed + i)
+                       if self.has_memory else HEURISTICS[self.name](self.seed + i)
+                       for i in range(n)]
+
+    def act(self, obs, greedy: bool = True, rng=None, envs=None):
+        acts, ans = [], []
+        for a, e in zip(self.agents, envs):
+            act, v = a.decide(e)
+            acts.append(act)
+            ans.append(v)
+        return np.asarray(acts), np.asarray(ans)
+
+    def hidden(self):
+        return None
+
+    def state_fields(self) -> list[str]:
+        return (["mem_payloads", "mem_keys", "mem_occupied",
+                 "mem_insert", "mem_clock"] if self.has_memory else [])
+
+    def get_states(self) -> list[dict]:
+        return [a.mem.clone_state() if self.has_memory else {}
+                for a in self.agents]
+
+    def set_states(self, states: list[dict]) -> None:
+        for a, st in zip(self.agents, states):
+            if self.has_memory:
+                a.mem.clear()
+                if "mem_payloads" in st:
+                    a.mem.load_state(st)
