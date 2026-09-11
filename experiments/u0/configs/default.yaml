@@ -1,0 +1,63 @@
+# U0 uncertainty / metacognition — default config
+seed: 0
+
+env:
+  n_classes: 4
+  feat_dim: 8
+  signal: 3.0
+  max_obs: 5
+  sigma_easy: 0.5
+  sigma_noisy: 2.0
+  sigma_weak: 1.0
+  sigma_ambiguous: 0.8
+  sigma_null: 1.0
+  sigma_ood: 2.8
+  weak_gain: 0.35
+  amb_gain: 0.9
+  amb_m_probs: [0.4, 0.6]
+  regime_probs: [0.35, 0.15, 0.15, 0.20, 0.15]
+  class_prior: [0.25, 0.25, 0.25, 0.25]
+  reward_correct: 1.0
+  reward_wrong: -1.0
+  reward_abstain: 0.05
+  cost_observe: 0.10
+  missing_frac: 0.5
+  pattern_rho: 2.0
+  noise_scale: 1.0
+  prototype_seed: 12345
+
+data:
+  episodes: 30000
+  val_episodes: 4000
+  seed: 51000
+
+train:
+  hidden: 64
+  u_hidden: 64
+  cls_epochs: 5
+  conf_epochs: 4
+  batch: 512
+  lr: 0.003
+  ensemble_size: 3
+  imit_episodes: 6000
+  imit_epochs: 6
+  imit_lr: 0.003
+  ppo_iters: 150
+  num_envs: 128
+  ppo_epochs: 3
+  minibatch_envs: 64
+  ppo_lr: 0.001
+  clip: 0.2
+  gamma: 0.97
+  lam: 0.95
+  vf_coef: 0.5
+  ent_coef: 0.02
+  max_grad_norm: 0.5
+  eval_every: 10
+  eval_episodes: 256
+  val_seed: 700001
+
+eval:
+  episodes: 512
+  aux_episodes: 256
+  seed: 900001

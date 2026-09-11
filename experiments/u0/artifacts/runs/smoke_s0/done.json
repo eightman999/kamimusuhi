@@ -1,0 +1,10 @@
+{
+  "iters": 40,
+  "best": {
+    "iter": 30,
+    "val_reward": 0.45976562499999996,
+    "sha256": "33f82a97f2c8a5e6f38f32235b015fe53496ea9167bcdf0153770c19a5dd9bc2"
+  },
+  "final_sha256": "0c61a44cc34af937e258df22bc80a2ea9a418e54f003473cba6012b4951246cc",
+  "elapsed_sec": 6.067896127700806
+}

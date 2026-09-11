@@ -1,0 +1,7 @@
+{
+  "criterion": "val mean_reward",
+  "val_seed": 700001,
+  "iter": 30,
+  "val_reward": 0.45976562499999996,
+  "sha256": "33f82a97f2c8a5e6f38f32235b015fe53496ea9167bcdf0153770c19a5dd9bc2"
+}

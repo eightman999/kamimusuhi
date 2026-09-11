@@ -77,13 +77,13 @@ class U0Config:
     max_obs: int = 5
 
     sigma_easy: float = 0.5
-    sigma_noisy: float = 1.5
+    sigma_noisy: float = 2.0
     sigma_weak: float = 1.0
     sigma_ambiguous: float = 0.8
     sigma_null: float = 1.0
-    sigma_ood: float = 2.4            # ood="noise": unseen noise level
+    sigma_ood: float = 2.8            # ood="noise": unseen noise level
 
-    weak_gain: float = 0.5            # signal attenuation for "weak"
+    weak_gain: float = 0.35           # signal attenuation for "weak"
     amb_gain: float = 0.9             # signal scale for ambiguous means
     amb_m_probs: tuple = (0.4, 0.6)   # P(|S|=2), P(|S|=3)
     regime_probs: tuple = (0.35, 0.15, 0.15, 0.20, 0.15)
@@ -307,7 +307,7 @@ class U0Env:
         return {
             "regime": lat["regime"],
             "c": int(lat["c"]), "y": int(lat["y"]),
-            "S": list(lat["S"]),
+            "S": [int(s) for s in lat["S"]],
             "sigma": float(lat["sigma"]),
             "n_obs": int(self.n),
             "outcome": outcome,
