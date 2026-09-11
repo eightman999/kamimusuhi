@@ -15,10 +15,17 @@ A 1D bounded world `[0, L]` (`L=4`). One episode:
 3. **occluded**: target enters a static occluder interval (bounds are
    always observable — a visible wall); all target channels read
    exactly 0 for `N ~ U(4,16)` steps (train range; OOD up to 48).
-4. **reappearance / gone**: it either exits the far side (same object,
-   or an identity-swapped imposter, `p_swap=0.3`) or — in `p_gone=0.2`
-   episodes where the occluder touches the world edge — is absorbed by
-   the boundary *while hidden* and never reappears (`exist -> 0`).
+4. **reappearance**: it exits the far side (same object, or an
+   identity-swapped imposter, `p_swap=0.3`).  **Training uses
+   `p_gone=0`**: boundary absorption while hidden was moved to the
+   eval-only preset `gone20` after review showed that edge-touching
+   occluders made realized hidden bouts reach 60+ steps, contaminating
+   both the headline metric and the "trained on 4-16" claim.
+5. **decoy takeover** (eval-only, `decoy_takeover_prob`): an ambush
+   distractor timed to exit the occluder's far edge while the target is
+   still inside is reported *on the target channel* (the sensor locks
+   onto the wrong object).  `same=0` on those steps; position labels
+   still track the true (hidden) target.
 
 Distractor objects (0–4 per episode) wander, bounce off boundaries, and
 are occluded by the same interval.
@@ -56,7 +63,11 @@ single tensor `[B,H]` (LSTM packs h||c) so hidden-state interventions
 are uniform.
 
 Heuristics (`agents/heuristics.py`): `prior` (occluder-mid guess),
-`lastobs`, `constvel`, `oracle` (true dynamics — reference ceiling).
+`lastobs`, `constvel`, `corridor` (constvel clipped to the occluder
+bounds — the honest strong baseline), `openloop` (true dynamics,
+open-loop integration — a reference point, *not* a Bayes-optimal
+ceiling), `kalman` (linear Kalman filter over [x, v, a] with true noise
+statistics — the closest available optimal-filter approximation).
 
 ## Causal tests & OOD
 
@@ -66,8 +77,17 @@ per-episode anchors (`mid_occl`, `occl_start`, `pre_reappear`,
 tracking much more than reset mid-visible (position can be re-read from
 the observation when visible, but not when hidden).
 
-OOD presets: `occ24/32/48`, `fast_v`, `slow_v`, `drag_x3`, `v_flip`,
-`distractors4`, `ambush`, `app_jitter`, `swap_half`.
+OOD presets: `plen24/32/48` (pure occlusion-length shift — only the
+bout-length bounds change), `occ24/32/48` (calibrated variants that
+also narrow velocity/visible-window/spawn so the geometry is feasible),
+`gone20` (boundary absorption while hidden — never seen in training),
+`fast_v`, `slow_v`, `drag_x3`, `v_flip`, `distractors4`, `ambush`,
+`decoytk` (decoy on the target channel), `app_jitter`, `swap_half`.
+
+Metrics decompose position error by episode type (`pos_mae_occ_*`:
+`persistent`, `gone`, `le16`, `gt16`, `persist_le16`) — the headline is
+`pos_mae_occ_persist_le16`, error on ordinary occlusions of trained
+length.
 
 ## Usage
 
