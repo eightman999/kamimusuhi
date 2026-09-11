@@ -37,6 +37,7 @@ from pathlib import Path
 
 from ..development.phenotype import develop
 from ..fba.registry import get_backend
+from ..perf import PhaseTimer
 from ..fba.replicates import chunk_indices, replicate_seeds
 from ..genome.schema import Genome, utcnow
 from ..mie.environments import make_drive
@@ -49,23 +50,54 @@ _stop = threading.Event()
 _current_job_started = None
 
 
+class _SlotLocal(threading.local):
+    """Which job the calling slot thread currently holds."""
+    job_id: str | None = None
+
+
+_SLOT = _SlotLocal()
+
+
 class WorkerState:
-    """Shared between the job loop and the heartbeat thread."""
+    """Shared between the job loops and the heartbeat thread.
+
+    With ``--slots N`` (M1 §2.2) several evaluations run concurrently in
+    one process, so the state holds a set of in-flight jobs. The
+    heartbeat still reports a single ``current_job_id`` (the schema's
+    column) plus the full list, and every slot's job is reported, so a
+    lost worker still requeues all of them.
+    """
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._job_id: str | None = None
+        self._jobs: dict[str, str] = {}     # job_id -> phase
         self.phase = "idle"
 
-    def set_job(self, job_id: str | None, phase: str = "running") -> None:
+    def set_job(self, job_id: str | None, phase: str = "running",
+                slot: str | None = None) -> None:
+        """Backwards-compatible single-slot API: ``None`` clears the job
+        this thread was holding."""
         with self._lock:
-            self._job_id = job_id
-            self.phase = phase if job_id else "idle"
+            if job_id is None:
+                held = slot or _SLOT.job_id
+                if held:
+                    self._jobs.pop(held, None)
+                else:
+                    self._jobs.clear()
+            else:
+                self._jobs[job_id] = phase
+            _SLOT.job_id = job_id
+            self.phase = (phase if self._jobs else "idle")
 
     @property
     def current_job_id(self) -> str | None:
         with self._lock:
-            return self._job_id
+            return next(iter(self._jobs), None)
+
+    @property
+    def current_job_ids(self) -> list[str]:
+        with self._lock:
+            return sorted(self._jobs)
 
 
 STATE = WorkerState()
@@ -88,6 +120,8 @@ def backend_kwargs(config: dict, run_dir: str | None,
           "synthetic": bool(fba.get("synthetic", True)),
           "synthetic_neurons": int(fba.get("synthetic_neurons", 2000)),
           "runs_dir": run_dir}
+    if fba.get("base_seed") is not None:
+        kw["base_seed"] = int(fba["base_seed"])
     if fba.get("synthetic_edges"):
         kw["synthetic_edges"] = int(fba["synthetic_edges"])
     if fba.get("connectivity") is not None:
@@ -108,15 +142,34 @@ def _stack(per_lane: dict[str, list], key: str, values) -> None:
     per_lane.setdefault(key, []).extend(values)
 
 
+def make_timer(device: str, enabled: bool = True) -> PhaseTimer:
+    """Phase timer for one evaluation; on CUDA it synchronises at phase
+    boundaries so asynchronous kernel time is attributed correctly."""
+    sync = None
+    if enabled and str(device).startswith("cuda"):
+        try:
+            import torch
+            if torch.cuda.is_available():
+                dev = torch.device(device)
+                sync = lambda: torch.cuda.synchronize(dev)  # noqa: E731
+        except Exception:
+            sync = None
+    return PhaseTimer(enabled=enabled, sync=sync, label=str(device))
+
+
 def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
                         execution_batch: int, grace_s: float = 30.0,
-                        deadline_started: float | None = None) -> dict:
+                        deadline_started: float | None = None,
+                        timer: PhaseTimer | None = None) -> dict:
     """Run every scientific replicate of ``job`` in chunks of
     ``execution_batch`` lanes and aggregate per-replicate results.
 
     Returned ``summary`` is ordered by replicate index; ``mean_rate_hz``
     is the mean over replicates. Independent of ``execution_batch``.
+    ``timer`` (M1 §2) records the per-phase breakdown into
+    ``summary["timing"]``; it only measures and never changes results.
     """
+    timer = timer or PhaseTimer(enabled=False)
     n_rep = int(job.get("replicates") or 1)
     seeds = list(job.get("replicate_seeds") or replicate_seeds(job["seed"],
                                                                 n_rep))
@@ -132,30 +185,38 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
     total_wall = 0.0
     t_ms = 0.0
     completed = 0
+    state: dict = {}
     for lanes in chunks:
         backend.initialize(phenotype, batch_size=len(lanes), seed=job["seed"],
                            device=device,
-                           replicate_seeds=[seeds[i] for i in lanes])
+                           replicate_seeds=[seeds[i] for i in lanes],
+                           timer=timer)
         n_drive = backend.n_base if hasattr(backend, "n_base") else 512
-        backend.set_inputs(make_drive(job["environment_id"], n_drive, config))
+        with timer.phase("state_init"):
+            backend.set_inputs(make_drive(job["environment_id"], n_drive,
+                                          config))
         remaining = duration
-        while remaining > 1e-9:
-            if _stop.is_set() and deadline_started is not None and \
-                    time.time() - deadline_started > grace_s:
-                raise RuntimeError("interrupted")
-            chunk = min(50.0, remaining)
-            stats = backend.run(chunk)
-            total_wall += float(stats.get("wall_s", 0.0))
-            remaining -= chunk
-        s = backend.get_state_summary()
-        t_ms = s.get("t_ms", t_ms)
-        _stack(per_rep, "mean_rate_hz", s["per_batch_mean_rate_hz"])
-        _stack(per_rep, "spike_counts", s["per_batch_spike_counts"])
-        _stack(per_rep, "seeds", list(s.get("replicate_seeds") or
-                                      [seeds[i] for i in lanes]))
-        _stack(per_rep, "index", lanes)
-        for g, vals in backend.get_population_activity(["all", "fba0"]).items():
-            _stack(activity, g, vals)
+        with timer.phase("simulation_loop"):
+            while remaining > 1e-9:
+                if _stop.is_set() and deadline_started is not None and \
+                        time.time() - deadline_started > grace_s:
+                    raise RuntimeError("interrupted")
+                chunk = min(50.0, remaining)
+                stats = backend.run(chunk)
+                total_wall += float(stats.get("wall_s", 0.0))
+                remaining -= chunk
+        with timer.phase("metrics"):
+            s = backend.get_state_summary()
+            state = s
+            t_ms = s.get("t_ms", t_ms)
+            _stack(per_rep, "mean_rate_hz", s["per_batch_mean_rate_hz"])
+            _stack(per_rep, "spike_counts", s["per_batch_spike_counts"])
+            _stack(per_rep, "seeds", list(s.get("replicate_seeds") or
+                                          [seeds[i] for i in lanes]))
+            _stack(per_rep, "index", lanes)
+            for g, vals in backend.get_population_activity(
+                    ["all", "fba0"]).items():
+                _stack(activity, g, vals)
         completed += len(lanes)
     rates = per_rep["mean_rate_hz"]
     counts = per_rep["spike_counts"]
@@ -175,8 +236,19 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
         "wall_s": total_wall,
         "sim_seconds_per_wall_second": ((duration / 1000.0) * n_rep / total_wall
                                         if total_wall > 0 else None),
-        "vram": (backend.get_state_summary().get("vram")
-                 if hasattr(backend, "get_state_summary") else None),
+        "vram": state.get("vram"),
+        # circuit size of the evaluated organism (M1 §8 resource cost)
+        "circuit": {
+            "n_neurons": state.get("n_neurons"),
+            "n_base": state.get("n_base"),
+            "n_artificial_neurons": state.get("n_artificial_neurons"),
+            "n_artificial_organs": state.get("n_artificial_organs"),
+            "n_attachments": state.get("n_attachments"),
+            "nnz": state.get("nnz"),
+            "nnz_artificial": state.get("nnz_artificial"),
+        },
+        "topology": state.get("topology"),
+        "timing": timer.to_dict() if timer.enabled else None,
     }
     return {"summary": summary, "requested_replicates": n_rep,
             "completed_replicates": completed,
@@ -214,7 +286,8 @@ def _clear_cuda_cache(device: str) -> None:
 def run_job(client, worker_id: str, job: dict, device: str,
             execution_batch: int, grace_s: float = 30.0,
             runtime_info: dict | None = None, state: WorkerState = STATE,
-            deliver: bool = True, data_dir: str | None = None) -> dict:
+            deliver: bool = True, data_dir: str | None = None,
+            profile: bool = True) -> dict:
     """Execute one claimed job and deliver its result until acknowledged.
     Returns the result body (with ``delivery`` = accepted|duplicate|
     rejected|gone|abandoned when delivered).
@@ -225,8 +298,11 @@ def run_job(client, worker_id: str, job: dict, device: str,
     """
     global _current_job_started
     state.set_job(job["job_id"], "running")
-    genome = Genome.from_json(job["genome_json"])
-    phenotype = develop(genome)
+    timer = make_timer(device, enabled=profile)
+    with timer.phase("genome_decode"):
+        genome = Genome.from_json(job["genome_json"])
+    with timer.phase("mutation_resolve"):
+        phenotype = develop(genome)
     config = job.get("config") or {}
     backend = None
     started = utcnow()
@@ -242,7 +318,8 @@ def run_job(client, worker_id: str, job: dict, device: str,
             try:
                 rep = evaluate_replicates(
                     backend, phenotype, job, device, used_batch,
-                    grace_s=grace_s, deadline_started=_current_job_started)
+                    grace_s=grace_s, deadline_started=_current_job_started,
+                    timer=timer)
                 break
             except Exception as exc:
                 if _is_oom(exc) and used_batch > 1:
@@ -278,6 +355,10 @@ def run_job(client, worker_id: str, job: dict, device: str,
         }
         if runtime_info:
             evaluation["runtime_info"] = runtime_info
+        if timer.enabled:
+            # refresh: genome decode / trace write / teardown land after
+            # evaluate_replicates took its snapshot
+            summary["timing"] = timer.to_dict()
         status, error = M.JOB_SUCCEEDED, None
     except Exception as exc:
         evaluation = None
@@ -338,7 +419,9 @@ def deliver_result(client, body: dict, max_wait_s: float | None = None,
 
 def heartbeat_payload(worker_id: str, current_job_id=None,
                       device: str | None = None,
-                      identity: dict | None = None) -> dict:
+                      identity: dict | None = None,
+                      current_job_ids: list[str] | None = None,
+                      slots: int | None = None) -> dict:
     g = gpu_info.query_device_gpu(device, identity) or {} if device else {}
     cpu = ram = None
     try:
@@ -369,6 +452,10 @@ def heartbeat_payload(worker_id: str, current_job_id=None,
         "vram_total_mb": g.get("memory_total_mb"),
         "cpu_percent": cpu, "ram_percent": ram,
         "current_job_id": current_job_id,
+        "current_job_ids": (list(current_job_ids)
+                            if current_job_ids is not None
+                            else ([current_job_id] if current_job_id else [])),
+        "slots": slots,
         "mie_samples": mie,
     }
 
@@ -424,6 +511,14 @@ def main(argv=None) -> int:
     ap.add_argument("--grace-s", type=float, default=30.0)
     ap.add_argument("--data-dir", default=None,
                     help="local FBA dataset dir (real backend)")
+    ap.add_argument("--slots", type=int, default=None,
+                    help="concurrent evaluations on this device "
+                         "(default: worker.slots from the experiment "
+                         "profile, else 1). Operational, like "
+                         "--execution-batch: it changes throughput, never "
+                         "the replicate set or fitness.")
+    ap.add_argument("--no-profile", action="store_true",
+                    help="skip the per-evaluation phase breakdown")
     args = ap.parse_args(argv)
 
     import httpx
@@ -445,6 +540,8 @@ def main(argv=None) -> int:
         bench_rows = [r.to_dict() for r in rows]
     if args.batch != "auto":
         batch_size = int(args.batch)
+    slots = int(args.slots if args.slots is not None
+                else (profile.get("worker") or {}).get("slots", 1) or 1)
 
     payload = {"worker_id": worker_id, "hostname": socket.gethostname(),
                "device": args.device,
@@ -453,7 +550,7 @@ def main(argv=None) -> int:
                "gpu_identity": identity,
                "runtime_info": runtime_info,
                "bench": bench_rows, "batch_size": batch_size,
-               "vram_headroom": headroom,
+               "slots": slots, "vram_headroom": headroom,
                "profile_scientific_config_hash":
                    profile.get("scientific_config_hash")}
     delay = 1.0
@@ -471,33 +568,49 @@ def main(argv=None) -> int:
         while not _stop.is_set():
             try:
                 client.post("/api/worker/heartbeat",
-                            json=heartbeat_payload(worker_id,
-                                                   STATE.current_job_id,
-                                                   device=args.device,
-                                                   identity=identity))
+                            json=heartbeat_payload(
+                                worker_id, STATE.current_job_id,
+                                device=args.device, identity=identity,
+                                current_job_ids=STATE.current_job_ids,
+                                slots=slots))
             except Exception:
                 pass
             _stop.wait(args.heartbeat_s)
 
     threading.Thread(target=hb_loop, daemon=True).start()
 
-    while not _stop.is_set():
-        try:
-            resp = client.post("/api/worker/claim",
-                               json={"worker_id": worker_id,
-                                     "batch_size": batch_size})
-        except Exception:
-            time.sleep(2.0)
-            continue
-        if resp.status_code == 204:
-            time.sleep(1.0)
-            continue
-        job = resp.json()
-        run_job(client, worker_id, job, args.device, batch_size or 1,
-                grace_s=args.grace_s, runtime_info=runtime_info,
-                data_dir=args.data_dir)
-        if _stop.is_set():
-            break
+    def claim_loop():
+        """One evaluation slot: claim -> evaluate -> deliver -> claim.
+
+        Slots are independent; an empty queue backs one slot off without
+        stalling the others, and each slot's backend shares the process's
+        resident base topology (fba/topology.py).
+        """
+        while not _stop.is_set():
+            try:
+                resp = client.post("/api/worker/claim",
+                                   json={"worker_id": worker_id,
+                                         "batch_size": batch_size})
+            except Exception:
+                _stop.wait(2.0)
+                continue
+            if resp.status_code == 204:
+                _stop.wait(1.0)
+                continue
+            job = resp.json()
+            run_job(client, worker_id, job, args.device, batch_size or 1,
+                    grace_s=args.grace_s, runtime_info=runtime_info,
+                    data_dir=args.data_dir, profile=not args.no_profile)
+
+    if slots <= 1:
+        claim_loop()
+        return 0
+    threads = [threading.Thread(target=claim_loop, name=f"slot{i}",
+                                daemon=True) for i in range(slots)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
     return 0
 
 

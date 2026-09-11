@@ -214,6 +214,89 @@ def cmd_bench(args) -> int:
     return 0
 
 
+def cmd_profile(args) -> int:
+    """M1 §2: per-phase breakdown of one evaluation and the concurrent
+    slot sweep, on the config's own conditions.
+
+    Reports successful evaluations/minute per slot count — the criterion
+    §2.2 asks for — not per-job latency.
+    """
+    from .fba.runtime_info import collect_runtime_info
+    from .genome.hashing import config_hash, scientific_config_hash
+    from .perf.evalbench import founder_population, slot_sweep
+    from .workers.gpu_info import gpu_identity
+    config = load_config(getattr(args, "config", None))
+    genomes = founder_population(args.evaluations,
+                                 base_seed=int(config.get("evolution", {})
+                                               .get("mutation_seed", 0)))
+    slots = tuple(int(s) for s in str(args.slots).split(","))
+    report = slot_sweep(genomes, config, args.device, slot_candidates=slots,
+                        execution_batch=args.execution_batch,
+                        duration_ms=args.duration_ms,
+                        replicates=args.replicates, data_dir=args.data_dir)
+    report["config_hash"] = config_hash(config)
+    report["scientific_config_hash"] = scientific_config_hash(config)
+    report["gpu_identity"] = gpu_identity(args.device)
+    report["runtime"] = collect_runtime_info(device=args.device)
+
+    print(f"device={args.device} evaluations={args.evaluations} "
+          f"execution_batch={args.execution_batch}")
+    for row in report["rows"]:
+        print(f"  slots={row['slots']} ok={row['succeeded']}/"
+              f"{row['evaluations']} oom={row['oom']} "
+              f"wall={row['wall_s']:.1f}s "
+              f"evals/min={row['successful_evaluations_per_minute']} "
+              f"median_latency={row['median_latency_s']}s")
+        for name, ph in sorted(row["timing"]["phases"].items(),
+                               key=lambda kv: -kv[1]["seconds"]):
+            print(f"      {name:22s} {ph['seconds']:8.3f}s "
+                  f"{ph['pct_of_wall']:5}%  x{ph['calls']}")
+    print(f"selected_slots={report['selected_slots']} "
+          f"({report['selected_evaluations_per_minute']} evals/min)")
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(json.dumps(report, indent=2, default=str))
+        print(f"wrote {args.out}")
+    return 0
+
+
+def cmd_rank_check(args) -> int:
+    """M1 §2.3: does a cheaper evaluator rank individuals like the gold
+    one? Accepts only at Spearman rho >= 0.85 and top-8 overlap >= 6/8.
+    """
+    from .evolution.population import fitness_placeholder
+    from .perf.evalbench import founder_population
+    from .perf.rank_agreement import compare_evaluators
+    config = load_config(getattr(args, "config", None))
+    ev = config.get("evaluation", {})
+    target = float(ev.get("target_rate_hz", 5.0))
+    genomes = founder_population(args.population,
+                                 base_seed=int(config.get("evolution", {})
+                                               .get("mutation_seed", 0)))
+    gold = {"duration_ms": args.gold_duration_ms or ev.get("duration_ms", 500),
+            "replicates": args.gold_replicates or ev.get("replicates", 8)}
+    cheap = {"duration_ms": args.cheap_duration_ms,
+             "replicates": args.cheap_replicates}
+    report = compare_evaluators(
+        genomes, config, args.device, gold, cheap,
+        score=lambda s: fitness_placeholder(s, target) or float("-inf"),
+        execution_batch=args.execution_batch, data_dir=args.data_dir,
+        k=args.top_k, min_rho=args.min_rho, min_overlap=args.min_overlap)
+    print(f"gold  {gold}  {report['gold_wall_s']}s")
+    print(f"cheap {cheap}  {report['cheap_wall_s']}s  "
+          f"speedup x{report['speedup']}")
+    print(f"spearman_rho={report['spearman_rho']} "
+          f"top{report['top_k']['k']}_overlap="
+          f"{report['top_k']['overlap']}/{report['top_k']['k']}")
+    print("ACCEPTED" if report["accepted"]
+          else "REJECTED: " + "; ".join(report["rejected_because"]))
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(json.dumps(report, indent=2, default=str))
+        print(f"wrote {args.out}")
+    return 0 if report["accepted"] else 6
+
+
 def cmd_env_info(args) -> int:
     from .fba.runtime_info import collect_runtime_info
     print(json.dumps(collect_runtime_info(device=args.device), indent=2))
@@ -328,6 +411,40 @@ def build_parser() -> argparse.ArgumentParser:
                    help="real FBA dataset dir (default: synthetic)")
     p.add_argument("--out", default=None, help="write JSON report here")
     p.set_defaults(fn=cmd_bench)
+
+    p = sub.add_parser("profile", help="M1 evaluation phase breakdown + "
+                                       "concurrent slot sweep")
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--evaluations", type=int, default=4,
+                   help="genomes evaluated per slot count")
+    p.add_argument("--slots", default="1",
+                   help="comma-separated concurrent evaluation slots, "
+                        "e.g. 1,2,3")
+    p.add_argument("--execution-batch", type=int, default=1,
+                   help="GPU lanes per chunk (operational)")
+    p.add_argument("--duration-ms", type=float, default=None,
+                   help="override evaluation.duration_ms")
+    p.add_argument("--replicates", type=int, default=None,
+                   help="override evaluation.replicates")
+    p.add_argument("--data-dir", default=None)
+    p.add_argument("--out", default=None, help="write JSON report here")
+    p.set_defaults(fn=cmd_profile)
+
+    p = sub.add_parser("rank-check",
+                       help="M1 cheap-vs-gold evaluator rank agreement")
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--population", type=int, default=16)
+    p.add_argument("--gold-duration-ms", type=float, default=None)
+    p.add_argument("--gold-replicates", type=int, default=None)
+    p.add_argument("--cheap-duration-ms", type=float, default=250.0)
+    p.add_argument("--cheap-replicates", type=int, default=2)
+    p.add_argument("--execution-batch", type=int, default=1)
+    p.add_argument("--top-k", type=int, default=8)
+    p.add_argument("--min-rho", type=float, default=0.85)
+    p.add_argument("--min-overlap", type=int, default=6)
+    p.add_argument("--data-dir", default=None)
+    p.add_argument("--out", default=None)
+    p.set_defaults(fn=cmd_rank_check)
 
     p = sub.add_parser("worker", add_help=False)
     p.add_argument("worker_args", nargs=argparse.REMAINDER)

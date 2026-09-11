@@ -69,6 +69,8 @@ def profile_backend_kwargs(profile: dict, data_dir: str | None = None,
         "connectivity": float(fba.get("connectivity", 0.01)),
         "n_neurons": int(fba.get("synthetic_neurons", 512)),
     }
+    if fba.get("base_seed") is not None:
+        kw["base_seed"] = int(fba["base_seed"])
     if fba.get("synthetic_edges"):
         kw["synthetic_edges"] = int(fba["synthetic_edges"])
     if fba.get("region_mode"):

@@ -24,8 +24,8 @@ class FbaBackend(ABC):
 
     @abstractmethod
     def initialize(self, phenotype: dict, batch_size: int, seed: int,
-                   device: str, replicate_seeds: list[int] | None = None
-                   ) -> None:
+                   device: str, replicate_seeds: list[int] | None = None,
+                   timer=None) -> None:
         """Build the network for ``batch_size`` lanes. Lane ``b`` draws
         its stochastic drive from a stream seeded by ``replicate_seeds[b]``
         (default ``replicate_seed(seed, b)``); the network itself is

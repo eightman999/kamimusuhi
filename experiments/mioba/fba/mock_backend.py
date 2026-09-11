@@ -28,9 +28,9 @@ class MockBackend(FbaBackend):
 
     # ------------------------------------------------------------- init
     def initialize(self, phenotype: dict, batch_size: int, seed: int,
-                   device: str, replicate_seeds: list[int] | None = None
-                   ) -> None:
-        del device  # cpu-only
+                   device: str, replicate_seeds: list[int] | None = None,
+                   timer=None) -> None:
+        del device, timer  # cpu-only; no phase profiling
         self.batch_size = int(batch_size)
         self.seed = int(seed)
         if replicate_seeds is None:

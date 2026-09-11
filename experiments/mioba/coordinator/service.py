@@ -215,6 +215,8 @@ class MiobaService:
                                                   ev.get("duration_ms", 500))),
                 "bench_organ_overhead_neurons": int(
                     wk.get("bench_organ_overhead_neurons", 0)),
+                # concurrent evaluations per worker process (M1 §2.2)
+                "slots": int(wk.get("slots", 1)),
             },
         }
 

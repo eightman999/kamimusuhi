@@ -41,8 +41,12 @@ from ..genome.schema import Genome
 from ..storage.db import Database
 from ..workers.gpu_info import gpu_identity
 
-_SYNTH_VERSION = re.compile(r"^v0-n(?P<n>\d+)-p(?P<p>[0-9.eE+-]+)$")
-_SYNTH_EDGES_VERSION = re.compile(r"^v0-n(?P<n>\d+)-e(?P<e>\d+)$")
+# v0 = base graph sampled from the genome seed (M0, and the mock backend
+# which has no separate base seed); v1 = sampled from fba.base_seed, which
+# the version string carries as a "-s<seed>" suffix.
+_SYNTH_VERSION = re.compile(r"^v[01]-n(?P<n>\d+)-p(?P<p>[0-9.eE+-]+)$")
+_SYNTH_EDGES_VERSION = re.compile(r"^v[01]-n(?P<n>\d+)-e(?P<e>\d+)$")
+_BASE_SEED_SUFFIX = re.compile(r"^(?P<head>v1-.*)-s(?P<s>\d+)$")
 
 DEVICE_IDENTITY_KEYS = ("gpu_model", "compute_capability", "gpu_uuid",
                         "gpu_index", "device", "torch_version",
@@ -82,12 +86,19 @@ class ReplayPlan:
 
 
 def _parse_synthetic_version(version: str | None) -> dict:
-    m = _SYNTH_VERSION.match(version or "")
+    text = version or ""
+    base_seed = None
+    m = _BASE_SEED_SUFFIX.match(text)
     if m:
-        return {"n": int(m.group("n")), "p": float(m.group("p"))}
-    m = _SYNTH_EDGES_VERSION.match(version or "")
+        base_seed, text = int(m.group("s")), m.group("head")
+    m = _SYNTH_VERSION.match(text)
     if m:
-        return {"n": int(m.group("n")), "e": int(m.group("e"))}
+        return {"n": int(m.group("n")), "p": float(m.group("p")),
+                "base_seed": base_seed}
+    m = _SYNTH_EDGES_VERSION.match(text)
+    if m:
+        return {"n": int(m.group("n")), "e": int(m.group("e")),
+                "base_seed": base_seed}
     raise ReplayUnavailable(
         f"cannot reconstruct synthetic network from dataset version "
         f"{version!r}")
@@ -141,6 +152,8 @@ def _dataset_kwargs(dataset: dict, backend: str, data_dir: str | None,
             kw["synthetic_edges"] = v["e"]
         else:
             kw["connectivity"] = v["p"]
+        if v.get("base_seed") is not None:
+            kw["base_seed"] = v["base_seed"]
         return kw
     if ds_id.startswith("flywire"):
         if not data_dir or not Path(data_dir).is_dir():

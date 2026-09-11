@@ -9,8 +9,8 @@ buffer -> LIF (tauMem=20 ms, vRest=-52 mV, vThr=-45 mV, refractory
 
 Connectivity convention
 -----------------------
-``self.W`` is an ``N x N`` sparse CSR tensor indexed ``W[post, pre]``
-(row = postsynaptic, column = presynaptic). Propagation is
+Sparse CSR tensors indexed ``W[post, pre]`` (row = postsynaptic, column =
+presynaptic). Propagation is
 
     I_post = W @ spikes_pre        i.e.  torch.sparse.mm(W, spikes.T).T
 
@@ -18,11 +18,39 @@ so a spike of neuron ``pre`` delivers ``W[post, pre]`` to ``post``.
 (``spikes @ W`` would propagate post -> pre and, for CSR, torch returns
 zeros silently — never use it.)
 
-The matrix is built sparse-only: FBA0 edges (COO from the parquet, or a
-sampled synthetic edge list), artificial-organ internal edges, and
-attachment edges are concatenated as index/value lists and coalesced
-into one CSR. No ``N x N`` dense tensor is ever allocated, so memory is
+The graph is split in two (M1 §2.1, see fba/topology.py):
+
+``self.W_base``   ``n_base x n_base``, the FBA0 reference. Built once per
+                  worker process from ``fba.base_seed`` (not from the
+                  genome seed) and kept resident on the device; its values
+                  are stored *raw* and multiplied by ``self._base_scale``
+                  at propagation time, so a ``wScale`` mutation never
+                  rebuilds it.
+``self.W_extra``  ``N x N``, artificial-organ internal edges and
+                  attachment edges. Built per genome (its sampled index
+                  set is cached by ``organ_topology_hash``), ``None`` when
+                  the genome has no organs.
+
+No ``N x N`` dense tensor is ever allocated, so memory is
 ``O(E_fba0 + E_organs + E_attachments)``.
+
+Delay line
+----------
+The ``tDelay`` ring buffer is indexed by ``self._delay_ptr`` rather than
+rolled. M0 called ``torch.roll`` on a ``(B, steps_delay+1, N)`` tensor
+every step, i.e. it copied ~10 MB per lane per step (≈50 GB of memory
+traffic over one 500 ms evaluation at FlyWire scale) to achieve what a
+pointer increment does. The read/write order is identical.
+
+Poisson drive
+-------------
+``set_inputs`` keeps only the neurons whose rate is non-zero
+(``self._drive_idx``). M0 drew ``N`` uniforms per lane per step and
+compared them against a vector that was zero for 99% of entries; M1 draws
+one uniform per *driven* neuron. The stimulus is applied with the same
+``scalePoisson`` to the same neurons, but the random stream is consumed
+differently, so M1 trajectories are not comparable to M0 ones — as with
+the topology change, this is a new ``scientific_config_hash``.
 
 Data
 ----
@@ -66,10 +94,14 @@ from pathlib import Path
 
 import numpy as np
 
+from ..perf import PhaseTimer
 from .backend import BackendUnavailable, FbaBackend
+from .eventgraph import EventGraph
 from .fba0 import DATA_FILES
 from .params import DEFAULT_PARAMS, UnsupportedAttachmentRegion
 from .replicates import replicate_seeds as _default_replicate_seeds
+from .topology import (BASE_CACHE, ORGAN_CACHE, base_topology_key,
+                       organ_topology_hash)
 
 try:
     import torch
@@ -159,12 +191,17 @@ class TorchBackend(FbaBackend):
     def __init__(self, data_dir: str | None = None, synthetic: bool = True,
                  synthetic_neurons: int = 2000, connectivity: float = 0.01,
                  runs_dir: str | None = None, region_mode: str | None = None,
-                 synthetic_edges: int | None = None):
+                 synthetic_edges: int | None = None, base_seed: int = 0,
+                 topology_cache: bool = True):
         if torch is None:
             raise BackendUnavailable("torch not installed")
         self.data_dir = data_dir or os.environ.get("MIOBA_FLY_BRAIN_DATA")
         self.synthetic = synthetic
         self.synthetic_neurons = int(synthetic_neurons)
+        # seed of the *shared* FBA0 reference graph (M1): one base network
+        # for the whole run, independent of any genome's random_seed
+        self.base_seed = int(base_seed)
+        self.use_topology_cache = bool(topology_cache)
         # explicit edge count (FlyWire-scale smoke: 139k neurons / ~14M
         # edges) wins over the pair probability
         self.synthetic_edges = int(synthetic_edges) if synthetic_edges else None
@@ -187,22 +224,29 @@ class TorchBackend(FbaBackend):
                     "version": "2025_783",
                     "manifest_hash": self._manifest_hash,
                     "region_mode": self.region_mode}
+        # v1: the base graph is sampled from fba.base_seed, shared by every
+        # individual (v0 sampled it per genome seed and is not reproducible
+        # by this code path — a v0 recording must be replayed with M0 code).
         if self.synthetic_edges:
-            version = f"v0-n{self.synthetic_neurons}-e{self.synthetic_edges}"
+            version = (f"v1-n{self.synthetic_neurons}-e{self.synthetic_edges}"
+                       f"-s{self.base_seed}")
         else:
-            version = f"v0-n{self.synthetic_neurons}-p{self.connectivity}"
+            version = (f"v1-n{self.synthetic_neurons}-p{self.connectivity}"
+                       f"-s{self.base_seed}")
         return {"dataset_id": "synthetic-fba", "version": version,
                 "manifest_hash": None,
                 "region_mode": self.region_mode}
 
     # ------------------------------------------------------------ init
     def initialize(self, phenotype: dict, batch_size: int, seed: int,
-                   device: str, replicate_seeds: list[int] | None = None
-                   ) -> None:
+                   device: str, replicate_seeds: list[int] | None = None,
+                   timer: PhaseTimer | None = None) -> None:
+        timer = timer or PhaseTimer(enabled=False)
         self.batch_size = int(batch_size)
         self.seed = int(seed)
         self.device = torch.device(device if device else "cpu")
         self.phenotype = phenotype or {}
+        # per-genome generator: artificial wiring only
         self._build_gen = torch.Generator(device="cpu").manual_seed(self.seed)
         if replicate_seeds is None:
             replicate_seeds = _default_replicate_seeds(self.seed, self.batch_size)
@@ -212,32 +256,17 @@ class TorchBackend(FbaBackend):
         self._gens = [torch.Generator(device=self.device)
                       for _ in range(self.batch_size)]
 
-        self.params = dict(PARAMS)
-        self.params.update(self.phenotype.get("params") or {})
+        with timer.phase("mutation_resolve"):
+            self.params = dict(PARAMS)
+            self.params.update(self.phenotype.get("params") or {})
 
-        cache = (self.runs_dir / "cache") if self.runs_dir else None
-        if self.data_dir:
-            n_base, post, pre, w, manifest = _load_connectome(
-                Path(self.data_dir), cache)
-            self._manifest_hash = manifest
-            self.region_mode = self._region_mode_arg
-        elif self.synthetic:
-            n_base = self.synthetic_neurons
-            post, pre = _sample_edges(0, n_base, 0, n_base, self.connectivity,
-                                      self._build_gen,
-                                      n_edges=self.synthetic_edges)
-            w = torch.rand(post.numel(), generator=self._build_gen) \
-                * self.params["wScale"]
-            self.region_mode = self._region_mode_arg or SYNTHETIC_REGION_MODE
-        else:
-            raise BackendUnavailable(
-                "no fba.data_dir configured and synthetic=False")
+        self._load_base(timer)
 
         n_extra = int(self.phenotype.get("n_extra_neurons", 0) or 0)
-        self.n_base = n_base
-        self.n = n_base + n_extra
+        self.n = self.n_base + n_extra
+        self.n_extra = n_extra
         self._organ_ranges: list[tuple[str, int, int]] = []
-        off = n_base
+        off = self.n_base
         for organ in self.phenotype.get("artificial_organs", []):
             self._organ_ranges.append((organ["organ_id"], off,
                                        off + int(organ["size"])))
@@ -245,19 +274,114 @@ class TorchBackend(FbaBackend):
         if off != self.n:
             raise ValueError("n_extra_neurons != sum(organ sizes)")
 
-        self.n_edges_base = int(post.numel())
-        post, pre, w = self._with_organs(post, pre, w, self._build_gen)
-        self.n_edges_total = int(post.numel())
-        idx = torch.stack([post, pre])
-        W = torch.sparse_coo_tensor(idx, w, (self.n, self.n)).coalesce()
-        self.W = W.to_sparse_csr().to(self.device)
-        self.nnz = int(W._nnz())
+        with timer.phase("topology_construction"):
+            self.W_extra, self.nnz_extra = self._build_extra()
+        self.n_edges_base = self.nnz_base
+        self.n_edges_total = self.nnz_base + self.nnz_extra
+        self.nnz = self.n_edges_total
+        self._W_override = None
 
-        self._input_rates = torch.zeros(self.n, device=self.device)
-        self._silence = torch.zeros(self.n, dtype=torch.bool, device=self.device)
-        self.steps_delay = max(1, int(round(self.params["tDelay"] /
-                                            self.params["dt"])))
-        self.reset()
+        with timer.phase("state_init"):
+            self._input_rates = torch.zeros(self.n, device=self.device)
+            self._drive_idx = None
+            self._drive_p = None
+            self._silence_idx = None
+            self.steps_delay = max(1, int(round(self.params["tDelay"] /
+                                                self.params["dt"])))
+            self.reset()
+
+    # ------------------------------------------------------------ base graph
+    def _load_base(self, timer: PhaseTimer) -> None:
+        """Build (or reuse) the resident FBA0 reference graph.
+
+        Values are kept raw; ``self._base_scale`` is applied at
+        propagation time so that a ``wScale`` mutation is a scalar
+        multiply, not a 14M-edge rebuild.
+        """
+        cache_dir = (self.runs_dir / "cache") if self.runs_dir else None
+        if self.data_dir:
+            self.region_mode = self._region_mode_arg
+        elif self.synthetic:
+            self.region_mode = self._region_mode_arg or SYNTHETIC_REGION_MODE
+        else:
+            raise BackendUnavailable(
+                "no fba.data_dir configured and synthetic=False")
+
+        # dataset_identity() needs the manifest hash, which only exists
+        # after the parquet has been read once; the first real-data build
+        # therefore always misses the cache (by design: once per process).
+        ident = self.dataset_identity()
+        key = base_topology_key(ident, self.synthetic_neurons
+                                if not self.data_dir else -1,
+                                self.base_seed, self.connectivity,
+                                self.synthetic_edges, str(self.device))
+        hit = BASE_CACHE.get(key) if self.use_topology_cache else None
+        if hit is not None:
+            (self.W_base, self.n_base, self.nnz_base, self._manifest_hash,
+             self._base_scale_is_wscale) = hit
+            self.base_topology_key = key
+            self._base_scale = (float(self.params["wScale"])
+                                if self._base_scale_is_wscale else 1.0)
+            return
+
+        with timer.phase("topology_construction"):
+            if self.data_dir:
+                n_base, post, pre, w, manifest = _load_connectome(
+                    Path(self.data_dir), cache_dir)
+                self._manifest_hash = manifest
+                scale_is_wscale = False
+            else:
+                base_gen = torch.Generator(device="cpu").manual_seed(
+                    self.base_seed)
+                n_base = self.synthetic_neurons
+                post, pre = _sample_edges(0, n_base, 0, n_base,
+                                          self.connectivity, base_gen,
+                                          n_edges=self.synthetic_edges)
+                w = torch.rand(post.numel(), generator=base_gen)
+                scale_is_wscale = True
+            W = EventGraph.from_coo(post, pre, w, n_base, n_base)
+            nnz = W.nnz
+        with timer.phase("host_to_device"):
+            W = W.to(self.device)
+
+        self.W_base, self.n_base, self.nnz_base = W, n_base, nnz
+        self._base_scale_is_wscale = scale_is_wscale
+        self._base_scale = (float(self.params["wScale"]) if scale_is_wscale
+                            else 1.0)
+        # rebuild the key: for real data the manifest hash is only known now
+        key = base_topology_key(self.dataset_identity(),
+                                n_base if not self.data_dir else -1,
+                                self.base_seed, self.connectivity,
+                                self.synthetic_edges, str(self.device))
+        self.base_topology_key = key
+        if self.use_topology_cache:
+            BASE_CACHE.put(key, (W, n_base, nnz, self._manifest_hash,
+                                 scale_is_wscale))
+
+    # ------------------------------------------------------------ inspection
+    @property
+    def W(self):
+        """The full ``N x N`` connectivity as one CSR tensor, with
+        ``wScale`` already applied — materialised on demand for
+        inspection, tests and replay diffing. The simulation itself never
+        builds it (see ``propagate``)."""
+        if getattr(self, "_W_override", None) is not None:
+            return self._W_override
+        base = self.W_base.to_coo(size=(self.n, self.n),
+                                  scale=self._base_scale).coalesce()
+        if self.W_extra is None:
+            return base.to_sparse_csr()
+        ex = self.W_extra.to_coo().coalesce()
+        idx = torch.cat([base.indices(), ex.indices()], dim=1)
+        vals = torch.cat([base.values(), ex.values()])
+        return torch.sparse_coo_tensor(idx, vals, (self.n, self.n)) \
+            .coalesce().to_sparse_csr()
+
+    @W.setter
+    def W(self, value):
+        """Install an explicit matrix (tests / fixed micro-networks);
+        ``propagate`` then uses it instead of the base+extra split."""
+        self._W_override = value
 
     # ------------------------------------------------------------ regions
     def region_range(self, region: str) -> tuple[int, int]:
@@ -287,37 +411,69 @@ class TorchBackend(FbaBackend):
             raise ValueError(f"attachment endpoint {name!r}: unknown organ")
         return rng[1], rng[2]
 
-    def _with_organs(self, post, pre, w, gen):
-        """Append organ-internal and attachment edges (sparse index lists).
+    def _sample_extra(self):
+        """Sample the artificial index set: organ-internal edges
+        (p=ORGAN_INTERNAL_P inside each organ block) and attachment edges
+        (source (pre) -> target (post) pairs at p=ATTACHMENT_P;
+        'bidirectional' also adds target -> source).
 
-        Organ internal: p=ORGAN_INTERNAL_P within each organ block.
-        Attachment: source (pre) -> target (post) pairs at p=ATTACHMENT_P
-        with weight wScale*weight_scale; 'bidirectional' also adds
-        target -> source. Endpoints are resolved by name; nothing is
-        wired at random across the whole network.
+        Returns ``(post, pre, raw, group)`` where ``group`` is 0 for
+        organ-internal edges and ``1 + attachment index`` otherwise, so
+        the per-edge weight scale can be applied afterwards without
+        re-sampling. Endpoints are resolved by name; nothing is wired at
+        random across the whole network.
         """
-        if not self._organ_ranges:
-            return post, pre, w
-        posts, pres, ws = [post], [pre], [w]
-        wscale = float(self.params["wScale"])
-        for _oid, lo, hi in self._organ_ranges:
-            p_, r_ = _sample_edges(lo, hi, lo, hi, ORGAN_INTERNAL_P, gen)
+        gen = self._build_gen
+        posts, pres, raws, groups = [], [], [], []
+
+        def add(p_, r_, group):
             posts.append(p_)
             pres.append(r_)
-            ws.append(torch.rand(p_.numel(), generator=gen) * wscale)
-        for att in self.phenotype.get("attachments", []):
+            raws.append(torch.rand(p_.numel(), generator=gen))
+            groups.append(torch.full((p_.numel(),), group, dtype=torch.int64))
+
+        for _oid, lo, hi in self._organ_ranges:
+            add(*_sample_edges(lo, hi, lo, hi, ORGAN_INTERNAL_P, gen), 0)
+        for i, att in enumerate(self.phenotype.get("attachments", [])):
             s_lo, s_hi = self._endpoint_range(att["source"])
             t_lo, t_hi = self._endpoint_range(att["target"])
-            scale = wscale * float(att.get("weight_scale", 1.0))
             legs = [((t_lo, t_hi), (s_lo, s_hi))]
             if att.get("direction", "forward") == "bidirectional":
                 legs.append(((s_lo, s_hi), (t_lo, t_hi)))
             for (plo, phi), (rlo, rhi) in legs:
-                p_, r_ = _sample_edges(plo, phi, rlo, rhi, ATTACHMENT_P, gen)
-                posts.append(p_)
-                pres.append(r_)
-                ws.append(torch.rand(p_.numel(), generator=gen) * scale)
-        return torch.cat(posts), torch.cat(pres), torch.cat(ws)
+                add(*_sample_edges(plo, phi, rlo, rhi, ATTACHMENT_P, gen),
+                    i + 1)
+        if not posts:
+            e = torch.empty(0, dtype=torch.int64)
+            return e, e.clone(), torch.empty(0), e.clone()
+        return (torch.cat(posts), torch.cat(pres), torch.cat(raws),
+                torch.cat(groups))
+
+    def _build_extra(self):
+        """Build the per-genome artificial sparse matrix (``None`` when the
+        genome has no organs). The sampled index set is cached by
+        ``organ_topology_hash``, so a parameter-only child reuses its
+        parent's wiring instead of re-drawing it."""
+        if not self._organ_ranges and not self.phenotype.get("attachments"):
+            return None, 0
+        key = organ_topology_hash(self.phenotype, self.seed)
+        hit = ORGAN_CACHE.get(key) if self.use_topology_cache else None
+        if hit is None:
+            hit = self._sample_extra()
+            if self.use_topology_cache:
+                ORGAN_CACHE.put(key, hit)
+        post, pre, raw, group = hit
+        self.organ_topology_key = key
+        if post.numel() == 0:
+            return None, 0
+        wscale = float(self.params["wScale"])
+        scales = torch.tensor(
+            [wscale] + [wscale * float(a.get("weight_scale", 1.0))
+                        for a in self.phenotype.get("attachments", [])],
+            dtype=raw.dtype)
+        vals = raw * scales[group]
+        W = EventGraph.from_coo(post, pre, vals, self.n, self.n)
+        return W.to(self.device), W.nnz
 
     # ------------------------------------------------------------ state
     def reset(self) -> None:
@@ -327,6 +483,8 @@ class TorchBackend(FbaBackend):
         self.v = torch.full((B, n), p["v0"], device=d)
         self.g = torch.zeros((B, n), device=d)
         self.delay_buf = torch.zeros((B, self.steps_delay + 1, n), device=d)
+        # ring-buffer read/write slot (M0 rolled the whole buffer instead)
+        self._delay_ptr = 0
         self.refrac = torch.full((B, n), p["tRefrac"], device=d)
         self.spikes = torch.zeros((B, n), device=d)
         self.spike_counts = torch.zeros((B, n), dtype=torch.long, device=d)
@@ -334,6 +492,9 @@ class TorchBackend(FbaBackend):
             g.manual_seed(s)
 
     def set_inputs(self, drive: dict) -> None:
+        """Install a drive. Only the driven neurons are kept as an index
+        list: the per-step Poisson draw costs one uniform per *driven*
+        neuron, not one per neuron (M1 §2)."""
         rates = torch.zeros(self.n, device=self.device)
         for key, hz in (drive.get("rates_hz") or {}).items():
             if isinstance(key, str) and key == "all":
@@ -344,43 +505,67 @@ class TorchBackend(FbaBackend):
             else:
                 rates[int(key)] = hz
         self._input_rates = rates
-        self._silence = torch.zeros(self.n, dtype=torch.bool, device=self.device)
-        for i in drive.get("silence") or []:
-            self._silence[int(i)] = True
+        idx = torch.nonzero(rates, as_tuple=False).flatten()
+        if idx.numel():
+            self._drive_idx = idx
+            self._drive_p = rates[idx] * self.params["dt"] / 1000.0
+        else:
+            self._drive_idx = None
+            self._drive_p = None
+        sil = [int(i) for i in (drive.get("silence") or [])]
+        self._silence_idx = (torch.tensor(sil, dtype=torch.int64,
+                                          device=self.device)
+                             if sil else None)
 
     def force_spikes(self, neuron_ids: list[int] | None) -> None:
         """Debug/test hook: force these neurons to spike every step."""
         if not neuron_ids:
             self._force = None
             return
-        f = torch.zeros(self.n, dtype=torch.bool, device=self.device)
-        for i in neuron_ids:
-            f[int(i)] = True
-        self._force = f
+        self._force = torch.tensor([int(i) for i in neuron_ids],
+                                   dtype=torch.int64, device=self.device)
 
     def propagate(self, spikes: torch.Tensor) -> torch.Tensor:
         """Synaptic input to every post neuron given a (B, N) spike
-        matrix: I[b, post] = sum_pre W[post, pre] * spikes[b, pre]."""
-        return torch.sparse.mm(self.W, spikes.T).T
+        matrix: I[b, post] = sum_pre W[post, pre] * spikes[b, pre].
+
+        Event-driven (see fba/eventgraph.py): only the edges leaving
+        neurons that actually spiked are touched. Base and artificial
+        graphs accumulate into the same output; the base is resident and
+        its values are raw, so ``wScale`` enters as a scalar.
+        """
+        if getattr(self, "_W_override", None) is not None:
+            return torch.sparse.mm(self._W_override, spikes.T).T
+        out = torch.zeros((spikes.shape[0], self.n), device=spikes.device,
+                          dtype=spikes.dtype)
+        self.W_base.propagate(spikes, out, scale=self._base_scale,
+                              col_limit=self.n_base)
+        if self.W_extra is not None:
+            self.W_extra.propagate(spikes, out)
+        return out
 
     # ------------------------------------------------------------ step
     def _one_step(self) -> None:
         p, d = self.params, self.device
         dt = p["dt"]
-        u = torch.stack([torch.rand((self.n,), device=d, generator=g)
-                         for g in self._gens])
-        stim = (u < self._input_rates[None, :] * dt / 1000.0).float() \
-            * p["scalePoisson"]
-        delayed = self.delay_buf[:, 0, :]
-        self.delay_buf = torch.roll(self.delay_buf, -1, dims=1)
-        self.delay_buf[:, -1, :] = self.propagate(self.spikes)
+        L = self.delay_buf.shape[1]
+        ptr = self._delay_ptr
+        delayed = self.delay_buf[:, ptr, :]
         active = (self.refrac >= p["tRefrac"]).float()
         self.g = self.g * (1 - dt / p["tauSyn"]) + delayed * active
-        self.v = self.v + stim + (dt / p["tauMem"]) * (self.g - (self.v - p["vRest"]))
+        self.delay_buf[:, ptr, :] = self.propagate(self.spikes)
+        self._delay_ptr = (ptr + 1) % L
+        self.v = self.v + (dt / p["tauMem"]) * (self.g - (self.v - p["vRest"]))
+        if self._drive_idx is not None:
+            u = torch.stack([torch.rand((self._drive_idx.numel(),), device=d,
+                                        generator=g) for g in self._gens])
+            self.v[:, self._drive_idx] += \
+                (u < self._drive_p[None, :]).to(self.v.dtype) * p["scalePoisson"]
         spikes = ((self.v >= p["vThr"]) & (self.refrac >= p["tRefrac"])).float()
         if self._force is not None:
             spikes[:, self._force] = 1.0
-        spikes[:, self._silence] = 0.0
+        if self._silence_idx is not None:
+            spikes[:, self._silence_idx] = 0.0
         self.v = torch.where(spikes > 0, torch.full_like(self.v, p["vReset"]),
                              self.v)
         self.g = self.g * (1 - spikes)  # reset conductance of spiking cells
@@ -438,8 +623,17 @@ class TorchBackend(FbaBackend):
             "replicate_seeds": list(self.replicate_seeds),
             "n_neurons": self.n,
             "n_base": self.n_base,
+            "n_artificial_neurons": self.n_extra,
+            "n_artificial_organs": len(self._organ_ranges),
+            "n_attachments": len(self.phenotype.get("attachments") or []),
             "nnz": self.nnz,
+            "nnz_base": self.nnz_base,
+            "nnz_artificial": self.nnz_extra,
             "region_mode": self.region_mode,
+            "topology": {"base_key": getattr(self, "base_topology_key", None),
+                         "organ_key": getattr(self, "organ_topology_key", None),
+                         "base_cache": BASE_CACHE.stats(),
+                         "organ_cache": ORGAN_CACHE.stats()},
         }
 
     def get_population_activity(self, groups: list[str]) -> dict[str, list[float]]:
@@ -467,7 +661,8 @@ class TorchBackend(FbaBackend):
     def checkpoint(self) -> bytes:
         state = {
             "t_ms": self.t_ms, "v": self.v.cpu(), "g": self.g.cpu(),
-            "delay_buf": self.delay_buf.cpu(), "refrac": self.refrac.cpu(),
+            "delay_buf": self.delay_buf.cpu(), "delay_ptr": self._delay_ptr,
+            "refrac": self.refrac.cpu(),
             "spikes": self.spikes.cpu(),
             "spike_counts": self.spike_counts.cpu(),
             "gen_states": [g.get_state().cpu() for g in self._gens],
@@ -485,6 +680,7 @@ class TorchBackend(FbaBackend):
         self.t_ms = s["t_ms"]
         for k in ("v", "g", "delay_buf", "refrac", "spikes", "spike_counts"):
             setattr(self, k, s[k].to(self.device))
+        self._delay_ptr = int(s.get("delay_ptr", 0))
         if len(s["gen_states"]) != len(self._gens):
             raise ValueError("checkpoint batch width differs from this backend")
         for g, st in zip(self._gens, s["gen_states"]):

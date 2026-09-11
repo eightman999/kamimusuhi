@@ -633,12 +633,16 @@ def test_synthetic_edges_explicit():
                     synthetic_edges=900)
     b.initialize(develop(fba0_genome()), batch_size=1, seed=1, device="cpu")
     ident = b.dataset_identity()
-    assert ident["version"] == "v0-n300-e900"
+    # v1 = base graph sampled from fba.base_seed, not from the genome seed
+    assert ident["version"] == "v1-n300-e900-s0"
     # 900 sampled edges; self-edges dropped / duplicates coalesced
     assert 850 <= b.W._nnz() <= 900
     dense_p = get_backend("torch", synthetic=True, synthetic_neurons=300,
                           connectivity=0.01)
-    assert dense_p.dataset_identity()["version"] == "v0-n300-p0.01"
+    assert dense_p.dataset_identity()["version"] == "v1-n300-p0.01-s0"
+    seeded = get_backend("torch", synthetic=True, synthetic_neurons=300,
+                         synthetic_edges=900, base_seed=7)
+    assert seeded.dataset_identity()["version"] == "v1-n300-e900-s7"
     kw = profile_backend_kwargs({"backend": "torch",
                                  "fba": {"synthetic": True,
                                          "synthetic_neurons": 139000,

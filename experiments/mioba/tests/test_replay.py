@@ -89,14 +89,14 @@ def test_replay_manifest_mismatch_is_rejected(tmp_path, smoke_config):
     import sqlite3
     con = sqlite3.connect(str(exp_dir / "lineage.sqlite"))
     ds = json.loads(ev["dataset_json"])
-    ds["version"] = "v0-n999-p0.01"  # a different synthetic network
+    ds["version"] = "v1-n999-p0.01-s0"  # a different synthetic network
     con.execute("UPDATE evaluations SET dataset_json=? WHERE evaluation_id=?",
                 (json.dumps(ds), ev["evaluation_id"]))
     con.commit(); con.close()
     plan = build_plan(exp_dir, ev["evaluation_id"])
     assert plan.backend_kwargs["synthetic_neurons"] == 999
     # backend reports the identity it actually built -> matches the record
-    assert run_plan(plan)["dataset"]["version"] == "v0-n999-p0.01"
+    assert run_plan(plan)["dataset"]["version"] == "v1-n999-p0.01-s0"
     ds["version"] = "not-a-version"
     con = sqlite3.connect(str(exp_dir / "lineage.sqlite"))
     con.execute("UPDATE evaluations SET dataset_json=? WHERE evaluation_id=?",
