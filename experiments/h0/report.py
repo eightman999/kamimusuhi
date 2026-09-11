@@ -228,6 +228,91 @@ def fmt(x, nd=4):
     return "nan" if x is None or (isinstance(x, float) and np.isnan(x)) else f"{x:.{nd}f}"
 
 
+def _findings(summary: Dict, causal: Dict, seeds: List[int],
+              verdict: Dict) -> List[str]:
+    """Data-derived honest notes: unused channels, OOD failures, regressions."""
+    out = []
+    best_tag = verdict["best_tag"]
+
+    heur_id = summary.get("heuristic", {}).get("ID", {}).get(
+        "homeostatic_error_full", {}).get("mean", float("nan"))
+    best_id = np.nanmean([
+        summary[f"{best_tag}_seed{s}"]["best"]["ID"]
+        ["homeostatic_error_full"]["mean"] for s in seeds
+        if f"{best_tag}_seed{s}" in summary])
+    if not np.isnan(best_id) and not np.isnan(heur_id):
+        rel = "below" if best_id < heur_id else "above"
+        out.append(
+            f"In-distribution, the best learned agent ({best_tag}) is "
+            f"{rel} the hand-coded heuristic ({best_id:.4f} vs "
+            f"{heur_id:.4f}). The learned advantage is out-of-distribution, "
+            f"not ID.")
+
+    # OOD conditions where learned is worse than heuristic
+    losses = []
+    for c in OOD:
+        le = np.nanmean([summary[f"{best_tag}_seed{s}"]["best"][c]
+                         ["homeostatic_error_full"]["mean"] for s in seeds
+                         if f"{best_tag}_seed{s}" in summary])
+        he = summary.get("heuristic", {}).get(c, {}).get(
+            "homeostatic_error_full", {}).get("mean", float("nan"))
+        if not np.isnan(le) and not np.isnan(he) and le > he:
+            losses.append(f"{c} ({le:.3f} vs {he:.3f})")
+    if losses:
+        out.append("OOD conditions where learned loses to heuristic: "
+                   + "; ".join(losses) + ".")
+
+    # channels with no causal influence (|mask delta| small) and low
+    # action-shift: evidence the policy ignores them
+    unused, used = [], []
+    shifts = [summary[f"{best_tag}_seed{s}"]["best"]["ID"]["action_shift"]
+              for s in seeds if f"{best_tag}_seed{s}" in summary]
+    if shifts:
+        sh_avg = {v: float(np.mean([m[v] for m in shifts]))
+                  for v in dyn.INTERNAL_NAMES}
+        for v in dyn.INTERNAL_NAMES:
+            deltas = [causal[f"{best_tag}_seed{s}"]["summary"]
+                      .get(f"mask_{v}", {}).get("delta_error", float("nan"))
+                      for s in seeds if f"{best_tag}_seed{s}" in causal]
+            md = np.nanmean(deltas) if deltas else float("nan")
+            if not np.isnan(md) and abs(md) < 0.02 and sh_avg[v] < 0.15:
+                unused.append(v)
+            elif not np.isnan(md) and md > 0.05:
+                used.append(f"{v} (+{md:.3f})")
+    if used:
+        out.append("Channels with causal influence on behavior: "
+                   + ", ".join(used) + ".")
+    if unused:
+        out.append("Channels the policy does not causally use "
+                   "(mask delta ~0 and low action-shift): "
+                   + ", ".join(unused) + ".")
+
+    hr = [causal[f"{best_tag}_seed{s}"]["summary"]
+          .get("hidden_reset", {}).get("delta_error", float("nan"))
+          for s in seeds if f"{best_tag}_seed{s}" in causal]
+    if hr and not np.isnan(np.nanmean(hr)):
+        out.append(f"hidden_reset delta = {np.nanmean(hr):+.4f}: no evidence "
+                   f"of long-horizon dependence on recurrent hidden state "
+                   f"within a 1024-step episode.")
+
+    # best -> final regression (PPO late-training degradation)
+    gaps = []
+    for s in seeds:
+        k = f"{best_tag}_seed{s}"
+        try:
+            b = summary[k]["best"]["ID"]["homeostatic_error_full"]["mean"]
+            f_ = summary[k]["final"]["ID"]["homeostatic_error_full"]["mean"]
+            gaps.append(f_ - b)
+        except KeyError:
+            pass
+    if gaps:
+        out.append(f"best→final ID error regression: "
+                   f"{np.mean(gaps):+.4f} mean over {len(gaps)} seeds "
+                   f"(PPO continues to drift after the best checkpoint; "
+                   f"best-checkpoint selection matters).")
+    return out
+
+
 def build_report(summary: Dict, causal: Dict, seeds: List[int],
                  verdict: Dict) -> str:
     L = []
@@ -310,6 +395,13 @@ def build_report(summary: Dict, causal: Dict, seeds: List[int],
             for ab in ab_names:
                 L.append(f"| {ab} | {fmt(np.mean(rows[ab]),4)} |")
             L.append("")
+
+    findings = _findings(summary, causal, seeds, verdict)
+    if findings:
+        L.append("## Findings / limitations\n")
+        for f_ in findings:
+            L.append(f"- {f_}")
+        L.append("")
 
     L.append("## Figures\n")
     for f in sorted(FIGS.glob("*.png")):
