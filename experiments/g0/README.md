@@ -84,8 +84,13 @@ cause-independent distractor dims:
   permutation- and sign-invariant) probed per rep (`dynseg_*`), plus
   `dynfeat_canonical` (true-signal headroom) and `dynfeat_obs`
   (no-learning baseline) pseudo-reps in the sweep.
-- **controls**: `gru_untrained` / `ae_untrained` reservoir controls are
-  evaluated by the sweep per seed.
+- **controls**: `gru_untrained` / `ae_untrained` / `ae_vq_untrained` /
+  `gru_untrained_km` reservoir controls are evaluated by the sweep per
+  seed (`--untrained`); `controls.py` computes paired trained−untrained
+  per-seed diffs.
+- **nulls**: `midctx_acc_null` (per-episode post-switch label shuffle)
+  and `match_ood_ctx_null` (centroid-label permutation) calibrate
+  "above floor" claims empirically.
 - **discrete**: code usage, MI(cause; code), within-segment stability.
 - **intervention**: decode-delta directions vs true per-context cause
   prototypes (selectivity = diag - max off-diag cosine).
@@ -102,8 +107,14 @@ cause-independent distractor dims:
     $PY -m experiments.g0.sweep --config experiments/g0/configs/smoke.yaml \
         --seeds 0 --quiet
 
-    # full run (trains 4 models x N seeds, evaluates 9 reps)
+    # full run (trains 4 models x N seeds, evaluates 15 reps)
     $PY -m experiments.g0.sweep --seeds 0 1 2 3 4 --quiet
+
+    # re-evaluate saved best-val checkpoints (no retraining)
+    $PY -m experiments.g0.sweep --seeds 0 1 2 3 4 --eval-only --quiet
+
+    # paired trained-vs-untrained diffs -> reports/controls_untrained.json
+    $PY -m experiments.g0.controls --diffs-only
 
     # single model / single rep
     $PY -m experiments.g0.train --model gru_vq --seed 0 --quiet
