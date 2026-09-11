@@ -132,6 +132,10 @@ def compare_evaluators(genomes, config: dict, device: str,
                         replicates=setting.get("replicates"),
                         data_dir=data_dir, profile=False)
             ids.append(g.genome_id)
+            if r["ok"]:
+                # the scorer may need to know whose summary this is (the
+                # structural component lives on the genome, not the run)
+                r["summary"].setdefault("genome_id", g.genome_id)
             scores.append(float("-inf") if not r["ok"]
                           else float(score(r["summary"])))
             rows.append({"genome_id": g.genome_id, "ok": r["ok"],
@@ -157,3 +161,62 @@ def compare_evaluators(genomes, config: dict, device: str,
         "gold_rows": gold_rows, "cheap_rows": cheap_rows,
     })
     return report
+
+
+def parse_candidate(text: str) -> dict:
+    """``"250x2"`` -> ``{"duration_ms": 250.0, "replicates": 2}``."""
+    part = text.strip().lower().replace(" ", "")
+    if "x" not in part:
+        raise ValueError(f"cheap evaluator candidate {text!r} must be "
+                         "<duration_ms>x<replicates>, e.g. 250x2")
+    dur, reps = part.split("x", 1)
+    return {"duration_ms": float(dur), "replicates": int(reps)}
+
+
+def candidate_cost(setting: dict) -> float:
+    """Simulated milliseconds per evaluation — what makes one candidate
+    lighter than another, before anything is measured."""
+    return float(setting.get("duration_ms", 0)) * int(
+        setting.get("replicates", 1))
+
+
+def search_cheap_evaluator(genomes, config: dict, device: str, gold: dict,
+                           candidates: list[dict], score,
+                           execution_batch: int = 1,
+                           data_dir: str | None = None, k: int = 8,
+                           min_rho: float = 0.85,
+                           min_overlap: int = 6) -> dict:
+    """Take the **lightest** candidate that still ranks like gold (§21).
+
+    Candidates are tried cheapest first and the search stops at the first
+    acceptance, so the chosen evaluator is the cheapest one that passes —
+    not the best-scoring one, which would quietly buy agreement with
+    compute. Every rejected candidate is reported with the numbers that
+    rejected it, because "500x2 failed at rho=0.71" is the finding that
+    sets the run's replicate count.
+    """
+    ordered = sorted(candidates, key=candidate_cost)
+    gold_cost = candidate_cost(gold)
+    attempts, chosen = [], None
+    for setting in ordered:
+        if candidate_cost(setting) >= gold_cost:
+            attempts.append({"candidate": setting, "skipped": True,
+                             "reason": "not cheaper than gold"})
+            continue
+        report = compare_evaluators(genomes, config, device, gold, setting,
+                                    score, execution_batch=execution_batch,
+                                    data_dir=data_dir, k=k, min_rho=min_rho,
+                                    min_overlap=min_overlap)
+        attempts.append(report)
+        if report["accepted"]:
+            chosen = report
+            break
+    return {
+        "gold": gold,
+        "chosen": (chosen["cheap"] if chosen else None),
+        "chosen_report": chosen,
+        "attempts": attempts,
+        "note": ("no candidate ranked like gold; update generations with "
+                 "the gold evaluator" if chosen is None else
+                 "cheapest candidate that reproduces gold's ranking"),
+    }

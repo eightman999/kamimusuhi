@@ -276,40 +276,79 @@ def cmd_profile(args) -> int:
 
 
 def cmd_rank_check(args) -> int:
-    """M1 §2.3: does a cheaper evaluator rank individuals like the gold
-    one? Accepts only at Spearman rho >= 0.85 and top-8 overlap >= 6/8.
+    """M1 §2.3/§21: which cheap evaluator ranks individuals like gold?
+
+    Selection consumes ranks, so the question is not whether the cheap
+    evaluator agrees on scores but whether it orders the population the
+    same way. The lightest candidate meeting rho >= 0.85 and top-8
+    overlap >= 6/8 is adopted; anything else is refused with its numbers.
     """
-    from .evolution.population import fitness_placeholder
+    from .evolution import fitness as F
+    from .genome.structure import analyse
     from .perf.evalbench import founder_population
-    from .perf.rank_agreement import compare_evaluators
+    from .perf.rank_agreement import (compare_evaluators, parse_candidate,
+                                      search_cheap_evaluator)
     config = load_config(getattr(args, "config", None))
     ev = config.get("evaluation", {})
     target = float(ev.get("target_rate_hz", 5.0))
     genomes = founder_population(args.population,
                                  base_seed=int(config.get("evolution", {})
                                                .get("mutation_seed", 0)))
+    structures = {g.genome_id: analyse(g).to_dict() for g in genomes}
+
+    def score(summary):
+        # rank on what the run actually selects on, not on the M0
+        # placeholder: a cheap evaluator that preserves the placeholder's
+        # order but scrambles the disturbance response is not usable
+        gid = (summary or {}).get("genome_id")
+        metrics = F.compute_metrics(summary, structures.get(gid), config,
+                                    target)
+        value = F.selection_score(metrics, config)
+        return value if value is not None else float("-inf")
+
     gold = {"duration_ms": args.gold_duration_ms or ev.get("duration_ms", 500),
             "replicates": args.gold_replicates or ev.get("replicates", 8)}
-    cheap = {"duration_ms": args.cheap_duration_ms,
-             "replicates": args.cheap_replicates}
-    report = compare_evaluators(
-        genomes, config, args.device, gold, cheap,
-        score=lambda s: fitness_placeholder(s, target) or float("-inf"),
-        execution_batch=args.execution_batch, data_dir=args.data_dir,
-        k=args.top_k, min_rho=args.min_rho, min_overlap=args.min_overlap)
-    print(f"gold  {gold}  {report['gold_wall_s']}s")
-    print(f"cheap {cheap}  {report['cheap_wall_s']}s  "
-          f"speedup x{report['speedup']}")
-    print(f"spearman_rho={report['spearman_rho']} "
-          f"top{report['top_k']['k']}_overlap="
-          f"{report['top_k']['overlap']}/{report['top_k']['k']}")
-    print("ACCEPTED" if report["accepted"]
-          else "REJECTED: " + "; ".join(report["rejected_because"]))
+    if args.candidates:
+        report = search_cheap_evaluator(
+            genomes, config, args.device, gold,
+            [parse_candidate(c) for c in args.candidates.split(",")],
+            score=score, execution_batch=args.execution_batch,
+            data_dir=args.data_dir, k=args.top_k, min_rho=args.min_rho,
+            min_overlap=args.min_overlap)
+        print(f"gold {gold}")
+        for a in report["attempts"]:
+            if a.get("skipped"):
+                print(f"  {a['candidate']}  skipped: {a['reason']}")
+                continue
+            print(f"  {a['cheap']}  x{a['speedup']} faster  "
+                  f"rho={a['spearman_rho']} "
+                  f"top{a['top_k']['k']}={a['top_k']['overlap']}  "
+                  + ("ACCEPTED" if a["accepted"]
+                     else "rejected: " + "; ".join(a["rejected_because"])))
+        print(f"chosen: {report['chosen']} ({report['note']})")
+        accepted = report["chosen"] is not None
+    else:
+        cheap = {"duration_ms": args.cheap_duration_ms,
+                 "replicates": args.cheap_replicates}
+        report = compare_evaluators(
+            genomes, config, args.device, gold, cheap, score=score,
+            execution_batch=args.execution_batch, data_dir=args.data_dir,
+            k=args.top_k, min_rho=args.min_rho,
+            min_overlap=args.min_overlap)
+        print(f"gold  {gold}  {report['gold_wall_s']}s")
+        print(f"cheap {cheap}  {report['cheap_wall_s']}s  "
+              f"speedup x{report['speedup']}")
+        print(f"spearman_rho={report['spearman_rho']} "
+              f"top{report['top_k']['k']}_overlap="
+              f"{report['top_k']['overlap']}/{report['top_k']['k']}")
+        print("ACCEPTED" if report["accepted"]
+              else "REJECTED: " + "; ".join(report["rejected_because"]))
+        accepted = report["accepted"]
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(report, indent=2, default=str))
         print(f"wrote {args.out}")
-    return 0 if report["accepted"] else 6
+    return 0 if accepted else 6
 
 
 def cmd_sensitivity(args) -> int:
@@ -550,6 +589,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--gold-replicates", type=int, default=None)
     p.add_argument("--cheap-duration-ms", type=float, default=250.0)
     p.add_argument("--cheap-replicates", type=int, default=2)
+    p.add_argument("--candidates", default=None,
+                   help="comma-separated <duration_ms>x<replicates> "
+                        "candidates, cheapest accepted wins "
+                        "(e.g. 250x2,500x2,500x4)")
     p.add_argument("--execution-batch", type=int, default=1)
     p.add_argument("--top-k", type=int, default=8)
     p.add_argument("--min-rho", type=float, default=0.85)

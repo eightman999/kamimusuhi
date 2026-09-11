@@ -132,6 +132,7 @@ def episode_metrics(
         "switching_rate": switching_rate(actions),
         "recovery_time": recovery_time(stable),
         "state_action_mi": mi,
+        "action_shift": conditional_action_shift(internals, actions),
         "total_reward": float(np.sum(rewards)),
     }
 
