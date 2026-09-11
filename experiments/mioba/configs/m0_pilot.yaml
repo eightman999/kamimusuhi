@@ -1,0 +1,59 @@
+# M0 Evolution Pilot — the first *actual* multi-generation MIOBA evolution.
+#
+# Purpose: run the evolutionary loop for 10 generations under sustained load
+# and confirm the infrastructure does not break (lineage, mutation, job flow
+# across two heterogeneous GPUs, checkpoints, DB integrity, resume, no memory
+# or VRAM growth). This is NOT a smoke test and NOT the scientific experiment:
+# `fitness` is still the placeholder -|mean_rate_hz - target|, so an M0 fitness
+# improvement is not a research result. M1 designs the environment, fitness and
+# mutation pressure.
+#
+# Hardware: RTX 3060 12GB (cuda:0) + Tesla P100 16GB (cuda:1), asynchronous.
+# FBA: the validated synthetic 139k neurons / 14M explicit edges
+# (dataset identity v0-n139000-e14000000) — the FlyWire-scale condition that
+# passed the 2026-09-11 GPU validation on both GPUs.
+#
+# Scientific sections (population, evolution, evaluation, fba, env) are frozen
+# under one experiment id: changing any of them requires a NEW experiment.
+# Everything else (worker, jobs, checkpoint, stop, mie, traces, gui) is
+# operational and may be tuned mid-run.
+
+experiment: {id_prefix: "M0", runs_dir: "experiments/mioba/.runs"}
+
+population: {target_size: 32}
+
+evolution: {max_generations: 10, elite_k: 8, mutation_seed: 20260911}
+
+# execution_batch is pinned to 1 (not `auto`): the GPU validation measured
+# sim-s/wall-s *dropping* 5-7x at batch >= 2 at this scale (spmv vs spmm
+# kernel paths), and `auto` selects 1 on both GPUs anyway. Pinning it keeps
+# the two workers on one known execution path for the pilot. It is
+# operational: replicate count, seeds and fitness do not depend on it.
+worker: {execution_batch: 1, candidates: [1,2,4,8,16,32], vram_headroom: 0.85,
+         bench_duration_ms: 200, bench_organ_overhead_neurons: 0,
+         heartbeat_s: 5, lost_after_s: 90, grace_s: 30}
+
+jobs: {requeue_unknown: true, max_attempts: 3}
+
+evaluation: {tier: pilot, replicates: 8, duration_ms: 500, backend: torch,
+             environment_id: synthetic-quiet-v0, target_rate_hz: 5.0}
+
+fba: {data_dir: null, synthetic: true, synthetic_neurons: 139000,
+      synthetic_edges: 14000000}
+
+# ~36 s per evaluation per GPU at this scale, so a checkpoint every 5 min is
+# roughly every 16 evaluations — frequent enough that a crash costs little,
+# rare enough not to churn the DB over a multi-hour run.
+checkpoint: {interval_s: 300}
+
+# One in-flight evaluation is ~36 s; allow a graceful stop to let the current
+# jobs land instead of orphaning them.
+stop: {timeout_s: 180}
+
+mie: {interval_s: 5, collectors: [gpu, cpu, ram], anomaly: {gpu_temp_c: 85}}
+
+env: {stim_fraction: 0.01, stim_rate_hz: 50}
+
+traces: {store_full_for: [elite, novel, debug, explicit], dir: traces}
+
+gui: {enabled: true}
