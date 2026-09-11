@@ -726,9 +726,18 @@ class Database:
 
     def mark_worker_status(self, experiment_id: str, worker_id: str,
                            status: str) -> None:
+        """Set a worker's run status. A worker that is no longer online
+        holds no job: its ``current_job_id`` is cleared so the GUI does not
+        show a dead worker card as still running a job that has since been
+        requeued and finished elsewhere."""
         with self._lock:
-            self._q("UPDATE worker_runs SET status=? WHERE experiment_id=? AND "
-                    "worker_id=?", (status, experiment_id, worker_id))
+            if status == "online":
+                self._q("UPDATE worker_runs SET status=? WHERE experiment_id=? "
+                        "AND worker_id=?", (status, experiment_id, worker_id))
+            else:
+                self._q("UPDATE worker_runs SET status=?, current_job_id=NULL "
+                        "WHERE experiment_id=? AND worker_id=?",
+                        (status, experiment_id, worker_id))
             self._commit()
 
     # ------------------------------------------------------------ checkpoints

@@ -162,3 +162,48 @@ def test_cli_replay_exit_codes(tmp_path, smoke_config):
                           exp_dir.name, "replay", ev["evaluation_id"],
                           "--backend", "torch", "--strict"])
     assert args.fn(args) == 5
+
+
+def test_repeated_replays_are_archived_not_overwritten(tmp_path, smoke_config):
+    """Replaying one evaluation several times (strict / device-drift /
+    different execution batch) must keep every report: the per-run
+    device_warnings of an earlier replay are not overwritten by a later
+    one. <evaluation_id>.json remains the latest pointer."""
+    from experiments.mioba.cli import build_parser
+    import yaml
+    cfg = copy.deepcopy(smoke_config)
+    exp_dir, ev = _one_eval(tmp_path, cfg)
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg))
+    ap = build_parser()
+    base = ["--config", str(cfg_path), "--runs-dir", str(tmp_path / "runs"),
+            "--experiment-id", exp_dir.name, "replay", ev["evaluation_id"]]
+
+    assert ap.parse_args(base).fn(ap.parse_args(base)) == 0
+    args = ap.parse_args(base + ["--execution-batch", "1"])
+    assert args.fn(args) == 0
+
+    replays = exp_dir / "replays"
+    archived = sorted(replays.glob(f"{ev['evaluation_id']}.*.json"))
+    assert len(archived) == 2, [p.name for p in archived]
+    latest = json.loads((replays / f"{ev['evaluation_id']}.json").read_text())
+    assert latest["conditions"]["execution_batch"] == 1
+    assert json.loads(archived[-1].read_text())["conditions"]["execution_batch"] == 1
+
+
+def test_replay_out_option(tmp_path, smoke_config):
+    from experiments.mioba.cli import build_parser
+    import yaml
+    cfg = copy.deepcopy(smoke_config)
+    exp_dir, ev = _one_eval(tmp_path, cfg)
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg))
+    out = tmp_path / "reports" / "parity.json"
+    ap = build_parser()
+    args = ap.parse_args(["--config", str(cfg_path), "--runs-dir",
+                          str(tmp_path / "runs"), "--experiment-id",
+                          exp_dir.name, "replay", ev["evaluation_id"],
+                          "--out", str(out)])
+    assert args.fn(args) == 0
+    assert json.loads(out.read_text())["diff"]["identical_spike_counts"] is True
+    assert list((exp_dir / "replays").glob(f"{ev['evaluation_id']}.*.json"))
