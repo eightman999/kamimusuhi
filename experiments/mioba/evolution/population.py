@@ -230,6 +230,50 @@ class PopulationController:
                                   "selection_score": selection_score},
                          source="population")
 
+    def _check_efficiency_gate(self, generation_rows, generation: int) -> None:
+        """Warn when the whole generation was below the viability gate.
+
+        ``fitness.minimum_viable_task_score`` exists so that an organism
+        which does nothing cannot win on cheapness (M1 §9). If *every*
+        individual is below it, the gate is no longer protecting the
+        efficiency term — it is switching it off, and the run is
+        selecting on fewer objectives than it says it is. That is a
+        calibration fact about the target rate and the gate, and it has
+        to be visible rather than showing up as a column of zeros.
+        """
+        qualities, gated = [], 0
+        for g in generation_rows:
+            evs = self.db.list_evaluations(self.experiment_id,
+                                           genome_id=g["genome_id"], limit=1)
+            if not evs:
+                continue
+            try:
+                metrics = json.loads(evs[0].get("metrics_json") or "{}")
+            except ValueError:
+                continue
+            if metrics.get("task_quality") is not None:
+                qualities.append(metrics["task_quality"])
+            if metrics.get("resource_efficiency_gated"):
+                gated += 1
+        if not qualities or gated < len(qualities):
+            return
+        gate = float((self.config.get("fitness") or {})
+                     .get("minimum_viable_task_score", 0.35))
+        self.db.emit(
+            self.experiment_id, M.EV_EFFICIENCY_GATE_INERT, "warn",
+            {"generation": generation, "gated": gated,
+             "evaluated": len(qualities),
+             "minimum_viable_task_score": gate,
+             "max_task_quality": round(max(qualities), 4),
+             "median_task_quality": round(
+                 sorted(qualities)[len(qualities) // 2], 4),
+             "reason": "no individual reached the viability gate, so the "
+                       "resource-efficiency component contributed nothing; "
+                       "calibrate fitness.minimum_viable_task_score or "
+                       "evaluation.target_rate_hz from the measured rate "
+                       "distribution"},
+            "population")
+
     # ------------------------------------------------------------- advance
     def maybe_advance(self) -> int:
         """Spawn next generation when the current one is fully evaluated."""
@@ -269,6 +313,7 @@ class PopulationController:
             scored.append((score if score is not None else float("-inf"),
                            g["genome_id"]))
         scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+        self._check_efficiency_gate(current, current_gen)
         elites = [gid for _, gid in scored[:elite_k]] or [current[0]["genome_id"]]
         target = int(self.config.get("population", {}).get("target_size", 8))
         born = 0

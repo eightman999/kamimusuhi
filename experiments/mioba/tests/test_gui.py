@@ -80,7 +80,9 @@ def test_ancestry_fraction_synthetic(client, service):
     organ_genome = None
     for i in range(200):
         g = mutate(base, rng, i, 1)
-        if g.artificial_organs:
+        # a genome whose only organs are disabled develops no extra
+        # neurons, so its ancestry fraction is legitimately 1.0
+        if any(o.enabled for o in g.artificial_organs):
             organ_genome = g
             break
     assert organ_genome is not None

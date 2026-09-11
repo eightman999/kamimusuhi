@@ -132,6 +132,36 @@ Ranking is on `selection_score`, not the M0 placeholder: a cheap evaluator that
 preserves the placeholder's order while scrambling the disturbance response is
 not usable for M1.
 
+## 5b. Calibrate the viability gate (§9)
+
+`fitness.minimum_viable_task_score` decides which individuals are eligible for
+the resource-efficiency bonus. It is the one M1 parameter that can silently
+switch off a whole objective, so it must be set from the measured distribution:
+
+```
+task_quality = 1 - |mean_rate_hz - target_rate_hz| / target_rate_hz
+```
+
+At the default gate of 0.35 and a 5 Hz target, an individual must fire within
+3.25 Hz of target. **M0 measured every individual at ~9.5 Hz, which scores
+0.1** — at that distribution nobody passes, the efficiency component
+contributes zero to everyone, and M1 selects on fewer objectives than it
+claims. The same happened on the CPU smoke run (max task_quality 0.22,
+32/32 gated).
+
+From the step 1 profile output, take the `mean_rate_hz` of the founder
+population and compute the resulting `task_quality` spread. Then either
+
+- move `evaluation.target_rate_hz` to the middle of the achievable range, or
+- lower `minimum_viable_task_score` to roughly the 25th percentile of the
+  measured `task_quality`,
+
+so that a useful minority passes the gate and the efficiency pressure acts
+*between* capable individuals, as §9 intends. The coordinator emits
+`efficiency_gate_inert` (warning, visible in the Live Observatory feed) if a
+whole generation falls below the gate anyway — treat it as a stop-and-recalibrate
+signal, not as noise.
+
 ## 6. Derive the run parameters
 
 From steps 1-5:
@@ -143,6 +173,7 @@ From steps 1-5:
 | `evaluation.duration_ms` / `replicates` | step 5 adopted candidate |
 | `evolution.mutation.parameter_*` | step 4 recommendation |
 | `fba.propagation_backend` / `dense_above` | step 2 |
+| `fitness.minimum_viable_task_score` | step 5b |
 | `population.target_size` | see below |
 | `evolution.max_generations` | see below |
 

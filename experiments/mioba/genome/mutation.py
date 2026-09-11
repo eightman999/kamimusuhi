@@ -82,6 +82,13 @@ DEFAULTS = {
     "attachment_weight_scale": [0.5, 1.5],
     # per-parameter scale ranges, filled in from the §10 sensitivity sweep
     "parameter_scale_by_path": {},
+    # An operator drawn for a genome that has nothing to operate on (GROW
+    # on an organism with no organs, PRUNE with no attachments) applies
+    # nothing. Early generations are mostly such genomes, so without a
+    # re-draw roughly half the mutation budget evaporates exactly when
+    # structure needs to appear. Re-draws are bounded and every abandoned
+    # attempt is still recorded, so the provenance stays complete.
+    "retry_no_target": 3,
     # relative probability of picking each parameter; the sweep lowers the
     # ones that do not move the phenotype (M1 §10)
     "parameter_weights": {},
@@ -490,12 +497,20 @@ def mutate(parent: Genome, rng: random.Random, birth_index: int,
     child.random_seed = rng.randrange(2**31)
 
     n = mutation_count(rng, cfg)
+    retries = int(cfg.get("retry_no_target", 0) or 0)
     records: list[MutationRecord] = []
     for _ in range(n):
-        mid = _mid(rng)
-        prov = parent.provenance(birth_mutation_id=mid)
-        _category, operator = choose_operator(rng, cfg)
-        records.append(apply_operator(child, rng, operator, cfg, prov, mid))
+        for attempt in range(retries + 1):
+            mid = _mid(rng)
+            prov = parent.provenance(birth_mutation_id=mid)
+            _category, operator = choose_operator(rng, cfg)
+            rec = apply_operator(child, rng, operator, cfg, prov, mid)
+            records.append(rec)
+            if rec.outcome != OUTCOME_NO_TARGET or attempt == retries:
+                break
+            # nothing to operate on: draw again rather than spend a
+            # mutation on a genome that cannot receive it
+            rec.detail = dict(rec.detail, redrawn=True)
     return child.finalize(), records
 
 

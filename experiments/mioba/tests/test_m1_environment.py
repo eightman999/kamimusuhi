@@ -9,6 +9,7 @@ doing nothing.
 from __future__ import annotations
 
 import copy
+import json
 
 import pytest
 
@@ -429,3 +430,25 @@ def test_end_to_end_evaluation_under_disturbance(tmp_path, smoke_config):
         assert ev["selection_score"] is not None
     finally:
         svc.db.close()
+
+
+def test_a_wholly_gated_generation_is_reported_not_silent(client, service,
+                                                          monkeypatch):
+    """§9: the viability gate must protect the efficiency term, not
+    switch it off. If every individual is below it, the run is selecting
+    on fewer objectives than it claims, and that has to be visible."""
+    from experiments.mioba.storage import models as M
+    from .conftest import run_worker_once
+
+    # a target the mock backend cannot reach: everyone is gated
+    service.config.setdefault("evaluation", {})["target_rate_hz"] = 400.0
+    while run_worker_once(client, "w1") is not None:
+        pass
+    service.population.maybe_advance()
+
+    events = service.db.list_events(service.experiment_id, 0, 10000)
+    inert = [e for e in events if e["type"] == M.EV_EFFICIENCY_GATE_INERT]
+    assert inert, "a fully gated generation was not reported"
+    payload = json.loads(inert[0]["payload_json"])
+    assert payload["gated"] == payload["evaluated"]
+    assert payload["max_task_quality"] < payload["minimum_viable_task_score"]

@@ -110,8 +110,17 @@ fitness:
     resource_efficiency_score: 0.4
     structural_functionality: 0.2
     novelty: 0.2
-  # below this normalised task quality the efficiency bonus is exactly
-  # zero, so an organism that does nothing cannot win on cheapness
+  # Below this normalised task quality the efficiency bonus is exactly
+  # zero, so an organism that does nothing cannot win on cheapness.
+  #
+  # CALIBRATE THIS BEFORE THE RUN. task_quality = 1 - |rate - target|/target,
+  # so 0.35 requires the population to fire within 3.25 Hz of the 5 Hz
+  # target. M0 measured every individual at ~9.5 Hz, which scores 0.1 —
+  # at that distribution NO individual passes the gate and the whole
+  # resource-efficiency objective is silently switched off. The
+  # preflight run measures the actual task_quality distribution and sets
+  # this (or evaluation.target_rate_hz) from it; the coordinator emits
+  # `efficiency_gate_inert` if a whole generation falls below it anyway.
   minimum_viable_task_score: 0.35
   memory_cost_reference_bytes: 524288
   compute_cost_reference_edges: 5000.0

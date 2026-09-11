@@ -51,6 +51,11 @@ EV_SCIENTIFIC_CONFIG_MISMATCH = "scientific_config_mismatch"
 EV_RUNTIME_RESOURCE_RETRY = "runtime_resource_retry"
 # an evaluation whose activity makes event-driven propagation a bad fit
 EV_HIGH_ACTIVITY = "high_activity_individual"
+# M1: every evaluated individual in a generation fell below
+# fitness.minimum_viable_task_score, so the resource-efficiency pressure
+# (section 8/9) contributed nothing to any of them. Not an error - but a
+# silently inert objective is worse than a loud one, so it is an event.
+EV_EFFICIENCY_GATE_INERT = "efficiency_gate_inert"
 
 # M1 structural mutation outcomes (§4 / §13)
 EV_STRUCTURAL_MUTATION = "structural_mutation"
