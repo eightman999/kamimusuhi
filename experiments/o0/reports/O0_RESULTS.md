@@ -1,189 +1,217 @@
-# O0 — Object Permanence: Results
+# O0 — Object Permanence: Results (v2, post-review revision)
 
 **Question.** After a target disappears behind an occluder, can an agent
 maintain its existence, position, and identity in an internal state —
-i.e. track something it cannot currently see? Not general memory:
-*persistent world representation under occlusion*.
+i.e. track something it cannot currently see?
 
-**Verdict: PASS** on position + existence tracking (the core claim),
-**PARTIAL** on identity re-acquisition (capacity-dependent; see below).
+**Verdict: PARTIAL.** The central phenomenon is real and causally
+verified — recurrent models maintain an internal object state whose
+deletion destroys tracking. But the v1 claim "beats all heuristics"
+was an aggregation artifact: on ordinary occlusions of trained length
+(4–16) the const-velocity family is near-optimal and the learned models
+do **not** beat it. The models earn their keep on longer bouts, motion
+shifts, and existence representation — not on the easy canonical case.
+
+## What changed after review
+
+| finding | fix |
+|---|---|
+| C1 aggregate artifact (gone eps dominated hidden steps: 70% of hidden mass at bout>16) | `p_gone=0` in training; `pos_mae_occ_*` decomposed by episode type and realized bout length; `pos_mae_occ_persist_le16` is the headline |
+| C2 realized hidden duration exceeded 4–16 claim | same retrain; boundary absorption is now eval-only (`gone20`) |
+| C1 missing strong baseline | added `corridor` (constvel clipped to occluder bounds) and `kalman` (linear KF over [x,v,a], true noise stats); `oracle` → `openloop` (it overshoots the boundary — not a Bayes ceiling) |
+| M1 occ24/32/48 also changed v/vis/spawn | added pure `plen24/32/48` (only occ bounds change); all knobs disclosed below |
+| M2 distractors toothless (dedicated channels) | added `decoytk`: ambush decoy occupies the **target channel** while the true target is still hidden |
+| M3 report errors | err-vs-occstep numbers corrected; heuristics renamed |
+| minor | per-episode 95% CI added; post-reset-only degradation reported; reset→prior reversion verified |
+
+v1 artifacts (p_gone=0.2 matrix) preserved under
+`artifacts/runs_v1_pgone02/` and `reports/v1_pgone02/`,
+`reports/raw/all_results_v1_pgone02.json`.
 
 ## Setup
 
-- World: 1D `[0,4]`, horizon 96. Target appears, moves with
-  near-constant velocity (drag 0.005, per-episode accel, process noise),
-  enters a static occluder for a planned 4–16 steps (train), then
-  reappears on the far side — unless absorbed by the world boundary
-  while hidden (`p_gone=0.2`, occluder flush with the edge) or
-  identity-swapped (`p_swap=0.3`, appearance jump ≥0.25).
-- 0–4 wandering distractors; occluder bounds always observable.
-- Observation dim 20. While the target is inside the occluder, **all**
-  target channels read exactly 0; `tests/test_leakage.py` verifies no
-  channel decodes hidden-position residual, time-to-reappearance, or
-  counterfactual hidden trajectories.
-- Tasks: O0-A position (MAE on the hidden window; headline
-  `pos_err_pre_reappear` = error on the last hidden step), O0-B
-  existence (incl. post-absorption steps), O0-C identity
-  (post-reappearance "same object?").
-- Learned: MLP (memoryless control), GRU-64/128, LSTM-64, tiny diagonal
-  SSM. 3000 supervised updates, fresh episodes each step, multitask
-  heads; checkpoint selected on a fixed validation stream.
-  Heuristics: `prior`, `lastobs`, `constvel`, `oracle` (true motion
-  model — reference ceiling).
-- **5 seeds × 5 architectures + 4 heuristics**, 512 eval episodes per
-  condition. Raw: `reports/raw/all_results.json` (493 rows),
-  `reports/summary.json`, figures `reports/*.png`.
+World `[0,4]`, horizon 96, target visible → occluded (planned 4–16,
+realized mean 12.2) → reappears (`p_swap=0.3` identity swap). 5 seeds ×
+{mlp, ssm, gru64, gru128, lstm64} × 3000 supervised updates; 6
+heuristics; 512 eval episodes per condition. Raw:
+`reports/raw/all_results.json` (682 rows), `reports/summary.json`,
+`reports/*.png`.
 
-## ID distribution (occlusion 4–16)
+## Headline: decomposed position error (ID)
 
-`pos_mae_occluded` = MAE over hidden steps while the object exists
-(normalized by world length; ×4 for world units).
+`pos_mae_occ_persist_le16` = MAE on hidden steps of persistent episodes
+whose realized bout ≤16 — the canonical task the v1 claim was about.
 
-| predictor | pos MAE occluded ↓ | pre-reappear ↓ | exist acc hidden ↑ | id acc ↑ |
-|---|---|---|---|---|
-| prior (geometry)   | 0.1222 | 0.0823 | 0.817 | 1.000* |
-| lastobs            | 0.2521 | 0.1734 | 0.817 | 1.000* |
-| constvel           | 0.0877 | 0.0256 | 0.910 | 1.000* |
-| oracle (ceiling)   | 0.0662 | 0.0205 | 0.915 | 0.995 |
-| mlp ×5             | 0.1235±.0010 | 0.0797±.002 | 0.450±.001 | 0.613±.016 |
-| ssm ×5             | 0.0726±.0036 | 0.0458±.003 | 0.856±.002 | 0.565±.031 |
-| **gru64 ×5**       | **0.0549±.0026** | 0.0259±.002 | 0.903±.007 | 0.560±.030 |
-| **gru128 ×5**      | **0.0533±.0011** | 0.0299±.001 | 0.909±.005 | **0.989±.003** |
-| **lstm64 ×5**      | **0.0585±.0029** | 0.0293±.004 | 0.900±.004 | 0.558±.025 |
+| predictor | persist ≤16 ↓ | bout >16 ↓ | all hidden ↓ | pre-reappear ↓ | exist hidden ↑ | id acc ↑ |
+|---|---|---|---|---|---|---|
+| prior    | .0440 | .0619 | .0498 | .0800 | 1.00 | 1.00* |
+| lastobs  | .0966 | .1394 | .1103 | .1740 | 1.00 | 1.00* |
+| constvel | **.0077** | .0455 | .0198 | .0206 | .996 | 1.00* |
+| corridor | **.0070** | **.0192** | **.0109** | **.0076** | .996 | 1.00* |
+| openloop | .0080 | .0344 | .0164 | .0174 | .996 | .998 |
+| kalman   | .0113 | .0381 | .0199 | .0295 | .998 | 1.00* |
+| mlp ×5   | .0455±.000 | .0628 | .0510±.000 | .0765 | **0.000** | .607±.026 |
+| ssm ×5   | .0190±.001 | .0303 | .0226±.001 | .0346 | 1.00 | .557±.023 |
+| gru64 ×5 | .0149±.005 | .0238 | .0177±.006 | .0258 | 1.00 | .815±.201 |
+| gru128 ×5| **.0099±.001** | **.0175** | **.0123±.001** | .0188 | 1.00 | .995±.004 |
+| lstm64 ×5| .0131±.002 | .0232 | .0163±.003 | .0249 | 1.00 | .569±.026 |
 
-\* heuristics get identity "for free" via a hard-coded appearance
-comparison rule — a designed capability, not evidence about learning.
+\* heuristics get identity via a hard-coded appearance-comparison rule.
 
-Reading:
-- **O0-A position**: every recurrent model beats *all* heuristics
-  (incl. the true-dynamics oracle, 0.0662) and the MLP (0.1235 — it can
-  only guess the occluder interior). Error grows smoothly with hidden
-  duration (`err_vs_occstep_id.png`), ≈0.03 at k=1 → ≈0.10 at k=20.
-- **O0-B existence**: recurrent ≈ oracle/constvel (~0.90–0.91);
-  MLP 0.45 ≈ chance — existence-over-time genuinely requires memory.
-  On absorbed (vanished) episodes: models ~0.84–0.85 vs oracle 0.848.
-- **O0-C identity**: **gru128 solves it (0.989, balanced
-  intact 0.99/swapped 0.99).** gru64/lstm64/ssm sit at ~0.56 — *below*
-  the ~0.7 always-"same" prior — they attempt discrimination but cannot
-  retain/compare the appearance signature reliably at this capacity.
-  PARTIAL: identity persistence is achievable but capacity-limited.
+Reading (honest):
+- **On the canonical short-bout task the learned models lose**:
+  corridor 0.0070 / constvel 0.0077 / openloop 0.0080 < kalman 0.0113 <
+  gru128 0.0099 < lstm 0.0131 < gru64 0.0149 < ssm 0.0190. Const-velocity
+  extrapolation is essentially optimal over ≤16 steps at this noise
+  level — the reviewer's point stands. The earlier "beats oracle"
+  aggregate was produced by long/gone bouts dominating hidden mass.
+- **Where learned models do win**: realized bouts >16 (gru128 0.0175,
+  best of all predictors incl. corridor 0.0192, constvel 0.0455), the
+  all-hidden aggregate (0.0123 — beats everything except corridor
+  0.0109), and the OOD shifts below. They also destroy the weak
+  baselines everywhere (prior/lastobs/mlp by 3–10×).
+- **Existence**: trivially 1.0 on ID for anything that tracks
+  (p_gone=0 ⇒ hidden ⇒ exists). The MLP scores **0.000** — it cannot
+  distinguish pre-appearance from occlusion; memory is necessary even
+  for the trivial version. The interesting case is `gone20` below.
+- **Identity**: gru128 solves it (0.995). gru64 is *seed-unstable*
+  (0.99/0.96/0.57/0.57/0.99 — bimodal), lstm64/ssm sit at ~0.55 ≈
+  below the always-same prior. Capacity story confirmed.
+- Per-episode 95% CI on the aggregate ≈ ±0.001 (gru128) — but all seeds
+  share one eval stream; σ over seeds measures init variance only
+  (paired design), not episode resampling.
 
-## Causal tests (ID preset) — does the hidden state carry the object?
+## Causal tests — does the hidden state carry the object?
 
-| intervention | mlp | ssm | gru64 | gru128 | lstm64 | constvel | oracle |
-|---|---|---|---|---|---|---|---|
-| none                | .1235 | .0726 | .0549 | .0533 | .0585 | .0877 | .0662 |
-| reset @ mid-occl    | .1235 | .1379 | .1567 | .1589 | .1419 | .2785 | .2758 |
-| reset @ mid-vis (control) | .1235 | .0833 | .0845 | .0820 | .0732 | .0877 | .0734 |
-| reset @ occl-start  | .1235 | .1622 | .2469 | .2488 | .2071 | .4869 | .4869 |
-| noise σ=0.5 @mid-occl | .1235 | .5031 | .1243 | .1501 | .0694 | .3648 | .3600 |
-| noise σ=2.0 @mid-occl | .1235 | 1.0848 | .3322 | .4060 | .1047 | .4895 | .4883 |
+ID preset; `post_reset` = hidden error strictly after the intervention
+step (the window-averaged number dilutes it).
 
-- **KEY RESULT — hidden reset mid-occlusion degrades tracking ~2.6–2.9×**
-  (gru128 0.053→0.159, gru64 0.055→0.157, lstm64 0.059→0.142), while the
-  **mid-visible control is nearly free** (0.073–0.085): when the target
-  is observable the model re-reads position from the observation; when
-  hidden, the state *is* the object representation. Existence accuracy
-  collapses 0.90→0.58 after mid-occlusion reset. No environment
-  shortcut: with the state zeroed there is nothing left to read —
-  consistent with the leakage audit.
-- Heuristics show the same signature (constvel 0.088→0.279,
-  oracle 0.066→0.276), validating the instrument.
-- MLP is invariant to all interventions (no state) — the negative
-  control behaves exactly as specified.
-- Reset at occlusion *start* is catastrophic (exist acc →0.22, whole
-  window lost), as expected.
-- Noise: graded degradation; LSTM notably robust (σ=2: 0.105 vs GRU
-  0.33–0.41) — its additive cell channel resists perturbation; SSM is
-  fragile (linear modes swamped by noise).
-
-## OOD / generalization (trained on occlusion 4–16)
-
-pos MAE occluded, mean over 5 seeds (heuristics deterministic):
-
-| preset | prior | constvel | oracle | mlp | ssm | gru64 | gru128 | lstm64 |
+| intervention | mlp | ssm | gru64 | gru128 | lstm64 | constvel | corridor | kalman |
 |---|---|---|---|---|---|---|---|---|
-| id          | .122 | .088 | .066 | .124 | .073 | .055 | .053 | .059 |
-| **occ24**   | .132 | .113 | .077 | .132 | .092 | .065 | .064 | .070 |
-| **occ32**   | .146 | .128 | .089 | .146 | .106 | .073 | .070 | .083 |
-| **occ48**   | .180 | .140 | .102 | .180 | .120 | .089 | .085 | .098 |
-| fast_v      | .124 | .019 | .014 | .126 | .060 | .030 | .031 | .060 |
-| slow_v      | .142 | .071 | .079 | .142 | .109 | .070 | .068 | .080 |
-| drag_x3     | .123 | .132 | .071 | .123 | .083 | .068 | .063 | .068 |
-| v_flip      | .126 | .098 | .076 | .128 | .077 | .062 | .060 | .067 |
-| distractors4| .123 | .092 | .063 | .125 | .076 | .059 | .058 | .062 |
-| ambush      | .124 | .090 | .060 | .127 | .071 | .054 | .053 | .058 |
-| app_jitter  | .126 | .073 | .069 | .127 | .071 | .052 | .051 | .057 |
-| swap_half   | .126 | .080 | .069 | .128 | .072 | .055 | .054 | .060 |
+| none (post-window baseline) | .054 | .023 | .019 | .015 | .018 | .034 | .016 | .036 |
+| reset @ mid-occl → post   | .054 | .150 | .216 | .187 | .137 | .498 | .103 | .498 |
+| reset @ mid-occl, whole window | .051 | .087 | .105 | .104 | .078 | .262 | .055 | .261 |
+| reset @ mid-vis (control), whole window | .051 | .034 | .045 | .043 | .031 | .020 | .011 | .034 |
+| reset @ occl-start, whole window | .051 | .103 | .158 | .166 | .104 | .457 | .093 | .456 |
+| noise σ=0.5 @ mid-occl    | .051 | .244 | .098 | .107 | .041 | .268 | .049 | .303 |
+| noise σ=2.0 @ mid-occl    | .051 | .528 | .300 | .336 | .102 | .449 | .054 | .464 |
 
-- **Occlusion-length transfer**: graceful degradation — gru128 holds
-  0.085 at occ48 (3× the max trained length) and still beats constvel
-  (0.140), prior (0.180), MLP (0.180) *and* the oracle (0.102).
-  Pre-reappear error grows (gru128 0.030→0.089→0.137→0.237 at
-  24/32/48): localizing the *exit moment* over long horizons is the hard
-  part. `err_vs_occstep_occ48.png`, `err_vs_boutlen.png`.
-- **Motion-model shift**: drag_x3 barely hurts models (0.063–0.068 ≈
-  oracle 0.071) while constvel collapses (0.132) — the learned dynamics
-  model absorbs the shift. v_flip (velocity reversal while hidden):
-  models 0.060–0.067 vs oracle 0.076 — hidden flip is in principle
-  undetectable until the object exits the entry side; models' hidden MAE
-  stays low because the mid-occlusion position is similar either way.
-- **Unseen velocity caveat**: on `fast_v` (0.11–0.14 vs trained
-  0.04–0.09) the learned models (0.03–0.06) *lose* to constvel (0.019)
-  and oracle (0.014) — they under-extrapolate speeds outside the
-  training prior. Honest negative.
-- **Appearance stress**: app_jitter costs gru128 id_acc 0.99→0.88
-  (jitter mimics swaps); swap_half leaves it at 0.99. Position/existence
-  unaffected.
+- **KEY**: post-mid-occlusion error jumps **7–12×** after a hidden-state
+  reset (gru128 0.015→0.187, gru64 0.019→0.216, lstm 0.018→0.137,
+  ssm 0.023→0.150), while the mid-visible control is near-baseline
+  (0.031–0.045 whole-window vs 0.078–0.166 for mid-occl reset).
+  The object representation lives in the recurrent state — PASS,
+  strengthened over v1 (which reported the diluted 2.6–2.9×).
+- **Mechanistic signature (new)**: post-reset, gru128's predictions
+  revert to the *pre-appearance prior* — hidden steps predict
+  pos≈0.30, exist≈0.07, vel≈0.05 vs un-perturbed pre-appearance
+  pos≈0.27, exist≈0.001, vel≈0.05. The zeroed state is literally the
+  "haven't seen anything yet" state. exist_acc collapses 1.00→0.48.
+- MLP is intervention-invariant (no state) — the control works.
+- Corridor degrades least under reset (0.103): its "state" is just
+  last-observation, and the corridor bound keeps it sane. Constvel/
+  kalman collapse hardest (0.498) — unbounded extrapolation from a
+  zeroed estimate.
+- LSTM remains the most noise-robust learned model (σ=2: 0.102 vs GRU
+  ~0.32); SSM is noise-fragile as before.
 
-## Distractors (criterion 4)
+## OOD (trained on planned 4–16, p_gone=0)
 
-Always-4-distractors and `ambush` (a decoy timed to exit the occluder's
-far edge just before the target) leave position error essentially at ID
-level for all recurrent models (gru128 0.058/0.053 vs 0.053 ID;
-id_acc ≥0.98). The target slot is tracked independently of distractor
-slots. PASS.
+`plen*` = pure length shift (only occ_lo/hi). `occ*` = calibrated
+variants that also narrow velocity to [0.05,0.07], visible window to
+2–4, spawn_frac_hi to 0.10 — disclosed per M1. `bl` = realized mean
+bout length (nominal≠realized: occluder width is clipped to the world,
+so plen48 realizes ~54 not 48, occ48 ~64).
 
-## Seed replication (criterion 5)
+pos_mae_occluded (mean over seeds):
 
-5 seeds, tight dispersion on the headline metric: gru128
-0.0533±0.0011, gru64 0.0549±0.0026, lstm64 0.0585±0.0029, ssm
-0.0726±0.0036, mlp 0.1235±0.0010. PASS.
+| preset (bl) | prior | constvel | corridor | openloop | kalman | mlp | ssm | gru64 | gru128 | lstm64 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| plen24 (33) | .100 | .089 | **.037** | .048 | .090 | .100 | .067 | .052 | .044 | .055 |
+| plen32 (44) | .130 | .109 | **.051** | .072 | .128 | .130 | .098 | .081 | .072 | .089 |
+| plen48 (54) | .158 | .121 | **.075** | .084 | .174 | .159 | .129 | .113 | .101 | .129 |
+| occ24 (31)  | .095 | .079 | **.032** | .057 | .117 | .095 | .070 | .056 | .052 | .057 |
+| occ32 (44)  | .121 | .120 | **.053** | .081 | .196 | .122 | .101 | .085 | .080 | .093 |
+| occ48 (64)  | .170 | .148 | **.094** | .107 | .261 | .171 | .153 | .139 | .130 | .162 |
+| gone20 (21) | .126 | .086 | **.064** | .057 | .104 | .128 | .099 | .089 | .076 | .099 |
+| fast_v (11) | .095 | .011 | **.010** | .010 | .012 | .095 | .042 | .028 | .019 | .037 |
+| slow_v (15) | .020 | .042 | .016 | .032 | .056 | .025 | .027 | .021 | **.015** | .020 |
+| drag_x3(15) | .049 | .053 | .021 | .022 | .036 | .050 | .026 | .022 | **.017** | .020 |
+| v_flip (12) | .050 | .039 | .035 | .036 | .039 | .053 | .041 | .038 | **.035** | .037 |
+| distra4(12) | .050 | .016 | **.010** | .011 | .019 | .053 | .025 | .020 | .013 | .018 |
+| ambush (12) | .049 | .020 | **.011** | .014 | .022 | .052 | .024 | .020 | .014 | .018 |
+| decoytk(12) | .047 | .008 | **.007** | .008 | .010 | .052 | .023 | .017 | .011 | .016 |
+| app_jit(12) | .050 | .025 | .011 | .018 | .024 | .051 | .023 | .018 | **.013** | .016 |
+| swap_hlf(12)| .049 | .028 | .012 | .024 | .032 | .050 | .023 | .018 | **.013** | .017 |
 
-## Scorecard
+- **Pure length transfer (plen)**: models degrade gracefully and beat
+  constvel/prior/lastobs/mlp/kalman at 2–4× trained length — but lose
+  to `corridor` and mostly `openloop`. The corridor bound (position must
+  be inside the observable interval) is a strong free prior the models
+  do not fully exploit. Same pattern on calibrated `occ*`.
+- **fast_v**: learned models still under-extrapolate unseen speeds
+  (gru128 0.019 vs corridor/openloop ~0.010) — negative result stands.
+- **slow_v, drag_x3, v_flip, app_jitter, swap_half**: gru128 wins the
+  aggregate outright vs every baseline including corridor — the learned
+  dynamics model adapts where fixed heuristics can't (e.g. constvel
+  collapses under 3× drag, 0.053 vs gru128 0.017).
+- **gone20 (never trained on disappearance)**: learned models track
+  gone-episode positions fine (gru128 0.076 vs corridor 0.064) but
+  **fail to declare absorption**: exist_acc_absorbed ≈0.57 for all
+  learned models and prior/lastobs (they effectively always answer
+  "still exists"), vs constvel/corridor 0.93, openloop 0.87, kalman
+  0.79 — the extrapolation rule "exited world ⇒ gone" is the one thing
+  training without p_gone removed. Permanence learned *too* well.
 
-| # | Criterion | Result |
-|---|---|---|
-| 1 | Beats heuristic + MLP baselines | **PASS** (O0-A: all recurrent < oracle/constvel/prior/lastobs/mlp; O0-B: parity with oracle, ≫ MLP; O0-C: only gru128, see caveat) |
-| 2 | Transfer to unseen occlusion lengths | **PASS** (occ24/32/48 all beat heuristics+MLP; gru128/64 beat oracle everywhere) |
-| 3 | Hidden reset degrades performance | **PASS** (2.6–2.9× occluded-MAE degradation vs ~1.3–1.5× for the mid-visible control; existence collapses; MLP invariant) |
-| 4 | Tracks target under distractors | **PASS** (distractors4/ambush ≈ ID level) |
-| 5 | Replicates across seeds | **PASS** (5 seeds, σ≤0.004 on occluded MAE) |
+## Distractors / decoys (criterion 4, revised)
 
-**Overall: PASS** — learned recurrent models genuinely maintain hidden
-object state (existence + position), verified causally. **PARTIAL** on
-O0-C for ≤64-unit models (identity needs capacity: 128-unit GRU solves
-it, 64-unit GRU/LSTM and the SSM do not beat the trivial same-prior).
+- Channel-segregated distractors remain toothless (distractors4/ambush
+  ≈ ID for everyone) — as the reviewer said, they were never a real
+  identity test.
+- `decoytk` is the real test: a decoy exits the far edge *on the target
+  channel* while the true object is still hidden (~2–5 takeover
+  steps/episode). On takeover steps all predictors are pulled toward
+  the decoy (pos err 0.11–0.14 vs true hidden position; learned
+  0.112–0.117 marginally better than heuristics ~0.14). Decoy-step
+  identity rejection `id_acc_decoy`: heuristics 0.585–0.70 (hard-coded
+  app tolerance), gru128 0.563, others ≤0.50 — everyone is partially
+  fooled; gru128 keeps overall id_acc at 0.822 vs heuristics 0.666.
+  Verdict: **the model tracks through decoys no worse than the designed
+  baselines and identifies better overall, but is not immune.**
 
-## Caveats / threats to validity
+## Scorecard (revised)
 
-- Occluder bounds are observable and their width correlates with
-  crossing time — *physical* information (a wider tunnel takes longer to
-  cross), verified to carry nothing beyond geometry by the leakage
-  probe. Exit-timing inference from width+velocity is the intended
-  computation, not a leak.
-- Heuristic id_acc=1.0 is a hard-coded rule; learned models are not
-  directly comparable — the informative comparison is gru128 vs gru64.
-- `fast_v` under-extrapolation shows the learned motion prior is
-  range-limited; OOD generalization is good on duration, weaker on
-  speed.
-- Edge-touching occluders (gone episodes) are observable geometry; the
-  existence task still requires predicting absorption while hidden.
-- SSM converges slower and is noise-fragile; included as a capacity
-  point, not a contender.
-- Probes `probe_*` in `artifacts/runs/` are earlier hyperparameter
-  explorations (kept for the record); the reported matrix is
-  `{mlp,gru64,gru128,lstm64,ssm}_s{0..4}`.
+| # | Criterion | v1 | v2 (honest) |
+|---|---|---|---|
+| 1 | Beats heuristic + MLP baselines | PASS (artifact) | **PARTIAL** — loses to corridor/constvel/openloop on persist≤16 and to corridor on most aggregates; beats kalman & all weak baselines; wins outright on slow_v/drag_x3/v_flip/app_jitter/swap_half |
+| 2 | Transfer to unseen occlusion lengths | PASS (contaminated) | **PARTIAL** — graceful degradation to 4× trained length, beats 4 of 6 baselines on plen*, loses to corridor bound (and openloop at 32/48) |
+| 3 | Hidden reset degrades performance | PASS | **PASS** — stronger: 7–12× post-reset degradation, reverts to pre-appearance prior, MLP invariant control |
+| 4 | Tracks target under distractors | PASS (toothless) | **PARTIAL** — trivially true on dedicated channels; on target-channel decoys, comparable to designed baselines, not immune |
+| 5 | Replicates across seeds | PASS | **PASS** for position/existence (σ≤.006, CI±.001); **note**: id_acc bimodal across seeds for gru64 — identity training is unstable at h=64 |
+
+**Overall: PARTIAL** — object permanence as an internal state is
+demonstrated and causally necessary for the learned behavior; the
+model is *competitive but not superior* to a corridor-aware
+const-velocity tracker on trained-length occlusions, and its edge
+appears exactly where the reviewer predicted it should: long realized
+bouts, motion-model shifts, and adversarial conditions — while failing
+ cleanly detectable (honest negative) on never-trained disappearance.
+
+## Caveats
+
+- One shared eval stream (seed 910000, 512 eps) for all seeds: paired
+  comparisons are exact, but seed σ reflects init variance only; an
+  episode-resampled CI would widen intervals modestly (per-episode
+  stds are reported as `pos_mae_occluded_ep_std`/CI in raw rows).
+- `plen*`/`occ*` nominal≠realized bout lengths (geometry clipping);
+  both are reported as realized `mean_bout_len` in the tables above.
+- `kalman` fuses x+v with true noise stats but is still not fully
+  Bayes-optimal here (absorption boundary, uniform priors); treat it as
+  a strong reference, not a bound.
+- Identity for ≤64-unit models is unreliable; heuristic identity is a
+  designed rule, an imperfect comparison point.
+- decoytk changes channel semantics (sensor lock-on); documented in
+  README/dynamics docstring.
 
 ## Reproduce
 
@@ -191,7 +219,7 @@ it, 64-unit GRU/LSTM and the SSM do not beat the trivial same-prior).
 PY=/Users/eightman/dev/sandbox/kamimusuhi/.venv/bin/python
 $PY -m pytest experiments/o0/tests
 $PY -m experiments.o0.train --config experiments/o0/configs/full.yaml \
-    --run-id gru64_s0 --seed 0 --arch gru64
+    --run-id gru128_s0 --seed 0 --arch gru128
 $PY -m experiments.o0.sweep --config experiments/o0/configs/full.yaml \
     --skip-train --seeds 0 1 2 3 4 --models mlp gru64 gru128 lstm64 ssm
 ```
