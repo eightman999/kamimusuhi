@@ -203,6 +203,22 @@ class OpenLoopTracker(BaseHeuristic):
         return app_bad or pos_bad
 
 
+class CorridorDynHeuristic(OpenLoopTracker):
+    """openloop dynamics (drag + accel estimate) clipped to the occluder
+    bounds while hidden -- the strongest hand-crafted baseline: true
+    motion model AND the geometric bound.  Added in round-2 review to
+    test whether the learned models' wins on motion shifts survive the
+    combination of both tricks."""
+
+    name = "corridordyn"
+
+    def _current_guess(self, obs):
+        x = self._integrate()
+        lo = float(obs[dyn.OCC_LO_IDX])
+        hi = float(obs[dyn.OCC_HI_IDX])
+        return float(np.clip(x, lo, hi)), 0.0
+
+
 class KalmanTracker(BaseHeuristic):
     """Linear Kalman filter over [x, v, a] in normalized units.
 
@@ -298,6 +314,7 @@ HEURISTICS = {
     "constvel": ConstVelHeuristic,
     "corridor": CorridorConstVelHeuristic,
     "openloop": OpenLoopTracker,
+    "corridordyn": CorridorDynHeuristic,
     "kalman": KalmanTracker,
 }
 

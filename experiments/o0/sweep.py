@@ -56,7 +56,7 @@ OOD_PRESET_LIST = [
 ]
 
 HEURISTIC_NAMES = ["prior", "lastobs", "constvel", "corridor",
-                   "openloop", "kalman"]
+                   "openloop", "corridordyn", "kalman"]
 
 
 def run_id_for(arch, seed):

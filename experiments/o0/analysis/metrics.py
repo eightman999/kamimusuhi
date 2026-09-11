@@ -73,6 +73,15 @@ def compute_metrics(pred, data, p: dyn.EnvParams,
 
     m = {}
     m["pos_mae_visible"] = _masked_mean(pos_err, vis)
+    tk_mask = data.get("decoy")
+    if tk_mask is not None and tk_mask.any():
+        # takeover steps carry ~0.1-0.15 pos error by construction (the
+        # channel reports the decoy while truth stays hidden) -- report a
+        # clean visible-step error too so decoytk doesn't inflate the
+        # visible metric 2-3x (reviewer minor).
+        m["pos_mae_visible_clean"] = _masked_mean(pos_err, vis & ~tk_mask)
+    else:
+        m["pos_mae_visible_clean"] = m["pos_mae_visible"]
     m["pos_mae_occluded"] = _masked_mean(pos_err, hidden_alive)
     m["pos_mae_occluded_world"] = m["pos_mae_occluded"] * p.world_len
 

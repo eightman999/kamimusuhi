@@ -61,3 +61,13 @@ def test_kalman_tracks_through_occlusion():
     assert kal["pos_mae_occ_persist_le16"] < 0.05
     assert np.isfinite(kal["pos_mae_occluded_ci95"])
     assert kal["exist_acc_hidden"] > 0.6
+
+
+def test_corridordyn_beats_openloop():
+    """corridor+dynamics (openloop propagation clipped to occluder
+    bounds) must be at least as good as pure openloop while hidden."""
+    p = dyn.EnvParams()
+    cd = evaluate_heuristic("corridordyn", p, 256, seed=11)["metrics"]
+    ol = evaluate_heuristic("openloop", p, 256, seed=11)["metrics"]
+    assert cd["pos_mae_occluded"] <= ol["pos_mae_occluded"] + 1e-6
+    assert cd["pos_mae_occ_persist_le16"] < 0.05
