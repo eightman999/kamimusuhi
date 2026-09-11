@@ -15,9 +15,12 @@ env:
   drag: 0.005
   accel_std: 0.0005
   v_noise: 0.002
-  p_gone: 0.0   # reviewer C1/C2: keep realized hidden duration inside the
-                # sampled 4-16; boundary-absorption is an eval-only OOD
-                # condition now (preset gone20)
+  p_gone: 0.0   # reviewer C1/C2: remove edge-touching occluders so the
+                # bulk of realized bouts sits in the sampled 4-16.
+                # NOTE: realized bouts still exceed 16 for a tail of
+                # episodes (drag + occluder-width clipping; ~16% of
+                # hidden steps at bout>16, tail to ~86).  Boundary
+                # absorption is eval-only (preset gone20).
   p_swap: 0.3
   distractor_probs: [0.2, 0.3, 0.3, 0.1, 0.1]
 

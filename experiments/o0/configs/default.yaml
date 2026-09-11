@@ -12,7 +12,9 @@ env:
   drag: 0.005
   accel_std: 0.0005
   v_noise: 0.002
-  p_gone: 0.2
+  p_gone: 0.0   # match full.yaml: boundary absorption is eval-only
+                # (preset gone20); p_gone>0 contaminates the "trained on
+                # occlusion 4-16" claim via edge-touching occluders
   p_swap: 0.3
   distractor_probs: [0.2, 0.3, 0.3, 0.1, 0.1]
 

@@ -95,9 +95,14 @@ class EnvParams:
     # episode kinds
     p_gone: float = 0.0              # absorbed by boundary while occluded;
                                      # kept 0 in the training distribution so
-                                     # realized hidden duration is truly the
-                                     # sampled 4-16 (reviewer C1/C2).  Enable
-                                     # via the `gone20` eval preset for the
+                                     # the *bulk* of realized bouts match the
+                                     # sampled 4-16 (reviewer C1/C2).
+                                     # Realized bouts still exceed 16 for a
+                                     # tail of episodes: drag slows the
+                                     # target and occluder width is clipped
+                                     # to the world, so mean realized bout
+                                     # ~12 with a tail to ~80+.  Enable via
+                                     # the `gone20` eval preset for the
                                      # existence-generalization test.
     p_swap: float = 0.3              # appearance swap at reappearance (O0-C)
     v_flip_prob: float = 0.0         # OOD: velocity reverses mid-occlusion
