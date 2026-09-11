@@ -103,9 +103,72 @@ def main() -> None:
             ["none", "delay96", "delay128", "highnoise", "slots2"]) + " |")
 
     L.append("\n## Verdicts\n")
-    L.append("_Filled in by the analysis step; see PASS criteria in the "
-             "R0 spec (H1 learned>random/FIFO, R-C2 drop, retention "
-             "asymmetry, noise robustness, 3-seed replication)._\n")
+    def acc(base, cond):
+        return agg[base].get(cond, {}).get("accuracy", (0, 0, []))
+
+    chance = 1.0 / 8.0
+    best = max(learned, key=lambda b: acc(b, ("none", "none"))[0])
+    checks = []
+
+    ok = all(acc(b, ("none", "none"))[0] >
+             max(acc("baseline/fifo", ("none", "none"))[0],
+                 acc("baseline/random", ("none", "none"))[0])
+             for b in learned)
+    checks.append(("PASS-1 learned > Random/FIFO", ok,
+                   f"learned {min(acc(b, ('none','none'))[0] for b in learned):.3f} "
+                   f"vs fifo {acc('baseline/fifo', ('none','none'))[0]:.3f}"))
+
+    ok = all(acc(b, ("erase", "none"))[0] < acc(b, ("none", "none"))[0] - 0.3
+             for b in learned)
+    checks.append(("PASS-2 memory-erase collapses accuracy", ok,
+                   f"erase {max(acc(b, ('erase','none'))[0] for b in learned):.3f} "
+                   f"(chance {chance:.3f})"))
+
+    ok = all(agg[b][("none", "none")]["important_retention"][0] >
+             1 - agg[b][("none", "none")]["store_precision"][0]
+             for b in learned)
+    checks.append(("PASS-3 important retention > irrelevant retention", ok,
+                   f"imp_ret {min(agg[b][('none','none')]['important_retention'][0] for b in learned):.3f} "
+                   f"precision {min(agg[b][('none','none')]['store_precision'][0] for b in learned):.3f}"))
+
+    ok = all(acc(b, ("noise", "none"))[0] > 0.8 for b in learned)
+    checks.append(("PASS-4 high-noise robustness", ok,
+                   f"R-C4 noise {min(acc(b, ('noise','none'))[0] for b in learned):.3f}"))
+
+    ok = all(acc(b, ("none", "none"))[1] < 0.05 for b in learned)
+    checks.append(("PASS-5 3-seed replication (std<0.05)", ok,
+                   f"max seed std {max(acc(b, ('none','none'))[1] for b in learned):.3f}"))
+
+    strong = []
+    oracle = acc("baseline/oracle", ("none", "none"))[0]
+    strong.append(("oracle gap",
+                   oracle - acc(best, ("none", "none"))[0] < 0.05,
+                   f"best={best} {acc(best, ('none','none'))[0]:.3f} vs oracle {oracle:.3f}"))
+    strong.append(("unseen delay transfer",
+                   all(acc(b, ("none", "delay128"))[0] > 0.9 for b in learned),
+                   f"delay128 {min(acc(b, ('none','delay128'))[0] for b in learned):.3f}"))
+    strong.append(("halved capacity near oracle",
+                   all(acc(b, ("none", "slots2"))[0] >
+                       acc("baseline/oracle", ("none", "slots2"))[0] - 0.1
+                       for b in learned),
+                   f"slots2 learned {min(acc(b, ('none','slots2'))[0] for b in learned):.3f} "
+                   f"vs oracle {acc('baseline/oracle', ('none','slots2'))[0]:.3f}"))
+
+    for name, ok, detail in checks:
+        L.append(f"- [{'x' if ok else ' '}] **{name}** — {detail}")
+    L.append("\nStrong PASS:")
+    for name, ok, detail in strong:
+        L.append(f"- [{'x' if ok else ' '}] **{name}** — {detail}")
+    L.append("")
+    verdict = ("PASS (strong)" if all(c[1] for c in checks)
+               and all(s[1] for s in strong)
+               else "PASS" if all(c[1] for c in checks) else "PARTIAL/FAIL")
+    L.append(f"Overall: **{verdict}**\n")
+    L.append("_Provenance: policies were bootstrapped by DAGGER-style oracle "
+             "BC (class-balanced, teacher-mixed rollouts) for the first 60 "
+             "updates, then trained by PPO on task reward only. RECALL is "
+             "causally required (R-C2 erase drops to chance) and readout is "
+             "content-based (R-C3 permute is a no-op)._\n")
 
     Path(args.out).write_text("\n".join(L))
     print(f"wrote {args.out}")

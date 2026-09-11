@@ -73,6 +73,11 @@ def main() -> None:
                 if mode != "none" and ood is not None:
                     continue  # causal x OOD cross-product not required
                 out = res_dir / f"{tag}_c-{mode}_o-{ood or 'none'}.json"
+                if out.exists():
+                    m = json.loads(out.read_text())["metrics"]
+                    rows.append({"subject": tag, "causal": mode,
+                                 "ood": ood or "none", **m})
+                    continue
                 cmd = [sys.executable, "-m", "experiments.r0.evaluate",
                        "--config", args.config, "--episodes", str(args.episodes),
                        "--seed", str(args.eval_seed), "--out", str(out)]

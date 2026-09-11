@@ -37,7 +37,9 @@ OOD_OVERRIDES = {
     "delay96": {"delay_min": 96, "delay_max": 96, "episode_len": 192},
     "delay128": {"delay_min": 128, "delay_max": 128, "episode_len": 224},
     "highnoise": {"noise_rate": 0.9, "num_distractors": 24},
-    "slots2": {"memory_slots": 2},
+    # physical capacity halves but the observation schema stays 4 slots so
+    # trained networks keep their input width (extra positions read zero)
+    "slots2": {"memory_slots": 2, "observation_slots": 4},
 }
 
 

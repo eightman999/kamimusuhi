@@ -53,6 +53,7 @@ class R0Config:
     delay_max: int = 64
     noise_rate: float = 0.5         # fraction of free steps emitting NOISE
     memory_slots: int = 4
+    observation_slots: int = 4
     query_window: int = 4
     noise_dim: int = 8
     evict_policy: str = "fifo"
@@ -79,9 +80,10 @@ class R0Config:
     def obs_dim(self) -> int:
         d = self.payload_dim
         query = 2 + self.num_keys
-        summary = self.memory_slots * (self.num_keys + 2)
-        recall = self.memory_slots * d
-        return d + query + summary + recall + self.memory_slots + 1
+        summary = self.observation_slots * (self.num_keys + 2)
+        recall = self.observation_slots * d
+        return d + query + summary + recall + self.observation_slots + \
+            self.num_values + 1
 
 
 @dataclass
@@ -102,7 +104,8 @@ class R0Env:
         self.t = 0
         self.schedule: list[_Event] = []
         self.pending = None            # dict(key, value, deadline, recalled)
-        self.recall_buffer = np.zeros(config.memory_slots * config.payload_dim, dtype=np.float32)
+        self.recall_buffer = np.zeros(
+            config.observation_slots * config.payload_dim, dtype=np.float32)
         self.query_records: list[dict] = []
         self.store_log: list[dict] = []
         self.action_counts = np.zeros(N_ACTIONS, dtype=np.int64)
@@ -196,21 +199,29 @@ class R0Env:
             q[1 + self.pending["key"]] = 1.0
             q[-1] = (self.pending["deadline"] - self.t) / max(1, c.query_window)
         parts.append(q)
-        parts.append(self.memory.summary(self.t, c.episode_len))
+        summary = np.zeros(
+            c.observation_slots * (c.num_keys + 2), dtype=np.float32)
+        raw_summary = self.memory.summary(self.t, c.episode_len)
+        summary[:len(raw_summary)] = raw_summary
+        parts.append(summary)
         parts.append(self.recall_buffer)
         # per-slot match bit: does the recalled payload's key equal the
         # pending query key? Derived from already-visible buffer contents;
         # all zeros until a RECALL fills the buffer, so RECALL stays
         # causally required for value readout.
-        match = np.zeros(c.memory_slots, dtype=np.float32)
+        match = np.zeros(c.observation_slots, dtype=np.float32)
+        mval = np.zeros(c.num_values, dtype=np.float32)
         if self.pending is not None:
             D = c.payload_dim
+            voff = 4 + c.num_keys
             for s in range(c.memory_slots):
                 blk = self.recall_buffer[s * D:(s + 1) * D]
                 keyreg = blk[4:4 + c.num_keys]
                 if keyreg.sum() > 0.9 and int(np.argmax(keyreg)) == self.pending["key"]:
                     match[s] = 1.0
+                    mval += blk[voff:voff + c.num_values]
         parts.append(match)
+        parts.append(mval)
         parts.append(np.array([self.t / c.episode_len], dtype=np.float32))
         return np.concatenate(parts)
 
@@ -243,7 +254,9 @@ class R0Env:
                                        "slot": slot})
         elif action == RECALL:
             reward -= c.cost_recall
-            self.recall_buffer = self.memory.recall().reshape(-1)
+            self.recall_buffer[:] = 0
+            recalled = self.memory.recall().reshape(-1)
+            self.recall_buffer[:len(recalled)] = recalled
             if self.pending is not None:
                 self.pending["recalled"] = True
                 if (not self.pending["hit_paid"]

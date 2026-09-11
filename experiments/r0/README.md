@@ -15,8 +15,12 @@ Isolated from M/H/S/T/J systems. Standalone under `experiments/r0/`.
   selectivity must be learned from which keys ever get queried.
 - Memory: 4 slots, fixed-length payload. `STORE` writes the current event
   (FIFO eviction, same-key refresh). `RECALL` snapshots slot payloads into
-  the observation + a per-slot key-match bit; stored *values* are only
-  readable through the recall buffer, so ANSWER without RECALL is blind.
+  the observation plus two derived readout features — a per-slot key-match
+  bit and the matched slot's value one-hot — both all-zero until a RECALL
+  fills the buffer. Stored *values* are only readable through the recall
+  buffer, so ANSWER without RECALL is blind; the derived features exist
+  because the experiment is about gating, not readout mechanics, and the
+  heuristic baselines get a perfect key-match reader for the same reason.
 - `QUERY` stays active for 4 steps; the env demands an answer at the
   deadline (forced-answer) so every query produces a correct/wrong signal.
 
