@@ -9,6 +9,9 @@
 
 # MIOBA experiment runtime
 /experiments/mioba/.runs/
+
+# R0 experiment runtime
+/experiments/r0/artifacts/
 __pycache__/
 *.pyc
 /.venv*/
