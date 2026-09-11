@@ -134,7 +134,21 @@ CREATE TABLE IF NOT EXISTS evaluations (
     -- GPU lanes per chunk (operational; must not affect fitness)
     execution_batch_size INTEGER,
     replicate_seeds_json TEXT NOT NULL DEFAULT '[]',
-    result_id          TEXT
+    result_id          TEXT,
+    -- simulator identity (fba/semantics.py): which equations, which RNG
+    -- protocol and which propagation path produced this row
+    simulator_semantics_version INTEGER,
+    rng_protocol_version        INTEGER,
+    propagation_backend         TEXT,
+    -- M1 selection: raw per-component metrics are kept separately from
+    -- the combined selection value, so weights can be re-derived later
+    -- without re-running anything (M1 section 9)
+    selection_score    REAL,
+    metrics_json       TEXT NOT NULL DEFAULT '{}',
+    -- the individual's own marginal cost, and how much of the network it
+    -- actually touched (M1 section 8 / 2.4-4)
+    resource_json      TEXT NOT NULL DEFAULT '{}',
+    activity_json      TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS evals_genome ON evaluations(experiment_id, genome_id);
 
@@ -153,6 +167,7 @@ CREATE TABLE IF NOT EXISTS worker_runs (
     failed_jobs        INTEGER NOT NULL DEFAULT 0,
     current_job_id     TEXT,
     batch_size         INTEGER,
+    slots              INTEGER,
     device             TEXT
 );
 CREATE INDEX IF NOT EXISTS worker_runs_exp ON worker_runs(experiment_id, worker_id);

@@ -89,35 +89,52 @@ def test_backend_propagate_matches_materialised_matrix():
 
 # ------------------------------------------------------------ delay line
 def test_delay_line_delivers_after_exactly_t_delay():
-    """The ring buffer must reproduce M0's delay exactly.
+    """Semantics v2: a spike emitted at step t arrives at t + D,
+    D = round(tDelay/dt).
 
-    The buffer holds ``steps_delay + 1`` slots and a value written into
-    the current slot is read ``steps_delay + 1`` steps later — the same
-    as M0's read-slot-0 / roll / write-slot-(-1) sequence. Note that this
-    makes the realised delay 1.9 ms for ``tDelay=1.8``/``dt=0.1``; that
-    off-by-one is inherited from M0 and is deliberately *not* fixed here,
-    because changing it would change the model, not its speed.
+    M0 delivered it at t + D + 2 (2.0 ms for a declared 1.8 ms delay),
+    because it propagated the *previous* step's spikes through a D+1 slot
+    buffer. That is fixed here; the change is pinned by
+    ``simulator_semantics_version = 2`` rather than being bit-compatible
+    with M0.
     """
     n = 3
     b = TorchBackend(synthetic=True, synthetic_neurons=n, connectivity=0.0)
     b.initialize(develop(fba0_genome(), base_neurons=n), batch_size=1,
                  seed=0, device="cpu")
+    assert b.steps_delay == round(b.params["tDelay"] / b.params["dt"]) == 18
     b.W = torch.sparse_coo_tensor(torch.tensor([[1], [0]]),
                                   torch.tensor([10.0]), (n, n)) \
         .coalesce().to_sparse_csr()
     b.set_inputs({"rates_hz": {}, "silence": []})
-    b.spikes = torch.zeros((1, n))
-    b.spikes[0, 0] = 1.0            # neuron 0 spiked "just now"
+    b.force_spikes([0])             # neuron 0 spikes from step 0 onwards
     seen = []
     for _ in range(b.steps_delay + 3):
         before = float(b.g[0, 1].item())
         b._one_step()
         seen.append(float(b.g[0, 1].item()) - before * (1 - b.params["dt"]
                                                         / b.params["tauSyn"]))
-        b.spikes = torch.zeros((1, n))   # one event only
-    arrivals = [i for i, d in enumerate(seen) if d > 1e-6]
-    assert arrivals == [b.steps_delay + 1], (arrivals, seen)
+    first = next(i for i, d in enumerate(seen) if d > 1e-6)
+    assert first == b.steps_delay, (first, seen)
     assert b.delay_buf.shape[1] == b.steps_delay + 1
+
+
+def test_delay_steps_round_half_up_despite_float_error():
+    """1.8 / 0.1 is 18.000000000000004 in binary floating point, and
+    Python's round() is banker's rounding — neither may move D."""
+    n = 3
+    for t_delay, dt, expected in ((1.8, 0.1, 18), (1.65, 0.1, 17),
+                                  (0.05, 0.1, 1), (2.0, 0.1, 20)):
+        g = fba0_genome()
+        g.parameter_mutations.append(ParameterMutation(
+            mutation_id="d", path="tDelay", op="set", value=t_delay))
+        g.parameter_mutations.append(ParameterMutation(
+            mutation_id="s", path="dt", op="set", value=dt))
+        b = TorchBackend(synthetic=True, synthetic_neurons=n,
+                         connectivity=0.0)
+        b.initialize(develop(g.finalize(), base_neurons=n), batch_size=1,
+                     seed=0, device="cpu")
+        assert b.steps_delay == expected, (t_delay, dt, b.steps_delay)
 
 
 # ------------------------------------------------------------ residency

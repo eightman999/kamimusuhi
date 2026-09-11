@@ -63,7 +63,24 @@ def split_config(config: dict) -> tuple[dict, dict]:
 
 
 def scientific_config_hash(config: dict) -> str:
-    return config_hash(split_config(config)[0])
+    """Hash of the result-affecting config *plus the simulator's own
+    semantics*.
+
+    The config alone is not enough to identify a scientific condition:
+    two runs with byte-identical YAML produce different trajectories if
+    the delay line, the RNG protocol or the propagation path changed
+    underneath them. Folding ``fba/semantics.py`` in means such a change
+    forces a new experiment id through the existing resume check, instead
+    of silently continuing an M0 experiment with M1 equations.
+    """
+    from ..fba.semantics import semantics
+
+    sci = split_config(config)[0]
+    prop = ((config.get("fba") or {}).get("propagation_backend")
+            or (config.get("evaluation") or {}).get("propagation_backend"))
+    payload = dict(sci)
+    payload["_simulator"] = semantics(prop) if prop else semantics()
+    return config_hash(payload)
 
 
 def runtime_config_hash(config: dict) -> str:

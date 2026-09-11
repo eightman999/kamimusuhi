@@ -68,6 +68,16 @@ class FbaBackend(ABC):
     def capabilities(self) -> BackendCapabilities:
         ...
 
+    def semantics(self) -> dict:
+        """Simulator identity of *this backend* (see fba/semantics.py):
+        which equations, which RNG protocol, which propagation path.
+        Recorded on every evaluation and checked by replay. Backends that
+        have never been revised keep version 1; the version numbers are
+        scoped to the backend family, not global."""
+        from .semantics import unversioned_semantics
+
+        return unversioned_semantics(self.name)
+
     def dataset_identity(self) -> dict:
         """Logical identity of the connectome data this backend simulates
         (``dataset_id``, ``version``, ``manifest_hash``, ``region_mode``).

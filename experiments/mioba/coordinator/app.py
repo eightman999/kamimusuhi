@@ -205,7 +205,8 @@ def create_app(service) -> FastAPI:
                                          body["status"],
                                          body.get("evaluation"),
                                          body.get("error"),
-                                         result_id=body.get("result_id"))
+                                         result_id=body.get("result_id"),
+                                         retry_reason=body.get("retry_reason"))
         except KeyError as exc:
             raise HTTPException(404, str(exc))
         except InvalidTransition as exc:

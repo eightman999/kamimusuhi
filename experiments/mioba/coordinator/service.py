@@ -290,7 +290,8 @@ class MiobaService:
 
     def worker_result(self, job_id: str, worker_id: str, status: str,
                       evaluation: dict | None, error: str | None,
-                      result_id: str | None = None) -> dict:
+                      result_id: str | None = None,
+                      retry_reason: str | None = None) -> dict:
         """Accept a worker's result. The success path (ownership check,
         RUNNING->SUCCEEDED, evaluation row, worker counter, counters +
         RNG state, event) is one SQLite transaction: a crash or exception
@@ -308,17 +309,29 @@ class MiobaService:
         if result_id and job.get("result_id") == result_id:
             return {"ok": True, "duplicate": True, "job_status": job["status"]}
         if status == "RETRY":
+            # A device resource limit (GPU OOM at the worker's chosen slot
+            # count / execution batch) is an operational event: the job is
+            # requeued with its evaluation seed intact and nothing about
+            # the organism is recorded as having failed (M1 2.4-7).
+            resource = retry_reason == M.RETRY_RUNTIME_RESOURCE
+            reason = retry_reason or M.RETRY_INFRASTRUCTURE
             with self.db.transaction():
                 self.db.release_job_for_retry(job_id, worker_id, error,
-                                              result_id=result_id)
+                                              result_id=result_id,
+                                              allow_same_worker=resource)
                 self.db.emit(
-                    self.experiment_id, M.EV_JOB_MARKED_UNKNOWN, "warn",
+                    self.experiment_id,
+                    M.EV_RUNTIME_RESOURCE_RETRY if resource
+                    else M.EV_JOB_MARKED_UNKNOWN,
+                    "info" if resource else "warn",
                     {"job_id": job_id, "worker_id": worker_id,
-                     "reason": "retryable_infrastructure_failure",
-                     "error": error, "result_id": result_id},
+                     "genome_id": job["genome_id"], "reason": reason,
+                     "error": error, "result_id": result_id,
+                     "fitness_affected": False},
                     "coordinator")
             return {"ok": True, "duplicate": False,
-                    "job_status": M.JOB_UNKNOWN, "retryable": True}
+                    "job_status": M.JOB_UNKNOWN, "retryable": True,
+                    "retry_reason": reason}
         ok = status == M.JOB_SUCCEEDED and evaluation is not None
         if status == M.JOB_SUCCEEDED and evaluation is None:
             status, error = M.JOB_FAILED, error or "success without evaluation"
@@ -357,11 +370,40 @@ class MiobaService:
             self._counters = before
             raise
         if ok:
+            self._warn_on_high_activity(job["genome_id"], evaluation)
             self.population.record_fitness(job["genome_id"],
                                            evaluation["fitness"])
         return {"ok": True, "duplicate": False, "job_status": status,
                 "evaluation_id": (evaluation or {}).get("evaluation_id")
                 if ok else None}
+
+    def _warn_on_high_activity(self, genome_id: str, evaluation: dict) -> None:
+        """Event-driven propagation costs what the organism activates.
+
+        A mutant that drives a large fraction of the connectome every step
+        makes its worker crawl while everything else waits behind it. That
+        is not a failure and not a fitness penalty — but it must be
+        visible, because it is the condition under which the event path
+        stops being the right one (M1 §2.4-4).
+        """
+        act = evaluation.get("activity") or {}
+        ratio = act.get("active_edge_ratio")
+        if ratio is None:
+            return
+        threshold = float(self.config.get("evaluation", {})
+                          .get("activity_warn_edge_ratio", 0.05))
+        if ratio <= threshold:
+            return
+        self.db.emit(self.experiment_id, M.EV_HIGH_ACTIVITY, "warn", {
+            "genome_id": genome_id,
+            "evaluation_id": evaluation.get("evaluation_id"),
+            "active_edge_ratio": ratio,
+            "active_edges_per_step": act.get("active_edges_per_step"),
+            "active_neurons_per_step": act.get("active_neurons_per_step"),
+            "threshold": threshold,
+            "propagation_backend": act.get("propagation_backend"),
+            "fitness_affected": False,
+        }, "coordinator")
 
     # ------------------------------------------------------------ background
     def request_shutdown(self):

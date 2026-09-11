@@ -11,11 +11,13 @@ from pathlib import Path
 
 from . import models as M
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text()
 
-# columns added after v2; applied with ALTER TABLE when opening an older DB
-_V3_COLUMNS = (
+# columns added after v2; applied with ALTER TABLE when opening an older DB.
+# Adding columns only: an older DB keeps every row it had, and rows written
+# before a column existed read back as NULL rather than being rewritten.
+_ADDED_COLUMNS = (
     ("evaluation_jobs", "replicates", "INTEGER NOT NULL DEFAULT 1"),
     ("evaluation_jobs", "result_id", "TEXT"),
     ("evaluations", "requested_replicates", "INTEGER"),
@@ -24,6 +26,15 @@ _V3_COLUMNS = (
     ("evaluations", "replicate_seeds_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("evaluations", "result_id", "TEXT"),
     ("worker_runs", "device", "TEXT"),
+    # v4
+    ("evaluations", "simulator_semantics_version", "INTEGER"),
+    ("evaluations", "rng_protocol_version", "INTEGER"),
+    ("evaluations", "propagation_backend", "TEXT"),
+    ("evaluations", "selection_score", "REAL"),
+    ("evaluations", "metrics_json", "TEXT NOT NULL DEFAULT '{}'"),
+    ("evaluations", "resource_json", "TEXT NOT NULL DEFAULT '{}'"),
+    ("evaluations", "activity_json", "TEXT NOT NULL DEFAULT '{}'"),
+    ("worker_runs", "slots", "INTEGER"),
 )
 
 
@@ -58,7 +69,7 @@ class Database:
             self._commit()
 
     def _migrate(self, from_version: int) -> None:
-        for table, col, decl in _V3_COLUMNS:
+        for table, col, decl in _ADDED_COLUMNS:
             have = {r["name"] for r in
                     self.conn.execute(f"PRAGMA table_info({table})")}
             if col not in have:
@@ -426,12 +437,19 @@ class Database:
 
     def release_job_for_retry(self, job_id: str, worker_id: str,
                               error: str | None = None,
-                              result_id: str | None = None) -> None:
+                              result_id: str | None = None,
+                              allow_same_worker: bool = False) -> None:
         """RUNNING -> UNKNOWN for an infrastructure/resource failure.
 
         ``claimed_by_worker`` is deliberately retained while UNKNOWN/QUEUED
         so the same worker does not immediately reclaim a job it just proved
         unable to execute.  A different worker may claim it.
+
+        ``allow_same_worker`` clears that hold. It is used for device
+        resource limits (M1 2.4-7): the worker has already narrowed its
+        concurrency, so retrying there is a *different* configuration, not
+        a repeat of the one that failed — and on a single-worker run
+        holding the job back would strand it forever.
         """
         with self._lock:
             job = self.get_job(job_id)
@@ -445,9 +463,14 @@ class Database:
                     f"job {job_id} claimed by {job['claimed_by_worker']}, "
                     f"not {worker_id}")
             detail = f"retryable:{worker_id}:{error or 'infrastructure failure'}"
-            self._q("UPDATE evaluation_jobs SET status='UNKNOWN', last_error=?, "
-                    "result_id=? WHERE job_id=?",
-                    (detail, result_id, job_id))
+            if allow_same_worker:
+                self._q("UPDATE evaluation_jobs SET status='UNKNOWN', "
+                        "last_error=?, result_id=?, claimed_by_worker=NULL "
+                        "WHERE job_id=?", (detail, result_id, job_id))
+            else:
+                self._q("UPDATE evaluation_jobs SET status='UNKNOWN', "
+                        "last_error=?, result_id=? WHERE job_id=?",
+                        (detail, result_id, job_id))
             self._commit()
 
     def cancel_job(self, job_id: str) -> None:
@@ -537,6 +560,7 @@ class Database:
     def insert_evaluation(self, experiment_id: str, job_id: str,
                           genome_id: str, evaluation: dict) -> str:
         eid = evaluation.get("evaluation_id") or _uid("eval")
+        sem = evaluation.get("semantics") or {}
         with self._lock:
             self._q("INSERT INTO evaluations(experiment_id,evaluation_id,job_id,"
                     "genome_id,worker_id,backend,seed,batch_size,fitness,"
@@ -545,9 +569,12 @@ class Database:
                     "git_commit,started_at,finished_at,trace_path,"
                     "environment_id,duration_ms,dataset_json,device,"
                     "requested_replicates,completed_replicates,"
-                    "execution_batch_size,replicate_seeds_json,result_id)"
+                    "execution_batch_size,replicate_seeds_json,result_id,"
+                    "simulator_semantics_version,rng_protocol_version,"
+                    "propagation_backend,selection_score,metrics_json,"
+                    "resource_json,activity_json)"
                     " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
-                    "?,?,?,?,?)",
+                    "?,?,?,?,?,?,?,?,?,?,?,?)",
                     (experiment_id, eid, job_id, genome_id,
                      evaluation.get("worker_id"), evaluation.get("backend"),
                      evaluation.get("seed"), evaluation.get("batch_size"),
@@ -568,7 +595,14 @@ class Database:
                      evaluation.get("completed_replicates"),
                      evaluation.get("execution_batch_size"),
                      json.dumps(evaluation.get("replicate_seeds") or []),
-                     evaluation.get("result_id")))
+                     evaluation.get("result_id"),
+                     sem.get("simulator_semantics_version"),
+                     sem.get("rng_protocol_version"),
+                     sem.get("propagation_backend"),
+                     evaluation.get("selection_score"),
+                     json.dumps(evaluation.get("metrics") or {}),
+                     json.dumps(evaluation.get("resource") or {}),
+                     json.dumps(evaluation.get("activity") or {})))
             self._commit()
         return eid
 

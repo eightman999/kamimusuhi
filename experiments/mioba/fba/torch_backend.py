@@ -36,11 +36,19 @@ No ``N x N`` dense tensor is ever allocated, so memory is
 
 Delay line
 ----------
-The ``tDelay`` ring buffer is indexed by ``self._delay_ptr`` rather than
-rolled. M0 called ``torch.roll`` on a ``(B, steps_delay+1, N)`` tensor
-every step, i.e. it copied ~10 MB per lane per step (≈50 GB of memory
-traffic over one 500 ms evaluation at FlyWire scale) to achieve what a
-pointer increment does. The read/write order is identical.
+A spike emitted at step ``t`` arrives at ``t + D`` with
+``D = round(tDelay/dt)`` — 18 steps = 1.8 ms at the reference
+parameters. M0 propagated the *previous* step's spikes into a
+``steps_delay + 1`` slot buffer, which delivered them at ``t + D + 2``
+(2.0 ms); that off-by-two is fixed here and pinned by
+``simulator_semantics_version = 2``, so M0 recordings are not
+bit-comparable and are refused by replay rather than re-run.
+
+The buffer is indexed by ``self._delay_ptr`` rather than rolled: M0
+called ``torch.roll`` on the whole ``(B, L, N)`` tensor every step, i.e.
+copied ~10 MB per lane per step (≈50 GB of memory traffic over one
+500 ms evaluation at FlyWire scale) to achieve what a pointer increment
+does.
 
 Poisson drive
 -------------
@@ -87,6 +95,7 @@ atomics; see README "Determinism".
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import pickle
 import time
@@ -100,6 +109,8 @@ from .eventgraph import EventGraph
 from .fba0 import DATA_FILES
 from .params import DEFAULT_PARAMS, UnsupportedAttachmentRegion
 from .replicates import replicate_seeds as _default_replicate_seeds
+from .semantics import (PROPAGATION_AUTO, PROPAGATION_EVENT_CSC,
+                        PROPAGATION_SPARSE_CSR, semantics)
 from .topology import (BASE_CACHE, ORGAN_CACHE, base_topology_key,
                        organ_topology_hash)
 
@@ -192,7 +203,9 @@ class TorchBackend(FbaBackend):
                  synthetic_neurons: int = 2000, connectivity: float = 0.01,
                  runs_dir: str | None = None, region_mode: str | None = None,
                  synthetic_edges: int | None = None, base_seed: int = 0,
-                 topology_cache: bool = True):
+                 topology_cache: bool = True,
+                 propagation_backend: str = PROPAGATION_EVENT_CSC,
+                 dense_above: float = 0.05):
         if torch is None:
             raise BackendUnavailable("torch not installed")
         self.data_dir = data_dir or os.environ.get("MIOBA_FLY_BRAIN_DATA")
@@ -202,6 +215,24 @@ class TorchBackend(FbaBackend):
         # for the whole run, independent of any genome's random_seed
         self.base_seed = int(base_seed)
         self.use_topology_cache = bool(topology_cache)
+        # event_csc | sparse_csr | auto (hybrid, M1 §2.4-4). "auto" keeps
+        # the event path until more than `dense_above` of the presynaptic
+        # population fires in one step, where the whole-matrix product
+        # becomes the cheaper way to compute the same sum.
+        self.propagation_backend = str(propagation_backend)
+        self.dense_above_threshold = float(dense_above)
+        if self.propagation_backend == PROPAGATION_SPARSE_CSR:
+            self._dense_above = -1.0        # always dense
+        elif self.propagation_backend == PROPAGATION_AUTO:
+            self._dense_above = self.dense_above_threshold
+        else:
+            self._dense_above = None        # always event-driven
+        # activity accumulators: they span the whole evaluation (every
+        # replicate chunk on this backend instance), so lane-steps rather
+        # than steps is the normaliser when chunk widths differ
+        self._act_steps = self._act_lane_steps = 0
+        self._act_events = self._act_edges = self._act_edges_extra = 0
+        self._act_wall = 0.0
         # explicit edge count (FlyWire-scale smoke: 139k neurons / ~14M
         # edges) wins over the pair probability
         self.synthetic_edges = int(synthetic_edges) if synthetic_edges else None
@@ -216,6 +247,9 @@ class TorchBackend(FbaBackend):
         self._force: torch.Tensor | None = None
 
     # ------------------------------------------------------------ identity
+    def semantics(self) -> dict:
+        return semantics(self.propagation_backend)
+
     def dataset_identity(self) -> dict:
         """Logical dataset identity for the research record (never a raw
         path): id, version, manifest hash, region mode."""
@@ -286,8 +320,11 @@ class TorchBackend(FbaBackend):
             self._drive_idx = None
             self._drive_p = None
             self._silence_idx = None
-            self.steps_delay = max(1, int(round(self.params["tDelay"] /
-                                                self.params["dt"])))
+            # D = round(tDelay/dt), rounded half-up with a float-error
+            # guard (1.8/0.1 == 18.000000000000004 in binary floating
+            # point, and Python's round() is banker's rounding)
+            self.steps_delay = max(1, int(math.floor(
+                self.params["tDelay"] / self.params["dt"] + 0.5 + 1e-9)))
             self.reset()
 
     # ------------------------------------------------------------ base graph
@@ -482,8 +519,9 @@ class TorchBackend(FbaBackend):
         self.t_ms = 0.0
         self.v = torch.full((B, n), p["v0"], device=d)
         self.g = torch.zeros((B, n), device=d)
+        # D + 1 slots: a value written at step t into slot (ptr-1) mod L
+        # comes back round exactly D steps later (see _one_step)
         self.delay_buf = torch.zeros((B, self.steps_delay + 1, n), device=d)
-        # ring-buffer read/write slot (M0 rolled the whole buffer instead)
         self._delay_ptr = 0
         self.refrac = torch.full((B, n), p["tRefrac"], device=d)
         self.spikes = torch.zeros((B, n), device=d)
@@ -536,12 +574,22 @@ class TorchBackend(FbaBackend):
         """
         if getattr(self, "_W_override", None) is not None:
             return torch.sparse.mm(self._W_override, spikes.T).T
+        t0 = time.perf_counter()
         out = torch.zeros((spikes.shape[0], self.n), device=spikes.device,
                           dtype=spikes.dtype)
-        self.W_base.propagate(spikes, out, scale=self._base_scale,
-                              col_limit=self.n_base)
+        events, edges = self.W_base.propagate(
+            spikes, out, scale=self._base_scale, col_limit=self.n_base,
+            dense_above=self._dense_above)
         if self.W_extra is not None:
-            self.W_extra.propagate(spikes, out)
+            e2, d2 = self.W_extra.propagate(spikes, out,
+                                            dense_above=self._dense_above)
+            events, edges = max(events, e2), edges + d2
+            self._act_edges_extra += d2
+        self._act_steps += 1
+        self._act_lane_steps += int(spikes.shape[0])
+        self._act_events += events
+        self._act_edges += edges
+        self._act_wall += time.perf_counter() - t0
         return out
 
     # ------------------------------------------------------------ step
@@ -550,11 +598,10 @@ class TorchBackend(FbaBackend):
         dt = p["dt"]
         L = self.delay_buf.shape[1]
         ptr = self._delay_ptr
+        # arrivals scheduled D steps ago
         delayed = self.delay_buf[:, ptr, :]
         active = (self.refrac >= p["tRefrac"]).float()
         self.g = self.g * (1 - dt / p["tauSyn"]) + delayed * active
-        self.delay_buf[:, ptr, :] = self.propagate(self.spikes)
-        self._delay_ptr = (ptr + 1) % L
         self.v = self.v + (dt / p["tauMem"]) * (self.g - (self.v - p["vRest"]))
         if self._drive_idx is not None:
             u = torch.stack([torch.rand((self._drive_idx.numel(),), device=d,
@@ -573,6 +620,10 @@ class TorchBackend(FbaBackend):
                                   self.refrac + dt)
         self.spikes = spikes
         self.spike_counts += spikes.long()
+        # schedule this step's spikes to arrive in D steps: slot (ptr-1)
+        # mod L was last read one step ago, so nothing unread is lost
+        self.delay_buf[:, (ptr - 1) % L, :] = self.propagate(spikes)
+        self._delay_ptr = (ptr + 1) % L
         self.t_ms += dt
 
     def step(self, n_steps: int = 1) -> None:
@@ -634,6 +685,79 @@ class TorchBackend(FbaBackend):
                          "organ_key": getattr(self, "organ_topology_key", None),
                          "base_cache": BASE_CACHE.stats(),
                          "organ_cache": ORGAN_CACHE.stats()},
+            "semantics": self.semantics(),
+            "activity": self.activity_stats(),
+            "resource": self.marginal_resource_cost(),
+        }
+
+    # ------------------------------------------------------------ activity
+    def activity_stats(self) -> dict:
+        """How much of the network the evaluation actually touched.
+
+        This is what decides whether event-driven propagation is still
+        the right path (M1 §2.4-4): the gather cost scales with
+        ``active_edges_per_step``, the dense product with ``nnz``. A
+        hyperactive mutant showing an ``active_edge_ratio`` near 1 is
+        slowing its worker down and must be visible, not silently
+        expensive.
+        """
+        lane_steps = max(1, self._act_lane_steps)
+        events_per_step = self._act_events / lane_steps
+        edges_per_step = self._act_edges / lane_steps
+        return {
+            "steps": self._act_steps,
+            "lane_steps": self._act_lane_steps,
+            "active_neurons_per_step": round(events_per_step, 4),
+            "active_presynaptic_ratio": round(
+                events_per_step / max(1, self.n), 8),
+            "active_edges_per_step": round(edges_per_step, 4),
+            "active_edge_ratio": round(
+                edges_per_step / max(1, self.nnz), 8),
+            "event_propagation_seconds": round(self._act_wall, 6),
+            "propagation_backend": self.propagation_backend,
+            "dense_above": (None if self._dense_above is None
+                            else self._dense_above),
+        }
+
+    # ------------------------------------------------------------ resource
+    def marginal_resource_cost(self) -> dict:
+        """The *individual's own* cost, not the worker's.
+
+        The 139k/14M FBA0 base is shared by every organism in the run, so
+        charging an individual for it (worker RSS, total VRAM) would
+        score the substrate, not the genome — and would make fitness
+        depend on which GPU ran the job. Only what the genome adds is
+        counted here; measured RSS/VRAM stay in telemetry (M1 §2.4-8).
+        """
+        f = 4                                   # float32
+        lanes = max(1, getattr(self, "batch_size", 1))
+        # per artificial neuron: v, g, refrac, spikes + (D+1) delay slots
+        slots = int(getattr(self, "delay_buf", None).shape[1]) \
+            if getattr(self, "delay_buf", None) is not None else 1
+        per_neuron_bytes = f * (4 + slots) + 8  # +int64 spike_counts
+        neuron_bytes = self.n_extra * per_neuron_bytes
+        # per artificial edge: value (f32) + row index (int64)
+        edge_bytes = self.nnz_extra * (f + 8)
+        organ_bytes = {oid: (hi - lo) * per_neuron_bytes
+                       for oid, lo, hi in self._organ_ranges}
+        lane_steps = max(1, self._act_lane_steps)
+        return {
+            "artificial_neuron_count": self.n_extra,
+            "artificial_edge_count": self.nnz_extra,
+            "artificial_neuron_state_bytes": neuron_bytes,
+            "artificial_edge_bytes": edge_bytes,
+            "per_organ_buffer_bytes": organ_bytes,
+            "genome_bytes": int(self.phenotype.get("genome_bytes") or 0),
+            # canonical metrics for §8/§9. The compute cost counts edges
+            # traversed in the *artificial* graph: base-graph traffic is
+            # the shared substrate, and an organism is charged for the
+            # circuit it added, not for the connectome it was born into.
+            "marginal_memory_cost_bytes": neuron_bytes + edge_bytes,
+            "marginal_compute_cost": round(
+                self._act_edges_extra / lane_steps, 4),
+            "active_propagated_edges": self._act_edges,
+            "active_propagated_edges_artificial": self._act_edges_extra,
+            "estimated_operations": self._act_edges * 2,
         }
 
     def get_population_activity(self, groups: list[str]) -> dict[str, list[float]]:
@@ -668,11 +792,13 @@ class TorchBackend(FbaBackend):
             "gen_states": [g.get_state().cpu() for g in self._gens],
             "replicate_seeds": list(self.replicate_seeds),
             "build_gen_state": self._build_gen.get_state().cpu(),
-            "torch_rng_state": torch.get_rng_state(),
-            "cuda_rng_state": (torch.cuda.get_rng_state(self.device)
-                               if self.device.type == "cuda" else None),
             "force": self._force.cpu() if self._force is not None else None,
         }
+        # NOTE: the global torch / CUDA RNG state is deliberately not
+        # stored. Nothing in the evaluation path draws from it (every
+        # draw goes through an explicit Generator), and restoring it
+        # would be a cross-slot hazard once one process runs several
+        # concurrent evaluations (M1 §2.4-6).
         return pickle.dumps(state)
 
     def restore(self, blob: bytes) -> None:
@@ -687,9 +813,6 @@ class TorchBackend(FbaBackend):
             g.set_state(st)
         self.replicate_seeds = list(s["replicate_seeds"])
         self._build_gen.set_state(s["build_gen_state"])
-        torch.set_rng_state(s["torch_rng_state"])
-        if s.get("cuda_rng_state") is not None and self.device.type == "cuda":
-            torch.cuda.set_rng_state(s["cuda_rng_state"], self.device)
         f = s.get("force")
         self._force = f.to(self.device) if f is not None else None
 

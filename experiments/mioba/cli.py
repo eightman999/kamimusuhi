@@ -223,7 +223,8 @@ def cmd_profile(args) -> int:
     """
     from .fba.runtime_info import collect_runtime_info
     from .genome.hashing import config_hash, scientific_config_hash
-    from .perf.evalbench import founder_population, slot_sweep
+    from .perf.evalbench import (activity_break_even, founder_population,
+                                 slot_sweep)
     from .workers.gpu_info import gpu_identity
     config = load_config(getattr(args, "config", None))
     genomes = founder_population(args.evaluations,
@@ -253,6 +254,19 @@ def cmd_profile(args) -> int:
                   f"{ph['pct_of_wall']:5}%  x{ph['calls']}")
     print(f"selected_slots={report['selected_slots']} "
           f"({report['selected_evaluations_per_minute']} evals/min)")
+    if args.activity_sweep:
+        be = activity_break_even(config, args.device, data_dir=args.data_dir)
+        report["activity_break_even"] = be
+        print("activity sweep (event vs dense propagation):")
+        for r in be["rows"]:
+            print(f"  stim={r['stim_rate_hz']:>7} Hz  "
+                  f"rate={r['mean_rate_hz']:8.3f} Hz  "
+                  f"edges/step={r['active_edges_per_step']:>12}  "
+                  f"ratio={r['active_edge_ratio']:<10}  "
+                  f"event={r['event_wall_s']}s dense={r['dense_wall_s']}s  "
+                  f"{'event' if r['event_faster'] else 'DENSE'} wins")
+        print(f"  break_even_active_edge_ratio="
+              f"{be['break_even_active_edge_ratio']} ({be['note']})")
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(report, indent=2, default=str))
@@ -427,6 +441,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--replicates", type=int, default=None,
                    help="override evaluation.replicates")
     p.add_argument("--data-dir", default=None)
+    p.add_argument("--activity-sweep", action="store_true",
+                   help="also measure where dense propagation overtakes "
+                        "the event path (sets fba.dense_above)")
     p.add_argument("--out", default=None, help="write JSON report here")
     p.set_defaults(fn=cmd_profile)
 

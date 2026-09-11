@@ -46,7 +46,7 @@ class EventGraph:
     graph was one CSR matrix.
     """
 
-    __slots__ = ("colptr", "row", "val", "n_rows", "n_cols", "nnz")
+    __slots__ = ("colptr", "row", "val", "n_rows", "n_cols", "nnz", "_csr")
 
     def __init__(self, colptr, row, val, n_rows: int, n_cols: int):
         self.colptr = colptr
@@ -55,6 +55,7 @@ class EventGraph:
         self.n_rows = int(n_rows)
         self.n_cols = int(n_cols)
         self.nnz = int(val.numel())
+        self._csr = None        # built lazily, only if the dense path runs
 
     # ------------------------------------------------------------- build
     @classmethod
@@ -87,9 +88,21 @@ class EventGraph:
         return torch.sparse_coo_tensor(torch.stack([self.row, pre]),
                                        self.val * scale, shape)
 
+    def as_csr(self):
+        """Postsynaptic-major CSR for the dense fallback path.
+
+        Built on first use and cached, so a run that never leaves the
+        event path never pays the extra copy (at FlyWire scale it is
+        another ~170 MB of device memory).
+        """
+        if self._csr is None:
+            self._csr = self.to_coo().coalesce().to_sparse_csr()
+        return self._csr
+
     # ------------------------------------------------------------- step
     def propagate(self, spikes, out, scale: float = 1.0,
-                  col_limit: int | None = None) -> None:
+                  col_limit: int | None = None,
+                  dense_above: float | None = None) -> tuple[int, int]:
         """Accumulate this graph's contribution of ``spikes`` (B x N_any,
         non-zero entries are the events) into ``out`` (B x N_out).
 
@@ -97,23 +110,38 @@ class EventGraph:
         ``col_limit`` columns — used for the FBA0 base graph, whose
         columns cover only the base neurons while ``spikes`` also carries
         the artificial ones.
+
+        ``dense_above`` is the hybrid switch (M1 §2.4-4): when the
+        fraction of presynaptic neurons firing in this step exceeds it,
+        the dense sparse-matrix product is cheaper than gathering, and
+        this step takes that path instead. ``None`` disables the switch.
+
+        Returns ``(events, edges)`` — how many (lane, neuron) spikes were
+        propagated and how many edges they carried — so an evaluation can
+        report the activity that decides which path is the right one.
         """
         idx = torch.nonzero(spikes, as_tuple=False)
         if idx.numel() == 0:
-            return
+            return 0, 0
         lane, pre = idx[:, 0], idx[:, 1]
         if col_limit is not None:
             keep = pre < col_limit
             if not bool(keep.all()):
                 lane, pre = lane[keep], pre[keep]
                 if pre.numel() == 0:
-                    return
+                    return 0, 0
+        events = int(lane.numel())
+        lanes = max(1, spikes.shape[0])
+        if (dense_above is not None
+                and events / (lanes * max(1, self.n_cols)) > dense_above):
+            return events, self._propagate_dense(spikes, out, scale,
+                                                 col_limit)
         amp = spikes[lane, pre]
         start = self.colptr[pre]
         counts = self.colptr[pre + 1] - start
         total = int(counts.sum())
         if total == 0:
-            return
+            return events, 0
         # flat positions of every outgoing edge of every spiking neuron
         seg_start = torch.cumsum(counts, 0) - counts
         pos = (torch.repeat_interleave(start, counts)
@@ -126,3 +154,17 @@ class EventGraph:
         n_out = out.shape[1]
         flat = torch.repeat_interleave(lane, counts) * n_out + rows
         out.view(-1).index_add_(0, flat, vals)
+        return events, total
+
+    def _propagate_dense(self, spikes, out, scale: float,
+                         col_limit: int | None) -> int:
+        """Dense fallback: the whole-matrix product M0 used. Same sum,
+        cheaper than gathering once most columns are active."""
+        src = spikes
+        if col_limit is not None and spikes.shape[1] != self.n_cols:
+            src = spikes[:, :self.n_cols].contiguous()
+        contrib = torch.sparse.mm(self.as_csr(), src.T).T
+        if scale != 1.0:
+            contrib = contrib * scale
+        out[:, :self.n_rows] += contrib
+        return self.nnz

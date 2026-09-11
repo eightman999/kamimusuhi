@@ -36,6 +36,8 @@ from pathlib import Path
 from ..development.phenotype import develop
 from ..fba.registry import get_backend
 from ..fba.replicates import replicate_seeds
+from ..fba.semantics import check_replayable
+from ..fba.semantics import semantics as current_semantics
 from ..genome.hashing import scientific_config_hash
 from ..genome.schema import Genome
 from ..storage.db import Database
@@ -83,6 +85,8 @@ class ReplayPlan:
     device_warnings: list[str] = field(default_factory=list)
     recorded_device: dict = field(default_factory=dict)
     current_device: dict = field(default_factory=dict)
+    # simulator identity of the recording (fba/semantics.py)
+    semantics: dict = field(default_factory=dict)
 
 
 def _parse_synthetic_version(version: str | None) -> dict:
@@ -262,6 +266,13 @@ def build_plan(exp_dir: Path, evaluation_id: str, *, device: str = "cpu",
     exec_batch = int(execution_batch or ev.get("execution_batch_size")
                      or ev.get("batch_size") or 1)
 
+    # simulator semantics of the recording; compared against the backend
+    # that will actually run the replay, in run_plan (M1 2.4-2)
+    recorded_semantics = {
+        k: ev.get(k) for k in ("simulator_semantics_version",
+                               "rng_protocol_version", "propagation_backend")
+        if ev.get(k) is not None}
+
     kwargs = _dataset_kwargs(dataset, use_backend,
                              data_dir or (config.get("fba") or {}).get(
                                  "data_dir"), exp_dir)
@@ -284,7 +295,8 @@ def build_plan(exp_dir: Path, evaluation_id: str, *, device: str = "cpu",
                   "allow_device_drift": allow_device_drift},
         replicates=n_rep, replicate_seeds=rec_seeds,
         execution_batch=exec_batch, device_warnings=device_warnings,
-        recorded_device=recorded_device, current_device=current_device)
+        recorded_device=recorded_device, current_device=current_device,
+        semantics=recorded_semantics)
 
 
 def run_plan(plan: ReplayPlan) -> dict:
@@ -294,6 +306,14 @@ def run_plan(plan: ReplayPlan) -> dict:
     # dataset identity is checked before any simulation
     backend.initialize(phen, batch_size=1, seed=plan.seed, device=plan.device,
                        replicate_seeds=plan.replicate_seeds[:1])
+    # a recording made by different equations, a different RNG protocol
+    # or a different propagation path is not reproducible by this build,
+    # whatever the config says (M1 2.4-2)
+    problems = check_replayable(plan.semantics, backend.semantics())
+    if problems:
+        raise ReplayUnavailable(
+            "simulator semantics mismatch: " + "; ".join(problems)
+            + " - replay this evaluation with the commit that produced it")
     ident = backend.dataset_identity()
     for k in ("dataset_id", "version", "manifest_hash"):
         if plan.dataset.get(k) is not None and ident.get(k) != plan.dataset[k]:

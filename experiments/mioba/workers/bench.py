@@ -71,6 +71,10 @@ def profile_backend_kwargs(profile: dict, data_dir: str | None = None,
     }
     if fba.get("base_seed") is not None:
         kw["base_seed"] = int(fba["base_seed"])
+    if fba.get("propagation_backend"):
+        kw["propagation_backend"] = str(fba["propagation_backend"])
+    if fba.get("dense_above") is not None:
+        kw["dense_above"] = float(fba["dense_above"])
     if fba.get("synthetic_edges"):
         kw["synthetic_edges"] = int(fba["synthetic_edges"])
     if fba.get("region_mode"):

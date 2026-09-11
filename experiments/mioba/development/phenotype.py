@@ -38,6 +38,9 @@ def develop(genome: Genome, base_neurons: int | None = None) -> dict:
         ],
         "params": params,
         "ancestry_fraction": ancestry_fraction,
+        # part of the individual's own resource cost (M1 §8): a genome
+        # that carries more structure costs more to store and ship
+        "genome_bytes": len(genome.to_json().encode("utf-8")),
     }
 
 

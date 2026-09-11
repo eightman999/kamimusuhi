@@ -651,7 +651,7 @@ def test_synthetic_edges_explicit():
 
 
 # ------------------------------------------------------------ schema / db
-def test_schema_v2_db_migrates_to_v3(tmp_path):
+def test_older_schema_db_migrates_forward(tmp_path):
     import sqlite3
     from experiments.mioba.storage import db as dbmod
     path = tmp_path / "old.sqlite"
@@ -660,8 +660,8 @@ def test_schema_v2_db_migrates_to_v3(tmp_path):
     conn = sqlite3.connect(path)
     # sqlite DROP COLUMN chokes on comments inside CREATE TABLE
     conn.executescript(re.sub(r"--[^\n]*", "", dbmod._SCHEMA_SQL))
-    # drop the v3 columns to fake a v2 database
-    for table, col, _ in dbmod._V3_COLUMNS:
+    # drop every post-v2 column to fake a v2 database
+    for table, col, _ in dbmod._ADDED_COLUMNS:
         conn.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
     conn.execute("INSERT INTO schema_version(version) VALUES(2)")
     conn.commit()
@@ -670,12 +670,16 @@ def test_schema_v2_db_migrates_to_v3(tmp_path):
     cols = {r[1] for r in db.conn.execute("PRAGMA table_info(evaluations)")}
     assert {"requested_replicates", "completed_replicates",
             "execution_batch_size", "replicate_seeds_json",
-            "result_id"} <= cols
+            "result_id",
+            # v4: simulator identity and the separated M1 metrics
+            "simulator_semantics_version", "rng_protocol_version",
+            "propagation_backend", "selection_score", "metrics_json",
+            "resource_json", "activity_json"} <= cols
     jcols = {r[1] for r in db.conn.execute("PRAGMA table_info(evaluation_jobs)")}
     assert {"replicates", "result_id"} <= jcols
     assert db.conn.execute("SELECT version FROM schema_version").fetchone()[0] \
         == dbmod.SCHEMA_VERSION
-    # v3 writes work on the migrated DB
+    # writes work on the migrated DB
     db.create_experiment("E", {}, "h", None)
     jid = db.enqueue_job("E", "g", "env", 1, "smoke", "mock", 10.0, [],
                          replicates=4)

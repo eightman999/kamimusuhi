@@ -39,3 +39,19 @@ EV_STARTED = "experiment_started"
 EV_RESUMED_FROM_CKPT = "experiment_resumed_from_checkpoint"
 EV_RUNTIME_CONFIG_CHANGED = "runtime_config_changed"
 EV_SCIENTIFIC_CONFIG_MISMATCH = "scientific_config_mismatch"
+
+# M1: a worker hit a *scheduling* resource limit (GPU OOM at the chosen
+# slot count / execution batch), backed off and asked for the job to be
+# re-run under the same evaluation seed. This is an operational event:
+# it is never a FAILED evaluation and never a fitness penalty (M1 §2.4-7).
+EV_RUNTIME_RESOURCE_RETRY = "runtime_resource_retry"
+# an evaluation whose activity makes event-driven propagation a bad fit
+EV_HIGH_ACTIVITY = "high_activity_individual"
+
+# M1 structural mutation outcomes (§4 / §13)
+EV_STRUCTURAL_MUTATION = "structural_mutation"
+EV_NEUTRAL_STRUCTURE = "neutral_structure"
+EV_INVALID_STRUCTURE = "invalid_structure"
+
+RETRY_RUNTIME_RESOURCE = "runtime_resource"
+RETRY_INFRASTRUCTURE = "retryable_infrastructure_failure"

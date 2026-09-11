@@ -103,6 +103,54 @@ class WorkerState:
 STATE = WorkerState()
 
 
+class SlotGovernor:
+    """Caps how many evaluations this process runs at once, and backs off
+    when the device says no (M1 §2.4-7).
+
+    A GPU OOM at three concurrent slots is a statement about the
+    scheduler, not about the organism: the same genome under the same
+    evaluation seed fits perfectly well at two. So the governor
+    permanently retires a permit on OOM, the job goes back to the queue
+    unchanged, and the run continues narrower instead of recording a
+    death that never happened.
+
+    Backoff is one-way within a worker's life: re-widening would
+    re-discover the same OOM, and a worker restart is the cheap way to
+    try a wider setting again.
+    """
+
+    def __init__(self, slots: int = 1, minimum: int = 1):
+        self.limit = max(1, int(slots))
+        self.minimum = max(1, int(minimum))
+        self._sem = threading.Semaphore(self.limit)
+        self._lock = threading.Lock()
+        self.backoffs: list[dict] = []
+
+    def acquire(self) -> None:
+        self._sem.acquire()
+
+    def release(self) -> None:
+        self._sem.release()
+
+    def back_off(self, reason: str = "cuda_oom") -> int:
+        """Retire one permit. Returns the new limit."""
+        with self._lock:
+            if self.limit <= self.minimum:
+                self.backoffs.append({"at": utcnow(), "reason": reason,
+                                      "limit": self.limit, "applied": False})
+                return self.limit
+            self.limit -= 1
+            self.backoffs.append({"at": utcnow(), "reason": reason,
+                                  "limit": self.limit, "applied": True})
+        # consume a permit in the background so an in-flight slot is not
+        # interrupted; the narrower limit takes effect as slots finish
+        threading.Thread(target=self._sem.acquire, daemon=True).start()
+        return self.limit
+
+
+GOVERNOR = SlotGovernor(1)
+
+
 def _sigterm(signum, frame):
     _stop.set()
 
@@ -122,6 +170,10 @@ def backend_kwargs(config: dict, run_dir: str | None,
           "runs_dir": run_dir}
     if fba.get("base_seed") is not None:
         kw["base_seed"] = int(fba["base_seed"])
+    if fba.get("propagation_backend"):
+        kw["propagation_backend"] = str(fba["propagation_backend"])
+    if fba.get("dense_above") is not None:
+        kw["dense_above"] = float(fba["dense_above"])
     if fba.get("synthetic_edges"):
         kw["synthetic_edges"] = int(fba["synthetic_edges"])
     if fba.get("connectivity") is not None:
@@ -248,6 +300,14 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
             "nnz_artificial": state.get("nnz_artificial"),
         },
         "topology": state.get("topology"),
+        # how much of the network was actually touched (M1 §2.4-4) and what
+        # this individual cost on top of the shared base (M1 §8)
+        "activity": state.get("activity"),
+        "resource": state.get("resource"),
+        "semantics": (state.get("semantics")
+                      or (backend.semantics()
+                          if hasattr(backend, "semantics")
+                          else None)),
         "timing": timer.to_dict() if timer.enabled else None,
     }
     return {"summary": summary, "requested_replicates": n_rep,
@@ -323,6 +383,8 @@ def run_job(client, worker_id: str, job: dict, device: str,
                 break
             except Exception as exc:
                 if _is_oom(exc) and used_batch > 1:
+                    # halve the lanes first: cheaper than giving the job
+                    # back, and the replicate set is unchanged
                     used_batch = max(1, used_batch // 2)
                     _clear_cuda_cache(device)
                     continue
@@ -348,6 +410,9 @@ def run_job(client, worker_id: str, job: dict, device: str,
             "environment_id": job["environment_id"],
             "duration_ms": float(job["duration_ms"]),
             "dataset": backend.dataset_identity(),
+            "semantics": summary.get("semantics"),
+            "activity": summary.get("activity"),
+            "resource": summary.get("resource"),
             "summary": summary,
             "started_at": started,
             "finished_at": utcnow(),
@@ -360,15 +425,26 @@ def run_job(client, worker_id: str, job: dict, device: str,
             # evaluate_replicates took its snapshot
             summary["timing"] = timer.to_dict()
         status, error = M.JOB_SUCCEEDED, None
+        retry_reason = None
     except Exception as exc:
         evaluation = None
-        status = "RETRY" if _is_retryable_infra(exc) else M.JOB_FAILED
+        # A device resource limit is a statement about how this worker
+        # scheduled the job, not about the organism: the job goes back to
+        # the queue with its evaluation seed intact and is re-run
+        # narrower. It is never a FAILED evaluation (M1 2.4-7).
+        if _is_oom(exc):
+            status, retry_reason = "RETRY", M.RETRY_RUNTIME_RESOURCE
+        elif _is_retryable_infra(exc):
+            status, retry_reason = "RETRY", M.RETRY_INFRASTRUCTURE
+        else:
+            status, retry_reason = M.JOB_FAILED, None
         error = f"{type(exc).__name__}: {exc}"
     finally:
         _current_job_started = None
     body = {"job_id": job["job_id"], "worker_id": worker_id,
             "result_id": result_id, "status": status,
-            "evaluation": evaluation, "error": error}
+            "evaluation": evaluation, "error": error,
+            "retry_reason": retry_reason}
     if deliver:
         state.set_job(job["job_id"], "delivering")
         body["delivery"] = deliver_result(client, body)
@@ -542,6 +618,8 @@ def main(argv=None) -> int:
         batch_size = int(args.batch)
     slots = int(args.slots if args.slots is not None
                 else (profile.get("worker") or {}).get("slots", 1) or 1)
+    global GOVERNOR
+    GOVERNOR = SlotGovernor(slots)
 
     payload = {"worker_id": worker_id, "hostname": socket.gethostname(),
                "device": args.device,
@@ -598,9 +676,21 @@ def main(argv=None) -> int:
                 _stop.wait(1.0)
                 continue
             job = resp.json()
-            run_job(client, worker_id, job, args.device, batch_size or 1,
-                    grace_s=args.grace_s, runtime_info=runtime_info,
-                    data_dir=args.data_dir, profile=not args.no_profile)
+            GOVERNOR.acquire()
+            try:
+                body = run_job(client, worker_id, job, args.device,
+                               batch_size or 1, grace_s=args.grace_s,
+                               runtime_info=runtime_info,
+                               data_dir=args.data_dir,
+                               profile=not args.no_profile)
+            finally:
+                GOVERNOR.release()
+            if body.get("retry_reason") == M.RETRY_RUNTIME_RESOURCE:
+                # the device ran out of room at this concurrency; run
+                # narrower rather than letting the next job hit the same
+                limit = GOVERNOR.back_off()
+                print(f"[{worker_id}] device resource limit; "
+                      f"concurrent slots -> {limit}", flush=True)
 
     if slots <= 1:
         claim_loop()

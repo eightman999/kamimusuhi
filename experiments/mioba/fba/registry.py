@@ -18,7 +18,8 @@ def get_backend(name: str, **kwargs) -> FbaBackend:
                                         "synthetic_neurons", "connectivity",
                                         "runs_dir", "region_mode",
                                         "synthetic_edges", "base_seed",
-                                        "topology_cache")})
+                                        "topology_cache",
+                                        "propagation_backend", "dense_above")})
     if name == "genn":
         from .genn_backend import GennBackend
         return GennBackend(**{k: v for k, v in kwargs.items()

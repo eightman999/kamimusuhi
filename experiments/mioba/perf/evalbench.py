@@ -196,3 +196,88 @@ def founder_population(n: int, base_seed: int = 0) -> list[Genome]:
     for i in range(1, max(1, n)):
         out.append(mutate(base, rng, birth_index=i, generation=0))
     return out
+
+
+def activity_break_even(config: dict, device: str,
+                        stim_rates_hz: tuple[float, ...] = (
+                            5.0, 50.0, 200.0, 500.0, 1000.0, 2000.0),
+                        stim_fraction: float = 0.05,
+                        duration_ms: float = 50.0,
+                        data_dir: str | None = None) -> dict:
+    """Where does event-driven propagation stop paying off? (M1 §2.4-4)
+
+    Event cost scales with the edges leaving neurons that spiked; the
+    dense product costs ``nnz`` whatever happens. Somewhere between the
+    two there is a crossover, and M1 can produce individuals on either
+    side of it — a hyperactive mutant, or an evaluation under a severe
+    disturbance. This drives the *same* network at increasing input rates
+    and times both paths at each resulting activity level, so the
+    crossover is measured on the run's own conditions rather than
+    guessed.
+
+    Returns one row per rate with the realised activity and both wall
+    times, plus the lowest ``active_edge_ratio`` at which the dense path
+    won.
+    """
+    import time as _time
+
+    from ..fba.registry import get_backend
+    from ..fba.semantics import (PROPAGATION_EVENT_CSC,
+                                 PROPAGATION_SPARSE_CSR)
+    from ..genome.schema import fba0_genome
+    from ..mie.environments import make_drive
+
+    rows = []
+    for rate in stim_rates_hz:
+        cfg = dict(config)
+        cfg["env"] = dict(cfg.get("env") or {},
+                          stim_fraction=stim_fraction, stim_rate_hz=rate)
+        measured = {}
+        for mode in (PROPAGATION_EVENT_CSC, PROPAGATION_SPARSE_CSR):
+            kw = dict(_backend_kwargs(cfg, None, data_dir))
+            kw["propagation_backend"] = mode
+            backend = get_backend((cfg.get("evaluation") or {})
+                                  .get("backend", "torch"), **kw)
+            phen = develop(fba0_genome())
+            backend.initialize(phen, batch_size=1, seed=0, device=device)
+            n_drive = getattr(backend, "n_base", 512)
+            backend.set_inputs(make_drive(
+                (cfg.get("evaluation") or {}).get("environment_id",
+                                                  "synthetic-quiet-v0"),
+                n_drive, cfg))
+            t0 = _time.perf_counter()
+            backend.run(duration_ms)
+            measured[mode] = {
+                "wall_s": round(_time.perf_counter() - t0, 4),
+                "activity": backend.activity_stats(),
+                "mean_rate_hz": backend.get_state_summary()["mean_rate_hz"],
+            }
+        ev = measured[PROPAGATION_EVENT_CSC]
+        dn = measured[PROPAGATION_SPARSE_CSR]
+        rows.append({
+            "stim_rate_hz": rate,
+            "mean_rate_hz": ev["mean_rate_hz"],
+            "active_neurons_per_step":
+                ev["activity"]["active_neurons_per_step"],
+            "active_edges_per_step": ev["activity"]["active_edges_per_step"],
+            "active_edge_ratio": ev["activity"]["active_edge_ratio"],
+            "event_wall_s": ev["wall_s"],
+            "dense_wall_s": dn["wall_s"],
+            "event_faster": ev["wall_s"] < dn["wall_s"],
+            "speedup": (round(dn["wall_s"] / ev["wall_s"], 3)
+                        if ev["wall_s"] > 0 else None),
+        })
+    losing = [r for r in rows if not r["event_faster"]]
+    return {
+        "device": device,
+        "duration_ms": duration_ms,
+        "stim_fraction": stim_fraction,
+        "rows": rows,
+        # the activity level at which the dense path first wins: the
+        # right value for fba.dense_above on this device
+        "break_even_active_edge_ratio":
+            (min(r["active_edge_ratio"] for r in losing) if losing else None),
+        "note": ("event-driven propagation won at every sampled rate"
+                 if not losing else
+                 "dense propagation won above the break-even ratio"),
+    }
