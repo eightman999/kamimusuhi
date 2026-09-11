@@ -1,5 +1,6 @@
 # O0 local artifacts: keep raw JSON results/configs in git,
-# exclude bulky binary checkpoints and transient files.
+# exclude bulky binary checkpoints, console logs and transient files.
 artifacts/**/*.pt
 artifacts/**/*.tmp
+artifacts/*.log
 reports/raw/*.tmp
