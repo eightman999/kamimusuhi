@@ -92,11 +92,13 @@ class PcaMethod:
         self.means: Dict[str, np.ndarray] = {}
 
     def fit(self, tokens: Dict[str, np.ndarray]) -> "PcaMethod":
+        # one shared projection size so cross-modal cosine is defined
+        k_eff = min(self.d_z, min(X.shape[1] for X in tokens.values()))
         for m, X in tokens.items():
             mu = X.mean(0)
             Xc = X - mu
             _, _, vt = np.linalg.svd(Xc, full_matrices=False)
-            self.bases[m] = vt[: self.d_z].T          # (d_m, d_z)
+            self.bases[m] = vt[:k_eff].T              # (d_m, k_eff)
             self.means[m] = mu
         return self
 

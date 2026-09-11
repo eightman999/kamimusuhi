@@ -148,13 +148,14 @@ def compute_losses(model, toks, spec, modalities):
     if spec.kind == "binder":
         contra, recon = binder_losses(model, toks, spec, modalities)
         total = spec.contra_weight * contra + spec.recon_weight * recon
-        return total, {"contra": float(contra), "recon": float(recon)}
+        return total, {"contra": float(contra.detach()),
+                       "recon": float(recon.detach())}
     ae, cross = bottleneck_losses(model, toks, spec, modalities,
                                   cross_only=(spec.kind == "indep_ae"))
     if spec.kind == "indep_ae":
-        return ae, {"ae": float(ae)}
+        return ae, {"ae": float(ae.detach())}
     total = spec.ae_weight * ae + spec.cross_weight * cross
-    return total, {"ae": float(ae), "cross": float(cross)}
+    return total, {"ae": float(ae.detach()), "cross": float(cross.detach())}
 
 
 def eval_label_free(model, scenes, spec, modalities, device, chunk=128):
@@ -207,14 +208,14 @@ def train(config, artifacts, run_id):
 
     state()
     env_cfg = config["env"]
-    modalities = tuple(env_cfg["modalities"])
+    modalities = tuple(env_cfg.modalities)
     env = make_env(config, seed)
     dims = {m: env.transforms[m].out_dim for m in modalities}
     spec = config["model"]
 
-    train_scenes = env.sample_scenes(env_cfg["n_train_scenes"],
+    train_scenes = env.sample_scenes(env_cfg.n_train_scenes,
                                      seed=10_000 + seed)
-    val_scenes = env.sample_scenes(env_cfg["n_val_scenes"],
+    val_scenes = env.sample_scenes(env_cfg.n_val_scenes,
                                  seed=20_000 + seed)
     from experiments.x0.config import ModelSpec
     mspec = ModelSpec(**spec)

@@ -74,6 +74,10 @@ def matching_accuracy(sim: np.ndarray, ev_a: np.ndarray,
         return float("nan")
     S = np.asarray([[sim[ev_to_i[e], ev_to_j[f]] for f in common]
                     for e in common])
+    # break ties with tiny deterministic jitter so degenerate similarity
+    # (e.g. all-zero concat baseline) yields ~1/G, not a spurious identity
+    rng = np.random.default_rng(0)
+    S = S + rng.normal(0.0, 1e-9, S.shape)
     assign = _best_assignment(S)
     correct = sum(int(assign[r] >= 0 and common[assign[r]] == common[r])
                   for r in range(len(common)))
@@ -115,7 +119,8 @@ def false_binding(sim: np.ndarray, times_a: np.ndarray, times_b: np.ndarray,
                  and abs(int(times_a[i]) - int(times_b[j])) <= dt_true]
         if wrong:
             n_distracted += 1
-            margins.append(sim[i, j_true] - max(sim[i, j] for j in wrong))
+            if np.isfinite(sim[i, j_true]):
+                margins.append(sim[i, j_true] - max(sim[i, j] for j in wrong))
     return {
         "cotimed_wrong": float(top_wrong / max(1, valid)),
         "top1": float(top_correct / max(1, valid)) if valid else float("nan"),

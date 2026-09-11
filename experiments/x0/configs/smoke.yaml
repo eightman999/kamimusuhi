@@ -1,0 +1,40 @@
+# X0 smoke config: quick end-to-end check (<2 min)
+seed: 0
+name: smoke
+env:
+  factors: [4, 4, 4]
+  holdout: [2, 2]
+  modalities: [vis, aud, temp, mot]
+  n_events: 6
+  T: 16
+  lag: 2
+  token_drop_p: 0.1
+  modality_drop_p: 0.1
+  noise: 0.1
+  conflict_delta: 2
+  conflict_pair: [vis, aud]
+  n_train_scenes: 1024
+  n_val_scenes: 128
+model:
+  kind: binder
+  d_z: 32
+  hidden: 64
+  tau: 0.2
+  window: 3
+  contra_weight: 1.0
+  recon_weight: 0.5
+  ae_weight: 1.0
+  cross_weight: 1.0
+train:
+  steps: 60
+  batch_scenes: 64
+  lr: 0.001
+  val_every: 20
+  threads: 4
+  device: cpu
+eval:
+  scenes: 128
+  lags: [0, 2, 4]
+  conflict_deltas: [2]
+  drop_rates: [0.0, 0.5]
+  alt_noise: 0.3

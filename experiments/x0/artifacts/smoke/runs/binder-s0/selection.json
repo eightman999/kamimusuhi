@@ -1,0 +1,5 @@
+{
+  "criterion": "label-free val loss",
+  "step": 60,
+  "val_loss": 1.551426649093628
+}

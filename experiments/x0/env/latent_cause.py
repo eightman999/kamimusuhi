@@ -130,7 +130,9 @@ class SceneParams:
     n_events: int = 6
     T: int = 16                       # onset range
     lag: int = 2                      # per-modality jitter ~ U{0..lag}
-    fixed_shift: Optional[int] = None # if set: all lags = this value
+    fixed_shift: Optional[int] = None # if set: modality i lag = i*shift —
+                                      # every same-cause pair is separated
+                                      # by a deterministic nonzero offset
     token_drop_p: float = 0.1         # per (event, modality) drop prob
     modality_drop_p: float = 0.1      # whole-modality absent per scene
     noise: float = 0.1                # gaussian read noise on features
@@ -163,8 +165,12 @@ class LatentCauseEnv:
     # ------------------------------------------------------------------
     def _emit(self, cause_ids: np.ndarray, onsets: np.ndarray,
               lags: np.ndarray, rng: np.random.Generator,
-              drop_mask: np.ndarray) -> Dict[str, Emission]:
-        """cause_ids (G,), onsets (G,), lags (G, M), drop_mask (G, M)."""
+              drop_mask: np.ndarray,
+              wrap_T: Optional[int] = None,
+              wrap_mods: tuple = ()) -> Dict[str, Emission]:
+        """cause_ids (G,), onsets (G,), lags (G, M), drop_mask (G, M).
+        ``wrap_T`` wraps emission times of ``wrap_mods`` modulo wrap_T
+        (used by the conflict construction to form a timing ring)."""
         p = self.params
         out: Dict[str, Emission] = {}
         for mi, m in enumerate(self.modalities):
@@ -178,8 +184,10 @@ class LatentCauseEnv:
             z = self.causes.codes[cause_ids[idx]]
             feats = self.transforms[m](z)
             feats = feats + rng.normal(0.0, p.noise, feats.shape)
-            out[m] = Emission(times=onsets[idx] + lags[idx, mi],
-                              feats=feats, events=idx)
+            times = onsets[idx] + lags[idx, mi]
+            if wrap_T is not None and m in wrap_mods:
+                times = times % wrap_T
+            out[m] = Emission(times=times, feats=feats, events=idx)
         return out
 
     def sample_scene(self, rng: Optional[np.random.Generator] = None,
@@ -196,11 +204,14 @@ class LatentCauseEnv:
         mdp = p.modality_drop_p if modality_drop_p is None else modality_drop_p
 
         if mode == "conflict":
-            # X-C2 construction on the designated pair: co-timed tokens are
-            # always different causes; true partners are shifted by delta.
+            # X-C2 ring construction on the designated pair: vis[e] @ e and
+            # aud[e] @ (e + delta) mod G, so EVERY co-timed vis/aud token
+            # belongs to a different cause while each true partner sits
+            # exactly ``delta`` steps away (delta < G required).
             d = p.conflict_delta
             ma, mb = p.conflict_pair
-            onsets = np.arange(G) * d                     # 0, d, 2d, ...
+            assert 0 < d < G, "conflict_delta must be in (0, n_events)"
+            onsets = np.arange(G)
             lags = np.zeros((G, M), dtype=np.int64)
             for mi, m in enumerate(self.modalities):
                 if m == mb:
@@ -212,7 +223,7 @@ class LatentCauseEnv:
         else:
             onsets = rng.integers(0, p.T, size=G)
             if p.fixed_shift is not None:
-                lags = np.full((G, M), int(p.fixed_shift))
+                lags = np.tile(np.arange(M) * int(p.fixed_shift), (G, 1))
             else:
                 lmax = p.lag if lag is None else int(lag)
                 lags = rng.integers(0, lmax + 1, size=(G, M))
@@ -229,7 +240,10 @@ class LatentCauseEnv:
         present = np.broadcast_to(present, (G, M)).copy()
         drop |= ~present
 
-        emissions = self._emit(cause_ids, onsets, lags, rng, drop)
+        wrap_T = G if mode == "conflict" else None
+        wrap_mods = p.conflict_pair if mode == "conflict" else ()
+        emissions = self._emit(cause_ids, onsets, lags, rng, drop,
+                               wrap_T=wrap_T, wrap_mods=wrap_mods)
         return Scene(emissions=emissions, causes=cause_ids,
                      onsets=onsets, mode=mode)
 

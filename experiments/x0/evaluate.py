@@ -46,6 +46,17 @@ from experiments.x0.train import atomic, collate, make_env
 EVAL_SEED = 900001
 
 
+def sanitize(o):
+    """Recursively map non-finite floats to None for JSON output."""
+    if isinstance(o, dict):
+        return {k: sanitize(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [sanitize(v) for v in o]
+    if isinstance(o, float) and not np.isfinite(o):
+        return None
+    return o
+
+
 # ----------------------------------------------------------------------
 # methods
 # ----------------------------------------------------------------------
@@ -227,10 +238,21 @@ def build_eval_env(config: Config, seed, alt=False, noise_override=None,
 def load_model(checkpoint, device="cpu"):
     cp = torch.load(checkpoint, map_location=device, weights_only=False)
     cfg = cp["config"]
+    env_raw = cfg["env"]
+    if dataclasses.is_dataclass(env_raw):
+        env_raw = dataclasses.asdict(env_raw)
     env_cfg = EnvConfig(**{k: (tuple(v) if isinstance(v, list) else v)
-                           for k, v in cfg["env"].items()})
+                           for k, v in env_raw.items()})
+    model_raw = cfg["model"]
+    if dataclasses.is_dataclass(model_raw):
+        model_raw = dataclasses.asdict(model_raw)
+    eval_raw = cfg.get("eval") or {}
+    if dataclasses.is_dataclass(eval_raw):
+        eval_raw = dataclasses.asdict(eval_raw)
+    eval_cfg = EvalConfig(**{k: (tuple(v) if isinstance(v, list) else v)
+                             for k, v in eval_raw.items()})
     config = Config(seed=cfg["seed"], env=env_cfg,
-                    model=ModelSpec(**cfg["model"]))
+                    model=ModelSpec(**model_raw), eval=eval_cfg)
     env = build_eval_env(config, EVAL_SEED)
     dims = {m: env.transforms[m].out_dim for m in env.modalities}
     model = make_model(config.model, dims).to(device)
@@ -294,8 +316,7 @@ def evaluate_checkpoint(checkpoint, artifacts, device="cpu", scenes_n=None,
     for L in ecfg.lags:
         scs = env.sample_scenes(n_scenes // 2, seed=EVAL_SEED + 100 + L, lag=L)
         out["desync"][str(L)] = {
-            name: eval_retrieval(meth, scs, mods)[
-                f"{mods[0]}->{mods[1]}"]["top1"]
+            name: eval_retrieval(meth, scs, mods)["macro"]["top1"]
             for name, meth in methods.items()}
 
     # ---- X-C2 / X0-D false synchrony (conflict scenes) ------------------
@@ -348,10 +369,13 @@ def evaluate_checkpoint(checkpoint, artifacts, device="cpu", scenes_n=None,
         for name, meth in methods.items()}
 
     # ---- latent visualisation data (PCA of model embeddings) -------------
-    out["_latent"] = _latent_snapshot(model, std[:128], mods, device)
+    latent = _latent_snapshot(model, std[:128], mods, device)
+    if latent is not None:
+        atomic(Path(artifacts) / "eval" / (Path(checkpoint).stem + "_latent.json"),
+               latent)
 
     dest = Path(artifacts) / "eval" / (Path(checkpoint).stem + ".json")
-    atomic(dest, {k: v for k, v in out.items() if not k.startswith("_")})
+    atomic(dest, sanitize(out))
     return out
 
 
@@ -428,10 +452,6 @@ def consolidate(artifacts):
         for r in items:
             mat = r["probes"].get("model")
             if isinstance(mat, dict) and not mat.get("error"):
-                off = [v for a, b in itertools.product(mat, mat)
-                       for k2, v in [(b, mat[a].get(b))] if a != b
-                       and v is not None and not np.isnan(v)]
-                # simpler: off-diagonal entries
                 off = [mat[a][b] for a in mat for b in mat[a] if a != b]
                 cross_probe.append(float(np.nanmean(off)))
         s["probe_cross_modal"] = summarise(cross_probe)
@@ -481,6 +501,9 @@ def make_plots(artifacts):
         plot_lag_curve(rows, figdir / "desync_curve.png")
         plot_probe_heatmap(rows[0]["probes"]["model"],
                            figdir / "probe_transfer.png")
+    for lat in sorted(eval_dir.glob("*_latent.json"))[:1]:
+        plot_latent_pca(json.loads(lat.read_text()),
+                        figdir / "latent_pca.png")
     return figdir
 
 
