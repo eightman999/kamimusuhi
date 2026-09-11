@@ -32,8 +32,10 @@ train:
   iters: 300
   num_envs: 64
   lr: 0.001
-  ans_coef: 1.0
+  ans_coef: 4.0
+  aux_coef: 0.3
   aux_span: 12
+  warmup_iters: 100
   reset_prob: 0.6
   max_grad_norm: 0.5
   eval_every: 20

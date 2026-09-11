@@ -112,6 +112,17 @@ def main() -> None:
     for it in range(1, iters + 1):
         for i, e in enumerate(envs):
             e.cfg.seed = args.seed * 1_000_003 + it * 977 + i
+        # curriculum: slide the interval-0 item window toward the first stop
+        # so early iterations only need short retention spans
+        warm = tc.get("warmup_iters", 0)
+        if warm:
+            f = min(1.0, it / warm)
+            stop0 = ecfg.stops[0][0]
+            lo_full = full.get("env", {}).get("item_lo", 6)
+            lo_eff = round(stop0 - ecfg.item_hi_margin
+                           - f * (stop0 - ecfg.item_hi_margin - lo_full))
+            for e in envs:
+                e.cfg.item_lo = max(2, lo_eff)
         # restart augmentation: pick a mode + step for this iteration
         do_reset = rng.random() < tc.get("reset_prob", 0.6)
         mode = modes[int(rng.integers(len(modes)))]
@@ -133,7 +144,7 @@ def main() -> None:
         metrics_f.write(json.dumps(rec) + "\n")
         metrics_f.flush()
         print(f"[{run_id}] it {it} act {losses['act_loss']:.3f} "
-              f"ans {losses['ans_loss']:.3f} "
+              f"q {losses['q_loss']:.3f} x {losses['x_loss']:.3f} "
               f"val {rec.get('val_accuracy', float('nan')):.3f} "
               f"post {rec.get('val_acc_post', float('nan')):.3f}",
               flush=True)
@@ -157,7 +168,7 @@ def train_iter(policy, proto, envs, opt, device, tc,
         e.reset()
         e._last_item_t, e._last_item_v = -10**9, -1
     proto.reset(N)
-    al_t, nl_t, acts_t, anss_t, amask_t = [], [], [], [], []
+    al_t, nl_t, acts_t, anss_t, qmask_t, xmask_t = [], [], [], [], [], []
     aux = tc.get("aux_span", 12)
     for t in range(T):
         if do_reset and t == reset_t:
@@ -165,23 +176,29 @@ def train_iter(policy, proto, envs, opt, device, tc,
         x = proto._input(np.stack([e._obs() for e in envs]))
         al, nl, _v, proto.h = policy(x, proto.h)
         al_t.append(al); nl_t.append(nl)
-        oa, oan, am = [], [], []
+        oa, oan, qm, xm = [], [], [], []
         for i, e in enumerate(envs):
             a, v = e.oracle_action(store_items=proto.has_memory)
             oa.append(a); oan.append(v)
             ev = e.schedule[e.t]
-            if ev.kind in (QUERY, ITEM):
+            if ev.kind == QUERY:
+                qm.append(1); xm.append(0)          # real retention signal
+            else:
+                qm.append(0)
                 if ev.kind == ITEM:
                     e._last_item_t, e._last_item_v = e.t, ev.value
-                am.append(1)
-            elif e.t - e._last_item_t <= aux:
-                oan[i] = e._last_item_v
-                am.append(1)
-            else:
-                am.append(0)
+                    xm.append(1)
+                elif e.t - e._last_item_t <= aux:
+                    oan[i] = e._last_item_v
+                    xm.append(1)
+                else:
+                    xm.append(0)
         acts_t.append(torch.as_tensor(oa, device=device))
         anss_t.append(torch.as_tensor(oan, device=device))
-        amask_t.append(torch.as_tensor(am, dtype=torch.float32, device=device))
+        qmask_t.append(torch.as_tensor(qm, dtype=torch.float32,
+                                       device=device))
+        xmask_t.append(torch.as_tensor(xm, dtype=torch.float32,
+                                       device=device))
         for i, e in enumerate(envs):
             if oa[i] == STORE and proto.has_memory:
                 ev = e.schedule[e.t]
@@ -191,20 +208,24 @@ def train_iter(policy, proto, envs, opt, device, tc,
     NL = torch.stack(nl_t, 1)
     A = torch.stack(acts_t, 1)
     AV = torch.stack(anss_t, 1)
-    M = torch.stack(amask_t, 1)
+    MQ = torch.stack(qmask_t, 1)
+    MX = torch.stack(xmask_t, 1)
     act_loss = nn.functional.cross_entropy(
         AL.reshape(-1, AL.shape[-1]), A.reshape(-1))
-    ans_loss = (nn.functional.cross_entropy(
-        NL.reshape(-1, NL.shape[-1]), AV.reshape(-1),
-        reduction="none") * M.reshape(-1)).sum() / (M.sum() + 1e-8)
-    loss = act_loss + tc.get("ans_coef", 1.0) * ans_loss
+    ce = nn.functional.cross_entropy(
+        NL.reshape(-1, NL.shape[-1]), AV.reshape(-1), reduction="none")
+    q_loss = (ce * MQ.reshape(-1)).sum() / (MQ.sum() + 1e-8)
+    x_loss = (ce * MX.reshape(-1)).sum() / (MX.sum() + 1e-8)
+    ans_loss = tc.get("ans_coef", 4.0) * q_loss + tc.get("aux_coef", 0.3) * x_loss
+    loss = act_loss + ans_loss
     opt.zero_grad()
     loss.backward()
     nn.utils.clip_grad_norm_(policy.parameters(), tc["max_grad_norm"])
     opt.step()
     return {"act_loss": float(act_loss.item()),
             "ans_loss": float(ans_loss.item()),
-            "ans_mask": float(M.mean().item())}
+            "q_loss": float(q_loss.item()), "x_loss": float(x_loss.item()),
+            "q_mask": float(MQ.mean().item()), "x_mask": float(MX.mean().item())}
 
 
 if __name__ == "__main__":

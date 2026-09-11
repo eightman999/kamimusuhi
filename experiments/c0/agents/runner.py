@@ -45,8 +45,11 @@ class Runner:
         if mode == "none" or len(idx) == 0:
             return
         if mode in ("all", "hidden") and self.h is not None:
-            self.h[idx] = 0.0
-        if mode in ("all", "memory"):
+            with torch.no_grad():
+                h = self.h.clone()
+                h[idx] = 0.0
+            self.h = h
+        if mode in ("all", "memory") and self.has_memory:
             for i in idx:
                 self.mems[int(i)].clear()
 
