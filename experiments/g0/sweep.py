@@ -23,7 +23,7 @@ from .evaluate import _eval_datasets, eval_dynfeat, eval_representation
 from .models import MODEL_REGISTRY, build_model
 from .representations import (TorchRep, build_analytic_rep,
                               build_kmeans_rep)
-from .train import RUNS_DIR, train_one
+from .train import RUNS_DIR, load_ckpt, train_one
 
 REPORTS = Path(__file__).parent / "reports"
 ANALYTIC = ("raw", "raw_win", "pca", "pca_win")
@@ -48,6 +48,8 @@ METRIC_PATHS = {
     "fewshot5_in": ("probes", "fewshot_in", "5"),
     "fewshot5_ood": ("probes", "fewshot_ood", "5"),
     "best_action": ("probes", "best_action_acc"),
+    "best_action_maj": ("probes", "best_action_maj_baseline"),
+    "best_action_delta": ("probes", "best_action_delta"),
     "boundary_auc": ("probes", "boundary_auc"),
     "x_r2": ("probes", "x_r2"),
     "nmi_pooled": ("clustering", "nmi_pooled"),
@@ -55,6 +57,7 @@ METRIC_PATHS = {
     "nmi_ood": ("clustering", "nmi_ood_ctx"),
     "match_train": ("matching", "match_train_ctx"),
     "match_ood": ("matching", "match_ood_ctx"),
+    "match_ood_null": ("matching", "match_ood_ctx_null"),
     "match_ood_dm": ("matching", "match_ood_ctx_dm"),
     "margin_ood": ("matching", "margin_ood_ctx"),
     "margin_ood_dm": ("matching", "margin_ood_ctx_dm"),
@@ -66,6 +69,7 @@ METRIC_PATHS = {
     "perm_delta": ("causal", "perm_delta"),
     "dropout_acc": ("causal", "dropout_acc"),
     "midctx_acc": ("causal", "midctx_acc"),
+    "midctx_acc_null": ("causal", "midctx_acc_null"),
     "decoy_rate": ("causal", "decoy_rate"),
     "ood_noise": ("ood", "acc_noise"),
     "ood_gain": ("ood", "acc_gain"),
@@ -128,9 +132,13 @@ def main() -> None:
     ap.add_argument("--seeds", type=int, nargs="+", default=[0])
     ap.add_argument("--models", nargs="+", default=list(TRAINED))
     ap.add_argument("--analytic", nargs="+", default=list(ANALYTIC))
-    ap.add_argument("--untrained", nargs="+", default=["gru", "ae"],
+    ap.add_argument("--untrained", nargs="+", default=["gru", "ae",
+                                                     "ae_vq"],
                     help="models to also evaluate WITHOUT training "
                          "(reservoir controls)")
+    ap.add_argument("--eval-only", action="store_true",
+                    help="skip training; load ckpt_best.pt from "
+                         "existing runs/<model>__seed<i>/")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--max-steps", type=int, default=None)
     ap.add_argument("--time-budget", type=float, default=0.0)
@@ -174,10 +182,19 @@ def main() -> None:
 
         for model_name in args.models:
             out_dir = RUNS_DIR / f"{model_name}__seed{seed}"
-            res = train_one(model_name, seed, cfg, args.device, out_dir,
-                            args.time_budget, args.max_steps,
-                            quiet=args.quiet,
-                            datasets=(train_ds, val_ds))
+            if args.eval_only:
+                ckpt = out_dir / "ckpt_best.pt"
+                if not ckpt.exists():
+                    ckpt = out_dir / "ckpt.pt"
+                model, ck = load_ckpt(ckpt, args.device)
+                env_seed = int(ck["env_seed"])
+                res = {"model": model, "val_loss": None,
+                       "env_seed": env_seed}
+            else:
+                res = train_one(model_name, seed, cfg, args.device,
+                                out_dir, args.time_budget,
+                                args.max_steps, quiet=args.quiet,
+                                datasets=(train_ds, val_ds))
             model, env_seed = res["model"], res["env_seed"]
             all_results.setdefault(model_name, {})
             rep = TorchRep(model_name, model, args.device)
@@ -222,6 +239,18 @@ def main() -> None:
             print(f"== {rep.name} s{seed}: acc_in "
                   f"{evu['probes']['acc_in']:.3f} ood "
                   f"{evu['probes']['acc_ood_ctx']:.3f}", flush=True)
+
+            if mname in KMEANS_ON:
+                km = build_kmeans_rep(mname, m, args.device, cfg.model,
+                                      train_ds, seed)
+                km.name = f"{mname}_untrained_km"
+                evk = eval_representation(km, cfg, seed, args.device,
+                                          model=None,
+                                          train_ds=train_ds,
+                                          env_seed=seed, dss=dss)
+                all_results.setdefault(km.name, {})[seed] = evk
+                print(f"== {km.name} s{seed}: acc_in "
+                      f"{evk['probes']['acc_in']:.3f}", flush=True)
 
     summary = summarize(all_results)
     REPORTS.mkdir(exist_ok=True)

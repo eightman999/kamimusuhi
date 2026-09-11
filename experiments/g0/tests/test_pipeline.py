@@ -37,15 +37,16 @@ def test_eval_keys_smoke(tmp_path):
               "discrete", "intervention", "base_mse"):
         assert k in ev, k
     for k in ("acc_in", "acc_loco", "acc_ood_ctx", "acc_dense_ctx",
-              "fewshot_in", "fewshot_ood", "best_action_acc"):
+              "fewshot_in", "fewshot_ood", "best_action_acc",
+              "best_action_maj_baseline", "best_action_delta"):
         assert k in ev["probes"], k
     for k in ("nmi_pooled", "nmi_ood_ctx"):
         assert k in ev["clustering"], k
-    for k in ("match_train_ctx", "match_ood_ctx"):
+    for k in ("match_train_ctx", "match_ood_ctx", "match_ood_ctx_null"):
         assert k in ev["matching"], k
-    for k in ("shuffle_acc", "dropout_acc", "midctx_acc", "decoy_rate",
-              "perm_acc", "perm_delta", "shuffle_aligned_acc",
-              "shuffle_aligned_delta"):
+    for k in ("shuffle_acc", "dropout_acc", "midctx_acc",
+              "midctx_acc_null", "decoy_rate", "perm_acc", "perm_delta",
+              "shuffle_aligned_acc", "shuffle_aligned_delta"):
         assert k in ev["causal"], k
     for k in ("combo_presence_auc", "combo_set_acc", "acc_noise",
               "acc_gain"):

@@ -117,9 +117,9 @@ def train_one(model_name: str, seed: int, cfg: Config, device: str = "cpu",
         if budget and time.time() - t0 > budget:
             break
 
-    # restore best-val weights: the prediction loss is noise-dominated
-    # and long training memorizes episodes, so the *best* checkpoint is
-    # the meaningful model to evaluate
+    # restore best-val weights: val shares env dynamics; selection
+    # guards against late-training episode memorization, so the *best*
+    # checkpoint is the meaningful model to evaluate
     if best_state is not None:
         model.load_state_dict(best_state)
     model.eval()

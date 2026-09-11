@@ -198,6 +198,12 @@ def eval_representation(rep, cfg: Config, seed: int, device: str = "cpu",
     # novel-task transfer: best-action class + boundary detection + x
     yb = main["best_action"]
     p["best_action_acc"] = _acc(X["main"], yb, tr, te, N_ACTIONS_, ev, seed)
+    # the label is imbalanced (TAP is the argmax drive for 3/6 causes):
+    # majority-vote is the honest floor, not 1/4
+    maj_cls = int(np.bincount(yb[tr], minlength=N_ACTIONS_).argmax())
+    p["best_action_maj_baseline"] = float((yb[te] == maj_cls).mean())
+    p["best_action_delta"] = p["best_action_acc"] \
+        - p["best_action_maj_baseline"]
     r = logistic_probe(X["main"][tr], main["switch_next"][tr].astype(int),
                        X["main"][te], main["switch_next"][te].astype(int),
                        n_classes=2, steps=ev.probe_steps, lr=ev.probe_lr,
@@ -218,7 +224,12 @@ def eval_representation(rep, cfg: Config, seed: int, device: str = "cpu",
     seg = {k: segment_means(Z[k], dss[k], warm)
            for k in ("main", "ood_ctx", "dense_ctx")}
     p.update(_seg_probes(seg, ec.n_train_contexts, ev, seed, "seg_"))
-    dseg = {k: dynseg_dataset(Z[k], dss[k]["actions"], dss[k], warm)
+    # next-step latents: pairs each delta with the action that caused it
+    # (for instantaneous reps, diff-based deltas would misalign by one)
+    Zn = {k: _enc(rep, {"obs": dss[k]["next_obs"], "actions": dss[k]["actions"]})
+          for k in ("main", "ood_ctx", "dense_ctx")}
+    dseg = {k: dynseg_dataset(Z[k], dss[k]["actions"], dss[k], warm,
+                              next_X=Zn[k])
             for k in ("main", "ood_ctx", "dense_ctx")}
     p.update(_seg_probes(dseg, ec.n_train_contexts, ev, seed, "dynseg_"))
     out["probes"] = p
@@ -297,6 +308,23 @@ def eval_representation(rep, cfg: Config, seed: int, device: str = "cpu",
         return (float(np.mean(mt)) if mt else float("nan"),
                 float(np.mean(mg)) if mg else float("nan"))
 
+    # label-shuffle null: permute the cause->centroid assignment on one
+    # side — calibrates match_ood against its empirical chance level
+    rngm = np.random.default_rng(seed + 37)
+    match_pairs_null = {}
+    for i in ctx_ids_all:
+        for j in ctx_ids_all:
+            if j <= i:
+                continue
+            ca, ia = cents[i]
+            cb, ib = cents[j]
+            if len(cb) >= 2:
+                permj = rngm.permutation(len(cb))
+                mn = best_match_acc(ca, ia, cb[permj], ib)
+                match_pairs_null[f"{i}-{j}"] = mn["match_acc"]
+    mt_null, _ = _agg({k: {"match_acc": v} for k, v in
+                       match_pairs_null.items()}, False)
+
     mt_raw, mg_train = _agg(match_pairs, True)
     mo_raw, mg_ood = _agg(match_pairs, False)
     mt_dm, _ = _agg(match_pairs_dm, True)
@@ -305,6 +333,7 @@ def eval_representation(rep, cfg: Config, seed: int, device: str = "cpu",
         "pairs": match_pairs,
         "match_train_ctx": mt_raw,
         "match_ood_ctx": mo_raw,
+        "match_ood_ctx_null": mt_null,
         "margin_ood_ctx": mg_ood,
         "match_train_ctx_dm": mt_dm,
         "match_ood_ctx_dm": mo_dm,
@@ -396,6 +425,25 @@ def eval_representation(rep, cfg: Config, seed: int, device: str = "cpu",
                            n_classes=N_CAUSES, steps=ev.probe_steps,
                            lr=ev.probe_lr, seed=seed)
         cz["midctx_by_lag"][f"{lo}-{hi}"] = r["acc"]
+
+    # label-shuffle null for midctx: permute post-switch cause labels
+    # within each episode — empirical floor for "above chance" claims
+    rngn = np.random.default_rng(seed + 31)
+    post_lab_full = lab["midctx"]["cause_a"]
+    ep_m = lab["midctx"]["episode"]
+    post_idx = np.where(post)[0]
+    nulls = []
+    for _ in range(3):
+        pl = post_lab_full.copy()
+        for e in np.unique(ep_m[post_idx]):
+            m = post_idx[ep_m[post_idx] == e]
+            pl[m] = pl[m][rngn.permutation(len(m))]
+        rn = logistic_probe(X["midctx"][pre], post_lab_full[pre],
+                            X["midctx"][post], pl[post],
+                            n_classes=N_CAUSES, steps=ev.probe_steps,
+                            lr=ev.probe_lr, seed=seed)
+        nulls.append(rn["acc"])
+    cz["midctx_acc_null"] = float(np.mean(nulls))
 
     # decoy: most-confusable pair under held-out context (expected:
     # HEAT<->COLD) from the ood confusion matrix
@@ -631,7 +679,9 @@ def _intervention(model, rep, X, lab, cfg, env_seed) -> dict:
     for j in range(cfg.env.n_train_contexts):
         m = lab["main"]["single"] & (lab["main"]["ctx"] == j)
         cc, ids = cause_centroids(X["main"], np.where(
-            lab["main"]["single"], lab["main"]["cause_a"], -1),
+            lab["main"]["single"]
+            & (lab["main"]["seg_pos"] >= cfg.eval.seg_warmup),
+            lab["main"]["cause_a"], -1),
             lab["main"]["ctx"], j)
         if len(ids) >= 2:
             cents[j] = (cc, ids, X["main"][m].mean(0))
@@ -692,8 +742,8 @@ def main() -> None:
         out_path = Path(args.out) if args.out else \
             REPORTS / f"eval_{args.rep}__seed{args.seed}.json"
     else:
-        # prefer the best-val checkpoint (final ckpt.pt is often overfit
-        # on this noise-dominated prediction loss)
+        # prefer the best-val checkpoint (final ckpt.pt can be mildly
+        # overfit late in training)
         run_dir = Path(args.run_dir)
         ckpt_path = run_dir / "ckpt_best.pt"
         if not ckpt_path.exists():
