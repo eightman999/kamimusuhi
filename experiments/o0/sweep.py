@@ -43,14 +43,20 @@ CAUSAL = [
 ]
 
 OOD_PRESET_LIST = [
+    # pure occlusion-length shift (only occ bounds change) -- reviewer M1
+    "plen24", "plen32", "plen48",
+    # calibrated length shift (also narrows velocity/visible window/spawn)
     "occ24", "occ32", "occ48",
+    # existence generalization: gone episodes removed from training
+    "gone20",
     "fast_v", "slow_v",
     "drag_x3", "v_flip",
-    "distractors4", "ambush",
+    "distractors4", "ambush", "decoytk",
     "app_jitter", "swap_half",
 ]
 
-HEURISTIC_NAMES = ["prior", "lastobs", "constvel", "oracle"]
+HEURISTIC_NAMES = ["prior", "lastobs", "constvel", "corridor",
+                   "openloop", "kalman"]
 
 
 def run_id_for(arch, seed):
@@ -182,8 +188,13 @@ def aggregate(raw: list) -> dict:
             by.items(), key=lambda kv: tuple(str(x) for x in kv[0])):
         entry = {}
         for k in ("pos_mae_occluded", "pos_err_pre_reappear",
+                  "pos_mae_occ_persistent", "pos_mae_occ_gone",
+                  "pos_mae_occ_le16", "pos_mae_occ_gt16",
+                  "pos_mae_occ_persist_le16", "pos_mae_post_reset",
+                  "exist_acc_post_reset", "pos_mae_decoy", "id_acc_decoy",
                   "pos_mae_visible", "exist_acc_hidden", "exist_acc_all",
-                  "exist_acc_absorbed", "id_acc", "mean_bout_len"):
+                  "exist_acc_absorbed", "id_acc", "mean_bout_len",
+                  "frac_decoy_episodes", "pos_mae_occluded_ci95"):
             vals = np.array([r.get(k, np.nan) for r in rows], dtype=np.float64)
             with np.errstate(all="ignore"):
                 entry[k + "_mean"] = float(np.nanmean(vals))
@@ -202,8 +213,9 @@ def aggregate(raw: list) -> dict:
             continue
         id_table[tag] = {
             k: round(float(np.nanmean([r.get(k, np.nan) for r in rows])), 4)
-            for k in ("pos_mae_occluded", "pos_err_pre_reappear",
-                      "exist_acc_hidden", "id_acc")
+            for k in ("pos_mae_occluded", "pos_mae_occ_persist_le16",
+                      "pos_mae_occ_gt16", "pos_mae_occ_gone",
+                      "pos_err_pre_reappear", "exist_acc_hidden", "id_acc")
         }
     return {"per_cell": table, "id_table": id_table}
 

@@ -93,9 +93,18 @@ class EnvParams:
     reappear_app_jitter: float = 0.0  # OOD: noise on appearance at reappearance
 
     # episode kinds
-    p_gone: float = 0.2              # absorbed by boundary while occluded
+    p_gone: float = 0.0              # absorbed by boundary while occluded;
+                                     # kept 0 in the training distribution so
+                                     # realized hidden duration is truly the
+                                     # sampled 4-16 (reviewer C1/C2).  Enable
+                                     # via the `gone20` eval preset for the
+                                     # existence-generalization test.
     p_swap: float = 0.3              # appearance swap at reappearance (O0-C)
     v_flip_prob: float = 0.0         # OOD: velocity reverses mid-occlusion
+    decoy_takeover_prob: float = 0.0  # OOD: ambush decoy occupies the TARGET
+                                     # channel while the real target is still
+                                     # hidden (tests channel-level identity
+                                     # confusion; reviewer M2)
 
     # occluder geometry
     occ_margin: float = 0.06         # persistent occluders stay inside
@@ -216,6 +225,10 @@ def generate_batch(
     ok = (xa > 0.0) & (xa < L) & ambush
     d_x[:, 0] = np.where(ok, xa, d_x[:, 0])
     d_v[:, 0] = np.where(ok, dv0, d_v[:, 0])
+    # decoy takeover: for a subset of ambush episodes the decoy that exits
+    # the occluder's far edge while the target is still inside is reported
+    # on the *target* channel (the sensor locks onto the wrong object).
+    takeover = ok & (rng.random(B) < p.decoy_takeover_prob)
 
     # --- rollout ------------------------------------------------------------
     obs = np.zeros((T, B, OBS_DIM), dtype=np.float64)
@@ -226,6 +239,7 @@ def generate_batch(
     occ_m = np.zeros((T, B), dtype=bool)
     vis_m = np.zeros((T, B), dtype=bool)
     id_mask = np.zeros((T, B), dtype=bool)
+    decoy_m = np.zeros((T, B), dtype=bool)   # target channel shows a decoy
 
     x = np.zeros(B)
     v = np.zeros(B)
@@ -292,30 +306,49 @@ def generate_batch(
         d_x[hit_hi] = 2.0 * L - d_x[hit_hi]
         d_v[hit_hi] = -d_v[hit_hi]
         d_inside = (d_x >= occ_lo[:, None]) & (d_x <= occ_hi[:, None])
+        # takeover active while the target is hidden and the slot-0 decoy
+        # has passed the occluder's far edge (it is "reappearing" early).
+        # `far_edge` was computed once at episode setup (bounds are static).
+        d0_beyond = np.where(dirn > 0, d_x[:, 0] > far_edge,
+                             d_x[:, 0] < far_edge)
+        tk = takeover & inside & d0_beyond
 
         # ambient channel: slow OU process, unrelated to the task
         ambient += 0.05 * (0.5 - ambient) + rng.normal(0.0, 0.03, B)
         np.clip(ambient, 0.0, 1.0, out=ambient)
 
         # --- labels (trainer only) -----------------------------------------
+        # `vis` covers any step where the target channel reports an object:
+        # the real target while unoccluded, or the decoy during takeover.
+        vis = alive & (~inside | tk)
         exist_l[t] = alive.astype(np.float64)
         pos_l[t] = x / L
         vel_l[t] = v * VEL_SCALE / L
         occ_m[t] = inside
-        vis = alive & ~inside
         vis_m[t] = vis
         id_mask[t] = vis & ever_inside
-        same_l[t] = (~imposter).astype(np.float64)
+        decoy_m[t] = tk
+        # the channel reports "not the same object" during takeover (the
+        # decoy is a different physical object) and after a swap
+        same_l[t] = (~imposter & ~tk).astype(np.float64)
 
         # --- observation ----------------------------------------------------
         o = np.zeros((B, OBS_DIM), dtype=np.float64)
         nz = p.obs_noise
-        o[vis, T_VIS] = 1.0
-        o[vis, T_X] = x[vis] / L + rng.normal(0.0, nz, int(vis.sum()))
-        o[vis, T_V] = v[vis] * VEL_SCALE / L + rng.normal(0.0, nz, int(vis.sum()))
-        o[vis, T_APP] = app[vis] + rng.normal(0.0, nz, int(vis.sum()))
+        real_vis = alive & ~inside
+        o[real_vis, T_VIS] = 1.0
+        o[real_vis, T_X] = x[real_vis] / L + rng.normal(
+            0.0, nz, int(real_vis.sum()))
+        o[real_vis, T_V] = v[real_vis] * VEL_SCALE / L + rng.normal(
+            0.0, nz, int(real_vis.sum()))
+        o[real_vis, T_APP] = app[real_vis] + rng.normal(
+            0.0, nz, int(real_vis.sum()))
         for s in range(D_SLOTS):
             dvis = (s < n_dist) & ~d_inside[:, s]
+            if s == 0:
+                # the decoy is being read on the target channel; it does
+                # not also appear in its own slot
+                dvis = dvis & ~tk
             base = D0 + 3 * s
             o[dvis, base] = 1.0
             o[dvis, base + 1] = d_x[dvis, s] / L + rng.normal(
@@ -324,6 +357,13 @@ def generate_batch(
             o[dvis, base + 2] = d_app[dvis, s] + rng.normal(
                 0.0, nz, int(dvis.sum())
             )
+        # takeover writes: the decoy's state occupies the target channel
+        if tk.any():
+            o[tk, T_VIS] = 1.0
+            o[tk, T_X] = d_x[tk, 0] / L + rng.normal(0.0, nz, int(tk.sum()))
+            o[tk, T_V] = d_v[tk, 0] * VEL_SCALE / L + rng.normal(
+                0.0, nz, int(tk.sum()))
+            o[tk, T_APP] = d_app[tk, 0] + rng.normal(0.0, nz, int(tk.sum()))
         o[:, OCC_LO_IDX] = occ_lo / L
         o[:, OCC_HI_IDX] = occ_hi / L
         o[:, AMBIENT_IDX] = ambient
@@ -358,6 +398,7 @@ def generate_batch(
         "occluded": occ_m,
         "visible": vis_m,
         "id_mask": id_mask,
+        "decoy": decoy_m,
         # per-episode meta
         "t_appear": t_app,
         "t_occl": t_occl,

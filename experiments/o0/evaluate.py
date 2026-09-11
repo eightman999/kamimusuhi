@@ -38,13 +38,24 @@ from .env import dynamics as dyn
 # Named OOD / causal condition presets: EnvParams overrides.
 PRESETS: Dict[str, Dict] = {
     "id": {},
-    # longer occlusion than trained (train range 4-16)
+    # longer occlusion than trained (train range 4-16).  `occ*` also
+    # narrow velocity/visible-window/spawn so the occluder geometry is
+    # feasible at the nominal length (calibrated variants; all changed
+    # knobs disclosed in the report -- reviewer M1).  `plen*` are the
+    # PURE length shifts: only occ_lo/occ_hi change.
     "occ24": {"occ_lo": 24, "occ_hi": 24, "v_lo": 0.05, "v_hi": 0.07,
               "vis_lo": 2, "vis_hi": 4, "spawn_frac_hi": 0.10},
     "occ32": {"occ_lo": 32, "occ_hi": 32, "v_lo": 0.05, "v_hi": 0.07,
               "vis_lo": 2, "vis_hi": 4, "spawn_frac_hi": 0.10},
     "occ48": {"occ_lo": 48, "occ_hi": 48, "v_lo": 0.05, "v_hi": 0.07,
               "vis_lo": 2, "vis_hi": 4, "spawn_frac_hi": 0.10},
+    "plen24": {"occ_lo": 24, "occ_hi": 24},
+    "plen32": {"occ_lo": 32, "occ_hi": 32},
+    "plen48": {"occ_lo": 48, "occ_hi": 48},
+    # existence generalization: boundary absorption while hidden was
+    # removed from the training distribution (p_gone=0); this preset
+    # reintroduces it purely at eval time.
+    "gone20": {"p_gone": 0.2},
     # unseen velocities (faster than any training episode)
     "fast_v": {"v_lo": 0.11, "v_hi": 0.14},
     "slow_v": {"v_lo": 0.02, "v_hi": 0.035},
@@ -55,6 +66,10 @@ PRESETS: Dict[str, Dict] = {
     "distractors4": {"distractor_probs": (0.0, 0.0, 0.0, 0.0, 1.0)},
     "ambush": {"distractor_probs": (0.0, 0.0, 0.0, 0.0, 1.0),
                "ambush_prob": 0.7},
+    # strengthened ambush (reviewer M2): the decoy occupies the TARGET
+    # channel while the real object is still hidden
+    "decoytk": {"distractor_probs": (0.0, 0.0, 0.0, 0.0, 1.0),
+                "ambush_prob": 0.7, "decoy_takeover_prob": 1.0},
     # appearance stress
     "app_jitter": {"reappear_app_jitter": 0.10},
     "swap_half": {"p_swap": 0.5},
@@ -126,6 +141,13 @@ def predict_model(model, data: dict, intervention: Optional[Dict] = None,
             "exist": exist.numpy(), "same": same.numpy()}
 
 
+def _reset_steps_for(data: dict, intervention: Optional[Dict]):
+    """Step indices at which an intervention fired (None if none)."""
+    if not intervention or intervention.get("type", "none") == "none":
+        return None
+    return intervention_steps(data, intervention.get("at", "mid_occl"))
+
+
 def evaluate_model(model, p: dyn.EnvParams, n_episodes: int, seed: int,
                    intervention: Optional[Dict] = None, device: str = "cpu",
                    keep_data: bool = False) -> dict:
@@ -133,7 +155,8 @@ def evaluate_model(model, p: dyn.EnvParams, n_episodes: int, seed: int,
     data = dyn.generate_batch(p, n_episodes, rng)
     pred = predict_model(model, data, intervention, device=device, seed=seed)
     out = {
-        "metrics": metrics_mod.compute_metrics(pred, data, p),
+        "metrics": metrics_mod.compute_metrics(
+            pred, data, p, reset_steps=_reset_steps_for(data, intervention)),
         "boutlen_curve": metrics_mod.curve_by_boutlen(pred, data),
     }
     if keep_data:
@@ -169,8 +192,7 @@ def predict_heuristic(name: str, data: dict, p: dyn.EnvParams,
                 if intervention["type"] == "hidden_reset":
                     h.reset_memory()
                 elif intervention["type"] == "hidden_noise":
-                    h.last_x += float(rng.normal(0.0, intervention.get("sigma", 0.05)))
-                    h.last_v += float(rng.normal(0.0, intervention.get("sigma", 0.5)))
+                    h.perturb_memory(rng, float(intervention.get("sigma", 0.05)))
             x_hat, v_hat, e, s = h.predict(obs[t, b])
             pos[t, b] = x_hat
             vel[t, b] = v_hat
@@ -185,7 +207,8 @@ def evaluate_heuristic(name: str, p: dyn.EnvParams, n_episodes: int,
     data = dyn.generate_batch(p, n_episodes, rng)
     pred = predict_heuristic(name, data, p, intervention, seed=seed)
     return {
-        "metrics": metrics_mod.compute_metrics(pred, data, p),
+        "metrics": metrics_mod.compute_metrics(
+            pred, data, p, reset_steps=_reset_steps_for(data, intervention)),
         "boutlen_curve": metrics_mod.curve_by_boutlen(pred, data),
     }
 

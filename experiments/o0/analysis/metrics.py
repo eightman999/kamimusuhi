@@ -13,6 +13,7 @@ report world units (x_err_world = pos_mae * world_len).
 from __future__ import annotations
 
 import math
+from typing import Optional
 
 import numpy as np
 
@@ -56,7 +57,8 @@ def first_bout_masks(data):
     return (data["t_occl"][None, :] >= 0) & (t >= data["t_occl"][None, :]) & (t < end[None, :])
 
 
-def compute_metrics(pred, data, p: dyn.EnvParams) -> dict:
+def compute_metrics(pred, data, p: dyn.EnvParams,
+                    reset_steps: Optional[np.ndarray] = None) -> dict:
     pos_err = np.abs(pred["pos"] - data["pos"])          # normalized
     exist_true = data["exist"]
     exist_pred = (pred["exist"] > 0.5).astype(np.float64)
@@ -73,6 +75,62 @@ def compute_metrics(pred, data, p: dyn.EnvParams) -> dict:
     m["pos_mae_visible"] = _masked_mean(pos_err, vis)
     m["pos_mae_occluded"] = _masked_mean(pos_err, hidden_alive)
     m["pos_mae_occluded_world"] = m["pos_mae_occluded"] * p.world_len
+
+    # --- decomposition (reviewer C1): the aggregate mixes episode types.
+    # The canonical claim is position tracking on *persistent* occlusion
+    # bouts of the trained length; gone/long-bout episodes measure
+    # different skills (boundary-absorption correction, long integration).
+    gone_ep = data["gone"].astype(bool)[None, :]          # geometry flag
+    bl = data["bout_len"].astype(np.float64)[None, :]
+    m["pos_mae_occ_persistent"] = _masked_mean(
+        pos_err, hidden_alive & ~gone_ep)
+    m["pos_mae_occ_gone"] = _masked_mean(
+        pos_err, hidden_alive & gone_ep)
+    m["pos_mae_occ_le16"] = _masked_mean(
+        pos_err, hidden_alive & (bl <= 16))
+    m["pos_mae_occ_gt16"] = _masked_mean(
+        pos_err, hidden_alive & (bl > 16))
+    # the strict headline: persistent AND realized bout within trained
+    # range  -- "did it track through an ordinary occlusion?"
+    m["pos_mae_occ_persist_le16"] = _masked_mean(
+        pos_err, hidden_alive & ~gone_ep & (bl <= 16))
+    # per-episode spread -> a proper CI over the eval batch (episodes are
+    # the independent unit, not steps)
+    T, B = occ.shape
+    ep_err = np.full(B, np.nan)
+    for b in range(B):
+        mb = hidden_alive[:, b]
+        if mb.any():
+            ep_err[b] = pos_err[mb, b].mean()
+    n_ep = int(np.isfinite(ep_err).sum())
+    m["pos_mae_occluded_ep_std"] = (
+        float(np.nanstd(ep_err, ddof=1)) if n_ep > 1 else float("nan"))
+    m["pos_mae_occluded_ci95"] = (
+        float(1.96 * np.nanstd(ep_err, ddof=1) / np.sqrt(n_ep))
+        if n_ep > 1 else float("nan"))
+    m["n_pos_episodes"] = n_ep
+
+    # --- decoy-takeover steps (target channel reports a wrong object) ---
+    tk = data.get("decoy")
+    if tk is not None and tk.any():
+        m["frac_decoy_episodes"] = float(tk.any(axis=0).mean())
+        m["n_decoy_steps"] = int(tk.sum())
+        m["pos_mae_decoy"] = _masked_mean(pos_err, tk & (exist_true > 0.5))
+        m["id_acc_decoy"] = _masked_mean(
+            (same_pred == same_true).astype(np.float64), tk)
+
+    # --- post-intervention-only degradation (reviewer minor): the
+    # window-averaged MAE dilutes the effect; measure hidden error
+    # strictly after the reset/noise step ---
+    t = np.arange(T)[:, None]
+    if reset_steps is not None:
+        rs = np.asarray(reset_steps)[None, :]
+        post_alive = hidden_alive & (t > rs) & (rs >= 0)
+        m["pos_mae_post_reset"] = _masked_mean(pos_err, post_alive)
+        post_hid = hidden & (t > rs) & (rs >= 0)
+        m["exist_acc_post_reset"] = _masked_mean(
+            (exist_pred == exist_true).astype(np.float64), post_hid)
+        m["n_post_reset"] = int(post_alive.sum())
     # forecast at the moment of reappearance: error on the last hidden
     # step before each episode's reappearance
     T, B = occ.shape
