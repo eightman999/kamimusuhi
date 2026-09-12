@@ -149,6 +149,7 @@ def evaluate_learned(model, cfg: U0Config, device: str = "cpu",
                      batch: int = 32) -> dict:
     from .env.u0_env import U0Env
     model.eval()
+    dev = torch.device(device)
     records = []
     for ep0 in range(0, episodes, batch):
         n = min(batch, episodes - ep0)
@@ -164,25 +165,31 @@ def evaluate_learned(model, cfg: U0Config, device: str = "cpu",
                 donor_gates.append(g)
         for e in envs:
             e.reset()
-        pols = [PolicyWrapper(model, device) for _ in envs]
-        for p in pols:
-            p.reset()
         if donors:
             for d in donors:
                 d.reset()
+        h = model.initial_state(n, dev)
         for _t in range(cfg.episode_len):
-            for i, e in enumerate(envs):
-                _apply_causal(e, donors[i] if donors else None, causal)
+            idxs = [i for i, e in enumerate(envs) if not e.done]
+            for i in idxs:
+                _apply_causal(envs[i], donors[i] if donors else None,
+                              causal)
             if donors:
                 for d, g in zip(donors, donor_gates):
                     if not d.done:
                         d.step(g.decide(d))
-            for i, e in enumerate(envs):
-                if e.done:
-                    continue
-                obs = e._obs()
-                a = pols[i].act(obs)
-                _o, _r, done, info = e.step(a)
+            if not idxs:
+                break
+            obs = np.stack([envs[i]._obs() for i in idxs])
+            with torch.no_grad():
+                h_in = h[idxs] if h is not None else None
+                logits, _v, h_out = model(
+                    torch.as_tensor(obs, device=dev), h_in)
+                acts = logits.argmax(-1).cpu().numpy()
+                if h is not None:
+                    h[idxs] = h_out
+            for i, a in zip(idxs, acts):
+                _o, _r, done, info = envs[i].step(int(a))
                 if done and "ep_stats" in info:
                     records.append(info["ep_stats"])
     return _mean_stats(records)

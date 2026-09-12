@@ -72,12 +72,12 @@ def collect_rollout(policy, vec: VecU0Env, device, teacher=None,
     logp_buf = np.zeros((B, T), dtype=np.float32)
     rew_buf = np.zeros((B, T), dtype=np.float32)
     val_buf = np.zeros((B, T), dtype=np.float32)
+    alive_buf = np.zeros((B, T), dtype=bool)   # True while episode lives
     lab_buf = np.zeros((B, T), dtype=np.int64)
     ep_stats = []
     teachers = None
     if teacher is not None:
-        # one oracle per env: each caches its own episode's need plan and
-        # must reset when that env auto-resets on `done`
+        # one oracle per env: each caches its own episode's need plan
         teachers = [type(teacher)(seed=i) for i in range(B)]
         for te in teachers:
             te.reset()
@@ -94,6 +94,8 @@ def collect_rollout(policy, vec: VecU0Env, device, teacher=None,
             logp = dist.log_prob(act)
             if teachers is not None:
                 for i, e in enumerate(vec.envs):
+                    if e.done:
+                        continue
                     la = teachers[i].decide(e)
                     lab_buf[i, t] = IGNORE if la == STORE else la
                     if np.random.random() < teacher_mix:
@@ -102,27 +104,32 @@ def collect_rollout(policy, vec: VecU0Env, device, teacher=None,
             act_buf[:, t] = act.cpu().numpy()
             logp_buf[:, t] = logp.cpu().numpy()
             val_buf[:, t] = v.cpu().numpy()
+            alive_buf[:, t] = np.array([not e.done for e in vec.envs])
             obs, rew, done, infos = vec.step(act.cpu().numpy())
             rew_buf[:, t] = rew
-            for i, inf in enumerate(infos):
+            for inf in infos:
                 if "ep_stats" in inf:
                     ep_stats.append(inf["ep_stats"])
-                    if teachers is not None:
-                        teachers[i].reset()
     policy.train()
     return (obs_buf, act_buf, logp_buf, rew_buf, val_buf,
-            ep_stats, lab_buf)
+            ep_stats, lab_buf, alive_buf)
 
 
-def gae(rew: np.ndarray, val: np.ndarray, gamma: float, lam: float):
-    """Episodes are complete (terminal at T-1), so no bootstrap is needed."""
+def gae(rew: np.ndarray, val: np.ndarray, alive: np.ndarray,
+        gamma: float, lam: float):
+    """GAE over single-episode rollouts padded after death.
+
+    `alive[b,t]` marks steps belonging to the episode; post-death padding
+    contributes zero advantage and does not propagate backwards."""
     B, T = rew.shape
     adv = np.zeros_like(rew)
     last = np.zeros(B, dtype=np.float32)
     for t in reversed(range(T)):
-        v_next = val[:, t + 1] if t + 1 < T else 0.0
-        delta = rew[:, t] + gamma * v_next - val[:, t]
-        last = delta + gamma * lam * last
+        live = alive[:, t].astype(np.float32)
+        v_next = (val[:, t + 1] * alive[:, t + 1]
+                  if t + 1 < T else np.zeros(B, dtype=np.float32))
+        delta = (rew[:, t] + gamma * v_next - val[:, t]) * live
+        last = delta + gamma * lam * last * live
         adv[:, t] = last
     return adv, adv + val
 
@@ -141,8 +148,8 @@ def _seq_forward(policy, obs_seq: torch.Tensor, device):
 
 
 def ppo_update(policy, opt, bufs, tc, device):
-    obs_buf, act_buf, logp_buf, rew_buf, val_buf = bufs
-    adv, ret = gae(rew_buf, val_buf, tc["gamma"], tc["lam"])
+    obs_buf, act_buf, logp_buf, rew_buf, val_buf, alive_buf = bufs
+    adv, ret = gae(rew_buf, val_buf, alive_buf, tc["gamma"], tc["lam"])
     B, T, D = obs_buf.shape
 
     obs_t = torch.as_tensor(obs_buf, device=device)
@@ -150,7 +157,12 @@ def ppo_update(policy, opt, bufs, tc, device):
     old_logp_t = torch.as_tensor(logp_buf, device=device)
     adv_t = torch.as_tensor(adv, device=device)
     ret_t = torch.as_tensor(ret, device=device)
-    adv_t = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
+    mask_t = torch.as_tensor(alive_buf, dtype=torch.float32, device=device)
+    live = adv_t[mask_t.bool()]
+    adv_t = torch.where(
+        mask_t.bool(),
+        (adv_t - live.mean()) / (live.std() + 1e-8),
+        torch.zeros_like(adv_t))
 
     clip, vfc, ent = tc["clip"], tc["vf_coef"], tc["ent_coef"]
     mb = tc.get("minibatch_episodes", B)
@@ -160,15 +172,18 @@ def ppo_update(policy, opt, bufs, tc, device):
         perm = torch.randperm(B, device=device)
         for lo in range(0, B, mb):
             idx = perm[lo:lo + mb]
+            m = mask_t[idx]
             al_s, v_s = _seq_forward(policy, obs_t[idx], device)
             dist = torch.distributions.Categorical(logits=al_s)
             logp = dist.log_prob(act_t[idx])
             ratio = torch.exp(logp - old_logp_t[idx])
             a = adv_t[idx]
-            pi_loss = torch.max(
+            pi_el = torch.max(
                 -a * ratio,
-                -a * torch.clamp(ratio, 1 - clip, 1 + clip)).mean()
-            v_loss = 0.5 * (v_s - ret_t[idx]).pow(2).mean()
+                -a * torch.clamp(ratio, 1 - clip, 1 + clip))
+            pi_loss = (pi_el * m).sum() / m.sum().clamp(min=1)
+            v_el = 0.5 * (v_s - ret_t[idx]).pow(2)
+            v_loss = (v_el * m).sum() / m.sum().clamp(min=1)
             ent_b = dist.entropy().mean()
             loss = pi_loss + vfc * v_loss - ent * ent_b
             opt.zero_grad()
@@ -183,11 +198,13 @@ def ppo_update(policy, opt, bufs, tc, device):
     return {"pi_loss": pl / nup, "v_loss": vl / nup, "entropy": el / nup}
 
 
-def bc_update(policy, opt, obs_buf, lab_buf, tc, device):
+def bc_update(policy, opt, obs_buf, lab_buf, alive_buf, tc, device):
     """Mechanics-only behavioral cloning on oracle-labeled student steps."""
     B, T, D = obs_buf.shape
     obs_t = torch.as_tensor(obs_buf, device=device)
     lab_t = torch.as_tensor(lab_buf, device=device)
+    mask_t = torch.as_tensor(alive_buf, dtype=torch.float32,
+                             device=device)
     mb = tc.get("minibatch_episodes", B)
     total = 0.0
     nup = 0
@@ -195,13 +212,16 @@ def bc_update(policy, opt, obs_buf, lab_buf, tc, device):
         perm = torch.randperm(B, device=device)
         for lo in range(0, B, mb):
             idx = perm[lo:lo + mb]
+            m = mask_t[idx].reshape(-1)
             al_s, _v = _seq_forward(policy, obs_t[idx], device)
             al = al_s.reshape(-1, al_s.shape[-1])
             lab = lab_t[idx].reshape(-1)
             freq = torch.bincount(lab, minlength=al.shape[-1]).float()
             w = (1.0 / freq.clamp(min=1))
             w = w * (al.shape[-1] / w.sum())   # class-balanced act CE
-            loss = torch.nn.functional.cross_entropy(al, lab, weight=w)
+            el = torch.nn.functional.cross_entropy(
+                al, lab, weight=w, reduction="none")
+            loss = (el * m).sum() / m.sum().clamp(min=1)
             opt.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(policy.parameters(),
@@ -281,9 +301,11 @@ def main() -> None:
         bufs = collect_rollout(policy, vec, device,
                                teacher=teacher if in_imit else None)
         if in_imit:
-            losses = bc_update(policy, opt, bufs[0], bufs[6], tc, device)
+            losses = bc_update(policy, opt, bufs[0], bufs[6], bufs[7],
+                               tc, device)
         else:
-            losses = ppo_update(policy, opt, bufs[:5], tc, device)
+            losses = ppo_update(policy, opt,
+                                (*bufs[:5], bufs[7]), tc, device)
         stats = bufs[5]
         agg = {k: float(np.nanmean([s[k] for s in stats]))
                for k in stats[0]

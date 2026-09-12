@@ -694,7 +694,13 @@ class U0Env:
 
 
 class VecU0Env:
-    """Batched wrapper stepping a list of envs in lockstep for PPO."""
+    """Batched wrapper stepping a list of envs in lockstep for PPO.
+
+    Does NOT auto-reset: a finished env stays done and emits zero obs /
+    zero reward so rollouts are exactly one episode per env (possibly
+    padded after an early death), which keeps recurrent hidden states
+    episode-aligned.
+    """
 
     def __init__(self, config: U0Config, num_envs: int, seed: int):
         self.envs = [U0Env(U0Config(**{**config.__dict__,
@@ -709,10 +715,13 @@ class VecU0Env:
     def step(self, actions: np.ndarray):
         obs, rew, done, infos = [], [], [], []
         for e, a in zip(self.envs, actions):
+            if e.done:
+                obs.append(np.zeros(self.obs_dim, dtype=np.float32))
+                rew.append(0.0)
+                done.append(True)
+                infos.append({})
+                continue
             o, r, d, i = e.step(int(a))
-            if d:
-                i["terminal_obs"] = o
-                o = e.reset()          # auto-reset; ep_stats in info
             obs.append(o)
             rew.append(r)
             done.append(d)

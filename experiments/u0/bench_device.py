@@ -34,7 +34,8 @@ def bench_device(device: str, cfg: dict, updates: int,
     t0 = time.time()
     for _ in range(updates):
         bufs = collect_rollout(policy, vec, dev)
-        losses.append(ppo_update(policy, opt, bufs[:5], tc, dev))
+        losses.append(ppo_update(policy, opt,
+                                 (*bufs[:5], bufs[7]), tc, dev))
     wall = time.time() - t0
     return {"device": device, "updates": updates,
             "wall_sec": round(wall, 2),
