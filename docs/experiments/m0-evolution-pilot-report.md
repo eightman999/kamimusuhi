@@ -200,3 +200,13 @@ inactive のまま（起動前と同じ）。
 ~/mioba-logs/leakwatch.log                RSS / VRAM サンプル 75 件
 ~/mioba-logs/m0_check.py                  本レポートの検証スクリプト
 ```
+
+## 追記（2026-09-11, M1A 由来の provenance note）
+
+本レポートの「mean_rate_hz が全個体で約 9.5」は**記録値ではなく報告上の誤読**である。
+`evaluations` テーブルの `mean_rate_hz` は全 296 評価で 0.494–0.499 Hz
+（median 0.4968）と記録されており、GUI の表示値 0.50 Hz と一致する。
+9.5 Hz は `fitness = -|rate - 5.0| ≈ -4.5` を `rate = 5.0 + 4.5`（絶対値の
+上側分枝）として逆算した値で、実測ではない。正しい分枝は 0.5 Hz であり、
+M1A 時点の再現測定（semantics v3）は 0.4976 Hz — 記録値と整合する。
+詳細は `docs/experiments/m1a-substrate-validation-2026-09-11.md` §7 を参照。

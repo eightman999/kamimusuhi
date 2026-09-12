@@ -39,7 +39,10 @@ from __future__ import annotations
 
 # 1 = M0: delay = round(tDelay/dt) + 2 steps, dense sparse.mm propagation
 # 2 = M1: delay = round(tDelay/dt) steps exactly, event-driven propagation
-SIMULATOR_SEMANTICS_VERSION = 2
+# 3 = M1A: Poisson stimulus weight is wScale*scalePoisson (68.75 mV),
+#         matching the reference PoissonInput weight w_syn*f_poi;
+#         versions <= 2 applied scalePoisson alone (a 250 mV kick)
+SIMULATOR_SEMANTICS_VERSION = 3
 
 # 1 = M0: one uniform per neuron per step; base graph from the genome seed
 # 2 = M1: one uniform per driven neuron per step; per-purpose seed
