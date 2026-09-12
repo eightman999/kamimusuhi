@@ -1,0 +1,37 @@
+{
+  "seed": 1,
+  "agent": "trigger",
+  "condition": "causal:pe_mask",
+  "ablation": "pe_mask",
+  "config": "base",
+  "perm_tag": "pe_mask",
+  "detection_rate": 0.1919191919191919,
+  "mean_cost": 0.0028906250000000004,
+  "info_efficiency": 72.38303238303239,
+  "total_reward": -6.563333333333335,
+  "action_entropy": 0.23055801609867896,
+  "n_detected": 19,
+  "n_missed": 80,
+  "attention": {
+    "IGNORE": 0.85546875,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.14453125,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.11117715266421631,
+    "B": 0.11117715266421631,
+    "C": 0.11117715266421631,
+    "D": 0.22660960454231827
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.10667426869281577
+  },
+  "n_episodes": 12,
+  "wall_time_s": 1.97
+}

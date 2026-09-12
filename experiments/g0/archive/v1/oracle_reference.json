@@ -1,0 +1,26 @@
+{
+  "note": "oracle = probes run directly on the env's pre-context canonical signal (eval-only ground-truth feature); an upper reference for what any rep could linearly expose",
+  "per_seed": {
+    "0": {
+      "oracle_canonical_acc_in": 0.37373737373737376,
+      "oracle_canonical_nmi": 0.2829430259868665,
+      "oracle_canonical_seg_acc": 0.45454545454545453,
+      "oracle_match_train_ctxs": 0.8333333333333334,
+      "oracle_match_ctx0_to_ood6": 0.5
+    },
+    "1": {
+      "oracle_canonical_acc_in": 0.40540540540540543,
+      "oracle_canonical_nmi": 0.3046614439546682,
+      "oracle_canonical_seg_acc": 0.43902439024390244,
+      "oracle_match_train_ctxs": 0.6666666666666666,
+      "oracle_match_ctx0_to_ood6": 0.8333333333333334
+    },
+    "2": {
+      "oracle_canonical_acc_in": 0.39303000968054214,
+      "oracle_canonical_nmi": 0.31875608946901507,
+      "oracle_canonical_seg_acc": 0.43010752688172044,
+      "oracle_match_train_ctxs": 0.6666666666666666,
+      "oracle_match_ctx0_to_ood6": 0.6666666666666666
+    }
+  }
+}

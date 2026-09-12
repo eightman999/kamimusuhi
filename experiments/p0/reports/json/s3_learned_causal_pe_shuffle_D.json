@@ -1,0 +1,37 @@
+{
+  "seed": 3,
+  "agent": "learned",
+  "condition": "causal:pe_shuffle_D",
+  "ablation": "pe_shuffle",
+  "config": "base",
+  "perm_tag": "pe_shuffle_D",
+  "detection_rate": 0.20618556701030927,
+  "mean_cost": 0.0037304687500000003,
+  "info_efficiency": 49.001202306115566,
+  "total_reward": -6.66,
+  "action_entropy": 0.20789607618245468,
+  "n_detected": 20,
+  "n_missed": 77,
+  "attention": {
+    "IGNORE": 0.8134765625,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.1865234375,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.09629794637870266,
+    "B": 0.09629794637870266,
+    "C": 0.09629794637870266,
+    "D": 0.23967399487810326
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.1024878018773548
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.6
+}

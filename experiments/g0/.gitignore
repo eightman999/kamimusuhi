@@ -1,0 +1,14 @@
+# Bulky run artifacts: keep small JSONs (raw results) in git, drop
+# checkpoints and anything else under runs/*/
+/runs/*/*
+!/runs/*/eval.json
+!/runs/*/eval_km.json
+!/runs/*/run.json
+!/runs/*/metrics.json
+
+# same rule for archived v1 run artifacts
+/archive/v1/runs/*/*
+!/archive/v1/runs/*/*.json
+
+__pycache__/
+.pytest_cache/

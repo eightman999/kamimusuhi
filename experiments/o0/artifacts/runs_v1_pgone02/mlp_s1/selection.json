@@ -1,0 +1,5 @@
+{
+  "update": 1700,
+  "score": -0.1995676918086702,
+  "criterion": "-10*pos_mae_occ + exist + id - 2*pos_mae_vis"
+}

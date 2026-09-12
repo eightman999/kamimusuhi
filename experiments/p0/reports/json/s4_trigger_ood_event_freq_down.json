@@ -1,0 +1,37 @@
+{
+  "seed": 4,
+  "agent": "trigger",
+  "condition": "ood:ood_event_freq_down",
+  "ablation": "none",
+  "config": "ood_event_freq_down",
+  "perm_tag": "",
+  "detection_rate": 0.4883720930232558,
+  "mean_cost": 0.005266927083333334,
+  "info_efficiency": 73.78321681782099,
+  "total_reward": -2.7800000000000007,
+  "action_entropy": 0.3169263389808473,
+  "n_detected": 21,
+  "n_missed": 22,
+  "attention": {
+    "IGNORE": 0.7366536458333334,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.2633463541666667,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.056593801155448396,
+    "B": 0.056593801155448396,
+    "C": 0.056593801155448396,
+    "D": 0.15367010514789095
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.08862887564457513
+  },
+  "n_episodes": 12,
+  "wall_time_s": 1.96
+}

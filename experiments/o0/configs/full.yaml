@@ -1,0 +1,46 @@
+# O0 full-run config: multi-seed sweep training budget.
+# Same world as default.yaml (ID occlusion 4-16); longer schedule and
+# higher lr chosen after probe runs (probe_gru64_lr2e3) showed the
+# task needs ~3k updates to beat the const-velocity baseline.
+name: full
+seed: 0
+
+env:
+  world_len: 4.0
+  horizon: 96
+  occ_lo: 4
+  occ_hi: 16
+  v_lo: 0.04
+  v_hi: 0.09
+  drag: 0.005
+  accel_std: 0.0005
+  v_noise: 0.002
+  p_gone: 0.0   # reviewer C1/C2: remove edge-touching occluders so the
+                # bulk of realized bouts sits in the sampled 4-16.
+                # NOTE: realized bouts still exceed 16 for a tail of
+                # episodes (drag + occluder-width clipping; ~16% of
+                # hidden steps at bout>16, tail to ~86).  Boundary
+                # absorption is eval-only (preset gone20).
+  p_swap: 0.3
+  distractor_probs: [0.2, 0.3, 0.3, 0.1, 0.1]
+
+train:
+  updates: 3000
+  batch_size: 64
+  lr: 0.002
+  w_pos: 5.0
+  w_occ: 4.0
+  w_vis: 0.25
+  w_exist: 1.0
+  w_id: 1.0
+  val_every: 50
+  val_episodes: 256
+  threads: 3
+  device: cpu
+
+eval:
+  episodes: 512
+  seed: 910000
+
+model:
+  arch: gru64

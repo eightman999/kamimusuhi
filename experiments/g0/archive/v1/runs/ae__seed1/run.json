@@ -1,0 +1,11 @@
+{
+  "model": "ae",
+  "seed": 1,
+  "env_seed": 1,
+  "git": "b5f8f44",
+  "device": "cpu",
+  "steps": 3000,
+  "best_step": 2700,
+  "wall_sec": 4.641214847564697,
+  "config_name": "default"
+}

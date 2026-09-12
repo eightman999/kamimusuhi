@@ -1,0 +1,37 @@
+{
+  "seed": 4,
+  "agent": "bonly",
+  "condition": "causal:mask_belief",
+  "ablation": "mask_belief",
+  "config": "base",
+  "perm_tag": "mask_belief",
+  "detection_rate": 1.0,
+  "mean_cost": 0.019999999999999997,
+  "info_efficiency": 50.0,
+  "total_reward": -1.4900000000000018,
+  "action_entropy": 0.0,
+  "n_detected": 105,
+  "n_missed": 0,
+  "attention": {
+    "IGNORE": 0.0,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 1.0,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.10952748879390128,
+    "B": 0.10952748879390128,
+    "C": 0.10952748879390128,
+    "D": 0.17303092116647653
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.086429976532069
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.16
+}

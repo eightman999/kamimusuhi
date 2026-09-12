@@ -1,0 +1,7 @@
+# OOD: D events half as frequent
+name: ood_event_freq_down
+seed: 0
+env:
+  event_freq_mult: 0.5
+agent:
+  kind: mlp

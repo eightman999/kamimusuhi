@@ -1,0 +1,37 @@
+{
+  "seed": 3,
+  "agent": "fixed",
+  "condition": "causal:mask_belief",
+  "ablation": "mask_belief",
+  "config": "base",
+  "perm_tag": "mask_belief",
+  "detection_rate": 0.0,
+  "mean_cost": 0.0,
+  "info_efficiency": 0.0,
+  "total_reward": -8.833333333333334,
+  "action_entropy": 0.0,
+  "n_detected": 0,
+  "n_missed": 106,
+  "attention": {
+    "IGNORE": 1.0,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.0,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 1.4165465831756592,
+    "B": 1.4165465831756592,
+    "C": 1.4165465831756592,
+    "D": 1.3185622692108154
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.0
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.07
+}

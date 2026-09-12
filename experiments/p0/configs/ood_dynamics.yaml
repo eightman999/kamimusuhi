@@ -1,0 +1,10 @@
+# OOD: channel dynamics change -- B period halved, C jumpier, D ramp
+# shorter (3 -> less prediction lead time). Event window stays 1 step.
+name: ood_dynamics
+seed: 0
+env:
+  b_period: 32
+  c_jump_prob: 0.05
+  d_ramp_steps: 3
+agent:
+  kind: mlp

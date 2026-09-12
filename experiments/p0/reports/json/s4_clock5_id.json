@@ -1,0 +1,37 @@
+{
+  "seed": 4,
+  "agent": "clock5",
+  "condition": "id",
+  "ablation": "none",
+  "config": "base",
+  "perm_tag": "",
+  "detection_rate": 0.18018018018018017,
+  "mean_cost": 0.004023437499999999,
+  "info_efficiency": 39.16296576490751,
+  "total_reward": -7.976666666666669,
+  "action_entropy": 0.2801842047420751,
+  "n_detected": 20,
+  "n_missed": 91,
+  "attention": {
+    "IGNORE": 0.798828125,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.201171875,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.05017972599512177,
+    "B": 0.05017972599512177,
+    "C": 0.05017972599512177,
+    "D": 0.20974743319857225
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.0991545249090129
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.44
+}

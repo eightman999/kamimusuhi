@@ -1,0 +1,71 @@
+{
+  "name": "full",
+  "seed": 1,
+  "env": {
+    "world_len": 4.0,
+    "horizon": 96,
+    "t_appear_lo": 2,
+    "t_appear_hi": 6,
+    "vis_lo": 3,
+    "vis_hi": 8,
+    "occ_lo": 4,
+    "occ_hi": 16,
+    "post_lo": 6,
+    "post_hi": 10,
+    "v_lo": 0.04,
+    "v_hi": 0.09,
+    "drag": 0.005,
+    "accel_std": 0.0005,
+    "v_noise": 0.002,
+    "v_max": 0.25,
+    "app_lo": 0.2,
+    "app_hi": 0.9,
+    "app_swap_min": 0.25,
+    "reappear_app_jitter": 0.0,
+    "p_gone": 0.0,
+    "p_swap": 0.3,
+    "v_flip_prob": 0.0,
+    "decoy_takeover_prob": 0.0,
+    "occ_margin": 0.06,
+    "gone_span_lo": 1.0,
+    "gone_span_hi": 2.0,
+    "spawn_frac_lo": 0.02,
+    "spawn_frac_hi": 0.25,
+    "distractor_probs": [
+      0.2,
+      0.3,
+      0.3,
+      0.1,
+      0.1
+    ],
+    "v_distractor_lo": 0.03,
+    "v_distractor_hi": 0.1,
+    "ambush_prob": 0.0,
+    "obs_noise": 0.005
+  },
+  "train": {
+    "updates": 3000,
+    "batch_size": 64,
+    "lr": 0.002,
+    "w_pos": 5.0,
+    "w_occ": 4.0,
+    "w_vis": 0.25,
+    "w_exist": 1.0,
+    "w_id": 1.0,
+    "w_vel": 0.5,
+    "val_every": 50,
+    "val_episodes": 256,
+    "grad_clip": 1.0,
+    "threads": 3,
+    "device": "cpu"
+  },
+  "eval": {
+    "episodes": 512,
+    "seed": 910000
+  },
+  "model": {
+    "arch": "gru128",
+    "hidden": 64
+  },
+  "source_commit": "8e6d0e9c4c92bac9517af8fa227e2ca2f2574df3"
+}
