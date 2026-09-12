@@ -1,0 +1,7 @@
+# OOD: channel noise doubled (harder prediction everywhere)
+name: ood_noise_up
+seed: 0
+env:
+  noise_mult: 2.0
+agent:
+  kind: mlp
