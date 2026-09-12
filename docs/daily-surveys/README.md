@@ -65,6 +65,7 @@ New surveys start as **未判定**. Record an explicit decision and confirm any 
 
 | Date | Highlights | 反映判断 |
 |---|---|---|
+| [2026-09-13 07:01 delta](./2026-09-13-07-01-37.md) | async principal-provenance propagation and security–liveness coupling, child-agent execution-owner routing and unknown-outcome replay safety, truth-probe semantic aliasing, actionable hidden-state binding diagnostics, trajectory-adaptive cognitive budget; Zenn/note/Qiita scan with no new promotion | **未判定** |
 | [2026-09-13 00:58 delta](./2026-09-13-00-58-08.md) | in-flight continuation principal isolation, scoped interrupt/monitor lifecycle, evidence-backed cross-conversation diagnosis, asymmetric common-ground/co-regulation, embodied affect symbol alignment, decentralized shared-symbol inference; current Symbol Emergence in Robotics watch | **未判定** |
 | [2026-09-12 19:02 delta](./2026-09-12-19-02-01.md) | execution-grant lifecycle and single-use redemption, verifier-progress self-improvement signals, belief-shift compute allocation, causal memory ablation in long-run agent society, topology-preserving world-model transitions, event-driven distributed perception, calibrated human reliance, Japanese serverless autonomous-agent implementation | **未判定** |
 | [2026-09-12 13:01 delta](./2026-09-12-13-01-17.md) | control-boundary retention across compaction, dependency-consistent multimodal deep research, group-affect divergence, held-out modality utility, cross-architecture output information geometry, TTFS SNN expressivity, agent-evaluation coverage taxonomy | **未判定** |
