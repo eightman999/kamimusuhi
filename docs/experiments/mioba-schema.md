@@ -1,24 +1,36 @@
 # MIOBA schema: genome JSON + lineage SQLite
 
-## Genome JSON (`schema_version = 1`)
+## Genome JSON (`schema_version = 4`)
 
 | field | type | meaning |
 |---|---|---|
-| `genome_id` | str | content hash `b2b:<blake2b-32>`, filled by `finalize()` |
-| `schema_version` | int | currently 1 |
+| `genome_id` | str | content hash `b2b:<blake2b-32>`, filled by `finalize()`; a stored field, never recomputed |
+| `schema_version` | int | 4 (1-3: M0/M1 records without `substrates`) |
 | `parent_ids` | list[str] | parent genome_ids (genome_lineage, not canonical identity) |
 | `species_base` | str | `"fba0"` |
 | `generation` / `birth_index` | int | evolutionary position |
 | `random_seed` | int | per-genome seed used by evaluation jobs |
 | `ancestral_base` | str | FBA0 reference name (`flywire-v783-shiu-lif`) |
-| `artificial_organs` | list[ArtificialOrgan] | `{organ_id, kind, size, params, provenance}` |
-| `attachments` | list[Attachment] | `{attachment_id, source, target, weight_scale, provenance}`; source `"fba0:<region>"` or an organ_id |
+| `substrates` | list[SubstrateGene] | v4+: `{substrate_id, kind, enabled, params}` — which substrate implementations the organism is built on. v1-v3 documents have no such field; loading one assigns the implicit ancestral FBA0 gene |
+| `artificial_organs` | list[ArtificialOrgan] | `{organ_id, kind, size, params, provenance, enabled, ports, internal, state}`; `ports`/`internal`/`state` are the M2 organ IR fields |
+| `attachments` | list[Attachment] | `{attachment_id, source, target, weight_scale, provenance, enabled, signal}`; endpoints are typed (`substrate:<id>/<port>`, legacy `fba0:<region>`, `env:`/`sensor:`/`effector:` names, or a bare organ_id); `signal` is the port discipline (`event` for every M1 edge) |
 | `parameter_mutations` | list[ParameterMutation] | `{mutation_id, path, op(set|scale|add), value, scope}`; scope `global`/`region:<x>`/`organ:<id>` |
-| `development_rules` / `plasticity_rules` | list[dict] | reserved |
+| `development_rules` | list[dict] | birth-stage ops applied deterministically at `develop()` (ADD/GROW/SCALE_ORGAN_AT_BIRTH); lifetime-stage ops are deferred to the plasticity runtime |
+| `plasticity_rules` | list[dict] | heritable rules whose *effects* live in per-individual `LifetimeState`, never in the genome |
+| `source_schema_version` | int \| null | the version a document was authored in, set when loading migrates a v1-v3 record; null for natively-authored records |
 | `created_at` | str | ISO8601 UTC |
 
-`OrganProvenance`: `{origin: "fba0"|"artificial", parent_gene,
-birth_mutation_id, ancestry}`.
+`OrganProvenance`: `{origin: "fba0"|"artificial"|"substrate"|
+"development", parent_gene, birth_mutation_id, ancestry}`.
+
+### Migration rule
+
+`from_dict` on a v1-v3 document (no `substrates` field) injects
+`SubstrateGene("fba0", "flywire-v783-shiu-lif")`, sets
+`source_schema_version` to the authored version and
+`schema_version` to 4. The record keeps its stored `genome_id`
+verbatim — historical identities are never recomputed, so a migrated
+lineage stays hash-identical to the day it was born.
 
 ### Content hash rule
 

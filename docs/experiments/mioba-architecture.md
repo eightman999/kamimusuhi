@@ -1,4 +1,55 @@
-# MIOBA architecture (phase 1)
+# MIOBA architecture
+
+## Organism model (M2)
+
+M1 built the organism as *FBA0 plus artificial organs*: the FlyWire
+connectome was the architecture's implicit body. M2 makes the organism
+generic:
+
+```
+organism
+ ├─ substrate(s)      SubstrateGene list → substrate registry adapters
+ ├─ organs            organ IR: kind, size, params, typed ports,
+ │                    internal topology, runtime-state schema
+ ├─ transducers       sensor:* endpoints (habitat -> event)
+ ├─ internal state    organ state schema + LifetimeState (never in the
+ │                    genome)
+ └─ effectors         effector:* endpoints (event -> habitat)
+```
+
+FBA0 is the M-series founder condition and the only registered
+substrate (`substrate/fba0.py` behind `substrate/base.py`'s
+`SubstrateProtocol`); every M1 genome implicitly carries it, and schema
+v4 spells it out explicitly. Nothing in the architecture-level code
+imports the FBA0 implementation: `development/phenotype.py` resolves
+substrate genes through `substrate/registry.py`, and
+`genome/structure.py` classifies endpoints through the typed
+`substrate/endpoints.py` parser.
+
+Two topology modes exist in `analyse()`: `m1_fba0_loop` (the frozen
+historical FBA0→organ→FBA0 rule) and `generic_causal` (sources =
+enabled substrates + sensor/env, sinks = enabled substrates +
+effector/env). Every M1 genome classifies identically under both.
+
+The genome is the recipe, not the body: `development/rules.py` applies
+deterministic birth-stage `development_rules` (ADD/GROW/SCALE organ at
+birth), and lifetime-stage ops are deferred to
+`development/lifetime.py`'s `LifetimeState` — per-individual runtime
+state that is never hashed and never inherited. The mutation/
+plasticity boundary: a child inherits the *rules*, not the parent's
+*adjustments*.
+
+Functional departure (`m2/departure.py`, `functional_departure.enabled`
+in config) measures what an individual actually uses: intact, sham,
+founder, organ-ablation and per-severity substrate-lesion conditions on
+the same backend under the same seeds, with lesion masks from the
+substrate adapter under a dedicated `lesion` seed stream. Raw condition
+scores persist under `metrics.departure`; `departure_resistance` is a
+selection component (default weight 0).
+
+M3 scaffolding exists but is inert: `SUBSTRATE_OPERATORS`
+(DISABLE/BYPASS/PRUNE/REPLACE_SUBSTRATE_REGION) are applicable via
+`apply_operator` yet absent from every selection pool.
 
 ## Components
 
