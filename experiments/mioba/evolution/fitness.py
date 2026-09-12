@@ -40,7 +40,7 @@ import math
 
 COMPONENTS = ("task_score", "homeostasis_score", "disturbance_recovery_score",
               "resource_efficiency_score", "structural_functionality",
-              "novelty")
+              "novelty", "departure_resistance")
 
 DEFAULTS = {
     "weights": {
@@ -50,6 +50,9 @@ DEFAULTS = {
         "resource_efficiency_score": 0.4,
         "structural_functionality": 0.2,
         "novelty": 0.2,
+        # M2 §18: selection may reward surviving a substrate lesion.
+        # Default 0 — the M1 selection mix is unchanged.
+        "departure_resistance": 0.0,
     },
     # normalised task quality below which no efficiency bonus is given
     "minimum_viable_task_score": 0.35,
@@ -164,6 +167,18 @@ def structural_functionality(structure: dict | None) -> float | None:
     return (s.get("n_functional_neurons") or 0) / total
 
 
+def _departure_resistance(summary: dict | None) -> float | None:
+    """1 - normalised substrate-lesion loss, clipped to [0, 1]: how much
+    function the individual keeps when its substrate is lesioned (M2
+    §18). ``None`` when the departure battery did not run."""
+    dep = (summary or {}).get("departure") or {}
+    sid = dep.get("substrate_id") or "fba0"
+    norm = dep.get(f"{sid}_dependency_normalized")
+    if norm is None:
+        return None
+    return max(0.0, min(1.0, 1.0 - float(norm)))
+
+
 def descriptor(summary: dict, structure: dict | None) -> list[float]:
     """Behavioural descriptor for novelty (M1 §9).
 
@@ -256,6 +271,11 @@ def compute_metrics(summary: dict, structure: dict | None, config: dict | None,
         "structural_functionality": struct,
         "novelty": nov,
         "descriptor": desc,
+        # M2 functional departure: the raw condition scores and the
+        # derived dependencies, persisted as measured. None when the
+        # evaluation did not run the battery.
+        "departure": (summary or {}).get("departure"),
+        "departure_resistance": _departure_resistance(summary),
         "raw_firing_metrics": {
             "mean_rate_hz": (summary or {}).get("mean_rate_hz"),
             "rate_std_hz": (summary or {}).get("rate_std_hz"),
@@ -283,6 +303,8 @@ def normalised_components(raw: dict, cfg: dict, target_rate: float) -> dict:
         # novelty is unbounded above; squash it so one outlier cannot
         # dominate the sum
         "novelty": (None if nov is None else nov / (1.0 + nov)),
+        # already normalised by the departure evaluator
+        "departure_resistance": raw.get("departure_resistance"),
     }
 
 
