@@ -1,0 +1,37 @@
+{
+  "seed": 4,
+  "agent": "pe_thresh",
+  "condition": "id",
+  "ablation": "none",
+  "config": "base",
+  "perm_tag": "",
+  "detection_rate": 0.19801980198019803,
+  "mean_cost": 0.007086588541666668,
+  "info_efficiency": 12.04369798364021,
+  "total_reward": -8.711666666666668,
+  "action_entropy": 0.2881862299751776,
+  "n_detected": 20,
+  "n_missed": 81,
+  "attention": {
+    "IGNORE": 0.6456705729166666,
+    "OBSERVE_A": 0.05126953125,
+    "OBSERVE_B": 0.05029296875,
+    "OBSERVE_C": 0.056640625,
+    "OBSERVE_D": 0.19612630208333334,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.08472640549128603,
+    "B": 0.08496320537960855,
+    "C": 0.08694744845949269,
+    "D": 0.1322296369689866
+  },
+  "pred_err_mean": {
+    "A": 0.03362331363555197,
+    "B": 0.033493852884813,
+    "C": 0.030097836733755295,
+    "D": 0.04536385019147543
+  },
+  "n_episodes": 12,
+  "wall_time_s": 1.99
+}

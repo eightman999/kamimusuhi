@@ -1,0 +1,23 @@
+# P0 smoke config -- finishes in <60s on CPU
+name: smoke
+seed: 0
+
+env:
+  episode_length: 256
+
+train:
+  total_steps: 12000
+  rollout_steps: 64
+  num_envs: 4
+  eval_every_updates: 3
+  eval_episodes: 2
+
+eval:
+  episodes: 4
+
+agent:
+  kind: mlp
+  hidden: 32
+
+predictor:
+  hidden: 16

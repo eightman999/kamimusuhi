@@ -1,0 +1,31 @@
+seed: 0
+
+env:
+  episode_len: 48
+
+data:
+  episodes: 48
+  val_episodes: 8
+  policy: explore
+
+model:
+  hidden: 24
+  ae_hidden: 32
+  codebook_size: 16
+  window: 6
+  kmeans_k: 12
+
+train:
+  batch_size: 16
+  lr: 0.002
+  max_steps: 300
+  target_delta: true
+
+eval:
+  episodes: 12
+  warmup: 4
+  probe_steps: 200
+  fewshot: [1, 5]
+  ood:
+    ood_ctx_id: 6
+    ood_dense_ctx_id: 8

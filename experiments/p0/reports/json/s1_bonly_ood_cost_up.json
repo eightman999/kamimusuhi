@@ -1,0 +1,37 @@
+{
+  "seed": 1,
+  "agent": "bonly",
+  "condition": "ood:ood_cost_up",
+  "ablation": "none",
+  "config": "ood_cost_up",
+  "perm_tag": "",
+  "detection_rate": 1.0,
+  "mean_cost": 0.039999999999999994,
+  "info_efficiency": 25.0,
+  "total_reward": -12.646666666666667,
+  "action_entropy": 0.0,
+  "n_detected": 94,
+  "n_missed": 0,
+  "attention": {
+    "IGNORE": 0.0,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 1.0,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.10290447390586148,
+    "B": 0.10290447390586148,
+    "C": 0.10290447390586148,
+    "D": 0.1718831314065028
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.08622714372359042
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.15
+}

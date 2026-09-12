@@ -1,0 +1,41 @@
+env:
+  episode_len: 128
+  num_keys: 16
+  num_values: 8
+  num_queryable: 4
+  queries_per_episode: 4
+  num_distractors: 12
+  delay_min: 16
+  delay_max: 64
+  noise_rate: 0.5
+  memory_slots: 4
+  query_window: 4
+  noise_dim: 8
+  evict_policy: fifo
+  reward_correct: 1.0
+  reward_wrong: -0.3
+  reward_answered: 0.2
+  reward_recall_hit: 0.2
+  reward_expire: -0.25
+  cost_store: 0.01
+  cost_recall: 0.02
+  cost_bad_answer: 0.1
+
+train:
+  iters: 400
+  num_envs: 64
+  lr: 0.0003
+  epochs: 3
+  minibatch_episodes: 64
+  clip: 0.2
+  gamma: 0.99
+  lam: 0.95
+  vf_coef: 0.5
+  ent_coef: 0.01
+  max_grad_norm: 0.5
+  eval_every: 20
+  eval_episodes: 64
+  val_seed: 700001
+  delay_warmup_iters: 60
+  delay_start: [4, 12]
+  imitation_iters: 100

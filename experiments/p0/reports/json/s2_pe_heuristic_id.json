@@ -1,0 +1,37 @@
+{
+  "seed": 2,
+  "agent": "pe_heuristic",
+  "condition": "id",
+  "ablation": "none",
+  "config": "base",
+  "perm_tag": "",
+  "detection_rate": 0.35353535353535354,
+  "mean_cost": 0.019999999999999997,
+  "info_efficiency": 19.131042568542565,
+  "total_reward": -12.656666666666672,
+  "action_entropy": 0.4306814064384647,
+  "n_detected": 35,
+  "n_missed": 64,
+  "attention": {
+    "IGNORE": 0.0,
+    "OBSERVE_A": 0.45166015625,
+    "OBSERVE_B": 0.1396484375,
+    "OBSERVE_C": 0.048177083333333336,
+    "OBSERVE_D": 0.3605143229166667,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.09501235191570838,
+    "B": 0.061309537293558,
+    "C": 0.04813008630405117,
+    "D": 0.14618248893869654
+  },
+  "pred_err_mean": {
+    "A": 0.04600778758222198,
+    "B": 0.022502111066714913,
+    "C": 0.013133061819387818,
+    "D": 0.07775276686700554
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.08
+}

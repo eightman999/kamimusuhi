@@ -1,0 +1,37 @@
+{
+  "seed": 3,
+  "agent": "vtrigger22",
+  "condition": "causal:pe_shuffle_D",
+  "ablation": "pe_shuffle",
+  "config": "base",
+  "perm_tag": "pe_shuffle_D",
+  "detection_rate": 0.7289719626168224,
+  "mean_cost": 0.005045572916666667,
+  "info_efficiency": 137.35246993066508,
+  "total_reward": 1.4999999999999991,
+  "action_entropy": 0.3141298058123116,
+  "n_detected": 78,
+  "n_missed": 29,
+  "attention": {
+    "IGNORE": 0.7477213541666666,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.2522786458333333,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.05903857464393999,
+    "B": 0.05903857464393999,
+    "C": 0.05903857464393999,
+    "D": 0.23751656548605146
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.1247543076747113
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.22
+}

@@ -1,0 +1,44 @@
+# P0 base config (in-distribution)
+name: base
+seed: 0
+
+env:
+  episode_length: 512
+  p_event: 0.012
+  d_ramp_steps: 5
+  d_event_steps: 1        # single-step detection window (v2: was 3)
+  cd_coupling_mult: 10.0  # C-jump hazard boost (v2: was 6)
+  cost_observe: 0.02
+  cost_observe_all: 0.06
+  detect_bonus: 1.0
+  miss_penalty: 1.0
+
+train:
+  total_steps: 300000
+  rollout_steps: 128
+  num_envs: 8
+  ppo_epochs: 4
+  minibatch_size: 256
+  lr: 0.0003
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_coef: 0.2
+  ent_coef: 0.02
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  eval_every_updates: 5
+  eval_episodes: 6
+  device: cpu
+
+eval:
+  episodes: 12
+
+agent:
+  kind: mlp
+  hidden: 64
+
+predictor:
+  hidden: 32
+  lr: 0.003
+  ema: 0.5
+  err_scale: 4.0

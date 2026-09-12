@@ -1,0 +1,37 @@
+{
+  "seed": 3,
+  "agent": "learned",
+  "condition": "causal:trained_frozen",
+  "ablation": "trained_frozen",
+  "config": "base",
+  "perm_tag": "",
+  "detection_rate": 0.8640776699029126,
+  "mean_cost": 0.011136067708333334,
+  "info_efficiency": 77.5897919597885,
+  "total_reward": 0.5483333333333328,
+  "action_entropy": 0.38176735455040367,
+  "n_detected": 89,
+  "n_missed": 14,
+  "attention": {
+    "IGNORE": 0.4431966145833333,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.5568033854166666,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.13447590172290802,
+    "B": 0.13447590172290802,
+    "C": 0.13447590172290802,
+    "D": 0.15143692508718232
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.08243035162679967
+  },
+  "n_episodes": 12,
+  "wall_time_s": 1.01
+}

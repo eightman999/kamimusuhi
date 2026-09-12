@@ -1,0 +1,11 @@
+{
+  "model": "gru",
+  "seed": 3,
+  "env_seed": 3,
+  "git": "c8a1b90",
+  "device": "cpu",
+  "steps": 3000,
+  "best_step": 1450,
+  "wall_sec": 17.817745208740234,
+  "config_name": "default"
+}

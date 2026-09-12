@@ -1,0 +1,37 @@
+{
+  "seed": 0,
+  "agent": "bonly_final_stoch",
+  "condition": "causal:pe_mask",
+  "ablation": "pe_mask",
+  "config": "base_bonly",
+  "perm_tag": "pe_mask",
+  "detection_rate": 0.9134615384615384,
+  "mean_cost": 0.017763671874999998,
+  "info_efficiency": 51.13212803770713,
+  "total_reward": -1.928333333333334,
+  "action_entropy": 0.24761015135808395,
+  "n_detected": 95,
+  "n_missed": 9,
+  "attention": {
+    "IGNORE": 0.11669921875,
+    "OBSERVE_A": 0.00244140625,
+    "OBSERVE_B": 0.0078125,
+    "OBSERVE_C": 0.0013020833333333333,
+    "OBSERVE_D": 0.8693033854166666,
+    "OBSERVE_ALL": 0.00244140625
+  },
+  "surprise_mean": {
+    "A": 0.21167337803611494,
+    "B": 0.30725656386372674,
+    "C": 0.2360967212534888,
+    "D": 0.16508781825723418
+  },
+  "pred_err_mean": {
+    "A": 0.05896843493812614,
+    "B": 0.21282938147584596,
+    "C": 0.15401127085917526,
+    "D": 0.08373215457484957
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.71
+}

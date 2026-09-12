@@ -1,0 +1,7 @@
+# OOD: observation costs doubled
+name: ood_cost_up
+seed: 0
+env:
+  cost_mult: 2.0
+agent:
+  kind: mlp

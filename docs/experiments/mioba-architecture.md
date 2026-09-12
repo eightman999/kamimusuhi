@@ -1,74 +1,212 @@
-# MIOBA architecture
+# MIOA architecture
 
-## Organism model (M2)
+**MIOA = Machine Information Organism Architecture.**
 
-M1 built the organism as *FBA0 plus artificial organs*: the FlyWire
-connectome was the architecture's implicit body. M2 makes the organism
-generic:
+MIOA is the current architecture term for the **whole artificial organism**.
+It deliberately does not contain “Brain”: a MIOA organism may distribute
+sensing, state, computation, memory and action across multiple organs and
+substrates, with no requirement for a single central brain.
 
+> Compatibility note: `MIOBA` is the historical implementation / experiment
+> name used by the existing `experiments/mioba/` package, CLI, environment
+> variables, M0/M1 records and archived reports. Those identifiers are kept
+> stable for reproducibility. New architecture prose should use **MIOA** for
+> the organism as a whole and use **MIOBA** only when referring to that legacy
+> code or an experiment recorded under that name.
+
+## Terminology
+
+| term | meaning |
+|---|---|
+| **MIOA** | Machine Information Organism Architecture: organism-level architecture |
+| **MIO** | one Machine Information Organism / individual |
+| **FBA** | Fly-Brain Architecture: fly-derived neural architecture |
+| **FBA0** | the current immutable ancestral neural substrate used to found M-series organisms |
+| **MIOBA** | compatibility / historical name for the current experimental implementation and its recorded M-series infrastructure |
+| **M-series** | experimental lineage used to test evolution, organs, homeostasis and substrate departure |
+
+FBA0 is therefore **not the organism** and is not required to remain the
+organism's permanent “brain”. It is the current ancestral substrate from which
+MIOA organisms begin.
+
+## Organism model
+
+The architecture is organism-centric rather than brain-centric:
+
+```text
+                           MIOA organism
+
+        ┌───────────────────────────────────────────────┐
+world ↔ │ sensory organs / transducers                  │
+        │        ↕                                      │
+        │ ancestral substrate (currently FBA0)          │
+        │        ↕                                      │
+        │ evolved artificial organs ↔ memory / state    │
+        │        ↕                    ↕                 │
+        │ machine interoception ↔ action/effectors      │
+        └───────────────────────────────────────────────┘
+                           ↕
+                         habitat
 ```
-organism
- ├─ substrate(s)      SubstrateGene list → substrate registry adapters
- ├─ organs            organ IR: kind, size, params, typed ports,
- │                    internal topology, runtime-state schema
- ├─ transducers       sensor:* endpoints (habitat -> event)
- ├─ internal state    organ state schema + LifetimeState (never in the
- │                    genome)
- └─ effectors         effector:* endpoints (event -> habitat)
+
+Computation may occur in any of these organs. A future MIOA can therefore have
+no uniquely identifiable “brain” while still having coherent organism-level
+behaviour.
+
+### Architectural invariants
+
+1. **No mandatory central brain.** `sensor → brain → actuator` is one possible
+   phenotype, not a required topology.
+2. **Organs are causal parts of the organism.** Merely adding neurons or data
+   channels does not make a useful organ; an organ must be able to affect the
+   organism's state or behaviour and its contribution must be measurable.
+3. **Semantics are not supplied by the transducer.** A sensor may transform
+   photons, pressure waves, packets or machine state into signals, but labels
+   such as “food”, “enemy”, “voice” or “object” belong to learned/evolved
+   internal organization, not the input API.
+4. **Biological senses are examples, not limits.** Vision and hearing are early
+   test cases. Network activity, filesystem events, compute pressure, clock
+   phase, latency and other machine-native signals may become equally valid
+   senses.
+5. **The habitat is part of the experiment, not hidden host state.** Scientific
+   environmental inputs must be explicit, seeded/traceable where applicable,
+   and separable from runtime telemetry.
+
+## Sensory organs
+
+MIOA should not hard-code `Eye` and `Ear` as privileged architecture classes.
+The general pattern is:
+
+```text
+information source → transducer → organ encoding/dynamics → organism network
 ```
 
-FBA0 is the M-series founder condition (`substrate/fba0.py` behind
-`substrate/base.py`'s `SubstrateProtocol`); every M1 genome implicitly
-carries it, and schema v4 spells it out explicitly. M3 added a second
-registered substrate — `substrate/reflex0.py`, a 48-neuron
-sensor→integrator→motor arc with typed ports — purely to prove the
-abstraction is real: a non-FBA genome develops, mutates, lesions,
-evaluates, reproduces and replays through exactly the same machinery,
-with no reflex0 branch anywhere in the generic layer (the tripwire
-lives in `tests/test_m3_reflex0.py`). Nothing in the
-architecture-level code imports the FBA0 implementation:
-`development/phenotype.py` resolves substrate genes through
-`substrate/registry.py`, and `genome/structure.py` classifies
-endpoints through the typed `substrate/endpoints.py` parser.
+A human-facing presentation may describe an organ as an eye, ear, antenna,
+resonator or other fantasy-species anatomy, while the experimental interface
+remains general.
 
-Two topology modes exist in `analyse()`: `m1_fba0_loop` (the frozen
-historical FBA0→organ→FBA0 rule) and `generic_causal` (sources =
-enabled substrates + sensor/env, sinks = enabled substrates +
-effector/env). Every M1 genome classifies identically under both.
+### Spatial / vision-like organ
 
-The genome is the recipe, not the body: `development/rules.py` applies
-deterministic birth-stage `development_rules` (ADD/GROW/SCALE organ at
-birth), and lifetime-stage ops are deferred to
-`development/lifetime.py`'s `LifetimeState` — per-individual runtime
-state that is never hashed and never inherited. The mutation/
-plasticity boundary: a child inherits the *rules*, not the parent's
-*adjustments*.
+An early spatial organ may consume a small display-space or camera-space field
+(e.g. low-resolution intensity or event-like ON/OFF changes) and turn local
+spatiotemporal change into neural signals. It should not receive pre-labelled
+objects.
 
-Functional departure (`m2/departure.py`, `functional_departure.enabled`
-in config) measures what an individual actually uses: intact, sham,
-founder, organ-ablation and per-severity substrate-lesion conditions on
-the same backend under the same seeds, with lesion masks from the
-substrate adapter under a dedicated `lesion` seed stream. Raw condition
-scores persist under `metrics.departure`; `departure_resistance` is a
-selection component (default weight 0). Control lineages exist so that
-"structure changed" is separable from "selected for departure":
-`m2_control_parameter_only.yaml` restricts the mutation pool to
-`SCALE_PARAMETER`, and `m2_control_structural_neutral.yaml` runs the
-battery with selection weight 0.
+Candidate evolvable quantities include receptive-field geometry, gain,
+threshold, temporal decay, sample rate, output population size and attachment
+points.
 
-M3 scaffolding exists but is inert: `SUBSTRATE_OPERATORS`
-(DISABLE/BYPASS/PRUNE/REPLACE_SUBSTRATE_REGION) are applicable via
-`apply_operator` yet absent from every selection pool. What M3 *did*
-harden: a native-v4 genome that declares substrate genes but disables
-every one is substrate-less — `develop()` raises `NoEnabledSubstrate`
-rather than substituting the implicit FBA0 (only the *absent* field
-means the founder), genome-disabled substrate ports are dangling at
-both develop() and structure analysis, and the worker reports
-development failures as FAILED evaluations instead of crash-looping.
+### Resonance / hearing-like organ
 
-## Components
+An early resonance organ may consume a waveform or a compact frequency-bank
+representation and expose amplitude / temporal change as signals. Speech
+recognition is explicitly outside the primitive organ: linguistic meaning, if
+it ever emerges, belongs above the transducer.
 
+The same organ abstraction can later accept machine-native periodic streams,
+packet timing or other temporal signals without changing the organism model.
+
+## Habitat: inside the display
+
+The preferred early sandbox is **inside the display** rather than a miniature
+physical-world simulator. The display is a boundary between the human world
+and the information organism's first habitat, not merely a visualization of a
+separate world.
+
+```text
+human / physical world
+   ↓ mouse, touch, voice, camera, optional external signals
+┌──────────────────────── display boundary ────────────────────────┐
+│                                                                  │
+│   MIOA habitat: spatial fields, moving signals, sound/resonance,  │
+│   resources, hazards, other organisms, portals / interfaces      │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+   ↑ pixels, sound, motion, organism behaviour
 ```
+
+The habitat does not need to copy Earth physics. Information-native variables
+such as visibility, distance, bandwidth, latency, memory/compute budget,
+attention and persistence can be first-class environmental quantities.
+
+A useful staged boundary is:
+
+```text
+closed display habitat
+        ↓
+optional camera / microphone transducers
+        ↓
+filesystem / network / machine-native senses
+        ↓
+other hosts and other MIOA organisms
+```
+
+Opening a new interface should therefore be treated as adding or evolving a
+new sensory/action organ, not as silently granting the substrate arbitrary
+host access.
+
+## FBA0 ancestry and departure
+
+The current implementation describes an artificial organism as an immutable
+FBA0 reference plus artificial organs, attachments and parameter mutations.
+That is the **founder condition**, not the intended definition of MIOA.
+
+Two distinct forms of departure must be tested separately.
+
+### Functional departure
+
+Before physically deleting FBA0, test whether evolution transfers causal
+responsibility away from it. For matched environments/seeds, compare at least:
+
+- full organism;
+- artificial-organ lesion / ablation;
+- FBA0 lesion (graded where possible);
+- FBA0-only or founder baseline.
+
+A useful departure signature is simultaneous:
+
+- preserved task/homeostasis/survival performance;
+- increasing tolerance to FBA0 lesions;
+- increasing performance loss when evolved artificial organs are ablated;
+- artificial organs lying on causal paths used by successful behaviour.
+
+Activity difference alone is insufficient: a broken or noisy organism can be
+very different from FBA0 without having evolved a useful departure.
+
+Controls should include a parameter-only lineage and a structural-mutation
+lineage without the same selection pressure, so “changed” can be separated
+from “selected to become less FBA-dependent”.
+
+### Structural replacement
+
+Only after functional departure is demonstrated should later experiments allow
+mutations such as disabling, bypassing, pruning or replacing FBA0 regions.
+That experiment asks whether ancestry can physically shrink while viability is
+preserved. It is intentionally distinct from the current immutable-FBA0 M1
+condition.
+
+## Current implementation mapping
+
+Today, the legacy `experiments/mioba/` implementation provides the first MIOA
+experimental substrate:
+
+- FBA0 reference: FlyWire v783 connectivity simulated with the Shiu et al.
+  2024 LIF + delayed alpha-synapse model;
+- genome lineage with artificial organs and attachments;
+- structural growth/pruning and parameter mutation;
+- seeded virtual disturbances and homeostatic debt;
+- machine-interoceptive channels;
+- separated task, homeostasis, recovery, efficiency, structural and novelty
+  metrics;
+- coordinator, GPU workers, lineage SQLite storage and Observatory GUI.
+
+It does **not** yet establish long-run open-ended evolution, a mature sensory
+organ system, or physical replacement of FBA0. Those remain experimental
+questions.
+
+## Runtime components (legacy MIOBA implementation)
+
+```text
             ┌─────────────────────────────────────────────────────┐
             │ coordinator (FastAPI + uvicorn, single writer)       │
             │  app.py        HTTP API + worker protocol            │
@@ -91,22 +229,20 @@ development failures as FAILED evaluations instead of crash-looping.
             ┌──────┴───────────────────────────┐
             │ fba/: mock | torch | genn        │
             │ (Shiu 2024 LIF + alpha synapse,  │
-            │  1.8 ms delay ring buffer)       │
+            │  delayed propagation)            │
             └──────────────────────────────────┘
 
    MIE collectors (coordinator-side + worker heartbeats):
    gpu/cpu/ram/network_latency → telemetry_samples + samples.jsonl
 ```
 
-- **Coordinator** is the only writer to `lineage.sqlite`. The GUI and CLI
-  never own state.
-- **Workers** are stateless executors: register → (bench) → claim →
-  develop → backend.initialize → run → result. Heartbeats carry GPU
-  stats and MIE samples. A worker never marks anything succeeded on its
-  own; it only reports.
-- **MIE** collectors produce `SensorEvent`s, normalized/delta'ed, stored
-  in `telemetry_samples`; temperature above `mie.anomaly.gpu_temp_c`
-  raises `sensor_anomaly` events.
+- **Coordinator** is the only writer to `lineage.sqlite`; the GUI and CLI do
+  not own scientific state.
+- **Workers** are stateless executors: register → benchmark → claim → develop →
+  evaluate → result.
+- **MIE telemetry** and **scientific interoception** are distinct. Host GPU/CPU
+  telemetry must not affect fitness unless explicitly introduced as a traced
+  experimental input.
 
 ## LIVE / RECORDED / DERIVED
 
@@ -115,54 +251,38 @@ Every API payload carries `kind`:
 - `LIVE` — current runtime state (status, workers, runtime info).
 - `RECORDED` — rows read from the DB (genomes, evaluations, events,
   telemetry).
-- `DERIVED` — computed on request from recorded rows (throughput,
-  ancestry chains, phenotype summaries, latest-per-signal telemetry).
+- `DERIVED` — computed on request from recorded rows (throughput, ancestry
+  chains, phenotype summaries, latest-per-signal telemetry).
 
 ## Job state machine
 
-```
+```text
 QUEUED ──claim (atomic UPDATE ... WHERE status='QUEUED')──▶ RUNNING
 RUNNING ──worker result──▶ SUCCEEDED | FAILED
-RUNNING ──stale worker (> worker.lost_after_s) or coordinator restart──▶ UNKNOWN
-UNKNOWN ──jobs.requeue_unknown──▶ QUEUED (attempt+1)  | FAILED at max_attempts
-any non-terminal ──cancel──▶ CANCELLED
+RUNNING ──stale worker or coordinator restart────────────▶ UNKNOWN
+UNKNOWN ──requeue policy─────────────────────────────────▶ QUEUED | FAILED
+any non-terminal ──cancel────────────────────────────────▶ CANCELLED
 ```
 
-- `RUNNING → SUCCEEDED` is never inferred; only an explicit worker result
-  finishes a job, and only from the worker currently holding the claim —
-  a late result from a worker that lost its claim (UNKNOWN → requeued →
-  re-claimed by another worker) is rejected with `stale_result_rejected`
-  (warn) and HTTP 409.
-- `pause` stops claims only (claim returns 204); `stop` sets
-  `stopping`, waits for RUNNING jobs up to `stop.timeout_s`, marks the
-  rest UNKNOWN, writes a `reason=stop` checkpoint, WAL-truncates, exits.
+`RUNNING → SUCCEEDED` is never inferred; only an explicit result from the
+worker currently holding the claim finishes a job. Pause stops new claims;
+gracious stop waits for running work, checkpoints and exits.
 
-## Checkpoint manifest
+## Checkpoint / resume
 
-`<runs>/<exp>/checkpoints/<ts>-<reason>.json`:
-`experiment_id, created_at, reason, git_commit, config_hash, counters,
-rng_state, queue_counts, worker_ids, db_sha256, last_event_id` — plus a
-`checkpoints` row.
-
-## Resume rules
-
-`mioba start --resume <experiment_id>` reopens the existing DB (a runs
-dir that already holds an experiment refuses a fresh start without
-`--resume`). On resume: RUNNING → UNKNOWN (`job_marked_unknown`,
-reason `coordinator_restart`) then requeue per policy; online workers are
-marked offline and must re-register; `experiment_resumed_from_checkpoint`
-is emitted. If the config changed since the run started, a
-`config_hash_mismatch` warn event is emitted (the run continues — the
-operator may have legitimately changed intervals) and `/api/status`
-exposes both `config_hash` and `config_hash_stored`.
+Runtime state remains under the legacy MIOBA paths. Checkpoint manifests and
+`lineage.sqlite` are the source of truth for an experiment. Existing M0/M1
+records must continue to be replayed with the implementation and scientific
+configuration that produced them; the MIOA terminology change is not a reason
+to rewrite historical experiment identity.
 
 ## Boundaries
 
-- **vs Kamimusuhi canonical identity**: MIOBA genome lineage is
-  experiment data in `lineage.sqlite`; it is *not* canonical identity
-  lineage and never touches kamimusuhi crates or stores. Symbols are
-  named `genome_lineage`, never `continuity`.
-- **vs fly-brain**: the FBA0 reference model's equations and data-file
-  layout were read for reference only; fly-brain is GPL-2.0-or-later and
-  no code is copied or vendored. Data files are read from a
-  caller-provided `MIOBA_FLY_BRAIN_DATA` directory at runtime.
+- **vs Kamimusuhi canonical identity:** MIOA/MIOBA genome lineage is experiment
+  data in `lineage.sqlite`; it is not canonical Kamimusuhi identity lineage.
+- **vs fly-brain:** FBA0 is an ancestral experimental substrate. The upstream
+  fly-brain code remains external; data/licensing provenance must remain
+  explicit.
+- **vs embodiment:** a display habitat, camera, microphone or network interface
+  is not implicitly part of the organism. The organism/habitat boundary and
+  each transducer must be declared by the experiment.

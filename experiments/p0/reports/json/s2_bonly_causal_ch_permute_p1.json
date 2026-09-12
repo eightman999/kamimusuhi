@@ -1,0 +1,37 @@
+{
+  "seed": 2,
+  "agent": "bonly",
+  "condition": "causal:ch_permute_p1",
+  "ablation": "ch_permute",
+  "config": "base",
+  "perm_tag": "ch_permute_p1",
+  "detection_rate": 0.8058252427184466,
+  "mean_cost": 0.016223958333333333,
+  "info_efficiency": 48.12921527349894,
+  "total_reward": -3.056666666666667,
+  "action_entropy": 0.21626005417890756,
+  "n_detected": 83,
+  "n_missed": 20,
+  "attention": {
+    "IGNORE": 0.18880208333333334,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.8111979166666666,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.1986161396622871,
+    "B": 0.1986161396622871,
+    "C": 0.1986161396622871,
+    "D": 0.1710040844955074
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.0817698156051723
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.13
+}

@@ -1,0 +1,37 @@
+{
+  "seed": 3,
+  "agent": "clock2",
+  "condition": "ood:ood_event_freq_down",
+  "ablation": "none",
+  "config": "ood_event_freq_down",
+  "perm_tag": "",
+  "detection_rate": 0.5897435897435898,
+  "mean_cost": 0.009999999999999998,
+  "info_efficiency": 63.48484848484848,
+  "total_reward": -4.536666666666668,
+  "action_entropy": 0.3868528072345416,
+  "n_detected": 23,
+  "n_missed": 16,
+  "attention": {
+    "IGNORE": 0.5,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.5,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.08488315695194615,
+    "B": 0.08488315695194615,
+    "C": 0.08488315695194615,
+    "D": 0.1599101493929993
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.07700140524063197
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.04
+}

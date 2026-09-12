@@ -1,0 +1,37 @@
+{
+  "seed": 2,
+  "agent": "learned_final_stoch",
+  "condition": "id",
+  "ablation": "none",
+  "config": "base",
+  "perm_tag": "id",
+  "detection_rate": 0.794392523364486,
+  "mean_cost": 0.015618489583333332,
+  "info_efficiency": 50.74796846209153,
+  "total_reward": -2.7466666666666675,
+  "action_entropy": 0.7231798700614268,
+  "n_detected": 85,
+  "n_missed": 22,
+  "attention": {
+    "IGNORE": 0.2688802083333333,
+    "OBSERVE_A": 0.07861328125,
+    "OBSERVE_B": 0.06510416666666667,
+    "OBSERVE_C": 0.0439453125,
+    "OBSERVE_D": 0.5185546875,
+    "OBSERVE_ALL": 0.02490234375
+  },
+  "surprise_mean": {
+    "A": 0.16094628248780887,
+    "B": 0.23426124056519862,
+    "C": 0.23217736881209325,
+    "D": 0.16979927022354482
+  },
+  "pred_err_mean": {
+    "A": 0.06328475061471302,
+    "B": 0.13236805622601697,
+    "C": 0.12097805600610995,
+    "D": 0.09442720646645623
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.62
+}

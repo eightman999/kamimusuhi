@@ -1,0 +1,37 @@
+{
+  "seed": 3,
+  "agent": "learned",
+  "condition": "causal:ch_permute_p1",
+  "ablation": "ch_permute",
+  "config": "base",
+  "perm_tag": "ch_permute_p1",
+  "detection_rate": 0.8627450980392157,
+  "mean_cost": 0.013147786458333333,
+  "info_efficiency": 67.07985916294426,
+  "total_reward": -0.5650000000000007,
+  "action_entropy": 0.3370485859704093,
+  "n_detected": 88,
+  "n_missed": 14,
+  "attention": {
+    "IGNORE": 0.3426106770833333,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.6573893229166666,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.12958195132402275,
+    "B": 0.12958195132402275,
+    "C": 0.12958195132402275,
+    "D": 0.16028750461676586
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.09081412409987592
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.21
+}

@@ -1,0 +1,50 @@
+env:
+  obs_dim: 16
+  n_self_dims: 5
+  n_ext_dims: 5
+  n_mix_dims: 4
+  z_self_dim: 4
+  z_ext_dim: 4
+  z_mix_dim: 4
+  self_decay: 0.92
+  ext_ar_coef: 0.95
+  mix_decay: 0.90
+  ext_coupling: 0.4
+  action_gain: 1.0
+  self_act_coef: 0.35
+  mix_act_coef: 0.15
+  disturbance_prob: 0.08
+  disturbance_gain: 0.8
+  mix_disturbance_gain: 0.3
+  process_noise: 0.02
+  obs_noise: 0.05
+  noise_dim_std: 0.5
+  sensor_coupling: 0.0
+  action_delay: 0
+  nonlinearity: 0.3
+  episode_len: 64
+
+data:
+  episodes: 256
+  val_episodes: 32
+  policy: random        # random | habitual
+
+train:
+  batch_size: 64
+  lr: 0.001
+  max_steps: 4000
+  time_budget_sec: 0    # 0 = unlimited; S0_TIME_BUDGET env overrides
+  target_delta: true
+
+eval:
+  episodes: 48
+  ood:
+    disturbance_prob_mul: 4.0
+    disturbance_gain_mul: 3.0
+    action_gain_mul: 1.5
+    sensor_coupling: 0.4
+    action_delay: 2
+  adapt:
+    episodes: 16        # small experience for S0-H5 readaptation
+    steps: 200
+    lr: 0.0005
