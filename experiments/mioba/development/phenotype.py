@@ -149,13 +149,16 @@ def develop(genome, base_neurons: int | None = None,
         ],
         # where each organ sits in the graph (M1 §4 / M2 generic):
         # functional / neutral_structure / invalid_structure / disabled.
-        # The report classifies the *developed* body — rule-added organs
-        # are real tissue — while keeping the genome's disabled organs
-        # and dangling attachments in the record.
+        # The report classifies the *developed* body — rule-grown sizes
+        # and rule-added organs are real tissue — while keeping the
+        # genome's disabled organs and dangling attachments in the
+        # record. (dev["organs"] are copies: the genome itself is never
+        # rewritten by development.)
         "structure": analyse(
             genome, topology_mode,
-            _developed=(list(genome.artificial_organs)
-                        + dev["added_organs"],
+            _developed=([o for o in genome.artificial_organs
+                         if not getattr(o, "enabled", True)]
+                        + dev["organs"],
                         list(genome.attachments)
                         + dev["added_attachments"])).to_dict(),
         # which development rules ran (M2 §13): the genome's rules are

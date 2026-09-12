@@ -70,11 +70,87 @@ def test_unknown_rules_are_recorded_skipped():
     assert rep["skipped"][0]["reason"] == "unknown_op"
 
 
+def test_grow_reports_the_applied_delta_not_the_requested_one():
+    """A negative delta that hits the size floor records the neuron
+    change that actually happened — the same accounting SCALE uses."""
+    g = fba0_genome(seed=8)
+    g.artificial_organs.append(
+        ArtificialOrgan(organ_id="org_x", kind="lif_cluster", size=8))
+    g.development_rules.append(
+        {"op": "GROW_ORGAN_AT_BIRTH", "organ_id": "org_x",
+         "delta": -100})
+    phen = develop(g.finalize(), base_neurons=100)
+    rep = phen["development"]
+    assert rep["applied"][0]["size"] == 1
+    assert rep["added_neurons"] == -7
+    assert phen["n_extra_neurons"] == 1
+
+
 def test_no_rules_means_no_development_record_noise():
     phen = develop(fba0_genome(seed=1), base_neurons=100)
     rep = phen["development"]
     assert rep == {"applied": [], "skipped": [], "deferred": [],
                    "added_organs": 0, "added_neurons": 0}
+
+
+def test_development_never_writes_back_to_the_genome():
+    """GROW/SCALE rules act on the phenotype, not the genome: develop()
+    is idempotent, the genome's content still hashes to its stored
+    genome_id, and the grown size is not heritable (§14)."""
+    from experiments.mioba.genome.hashing import genome_hash
+    g = fba0_genome(seed=8)
+    g.artificial_organs.append(
+        ArtificialOrgan(organ_id="org_x", kind="lif_cluster", size=16))
+    g.development_rules += [
+        {"op": "GROW_ORGAN_AT_BIRTH", "organ_id": "org_x", "delta": 8},
+        {"op": "SCALE_ORGAN_AT_BIRTH", "organ_id": "org_x",
+         "factor": 2.0}]
+    g = g.finalize()
+
+    a, b = develop(g, base_neurons=100), develop(g, base_neurons=100)
+    assert a["artificial_organs"] == b["artificial_organs"]
+    assert a["artificial_organs"][0]["size"] == (16 + 8) * 2
+    # the genome object is untouched and still hashes to its identity
+    assert g.artificial_organs[0].size == 16
+    assert genome_hash(g) == g.genome_id
+    # children are built from the record — they inherit the recipe
+    # (size 16), never the developmental product (48)
+    from experiments.mioba.genome.schema import Genome
+    clone = Genome.from_dict(g.to_dict())
+    assert clone.artificial_organs[0].size == 16
+
+
+def test_structure_report_uses_developed_sizes():
+    """The §4 classification counts the body development produced, not
+    the literal gene sizes."""
+    g = fba0_genome(seed=8)
+    g.artificial_organs.append(
+        ArtificialOrgan(organ_id="org_x", kind="lif_cluster", size=16))
+    g.attachments += [
+        Attachment(attachment_id="in", source="fba0:medulla",
+                   target="org_x"),
+        Attachment(attachment_id="out", source="org_x",
+                   target="fba0:central_complex")]
+    g.development_rules.append(
+        {"op": "GROW_ORGAN_AT_BIRTH", "organ_id": "org_x", "delta": 8})
+    phen = develop(g.finalize(), base_neurons=100)
+    assert phen["structure"]["n_artificial_neurons"] == 24
+    assert phen["structure"]["n_functional_neurons"] == 24
+
+
+def test_add_organ_rule_cannot_reuse_a_disabled_organs_id():
+    """organ_id is the report key: a rule may not shadow a disabled
+    organ's id (the disabled organ stays in the record)."""
+    g = fba0_genome(seed=8)
+    g.artificial_organs.append(
+        ArtificialOrgan(organ_id="org_d", kind="lif_cluster", size=8,
+                        enabled=False))
+    g.development_rules.append(
+        {"op": "ADD_ORGAN_AT_BIRTH", "organ_id": "org_d", "size": 4})
+    phen = develop(g.finalize(), base_neurons=100)
+    rep = phen["development"]
+    assert rep["skipped"][0]["reason"] == "organ_id_exists"
+    assert phen["structure"]["organs"] == {"org_d": "disabled"}
 
 
 def test_rule_wired_organ_reaches_the_backend():

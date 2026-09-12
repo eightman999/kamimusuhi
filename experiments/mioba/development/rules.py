@@ -33,6 +33,8 @@ Birth-stage ops implemented:
 """
 from __future__ import annotations
 
+import copy
+
 from ..genome.schema import ArtificialOrgan, Attachment, OrganProvenance
 
 BIRTH_RULE_OPS = ("ADD_ORGAN_AT_BIRTH", "GROW_ORGAN_AT_BIRTH",
@@ -64,16 +66,26 @@ def apply_development_rules(genome, organs, attachments, adapters=None):
     already building; the function returns them extended, plus the
     report and the objects the rules added (so the structure report can
     classify the *developed* body, not just the gene list).
+
+    The genome is never written to: GROW/SCALE act on *copies* of the
+    gene organs. A developmental product that leaked into the genome
+    would silently become heritable content — the §14 boundary this
+    function exists to hold.
     """
-    organs = list(organs)
-    attachments = list(attachments)
+    organs = [copy.deepcopy(o) for o in organs]
+    attachments = [copy.deepcopy(a) for a in attachments]
     report = {"applied": [], "skipped": [], "deferred": [],
               "added_organs": 0, "added_neurons": 0}
     added_organs: list[ArtificialOrgan] = []
     added_atts: list[Attachment] = []
     rules = getattr(genome, "development_rules", None) or []
 
-    known_ids = {o.organ_id for o in organs}
+    # every organ id the genome carries — including disabled ones, whose
+    # ids an ADD rule must not reuse (the structure report is keyed by
+    # organ_id, so a collision would silently overwrite the record)
+    known_ids = {o.organ_id
+                 for o in (getattr(genome, "artificial_organs", None)
+                           or [])}
     att_ids = {a.attachment_id for a in genome.attachments} | \
         {a.attachment_id for a in attachments}
     src_default, dst_default = _default_endpoints(adapters)
@@ -142,18 +154,23 @@ def apply_development_rules(genome, organs, attachments, adapters=None):
                 continue
             if op == "GROW_ORGAN_AT_BIRTH":
                 delta = int(rule.get("delta", 0) or 0)
-                target.size = max(1, int(target.size) + delta)
+                before = int(target.size)
+                target.size = max(1, before + delta)
                 report["applied"].append(
                     dict(entry, organ_id=target.organ_id, delta=delta,
                          size=target.size))
-                report["added_neurons"] += delta
+                # the applied change, like SCALE: a negative delta that
+                # hits the size floor did not remove ``delta`` neurons
+                report["added_neurons"] += target.size - before
             else:
                 factor = float(rule.get("factor", 1.0))
-                new_size = max(1, int(round(int(target.size) * factor)))
+                before = int(target.size)
+                new_size = max(1, int(round(before * factor)))
                 target.size = new_size
                 report["applied"].append(
                     dict(entry, organ_id=target.organ_id, factor=factor,
                          size=new_size))
+                report["added_neurons"] += new_size - before
         else:
             report["skipped"].append(dict(entry, reason="unknown_op"))
 
