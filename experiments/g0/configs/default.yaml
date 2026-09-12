@@ -1,0 +1,62 @@
+seed: 0
+
+env:
+  obs_dim: 16
+  n_features: 4
+  n_noise_dims: 3
+  n_ar_dims: 2
+  n_train_contexts: 6
+  n_contexts: 10
+  context_dense_from: 8
+  episode_len: 64
+  min_segment: 10
+  max_segment: 28
+  switch_prob: 0.05
+  pair_prob: 0.20
+  obs_noise: 0.05
+  noise_dim_std: 0.35
+  ar_coef: 0.90
+  ar_std: 0.25
+  x_clip: 3.0
+  ctx_gain_lo: 0.6
+  ctx_gain_hi: 1.6
+
+data:
+  episodes: 256
+  val_episodes: 32
+  policy: explore        # random | explore
+  ctx_switch_frac: 0.6   # mid-episode context switches in train data
+
+model:
+  hidden: 48
+  ae_hidden: 64
+  ae_latent: 8
+  codebook_size: 24
+  commitment: 0.25
+  window: 8
+  pca_dim: 8
+  pca_win_dim: 16
+  kmeans_k: 16
+
+train:
+  batch_size: 32
+  lr: 0.001
+  max_steps: 3000
+  time_budget_sec: 0     # 0 = unlimited; G0_TIME_BUDGET env overrides
+  target_delta: true
+
+eval:
+  episodes: 48
+  warmup: 4
+  seg_warmup: 2
+  probe_steps: 600
+  probe_lr: 0.05
+  loco: true
+  fewshot: [1, 5, 20]
+  ood:
+    noise_mul: 3.0
+    action_gain_mul: 1.5
+    dropout_frac: 0.5
+    ood_ctx_id: 6        # held-out signed-permutation context
+    ood_dense_ctx_id: 8  # held-out dense-mix context
+    pair_prob: 0.6

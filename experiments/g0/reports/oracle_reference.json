@@ -1,0 +1,40 @@
+{
+  "note": "oracle = probes on the env's pre-context canonical signal (eval-only). Instantaneous-only reference; the true dynamical headroom is dynfeat_canonical in sweep_summary.json",
+  "per_seed": {
+    "0": {
+      "oracle_canonical_acc_in": 0.3531128404669261,
+      "oracle_canonical_nmi": 0.30574537854819994,
+      "oracle_canonical_seg_acc": 0.3977272727272727,
+      "oracle_match_train_ctxs": 0.3333333333333333,
+      "oracle_match_ctx0_to_ood6": 0.5
+    },
+    "1": {
+      "oracle_canonical_acc_in": 0.391124871001032,
+      "oracle_canonical_nmi": 0.3198577384323308,
+      "oracle_canonical_seg_acc": 0.40229885057471265,
+      "oracle_match_train_ctxs": 0.5,
+      "oracle_match_ctx0_to_ood6": 0.6666666666666666
+    },
+    "2": {
+      "oracle_canonical_acc_in": 0.48811700182815354,
+      "oracle_canonical_nmi": 0.3547012536147946,
+      "oracle_canonical_seg_acc": 0.4111111111111111,
+      "oracle_match_train_ctxs": 0.3333333333333333,
+      "oracle_match_ctx0_to_ood6": 0.5
+    },
+    "3": {
+      "oracle_canonical_acc_in": 0.4442361761949391,
+      "oracle_canonical_nmi": 0.32472618579056367,
+      "oracle_canonical_seg_acc": 0.34065934065934067,
+      "oracle_match_train_ctxs": 0.3333333333333333,
+      "oracle_match_ctx0_to_ood6": 0.5
+    },
+    "4": {
+      "oracle_canonical_acc_in": 0.39255014326647564,
+      "oracle_canonical_nmi": 0.32404165641195937,
+      "oracle_canonical_seg_acc": 0.3146067415730337,
+      "oracle_match_train_ctxs": 0.5,
+      "oracle_match_ctx0_to_ood6": 0.3333333333333333
+    }
+  }
+}
