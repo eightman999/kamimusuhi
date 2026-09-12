@@ -32,3 +32,8 @@ __pycache__/
 
 # T0 experiment runtime artifacts (checkpoints, eval outputs, run state)
 /experiments/t0/artifacts/
+
+# U0 experiment runtime artifacts (checkpoints, eval outputs, run state)
+/experiments/u0/artifacts/
+/experiments/u0/logs/
+/experiments/u0/reports/figs/
