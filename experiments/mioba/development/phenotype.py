@@ -62,7 +62,6 @@ def develop(genome, base_neurons: int | None = None,
     genes = substrate_genes_of(genome)
     adapters = [adapter_for(g, reg) for g in genes]
     primary = adapters[0]
-    substrate_ids = {a.substrate_id for a in adapters}
 
     # Disabled organs (DISABLE_ORGAN, M1 §3.1) and the attachments that
     # touch them are not built: a disabled organ stays in the genome for
@@ -71,12 +70,23 @@ def develop(genome, base_neurons: int | None = None,
               if getattr(o, "enabled", True)]
     live = {o.organ_id for o in organs}
 
+    substrate_ids = {a.substrate_id for a in adapters}
+    disabled = {g.substrate_id: set(
+        (getattr(g, "params", None) or {}).get("disabled_regions") or [])
+        for g in genes}
+
     def wireable(endpoint) -> bool:
         ref = parse_endpoint(endpoint)
         if ref.kind == "organ":
             return ref.id in live
         if ref.is_substrate():
-            return ref.id in substrate_ids
+            if ref.id not in substrate_ids:
+                return False
+            # port existence is the backend's contract (it raises
+            # UnsupportedAttachmentRegion rather than wiring at random);
+            # a *genome-disabled* region is a lesion and is dropped
+            return (ref.port is None
+                    or ref.port not in disabled.get(ref.id, ()))
         return ref.kind in _HABITAT_KINDS
 
     attachments = [a for a in genome.attachments if wireable(a.source)

@@ -87,3 +87,20 @@ def adapter_for(gene, registry: SubstrateRegistry | None = None):
     """Instantiate the adapter for one substrate gene record."""
     return (registry or default_registry()).get(
         getattr(gene, "substrate_id"), gene)
+
+
+def substrate_disabled_regions(genome) -> dict[str, set[str]]:
+    """``{substrate_id: {region names}}`` the genome's own substrate
+    genes have disabled (the M3 staged ``DISABLE_SUBSTRATE_REGION``
+    operator writes ``gene.params["disabled_regions"]``).
+
+    This is *declared* state, not adapter state: port existence stays the
+    backend's contract (an unknown region raises at initialise), while a
+    genome-disabled region is a lesion — its endpoints are dangling.
+    """
+    out: dict[str, set[str]] = {}
+    for gene in substrate_genes_of(genome):
+        out[gene.substrate_id] = set(
+            (getattr(gene, "params", None) or {})
+            .get("disabled_regions") or [])
+    return out

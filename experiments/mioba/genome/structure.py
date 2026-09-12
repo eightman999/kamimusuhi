@@ -73,9 +73,31 @@ def is_fba0(endpoint: str) -> bool:
     return ref.is_substrate(FBA0)
 
 
-def _substrate_ids(genome) -> set[str]:
-    from ..substrate.registry import substrate_ids_of
-    return set(substrate_ids_of(genome))
+def _substrate_disabled(genome) -> dict[str, set[str]]:
+    """The genome-declared disabled regions, per substrate id (M3 staged
+    ``DISABLE_SUBSTRATE_REGION``)."""
+    from ..substrate.registry import substrate_disabled_regions
+    return substrate_disabled_regions(genome)
+
+
+def _external(ref: EndpointRef, substrate_state: dict[str, set[str]],
+              topology_mode: str) -> bool:
+    """Is this endpoint a node outside the organ graph? In m1 mode only
+    the FBA0 substrate counts (the historical rule); in generic mode any
+    enabled substrate plus the habitat interfaces
+    (env/sensor/effector) count. A substrate endpoint naming a
+    *genome-disabled* region is a lesion — dangling. Whether the port
+    exists at all stays the backend's contract (it raises rather than
+    wiring at random), so an unknown port still counts as external."""
+    if topology_mode == TOPOLOGY_M1_FBA0_LOOP:
+        return ref.is_substrate(FBA0)
+    if ref.kind == "substrate":
+        if ref.id not in substrate_state:
+            return False
+        if ref.port is None:
+            return True
+        return ref.port not in substrate_state[ref.id]
+    return ref.kind in ("env", "sensor", "effector")
 
 
 @dataclass
@@ -107,21 +129,8 @@ class StructureReport:
         }
 
 
-def _external(ref: EndpointRef, substrate_ids: set[str],
-              topology_mode: str) -> bool:
-    """Is this endpoint a node outside the organ graph? In m1 mode only
-    the FBA0 substrate counts (the historical rule); in generic mode any
-    enabled substrate plus the habitat interfaces (env/sensor/effector)
-    count."""
-    if topology_mode == TOPOLOGY_M1_FBA0_LOOP:
-        return ref.is_substrate(FBA0)
-    if ref.kind == "substrate":
-        return ref.id in substrate_ids
-    return ref.kind in ("env", "sensor", "effector")
-
-
-def _edges(attachments, live_organs: set[str], substrate_ids: set[str],
-           topology_mode: str):
+def _edges(attachments, live_organs: set[str],
+           substrate_state: dict[str, set[str]], topology_mode: str):
     """Directed endpoint pairs an attachment contributes.
 
     ``bidirectional`` contributes both directions. Attachments touching a
@@ -137,8 +146,8 @@ def _edges(attachments, live_organs: set[str], substrate_ids: set[str],
         ok = True
         for e in (src, tgt):
             ref = parse_endpoint(e)
-            if not (_external(ref, substrate_ids, topology_mode)
-                    or ref.id in live_organs):
+            if not (_external(ref, substrate_state, topology_mode)
+                    or (ref.kind == "organ" and ref.id in live_organs)):
                 ok = False
         if not ok:
             dangling.append(att.attachment_id)
@@ -167,7 +176,7 @@ def _reachable(edges, sources, organs) -> set[str]:
     return seen & set(organs)
 
 
-def _sources_sinks(edges, substrate_ids: set[str],
+def _sources_sinks(edges, substrate_state: dict[str, set[str]],
                    topology_mode: str) -> tuple[set[str], set[str]]:
     """The endpoint nodes paths may start from / must reach."""
     if topology_mode == TOPOLOGY_M1_FBA0_LOOP:
@@ -178,7 +187,7 @@ def _sources_sinks(edges, substrate_ids: set[str],
     for a, b in edges:
         for node in (a, b):
             ref = parse_endpoint(node)
-            if ref.kind == "substrate" and ref.id in substrate_ids:
+            if ref.kind == "substrate" and ref.id in substrate_state:
                 src.add(node)
                 sink.add(node)
             else:
@@ -191,7 +200,7 @@ def _sources_sinks(edges, substrate_ids: set[str],
     return src, sink
 
 
-def _classify(organs, attachments, substrate_ids: set[str],
+def _classify(organs, attachments, substrate_state: dict[str, set[str]],
               topology_mode: str) -> StructureReport:
     """Core classification over an explicit organ/attachment list —
     the developed phenotype may differ from the genome when development
@@ -199,8 +208,9 @@ def _classify(organs, attachments, substrate_ids: set[str],
     organs = list(organs)
     live = {o.organ_id for o in organs if getattr(o, "enabled", True)}
     atts = list(attachments)
-    edges, dangling = _edges(atts, live, substrate_ids, topology_mode)
-    sources, sinks = _sources_sinks(edges, substrate_ids, topology_mode)
+    edges, dangling = _edges(atts, live, substrate_state, topology_mode)
+    sources, sinks = _sources_sinks(edges, substrate_state,
+                                    topology_mode)
 
     # organs the environment can drive ...
     downstream = _reachable(edges, sources, live)
@@ -264,7 +274,8 @@ def analyse(genome, topology_mode: str = TOPOLOGY_M1_FBA0_LOOP,
     atts = list(genome.attachments)
     if _developed is not None:
         organs, atts = _developed
-    return _classify(organs, atts, _substrate_ids(genome), topology_mode)
+    return _classify(organs, atts, _substrate_disabled(genome),
+                     topology_mode)
 
 
 def limits_report(genome, limits: dict) -> dict:

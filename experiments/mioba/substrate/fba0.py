@@ -69,13 +69,22 @@ class FBA0Adapter:
         return dict(FBA0_REFERENCE)
 
     # ------------------------------------------------------------- ports
+    def _disabled_regions(self) -> set:
+        """Regions a genome-level substrate lesion removed (M3 staged
+        operator ``DISABLE_SUBSTRATE_REGION`` writes
+        ``gene.params["disabled_regions"]``)."""
+        return set((getattr(self.gene, "params", None) or {})
+                   .get("disabled_regions") or [])
+
     def ports(self) -> list[PortSpec]:
+        disabled = self._disabled_regions()
         return [PortSpec(name=r, kind="region", signal="event",
                          endpoint=f"{SUBSTRATE_ID}:{r}")
-                for r in FBA0_REGIONS]
+                for r in FBA0_REGIONS if r not in disabled]
 
     def regions(self) -> list[str]:
-        return list(FBA0_REGIONS)
+        disabled = self._disabled_regions()
+        return [r for r in FBA0_REGIONS if r not in disabled]
 
     def port_groups(self) -> dict:
         return {"upstream": list(UPSTREAM_PORTS),
