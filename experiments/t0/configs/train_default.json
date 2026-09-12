@@ -1,0 +1,26 @@
+{
+  "task": "interval",
+  "architecture": "gru64",
+  "seed": 0,
+  "num_envs": 512,
+  "minibatch_envs": 256,
+  "imitation_updates": 120,
+  "ppo_updates": 80,
+  "ppo_epochs": 2,
+  "lr": 0.001,
+  "gamma": 0.99,
+  "gae_lambda": 0.95,
+  "clip_ratio": 0.2,
+  "validation_envs": 128,
+  "env": {
+    "delay_distribution": "mixed",
+    "delays": [8, 16, 24, 32, 48, 64],
+    "delay_min": 8,
+    "delay_max": 64,
+    "excluded_training_delays": [38, 39, 40, 41, 42, 54, 55, 56, 57, 58],
+    "horizon": 96,
+    "window": 2,
+    "distractor_rate": 0.02,
+    "noise": 0.1
+  }
+}
