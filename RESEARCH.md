@@ -2,10 +2,15 @@
 
 Kamimusuhi is developed as a **living open-research program**, not as one monolithic paper. The repository should make it possible to distinguish vision, normative design, implementation, observations, hypotheses, experiments, and publication claims.
 
+## Distilled findings / 蒸留した知見
+
+[`RESEARCH_SYNTHESIS.md`](./RESEARCH_SYNTHESIS.md) is the top-level, non-normative synthesis of surveyed findings for Kamimusuhi. It connects continuity, authority, memory, fast/slow cognition, learning, and development to concrete uses, limitations, and prioritized controlled experiments. Read it before turning an intake note into a new implementation task; the source surveys and adoption ledger remain the evidence and decision history.
+
 ## Repository map
 
 ```text
 README.md / README.en.md      project overview
+RESEARCH_SYNTHESIS.md         distilled findings and experiment priorities (non-normative)
 spec.md / spec.en.md          normative requirements
 architecture.md               target architecture
 model-ecology-architecture.md normative/design addendum
