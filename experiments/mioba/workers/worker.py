@@ -389,7 +389,8 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
         with timer.phase("departure"):
             summary["departure"] = evaluate_departure(
                 backend, phenotype, job, config, device=device,
-                seeds=[int(x) for x in per_rep["seeds"]], timer=timer)
+                seeds=[int(x) for x in per_rep["seeds"]], timer=timer,
+                execution_batch=exec_batch_used)
     return {"summary": summary, "requested_replicates": n_rep,
             "completed_replicates": completed,
             "execution_batch_size": exec_batch_used,

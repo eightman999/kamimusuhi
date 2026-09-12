@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import random
 
+import pytest
+
 from experiments.mioba.development.phenotype import develop
 from experiments.mioba.evolution.fitness import compute_metrics
 from experiments.mioba.fba.mock_backend import MockBackend
@@ -132,6 +134,50 @@ def test_departure_feeds_the_fitness_components():
     assert plain["departure"] is None
     assert plain["departure_resistance"] is None
     assert plain["selection_components"]["departure_resistance"] is None
+
+
+def test_departure_chunks_by_the_evaluations_execution_batch():
+    """The battery must not widen the batch the main evaluation used —
+    at 139k neurons an un-batched run is an OOM, not a detail."""
+    class Rec(MockBackend):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.widths = []
+
+        def initialize(self, phenotype, batch_size, seed, device,
+                       replicate_seeds=None, timer=None):
+            self.widths.append(batch_size)
+            return super().initialize(phenotype, batch_size, seed, device,
+                                      replicate_seeds, timer)
+
+    phen = develop(_organ_genome(), base_neurons=500)
+    b = Rec(n_neurons=500)
+    dep = evaluate_departure(b, phen, _job(), _CFG,
+                             seeds=replicate_seeds(4242, 3),
+                             execution_batch=2)
+    assert max(b.widths) <= 2
+    assert dep["intact_score"] is not None
+
+
+def test_sham_runs_the_lesion_procedure_with_an_empty_mask():
+    """The sham is a severity-0 lesion through the substrate adapter:
+    the selection machinery runs, nothing is silenced."""
+    phen = develop(_organ_genome(), base_neurons=500)
+    dep = evaluate_departure(_backend(), phen, _job(), _CFG,
+                             seeds=replicate_seeds(4242, 3))
+    assert dep["conditions"]["sham"]["n_silenced"] == 0
+    assert dep["sham_score"] == dep["intact_score"]
+
+
+def test_colliding_severity_names_are_rejected():
+    """0.101 and 0.104 would both become '0.10' — silent condition
+    overwrites are worse than a loud config error."""
+    cfg = dict(_CFG, functional_departure={
+        "enabled": True, "severities": [0.101, 0.104]})
+    with pytest.raises(ValueError):
+        evaluate_departure(_backend(), develop(_organ_genome()),
+                           _job(), cfg,
+                           seeds=replicate_seeds(4242, 3))
 
 
 def test_mutation_children_measure_their_own_departure():

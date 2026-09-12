@@ -67,18 +67,19 @@ def _score(summary: dict, target_rate: float) -> dict:
 
 
 def _run_condition(backend, phenotype, job, config, device, seeds,
-                   silence=None, timer=None) -> dict:
+                   silence=None, timer=None, execution_batch=None) -> dict:
     """Initialise the backend with ``phenotype`` and run one condition
-    over all replicate lanes, chunked by the job's execution batch so
-    memory pressure matches the main evaluation."""
+    over all replicate lanes, chunked by the evaluation's execution
+    batch so memory pressure matches the main evaluation."""
     from ..fba.replicates import chunk_indices
 
     n_rep = len(seeds)
     exec_batch = max(1, int((config.get("functional_departure") or {})
                             .get("execution_batch")
-                       or job.get("execution_batch_size")
+                       or execution_batch
                        or n_rep))
     rates, counts = [], []
+    n_base = 0
     duration = float((config.get("functional_departure") or {})
                      .get("duration_ms") or job["duration_ms"])
     for lanes in chunk_indices(n_rep, exec_batch):
@@ -99,16 +100,20 @@ def _run_condition(backend, phenotype, job, config, device, seeds,
             "per_replicate_mean_rate_hz": rates,
             "per_replicate_spike_counts": counts,
             "spikes_total": int(sum(counts)),
-            "n_silenced": len(silence or [])}
+            "n_silenced": len(silence or []),
+            "n_base": n_base}
 
 
 def evaluate_departure(backend, phenotype, job, config, device="cpu",
-                       seeds=None, timer=None) -> dict | None:
+                       seeds=None, timer=None, execution_batch=None
+                       ) -> dict | None:
     """Run the departure battery for one evaluated individual.
 
     Returns the departure metrics dict, or ``None`` when the feature is
     not enabled in the config — an M1 job's summary is byte-identical to
-    before.
+    before. ``execution_batch`` is the replicate batching the main
+    evaluation used; the battery chunks by it so its memory pressure
+    matches (``functional_departure.execution_batch`` overrides).
     """
     dep = (config or {}).get("functional_departure") or {}
     if not dep.get("enabled"):
@@ -124,29 +129,52 @@ def evaluate_departure(backend, phenotype, job, config, device="cpu",
                    .get("target_rate_hz", 5.0))
     sid = str(dep.get("substrate_id") or "fba0")
     severities = [float(s) for s in (dep.get("severities") or [0.1])]
+    sev_names = [f"{s:.2f}" for s in severities]
+    if len(set(sev_names)) != len(sev_names):
+        raise ValueError("functional_departure severities collide at "
+                         f"2-decimal naming: {sev_names}")
     controls = dep.get("controls") or {}
 
     conditions: dict[str, dict] = {}
 
     def run(name, phen, silence=None):
         raw = _run_condition(backend, phen, job, config, device, seeds,
-                             silence=silence, timer=timer)
+                             silence=silence, timer=timer,
+                             execution_batch=execution_batch)
         conditions[name] = dict(_score(raw, target),
                                 n_silenced=raw["n_silenced"])
+        return raw
 
-    run("intact", phenotype)
+    # the intact condition runs first; its backend layout gives n_base
+    # (the substrate population the lesion/ablation masks index into)
+    n_base = int(run("intact", phenotype)["n_base"])
+
+    # resolve the lesioned substrate's adapter once — the sham and the
+    # severity lesions both draw masks through it
+    try:
+        adapter = default_registry().get(sid)
+        has_lesion = hasattr(adapter, "lesion")
+    except KeyError:
+        adapter = None
+        has_lesion = False
+
     if controls.get("sham", True):
-        run("sham", phenotype, silence=[])
+        # the negative control runs the *real* lesion-selection
+        # procedure with an empty result: a severity-0 mask, from its
+        # own seed index (-1 keeps it off every severity's stream)
+        mask = (adapter.lesion(0.0, n_base,
+                               lesion_seed(int(job["seed"]), -1))
+                if has_lesion else None)
+        run("sham", phenotype,
+            silence=list(mask.neuron_ids) if mask else [])
     if controls.get("founder", True):
         founder_phen = dict(phenotype, artificial_organs=[],
                             attachments=[], n_extra_neurons=0)
         run("founder", founder_phen)
 
     # organ ablation: silence every artificial neuron (indices past the
-    # substrate base)
-    backend.initialize(phenotype, batch_size=1, seed=job["seed"],
-                       device=device, replicate_seeds=[seeds[0]])
-    n_base = _backend_base(backend)
+    # substrate base) — n_base is known from the intact run, no extra
+    # initialise needed
     n_extra = int(phenotype.get("n_extra_neurons") or 0)
     if n_extra:
         run("organ_ablation", phenotype,
@@ -157,14 +185,9 @@ def evaluate_departure(backend, phenotype, job, config, device="cpu",
 
     # substrate lesions at each severity, masks from the substrate's own
     # adapter and the dedicated lesion seed stream
-    try:
-        adapter = default_registry().get(sid)
-        has_lesion = hasattr(adapter, "lesion")
-    except KeyError:
-        has_lesion = False
     lesion_loss: dict[str, float] = {}
     for i, sev in enumerate(severities):
-        name = f"{sid}_lesion_{sev:.2f}"
+        name = f"{sid}_lesion_{sev_names[i]}"
         if not has_lesion:
             conditions[name] = dict(conditions["intact"], n_silenced=0,
                                     lesion_error="no_adapter")
@@ -172,7 +195,7 @@ def evaluate_departure(backend, phenotype, job, config, device="cpu",
             mask = adapter.lesion(sev, n_base,
                                   lesion_seed(int(job["seed"]), i))
             run(name, phenotype, silence=list(mask.neuron_ids))
-        lesion_loss[f"{sev:.2f}"] = round(
+        lesion_loss[sev_names[i]] = round(
             conditions["intact"]["task_score"]
             - conditions[name]["task_score"], 6)
 
@@ -208,9 +231,10 @@ def evaluate_departure(backend, phenotype, job, config, device="cpu",
         "structural_ancestry_fraction":
             phenotype.get("structural_ancestry_fraction"),
     }
-    # flat per-severity score keys (e.g. fba0_lesion_10_score)
-    for sev in severities:
-        pct = int(round(sev * 100))
-        name = f"{sid}_lesion_{sev:.2f}"
+    # flat per-severity score keys (e.g. fba0_lesion_10_score); pct is
+    # derived from the rounded name so the two key forms never disagree
+    for sev_name in sev_names:
+        pct = int(round(float(sev_name) * 100))
+        name = f"{sid}_lesion_{sev_name}"
         out[f"{sid}_lesion_{pct}_score"] = conditions[name]["task_score"]
     return out
