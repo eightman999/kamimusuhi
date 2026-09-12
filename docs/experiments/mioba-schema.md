@@ -11,7 +11,7 @@
 | `generation` / `birth_index` | int | evolutionary position |
 | `random_seed` | int | per-genome seed used by evaluation jobs |
 | `ancestral_base` | str | FBA0 reference name (`flywire-v783-shiu-lif`) |
-| `substrates` | list[SubstrateGene] | v4+: `{substrate_id, kind, enabled, params}` — which substrate implementations the organism is built on. v1-v3 documents have no such field; loading one assigns the implicit ancestral FBA0 gene |
+| `substrates` | list[SubstrateGene] | v4+: `{substrate_id, kind, enabled, params}` — which substrate implementations the organism is built on (`fba0`, `reflex0`). v1-v3 documents have no such field; loading one assigns the implicit ancestral FBA0 gene. A v4 record that *declares* genes but disables every one is substrate-less — not the implicit founder |
 | `artificial_organs` | list[ArtificialOrgan] | `{organ_id, kind, size, params, provenance, enabled, ports, internal, state}`; `ports`/`internal`/`state` are the M2 organ IR fields |
 | `attachments` | list[Attachment] | `{attachment_id, source, target, weight_scale, provenance, enabled, signal}`; endpoints are typed (`substrate:<id>/<port>`, legacy `fba0:<region>`, `env:`/`sensor:`/`effector:` names, or a bare organ_id); `signal` is the port discipline (`event` for every M1 edge) |
 | `parameter_mutations` | list[ParameterMutation] | `{mutation_id, path, op(set|scale|add), value, scope}`; scope `global`/`region:<x>`/`organ:<id>` |
@@ -31,6 +31,12 @@
 `schema_version` to 4. The record keeps its stored `genome_id`
 verbatim — historical identities are never recomputed, so a migrated
 lineage stays hash-identical to the day it was born.
+
+The two "no substrate" cases are deliberately distinct: a document
+*without* substrate records (legacy, or an empty list) means the
+implicit founder, while a document whose declared genes are all
+`enabled: false` is substrate-less — `develop()` raises
+`NoEnabledSubstrate` instead of silently substituting FBA0.
 
 ### Content hash rule
 

@@ -17,14 +17,19 @@ organism
  └─ effectors         effector:* endpoints (event -> habitat)
 ```
 
-FBA0 is the M-series founder condition and the only registered
-substrate (`substrate/fba0.py` behind `substrate/base.py`'s
-`SubstrateProtocol`); every M1 genome implicitly carries it, and schema
-v4 spells it out explicitly. Nothing in the architecture-level code
-imports the FBA0 implementation: `development/phenotype.py` resolves
-substrate genes through `substrate/registry.py`, and
-`genome/structure.py` classifies endpoints through the typed
-`substrate/endpoints.py` parser.
+FBA0 is the M-series founder condition (`substrate/fba0.py` behind
+`substrate/base.py`'s `SubstrateProtocol`); every M1 genome implicitly
+carries it, and schema v4 spells it out explicitly. M3 added a second
+registered substrate — `substrate/reflex0.py`, a 48-neuron
+sensor→integrator→motor arc with typed ports — purely to prove the
+abstraction is real: a non-FBA genome develops, mutates, lesions,
+evaluates, reproduces and replays through exactly the same machinery,
+with no reflex0 branch anywhere in the generic layer (the tripwire
+lives in `tests/test_m3_reflex0.py`). Nothing in the
+architecture-level code imports the FBA0 implementation:
+`development/phenotype.py` resolves substrate genes through
+`substrate/registry.py`, and `genome/structure.py` classifies
+endpoints through the typed `substrate/endpoints.py` parser.
 
 Two topology modes exist in `analyse()`: `m1_fba0_loop` (the frozen
 historical FBA0→organ→FBA0 rule) and `generic_causal` (sources =
@@ -53,7 +58,13 @@ battery with selection weight 0.
 
 M3 scaffolding exists but is inert: `SUBSTRATE_OPERATORS`
 (DISABLE/BYPASS/PRUNE/REPLACE_SUBSTRATE_REGION) are applicable via
-`apply_operator` yet absent from every selection pool.
+`apply_operator` yet absent from every selection pool. What M3 *did*
+harden: a native-v4 genome that declares substrate genes but disables
+every one is substrate-less — `develop()` raises `NoEnabledSubstrate`
+rather than substituting the implicit FBA0 (only the *absent* field
+means the founder), genome-disabled substrate ports are dangling at
+both develop() and structure analysis, and the worker reports
+development failures as FAILED evaluations instead of crash-looping.
 
 ## Components
 

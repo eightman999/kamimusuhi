@@ -409,7 +409,14 @@ def _op_add_attachment(genome, rng, cfg, prov, mid) -> MutationRecord:
         return MutationRecord(mid, "structural", "ADD_ATTACHMENT",
                               OUTCOME_AT_LIMIT, op="add", detail={"limit": hit})
     organ = rng.choice(_live_organs(genome))
-    other = rng.choice(_endpoints(genome, exclude=organ.organ_id))
+    others = _endpoints(genome, exclude=organ.organ_id)
+    if not others:
+        # a substrate-less genome with a single organ has nothing to
+        # attach it to — no_target is data, not a crash
+        return MutationRecord(mid, "structural", "ADD_ATTACHMENT",
+                              OUTCOME_NO_TARGET, op="add",
+                              detail={"reason": "no_endpoint"})
+    other = rng.choice(others)
     if rng.random() < 0.5:
         src, tgt = other, organ.organ_id
     else:
@@ -545,6 +552,8 @@ def _op_substrate_region(genome, rng, cfg, prov, mid,
            "BYPASS_SUBSTRATE_REGION": "bypassed_regions",
            "PRUNE_SUBSTRATE_REGION": "pruned_regions",
            "REPLACE_SUBSTRATE_REGION": "replaced_regions"}[operator]
+    if getattr(gene, "params", None) is None:
+        gene.params = {}
     marked = gene.params.setdefault(key, [])
     if region in marked:
         return MutationRecord(mid, "structural", operator,

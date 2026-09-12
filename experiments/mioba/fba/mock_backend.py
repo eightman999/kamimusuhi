@@ -39,6 +39,14 @@ class MockBackend(FbaBackend):
             raise ValueError("len(replicate_seeds) must equal batch_size")
         self.replicate_seeds = [int(s) for s in replicate_seeds]
         self.phenotype = phenotype or {}
+        # group label for the substrate population in
+        # get_population_activity: the primary substrate's own id
+        # (phenotypes without a substrates list are pre-M2 — "fba0")
+        subs = self.phenotype.get("substrates") or []
+        self._base_group = (str(subs[0].get("substrate_id"))
+                            if subs and isinstance(subs[0], dict)
+                            and subs[0].get("substrate_id")
+                            else "fba0")
         n_extra = int(self.phenotype.get("n_extra_neurons", 0) or 0)
         self.n = self.n_neurons + n_extra
         self._organ_ranges = []
@@ -156,7 +164,7 @@ class MockBackend(FbaBackend):
         rates = self._rates_hz()
         out = {}
         for gname in groups:
-            if gname == "fba0":
+            if gname in ("fba0", getattr(self, "_base_group", "fba0")):
                 sl = slice(0, self.n_neurons)
             elif gname == "all":
                 sl = slice(0, self.n)
