@@ -45,7 +45,11 @@ founder, organ-ablation and per-severity substrate-lesion conditions on
 the same backend under the same seeds, with lesion masks from the
 substrate adapter under a dedicated `lesion` seed stream. Raw condition
 scores persist under `metrics.departure`; `departure_resistance` is a
-selection component (default weight 0).
+selection component (default weight 0). Control lineages exist so that
+"structure changed" is separable from "selected for departure":
+`m2_control_parameter_only.yaml` restricts the mutation pool to
+`SCALE_PARAMETER`, and `m2_control_structural_neutral.yaml` runs the
+battery with selection weight 0.
 
 M3 scaffolding exists but is inert: `SUBSTRATE_OPERATORS`
 (DISABLE/BYPASS/PRUNE/REPLACE_SUBSTRATE_REGION) are applicable via
