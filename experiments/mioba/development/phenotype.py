@@ -1,46 +1,111 @@
-"""Development: map a Genome onto a concrete Phenotype description.
+"""Genome -> phenotype: what actually gets simulated (M1 §13, M2).
 
-The phenotype is a plain dict (serialisable) consumed by FBA backends.
-``ancestry_fraction`` is what the GUI renders as "ancestry %".
+Development resolves the genome's substrate genes through the substrate
+registry — ``development`` does not know what FBA0 is; it knows the
+organism's enabled substrates. For M-series genomes that is the single
+ancestral FBA0 substrate (declared explicitly in schema v4, implied by
+an empty ``substrates`` list in legacy records), so every M1 phenotype
+field keeps its meaning:
+
+``base``
+    the primary substrate's reference record (``FBA0_REFERENCE`` for
+    FBA0 genomes — unchanged).
+``substrates``
+    every enabled substrate's descriptor (M2; additive).
+``artificial_organs`` / ``attachments``
+    the organ IR the backends simulate: organs that are enabled, and
+    attachments whose endpoints all resolve — a live organ, an enabled
+    substrate endpoint, or a habitat interface (``env:/sensor:/
+    effector:``; no current backend can wire those, so a genome that
+    names them fails loudly at initialise rather than wiring at
+    random). Attachments that name something the organism does not have
+    are dropped: the genome keeps them as dead code, the phenotype does
+    not lie about them. ``structure`` is the section-4/M2
+    classification of the *genome's* graph (disabled organs and dangling
+    attachments included — they are part of the structural record).
+``params``
+    the primary substrate's parameter defaults with the genome's
+    ``parameter_mutations`` applied — organ- and region-scoped
+    mutations are resolved by the backend, which receives the same
+    filtered organ list.
+``ancestry_fraction``
+    primary-substrate neurons / (substrate + artificial) — the share of
+    the simulated body that is inherited tissue. ``genome_bytes``
+    prices the genome itself (§8): the genome is what reproduction
+    copies, so its cost is its length.
+
+M2 adds ``structural_ancestry_fraction`` (same number, explicit name)
+and ``fba0_structural_fraction`` (the FBA0 share specifically) so the
+structural share is never confused with *functional dependence* — that
+is measured by the departure evaluator, not by counting neurons.
+
+``base_neurons``: caller-provided population-size override for the
+primary substrate (e.g. the synthetic-N count when the backend runs in
+synthetic mode); defaults to the substrate's own ``neuron_count()``
+(the real FlyWire v783 count for FBA0 when the data is present).
 """
 from __future__ import annotations
 
-from ..fba.fba0 import FBA0_REFERENCE, fba0_neuron_count
-from ..fba.params import resolve_params
-from ..genome.schema import Genome
-from ..genome.structure import analyse
+from ..genome.structure import TOPOLOGY_M1_FBA0_LOOP, analyse
+from ..substrate.endpoints import parse_endpoint
+from ..substrate.registry import (adapter_for, default_registry,
+                                  substrate_genes_of)
+
+#: Endpoint kinds that terminate paths at the habitat boundary.
+_HABITAT_KINDS = ("env", "sensor", "effector")
 
 
-def develop(genome: Genome, base_neurons: int | None = None) -> dict:
-    """`base_neurons`: caller-provided FBA0 population size override (e.g.
-    the synthetic-N count when the backend runs in synthetic mode);
-    defaults to the real FlyWire v783 count when the data is present.
+def develop(genome, base_neurons: int | None = None,
+            topology_mode: str = TOPOLOGY_M1_FBA0_LOOP,
+            registry=None) -> dict:
+    reg = registry or default_registry()
+    genes = substrate_genes_of(genome)
+    adapters = [adapter_for(g, reg) for g in genes]
+    primary = adapters[0]
+    substrate_ids = {a.substrate_id for a in adapters}
 
-    Disabled organs (DISABLE_ORGAN, M1 §3.1) and the attachments that
-    touch them are not built: a disabled organ stays in the genome for the
-    lineage record but costs nothing to simulate. Attachments naming an
-    organ that no longer exists are dropped the same way, so a prune can
-    never hand the backend a dangling endpoint.
-    """
-    organs = [o for o in genome.artificial_organs if getattr(o, "enabled",
-                                                             True)]
+    # Disabled organs (DISABLE_ORGAN, M1 §3.1) and the attachments that
+    # touch them are not built: a disabled organ stays in the genome for
+    # the lineage record but costs nothing to simulate.
+    organs = [o for o in genome.artificial_organs
+              if getattr(o, "enabled", True)]
     live = {o.organ_id for o in organs}
 
-    def wired(a) -> bool:
-        if not getattr(a, "enabled", True):
-            return False
-        return all(e.startswith("fba0") or e in live
-                   for e in (a.source, a.target))
+    def wireable(endpoint) -> bool:
+        ref = parse_endpoint(endpoint)
+        if ref.kind == "organ":
+            return ref.id in live
+        if ref.is_substrate():
+            return ref.id in substrate_ids
+        return ref.kind in _HABITAT_KINDS
 
-    attachments = [a for a in genome.attachments if wired(a)]
-    n_extra = sum(o.size for o in organs)
+    attachments = [a for a in genome.attachments if wireable(a.source)
+                   and wireable(a.target)
+                   and getattr(a, "enabled", True)]
+    n_extra = sum(int(o.size) for o in organs)
     # region/organ-scoped mutations are left to the backend
-    params = resolve_params(genome.parameter_mutations)
-    base_n = base_neurons if base_neurons is not None else fba0_neuron_count()
-    denom = (base_n or 0) + n_extra
-    ancestry_fraction = (base_n / denom) if base_n and denom else (1.0 if not n_extra else None)
+    params = primary.resolve_params(genome.parameter_mutations)
+
+    # per-substrate neuron counts; ``base_neurons`` overrides the primary
+    substrate_neurons = {}
+    for i, (gene, adapter) in enumerate(zip(genes, adapters)):
+        n = adapter.neuron_count()
+        if i == 0 and base_neurons is not None:
+            n = int(base_neurons)
+        if n is None:
+            n = int((getattr(gene, "params", None) or {}).get(
+                "n_neurons", 0))
+        substrate_neurons[adapter.substrate_id] = int(n)
+    base_n = substrate_neurons.get(primary.substrate_id) or None
+    denom = sum(substrate_neurons.values()) + n_extra
+    ancestry = (base_n / denom) if base_n and denom else \
+        (1.0 if not n_extra else None)
+    fba0_n = substrate_neurons.get("fba0")
+
     return {
-        "base": dict(FBA0_REFERENCE),
+        "base": primary.reference(),
+        "substrates": [a.describe() for a in adapters],
+        "substrate_neurons": substrate_neurons,
         "species_base": genome.species_base,
         "genome_id": genome.genome_id,
         "n_extra_neurons": n_extra,
@@ -55,11 +120,16 @@ def develop(genome: Genome, base_neurons: int | None = None) -> dict:
              "weight_scale": a.weight_scale}
             for a in attachments
         ],
-        # where each organ sits in the graph (M1 section 4): functional /
-        # neutral_structure / invalid_structure / disabled
-        "structure": analyse(genome).to_dict(),
+        # where each organ sits in the graph (M1 §4 / M2 generic):
+        # functional / neutral_structure / invalid_structure / disabled
+        "structure": analyse(genome, topology_mode).to_dict(),
         "params": params,
-        "ancestry_fraction": ancestry_fraction,
+        "ancestry_fraction": ancestry,
+        "structural_ancestry_fraction": ancestry,
+        "fba0_structural_fraction": ((fba0_n / denom)
+                                   if fba0_n is not None and denom
+                                   else None),
+        "topology_mode": topology_mode,
         # part of the individual's own resource cost (M1 §8): a genome
         # that carries more structure costs more to store and ship
         "genome_bytes": len(genome.to_json().encode("utf-8")),

@@ -8,6 +8,8 @@ per genome (development / job setup), never in a simulation hot loop.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from .endpoints import FOUNDER_SUBSTRATE
 
 
@@ -55,9 +57,17 @@ def substrate_genes_of(genome) -> list:
              if getattr(s, "enabled", True)]
     if genes:
         return genes
-    from ..genome.schema import SubstrateGene
-    return [SubstrateGene(substrate_id=FOUNDER_SUBSTRATE,
-                          kind="flywire-v783-shiu-lif")]
+    return [_ImplicitSubstrateGene()]
+
+
+@dataclass
+class _ImplicitSubstrateGene:
+    """Duck-type stand-in for a genome SubstrateGene when a record
+    carries no substrate genes (legacy v1-v3 documents)."""
+    substrate_id: str = FOUNDER_SUBSTRATE
+    kind: str = "flywire-v783-shiu-lif"
+    enabled: bool = True
+    params: dict = field(default_factory=dict)
 
 
 _DEFAULT: SubstrateRegistry | None = None
