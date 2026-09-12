@@ -253,7 +253,7 @@ def _substrate_adapters(genome: Genome):
     return out
 
 
-def _endpoints(genome: Genome, rng: random.Random, exclude: str | None = None):
+def _endpoints(genome: Genome, exclude: str | None = None):
     """Every endpoint an attachment may name: the enabled substrates'
     ports plus live organs (minus ``exclude``). For an FBA0 genome this
     is exactly the historical ``fba0:<region>`` list, in the same
@@ -409,7 +409,7 @@ def _op_add_attachment(genome, rng, cfg, prov, mid) -> MutationRecord:
         return MutationRecord(mid, "structural", "ADD_ATTACHMENT",
                               OUTCOME_AT_LIMIT, op="add", detail={"limit": hit})
     organ = rng.choice(_live_organs(genome))
-    other = rng.choice(_endpoints(genome, rng, exclude=organ.organ_id))
+    other = rng.choice(_endpoints(genome, exclude=organ.organ_id))
     if rng.random() < 0.5:
         src, tgt = other, organ.organ_id
     else:
@@ -430,7 +430,7 @@ def _op_rewire_attachment(genome, rng, cfg, prov, mid) -> MutationRecord:
     before = {"source": att.source, "target": att.target}
     move_source = rng.random() < 0.5
     fixed = att.target if move_source else att.source
-    choices = [e for e in _endpoints(genome, rng) if e != fixed]
+    choices = [e for e in _endpoints(genome) if e != fixed]
     if not choices:
         return MutationRecord(mid, "structural", "REWIRE_ATTACHMENT",
                               OUTCOME_NO_TARGET, target=att.attachment_id,
