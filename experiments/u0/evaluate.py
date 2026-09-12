@@ -35,7 +35,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import yaml
 
 from .config import env_config, load_config
 from .env.u0_env import (STORE, INTERNAL_NAMES, FUNCTION_NAMES, U0Config)
@@ -147,7 +146,6 @@ def _fresh_donor(cfg: U0Config, seed: int):
 def evaluate_learned(model, cfg: U0Config, device: str = "cpu",
                      episodes: int = 256, seed: int = EVAL_SEED,
                      causal: str | None = None,
-                     policy: PolicyWrapper | None = None,
                      batch: int = 32) -> dict:
     from .env.u0_env import U0Env
     model.eval()
