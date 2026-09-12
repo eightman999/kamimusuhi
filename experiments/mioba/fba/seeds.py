@@ -31,7 +31,8 @@ import hashlib
 _MASK63 = (1 << 63) - 1
 
 # purposes that may draw randomness inside one evaluation
-PURPOSES = ("replicate", "environment", "noise", "disturbance", "structure")
+PURPOSES = ("replicate", "environment", "noise", "disturbance",
+            "structure", "lesion")
 
 
 def derive(evaluation_seed: int, purpose: str, index: int = 0) -> int:
@@ -72,6 +73,15 @@ def disturbance_seed(evaluation_seed: int, replicate_index: int = 0) -> int:
 def structure_seed(evaluation_seed: int) -> int:
     """Stream the genome's artificial wiring is drawn from."""
     return derive(evaluation_seed, "structure")
+
+
+def lesion_seed(evaluation_seed: int, lesion_index: int = 0) -> int:
+    """Lesion-mask stream for functional-departure evaluation (M2 §16):
+    which substrate neurons a severity-p lesion silences. Independent
+    per lesion index, and never shared with replicate/environment/noise
+    streams — a lesion's draw is a property of the condition, not the
+    scheduler."""
+    return derive(evaluation_seed, "lesion", lesion_index)
 
 
 def seed_manifest(evaluation_seed: int, replicates: int) -> dict:

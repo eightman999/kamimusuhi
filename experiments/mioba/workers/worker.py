@@ -381,6 +381,15 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
                           else None)),
         "timing": timer.to_dict() if timer.enabled else None,
     }
+    # M2 §16-18: the functional-departure battery runs on the same
+    # backend under the same seeds when the experiment asks for it;
+    # disabled, summary is byte-identical to M1
+    if ((config.get("functional_departure") or {}).get("enabled")):
+        from ..m2.departure import evaluate_departure
+        with timer.phase("departure"):
+            summary["departure"] = evaluate_departure(
+                backend, phenotype, job, config, device=device,
+                seeds=[int(x) for x in per_rep["seeds"]], timer=timer)
     return {"summary": summary, "requested_replicates": n_rep,
             "completed_replicates": completed,
             "execution_batch_size": exec_batch_used,
