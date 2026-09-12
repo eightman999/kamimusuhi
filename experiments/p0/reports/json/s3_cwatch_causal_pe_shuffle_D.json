@@ -1,0 +1,37 @@
+{
+  "seed": 3,
+  "agent": "cwatch",
+  "condition": "causal:pe_shuffle_D",
+  "ablation": "pe_shuffle",
+  "config": "base",
+  "perm_tag": "pe_shuffle_D",
+  "detection_rate": 0.8165137614678899,
+  "mean_cost": 0.011416015625,
+  "info_efficiency": 69.48640506605547,
+  "total_reward": -0.09500000000000101,
+  "action_entropy": 0.5764034852867351,
+  "n_detected": 89,
+  "n_missed": 20,
+  "attention": {
+    "IGNORE": 0.42919921875,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.18310546875,
+    "OBSERVE_D": 0.3876953125,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.11075887095406263,
+    "B": 0.11075887095406263,
+    "C": 0.24091067167197858,
+    "D": 0.231154682400908
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.11444354351702866,
+    "D": 0.12038714945216912
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.24
+}

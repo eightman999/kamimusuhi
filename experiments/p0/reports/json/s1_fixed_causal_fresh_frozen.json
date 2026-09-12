@@ -1,0 +1,37 @@
+{
+  "seed": 1,
+  "agent": "fixed",
+  "condition": "causal:fresh_frozen",
+  "ablation": "fresh_frozen",
+  "config": "base",
+  "perm_tag": "",
+  "detection_rate": 0.4945054945054945,
+  "mean_cost": 0.007106119791666668,
+  "info_efficiency": 71.06434745813199,
+  "total_reward": -3.721666666666668,
+  "action_entropy": 0.3631289547306095,
+  "n_detected": 45,
+  "n_missed": 46,
+  "attention": {
+    "IGNORE": 0.6446940104166666,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.3553059895833333,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.9799646139144897,
+    "B": 0.9799646139144897,
+    "C": 0.9799646139144897,
+    "D": 0.7889227853350652
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.09648422338525381
+  },
+  "n_episodes": 12,
+  "wall_time_s": 0.91
+}

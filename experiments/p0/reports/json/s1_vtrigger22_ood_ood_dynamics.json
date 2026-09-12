@@ -1,0 +1,37 @@
+{
+  "seed": 1,
+  "agent": "vtrigger22",
+  "condition": "ood:ood_dynamics",
+  "ablation": "none",
+  "config": "ood_dynamics",
+  "perm_tag": "",
+  "detection_rate": 0.46153846153846156,
+  "mean_cost": 0.004602864583333334,
+  "info_efficiency": 99.89058603547305,
+  "total_reward": -3.106666666666668,
+  "action_entropy": 0.30057317035364867,
+  "n_detected": 54,
+  "n_missed": 63,
+  "attention": {
+    "IGNORE": 0.7698567708333334,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.23014322916666666,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.05425343418437478,
+    "B": 0.05425343418437478,
+    "C": 0.05425343418437478,
+    "D": 0.2192171878280836
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.11374537059975721
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.35
+}

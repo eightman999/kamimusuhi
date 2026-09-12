@@ -1,0 +1,37 @@
+{
+  "seed": 3,
+  "agent": "roundrobin",
+  "condition": "id",
+  "ablation": "none",
+  "config": "base",
+  "perm_tag": "",
+  "detection_rate": 0.24761904761904763,
+  "mean_cost": 0.019999999999999997,
+  "info_efficiency": 11.578132515632516,
+  "total_reward": -14.656666666666672,
+  "action_entropy": 0.7737056144690831,
+  "n_detected": 26,
+  "n_missed": 79,
+  "attention": {
+    "IGNORE": 0.0,
+    "OBSERVE_A": 0.25,
+    "OBSERVE_B": 0.25,
+    "OBSERVE_C": 0.25,
+    "OBSERVE_D": 0.25,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.1307636254141471,
+    "B": 0.16441318713759756,
+    "C": 0.1754303858659417,
+    "D": 0.22602281870088822
+  },
+  "pred_err_mean": {
+    "A": 0.051180697191739455,
+    "B": 0.08119142766615066,
+    "C": 0.0933428733793941,
+    "D": 0.11843930080704013
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.03
+}

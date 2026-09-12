@@ -1,0 +1,37 @@
+{
+  "seed": 2,
+  "agent": "cwatch",
+  "condition": "causal:mask_belief",
+  "ablation": "mask_belief",
+  "config": "base",
+  "perm_tag": "mask_belief",
+  "detection_rate": 0.2872340425531915,
+  "mean_cost": 0.007581380208333333,
+  "info_efficiency": 37.762267752128174,
+  "total_reward": -7.2150000000000025,
+  "action_entropy": 0.5089135217490647,
+  "n_detected": 27,
+  "n_missed": 67,
+  "attention": {
+    "IGNORE": 0.6209309895833334,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.22314453125,
+    "OBSERVE_D": 0.15592447916666666,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.1439989146016766,
+    "B": 0.1439989146016766,
+    "C": 0.22763590748339388,
+    "D": 0.2517256758522611
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.10896586880545496,
+    "D": 0.1287181802192044
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.1
+}

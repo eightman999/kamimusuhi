@@ -1,0 +1,37 @@
+{
+  "seed": 2,
+  "agent": "trigger",
+  "condition": "causal:fresh_pred",
+  "ablation": "fresh_pred",
+  "config": "base",
+  "perm_tag": "",
+  "detection_rate": 0.5148514851485149,
+  "mean_cost": 0.006360677083333333,
+  "info_efficiency": 83.17353596132988,
+  "total_reward": -3.0066666666666677,
+  "action_entropy": 0.34684046112598615,
+  "n_detected": 52,
+  "n_missed": 49,
+  "attention": {
+    "IGNORE": 0.6819661458333334,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.3180338541666667,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.10693766243897092,
+    "B": 0.10693766243897092,
+    "C": 0.10693766243897092,
+    "D": 0.17793456144105826
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.10610840340412396
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.2
+}
