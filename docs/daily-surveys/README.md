@@ -65,6 +65,7 @@ New surveys start as **未判定**. Record an explicit decision and confirm any 
 
 | Date | Highlights | 反映判断 |
 |---|---|---|
+| [2026-09-12 13:01 delta](./2026-09-12-13-01-17.md) | control-boundary retention across compaction, dependency-consistent multimodal deep research, group-affect divergence, held-out modality utility, cross-architecture output information geometry, TTFS SNN expressivity, agent-evaluation coverage taxonomy | **未判定** |
 | [2026-09-12 06:58 delta](./2026-09-12-06-58-54.md) | capability-bound routing, recurrent variable-depth cognition, retrospective streaming speech reasoning, differentiable hard-action feasibility, visual-need-gated raw sensory revisit, synthetic-data supplier-lineage collapse risk, persona specialization vs general-capability retention, stage-aware verifiable HCI | **未判定** |
 | [2026-09-12 00:57 delta](./2026-09-12-00-57-48.md) | causal-visibility-aware distributed guards, cognitive-ABI migration and latent-protocol negative transfer, computation/energy coupling as ALife pressure, task-agnostic pre-study, action-grounded transition memory, hybrid reflex modulation, tail-aware workflow admission, verified autonomous skill acquisition | **未判定** |
 | [2026-09-11 19:02 delta](./2026-09-11-19-02-25.md) | physics-grounded reactive-safety failures that do not shrink with model scale, failure-domain diagnosis for harness self-improvement, factorization-diverse multi-model adjudication, executable planning state, unified embodied runtime, NVIDIA derived self-model + durable ledger; note→NVIDIA primary verification | **未判定** |
