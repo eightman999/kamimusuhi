@@ -39,8 +39,8 @@ import math
 import random
 from dataclasses import asdict, dataclass, field
 
-from .schema import (ArtificialOrgan, Attachment, Genome, OrganProvenance,
-                     ParameterMutation)
+from .schema import (SCHEMA_VERSION, ArtificialOrgan, Attachment, Genome,
+                     OrganProvenance, ParameterMutation)
 from .structure import analyse, is_fba0
 
 # Parameters a mutation may scale (Shiu et al. 2024 LIF names).
@@ -495,6 +495,10 @@ def mutate(parent: Genome, rng: random.Random, birth_index: int,
     child.generation = generation
     child.birth_index = birth_index
     child.random_seed = rng.randrange(2**31)
+    # a child is a new record authored under the current schema — it does
+    # not inherit the parent's migration provenance
+    child.source_schema_version = None
+    child.schema_version = SCHEMA_VERSION
 
     n = mutation_count(rng, cfg)
     retries = int(cfg.get("retry_no_target", 0) or 0)
