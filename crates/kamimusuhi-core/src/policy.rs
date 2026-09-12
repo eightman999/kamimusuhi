@@ -2,18 +2,33 @@
 //! in plan §8. This is not an LLM judge — every branch is an explicit,
 //! reviewable rule.
 //!
-//! This wave implements the rules that are checkable from the proposal
-//! itself plus the minimal [`crate::mutation::PolicyContext`] abstraction
-//! (evidence ownership, prior-proposal lookup, current generation).
-//! Semantic contradiction detection and full Library/state cross-checks
-//! are out of scope for W1 and are left to later waves (plan §8, final
-//! paragraph).
+//! This wave implements the full accept/reject table from plan §8.1/§8.2
+//! that is checkable from the proposal itself plus the
+//! [`crate::mutation::PolicyContext`] abstraction (evidence provenance,
+//! subject validity, prior-state lifecycle, prior-proposal lookup,
+//! current generation). Semantic contradiction detection is explicitly
+//! out of scope and left to a later wave (plan §8, final paragraph).
 
+use crate::evidence::EvidenceKind;
+use crate::memory::LifecycleState;
 use crate::mutation::{
     Disposition, MutationDecision, MutationDomain, MutationOperation, MutationPolicy,
     MutationProposal, OriginClass, PolicyContext, PolicyError, ReasonCode,
 };
 use crate::time::{UtcTimestamp, WallClock};
+
+/// Whether `operation` is a meaningful proposal shape for `domain`. Every
+/// other combination of a *supported* domain/operation pair is rejected
+/// as `UnsupportedOperation` rather than falling through to evidence/
+/// subject checks that would not make sense for it.
+fn domain_operation_supported(domain: &MutationDomain, operation: &MutationOperation) -> bool {
+    matches!(
+        (domain, operation),
+        (MutationDomain::Episodic, MutationOperation::Capture)
+            | (MutationDomain::Relationship, MutationOperation::Fact)
+            | (MutationDomain::Relationship, MutationOperation::Correction)
+    )
+}
 
 pub struct MutationPolicyV0<'clock> {
     clock: &'clock dyn WallClock,
@@ -63,22 +78,80 @@ impl MutationPolicy for MutationPolicyV0<'_> {
                 ReasonCode::UnsupportedOperation,
             ));
         }
+        if !domain_operation_supported(&proposal.domain, &proposal.operation) {
+            return Ok(self.decision(
+                proposal,
+                Disposition::Reject,
+                ReasonCode::UnsupportedOperation,
+            ));
+        }
 
         // 2. contamination checks derivable from the proposal's own
-        // origin class, without needing the evidence store.
-        let requires_canonical_grounding = matches!(
-            proposal.domain,
-            MutationDomain::Episodic | MutationDomain::Relationship
-        );
-        if requires_canonical_grounding {
-            match proposal.origin_class {
-                OriginClass::Simulation => {
-                    return Ok(self.decision(
-                        proposal,
-                        Disposition::Reject,
-                        ReasonCode::SimulationOriginNotExternalEvent,
-                    ));
-                }
+        // origin class, without needing the evidence store. Both
+        // `episodic.capture` and `relationship.*` require canonical
+        // grounding by construction (domain_operation_supported above
+        // already narrowed `domain` to Episodic/Relationship here).
+        match proposal.origin_class {
+            OriginClass::Simulation => {
+                return Ok(self.decision(
+                    proposal,
+                    Disposition::Reject,
+                    ReasonCode::SimulationOriginNotExternalEvent,
+                ));
+            }
+            OriginClass::LibraryEvidence => {
+                return Ok(self.decision(
+                    proposal,
+                    Disposition::Reject,
+                    ReasonCode::LibraryOnlyContamination,
+                ));
+            }
+            OriginClass::ExternalResourceResult => {
+                return Ok(self.decision(
+                    proposal,
+                    Disposition::Reject,
+                    ReasonCode::ExternalResourceOnlyContamination,
+                ));
+            }
+            OriginClass::CanonicalInteraction | OriginClass::Operator => {}
+        }
+
+        // 3. evidence ref presence.
+        if proposal.evidence_refs.is_empty() {
+            return Ok(self.decision(proposal, Disposition::Reject, ReasonCode::MissingEvidence));
+        }
+
+        // 4. evidence provenance: every referenced evidence record must
+        // exist, belong to the proposal's individual, actually be
+        // canonical-interaction/operator grounded (not a Library
+        // excerpt, external resource output, or simulation smuggled in
+        // as "evidence" regardless of what the proposal's own
+        // `origin_class` claims), and must not be a Persona Core
+        // narration mistaken for evidence (plan §8.2, §9.1, §15.3 T06).
+        for evidence_id in &proposal.evidence_refs {
+            let provenance = context.evidence_provenance(*evidence_id)?;
+            let Some(provenance) = provenance else {
+                return Ok(self.decision(
+                    proposal,
+                    Disposition::Reject,
+                    ReasonCode::EvidenceOwnerMismatch,
+                ));
+            };
+            if provenance.individual_id != proposal.individual_id {
+                return Ok(self.decision(
+                    proposal,
+                    Disposition::Reject,
+                    ReasonCode::EvidenceOwnerMismatch,
+                ));
+            }
+            if provenance.kind == EvidenceKind::PersonaNarration {
+                return Ok(self.decision(
+                    proposal,
+                    Disposition::Reject,
+                    ReasonCode::PersonaNarrationMisattributedAsEvidence,
+                ));
+            }
+            match provenance.origin_class {
                 OriginClass::LibraryEvidence => {
                     return Ok(self.decision(
                         proposal,
@@ -93,29 +166,66 @@ impl MutationPolicy for MutationPolicyV0<'_> {
                         ReasonCode::ExternalResourceOnlyContamination,
                     ));
                 }
+                OriginClass::Simulation => {
+                    return Ok(self.decision(
+                        proposal,
+                        Disposition::Reject,
+                        ReasonCode::SimulationOriginNotExternalEvent,
+                    ));
+                }
                 OriginClass::CanonicalInteraction | OriginClass::Operator => {}
             }
         }
 
-        // 3. evidence ref presence.
-        if proposal.evidence_refs.is_empty() {
-            return Ok(self.decision(proposal, Disposition::Reject, ReasonCode::MissingEvidence));
-        }
-
-        // 4. evidence ownership: every referenced evidence record must
-        // belong to the proposal's individual.
-        for evidence_id in &proposal.evidence_refs {
-            let owned = context.evidence_owned_by(*evidence_id, proposal.individual_id)?;
-            if !owned {
+        // 5. relationship-domain subject validity: the subject must be
+        // present and must not collapse into the individual's own self
+        // (plan §8.1: relationship subject is the user/known-person
+        // domain, never self).
+        if proposal.domain == MutationDomain::Relationship {
+            let Some(subject_key) = proposal.subject_key.as_deref().filter(|s| !s.is_empty())
+            else {
+                return Ok(self.decision(proposal, Disposition::Reject, ReasonCode::MissingSubject));
+            };
+            let known = context.subject_is_known_person(proposal.individual_id, subject_key)?;
+            if !known {
                 return Ok(self.decision(
                     proposal,
                     Disposition::Reject,
-                    ReasonCode::EvidenceOwnerMismatch,
+                    ReasonCode::InvalidRelationshipSubject,
                 ));
             }
         }
 
-        // 5. duplicate proposal with a different payload.
+        // 6. relationship.correction must explicitly name a prior,
+        // currently-active state record it supersedes (plan §8.1).
+        if proposal.operation == MutationOperation::Correction {
+            let Some(target) = proposal.supersedes_state_record_id else {
+                return Ok(self.decision(
+                    proposal,
+                    Disposition::Reject,
+                    ReasonCode::MissingSupersedesTarget,
+                ));
+            };
+            match context.state_record_lifecycle(target, proposal.individual_id)? {
+                None => {
+                    return Ok(self.decision(
+                        proposal,
+                        Disposition::Reject,
+                        ReasonCode::CorrectionTargetNotFound,
+                    ));
+                }
+                Some(LifecycleState::Superseded) => {
+                    return Ok(self.decision(
+                        proposal,
+                        Disposition::Reject,
+                        ReasonCode::CorrectionTargetNotActive,
+                    ));
+                }
+                Some(LifecycleState::Active) => {}
+            }
+        }
+
+        // 7. duplicate proposal with a different payload.
         if let Some(prior) =
             context.find_prior_proposal_by_idempotency_key(&proposal.idempotency_key)?
         {
@@ -131,7 +241,7 @@ impl MutationPolicy for MutationPolicyV0<'_> {
             }
         }
 
-        // 6. stale predecessor (best-effort pre-check; `activate()` still
+        // 8. stale predecessor (best-effort pre-check; `activate()` still
         // performs the authoritative check under `BEGIN IMMEDIATE`).
         let current_generation = context.current_generation(proposal.individual_id)?;
         if current_generation != proposal.expected_generation {

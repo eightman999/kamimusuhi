@@ -9,7 +9,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use crate::ids::{CommitId, EvidenceId, IndividualId, PolicyVersion, ProposalId};
+use crate::evidence::EvidenceKind;
+use crate::ids::{CommitId, EvidenceId, IndividualId, MemoryId, PolicyVersion, ProposalId};
+use crate::memory::LifecycleState;
 use crate::time::UtcTimestamp;
 
 /// Where a proposal's grounding evidence/content ultimately originated.
@@ -73,6 +75,19 @@ pub struct MutationProposal {
     /// Evidence this proposal is grounded in. Empty is rejected by
     /// `MutationPolicyV0` for domains that require grounding.
     pub evidence_refs: Vec<EvidenceId>,
+    /// Who/what a `relationship.*` proposal is about. Required (and
+    /// checked against `PolicyContext::subject_is_known_person`) for
+    /// `MutationDomain::Relationship`; unused for `Episodic`. Keeping
+    /// this a first-class field (rather than burying it in `candidate`)
+    /// is what lets policy tell a user-origin relationship fact apart
+    /// from a self-preference miscapture (plan §6.3, §8.1).
+    pub subject_key: Option<String>,
+    /// For `MutationOperation::Correction`: the prior state record this
+    /// proposal explicitly supersedes. Required for corrections; the
+    /// referenced record must exist, belong to the same individual, and
+    /// currently be `LifecycleState::Active` (plan §8.1 "prior state と
+    /// 新しい evidence を参照し、supersession を明示する").
+    pub supersedes_state_record_id: Option<MemoryId>,
     /// The commit this proposal expects to apply on top of. Used for the
     /// expected-head CAS check in `activate()`.
     pub expected_commit_id: Option<CommitId>,
@@ -113,6 +128,11 @@ pub enum ReasonCode {
     SimulationOriginNotExternalEvent,
     DuplicateProposalPayloadMismatch,
     SchemaOrPolicyVersionMismatch,
+    MissingSubject,
+    InvalidRelationshipSubject,
+    MissingSupersedesTarget,
+    CorrectionTargetNotFound,
+    CorrectionTargetNotActive,
 }
 
 /// Durable decision record for one proposal.
@@ -130,18 +150,51 @@ pub enum PolicyError {
     ContextLookup(String),
 }
 
+/// What policy needs to know about one referenced evidence record,
+/// without depending on the full [`crate::evidence::EvidenceStore`]
+/// contract. `None` from
+/// [`PolicyContext::evidence_provenance`] means the evidence does not
+/// exist at all.
+#[derive(Clone, Debug)]
+pub struct EvidenceProvenance {
+    pub individual_id: IndividualId,
+    pub origin_class: OriginClass,
+    pub kind: EvidenceKind,
+}
+
 /// Everything `MutationPolicyV0` needs to know about the world beyond the
 /// proposal itself, without depending on a concrete evidence/state store.
 /// `kamimusuhi-store-sqlite` implements this against real tables;
 /// `kamimusuhi-testkit` provides an in-memory fixture implementation.
 pub trait PolicyContext {
-    /// Whether the given evidence exists and belongs to the given
-    /// individual.
-    fn evidence_owned_by(
+    /// Provenance of one referenced evidence record, if it exists at
+    /// all. Used to check ownership, reject Library/external/simulation
+    /// grounding, and reject a Persona Core narration mistaken for
+    /// evidence (plan §8.2).
+    fn evidence_provenance(
         &self,
         evidence_id: EvidenceId,
+    ) -> Result<Option<EvidenceProvenance>, PolicyError>;
+
+    /// Whether `subject_key` names a valid `relationship.*` subject for
+    /// this individual (the user, or another known-person domain
+    /// subject) rather than the individual itself (plan §8.1:
+    /// relationship subject must not collapse into `self`).
+    fn subject_is_known_person(
+        &self,
         individual_id: IndividualId,
+        subject_key: &str,
     ) -> Result<bool, PolicyError>;
+
+    /// Current lifecycle of a prior state record, scoped to the given
+    /// individual. `None` if it does not exist or belongs to a
+    /// different individual. Used by `relationship.correction` to
+    /// reject targeting an already-superseded or nonexistent record.
+    fn state_record_lifecycle(
+        &self,
+        state_record_id: MemoryId,
+        individual_id: IndividualId,
+    ) -> Result<Option<LifecycleState>, PolicyError>;
 
     /// Look up a previously-decided proposal with the same idempotency
     /// key, if any (used to detect duplicate submissions with a
