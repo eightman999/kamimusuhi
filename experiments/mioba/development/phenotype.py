@@ -51,8 +51,8 @@ from ..genome.structure import TOPOLOGY_M1_FBA0_LOOP, analyse
 from .lifetime import lifetime_rules_of
 from .rules import apply_development_rules
 from ..substrate.endpoints import parse_endpoint
-from ..substrate.registry import (adapter_for, default_registry,
-                                  substrate_genes_of)
+from ..substrate.registry import (NoEnabledSubstrate, adapter_for,
+                                  default_registry, substrate_genes_of)
 
 #: Endpoint kinds that terminate paths at the habitat boundary.
 _HABITAT_KINDS = ("env", "sensor", "effector")
@@ -63,7 +63,20 @@ def develop(genome, base_neurons: int | None = None,
             registry=None) -> dict:
     reg = registry or default_registry()
     genes = substrate_genes_of(genome)
+    if not genes:
+        # substrate genes exist but every one is disabled — a native-v4
+        # substrate-less organism, not the implicit FBA0 the empty
+        # *record* means. Developing needs a substrate: fail here.
+        raise NoEnabledSubstrate(
+            "genome declares substrate genes but disables every one: "
+            "there is no substrate to develop the organism on")
     adapters = [adapter_for(g, reg) for g in genes]
+    sids = [a.substrate_id for a in adapters]
+    if len(set(sids)) != len(sids):
+        dup = sorted({s for s in sids if sids.count(s) > 1})
+        raise ValueError(f"genome declares substrate_id more than once: "
+                         f"{dup} (substrate_neurons is keyed by id; a "
+                         "duplicate cannot be represented)")
     primary = adapters[0]
 
     # Disabled organs (DISABLE_ORGAN, M1 §3.1) and the attachments that

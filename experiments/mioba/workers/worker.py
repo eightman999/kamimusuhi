@@ -323,8 +323,15 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
                                           [seeds[i] for i in lanes]))
             _stack(per_rep, "index", lanes)
             # per-region / per-organ rates for the Observatory's circuit
-            # activity view (M1 §17): the base, and each organ separately
-            groups = ["all", "fba0"] + [
+            # activity view (M1 §17): the base, and each organ separately.
+            # The base group is named by the phenotype's primary
+            # substrate id — "fba0" for M-series genomes, so recorded
+            # M1 summaries keep the same key.
+            primary_sid = next(
+                (s.get("substrate_id") for s in
+                 (phenotype.get("substrates") or [])
+                 if s.get("substrate_id")), "fba0")
+            groups = ["all", primary_sid] + [
                 f"organ:{o['organ_id']}"
                 for o in (phenotype.get("artificial_organs") or [])]
             for g, vals in backend.get_population_activity(groups).items():
@@ -440,10 +447,6 @@ def run_job(client, worker_id: str, job: dict, device: str,
     global _current_job_started
     state.set_job(job["job_id"], "running")
     timer = make_timer(device, enabled=profile)
-    with timer.phase("genome_decode"):
-        genome = Genome.from_json(job["genome_json"])
-    with timer.phase("mutation_resolve"):
-        phenotype = develop(genome)
     config = job.get("config") or {}
     backend = None
     started = utcnow()
@@ -451,6 +454,14 @@ def run_job(client, worker_id: str, job: dict, device: str,
     result_id = result_id_for(job["job_id"], worker_id,
                               int(job.get("attempt") or 0))
     try:
+        # genome decode + development are part of evaluating the job:
+        # a record that cannot develop (e.g. a native-v4 genome with
+        # every substrate disabled) is a FAILED evaluation, not a
+        # worker crash that leaves the job RUNNING until it goes stale.
+        with timer.phase("genome_decode"):
+            genome = Genome.from_json(job["genome_json"])
+        with timer.phase("mutation_resolve"):
+            phenotype = develop(genome)
         backend = get_backend(
             job["backend"],
             **backend_kwargs(config, job.get("run_dir"), data_dir=data_dir))

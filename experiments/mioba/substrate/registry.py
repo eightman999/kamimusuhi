@@ -17,6 +17,17 @@ class UnknownSubstrate(KeyError):
     """A genome named a substrate id no registered adapter provides."""
 
 
+class NoEnabledSubstrate(RuntimeError):
+    """A genome declares substrate genes but disables every one.
+
+    This is not the missing-field case: a record that carries no
+    substrate genes at all (a legacy v1-v3 document, or a
+    programmatically built Genome) means the ancestral FBA0 substrate.
+    All-disabled is explicit native-v4 content — the organism has *no*
+    substrate — and anything that needs one (development, and therefore
+    evaluation) must fail here rather than silently substituting FBA0."""
+
+
 class SubstrateRegistry:
     def __init__(self):
         self._factories: dict[str, object] = {}
@@ -40,23 +51,26 @@ class SubstrateRegistry:
 def substrate_ids_of(genome) -> list[str]:
     """The enabled substrate ids a genome carries.
 
-    A genome with no ``substrates`` list (a legacy v1-v3 record, or a
-    programmatically built Genome) means the ancestral FBA0 substrate —
+    A genome with no ``substrates`` records (a legacy v1-v3 document, or
+    a programmatically built Genome) means the ancestral FBA0 substrate —
     "empty" is the M1 condition, spelled out by schema v4 migration for
-    stored documents.
+    stored documents. A genome that *declares* substrate genes but
+    disables every one is substrate-less: ``[]`` — the disable marks are
+    explicit v4 content, not a missing field, so there is no implicit
+    founder to fall back to.
     """
-    genes = [s for s in (getattr(genome, "substrates", None) or [])
-             if getattr(s, "enabled", True)]
-    return [s.substrate_id for s in genes] or [FOUNDER_SUBSTRATE]
+    return [s.substrate_id for s in substrate_genes_of(genome)]
 
 
 def substrate_genes_of(genome) -> list:
     """Enabled substrate gene records; the implicit FBA0 gene when the
-    genome carries none (see ``substrate_ids_of``)."""
-    genes = [s for s in (getattr(genome, "substrates", None) or [])
-             if getattr(s, "enabled", True)]
+    genome carries no substrate genes at all (see ``substrate_ids_of``)."""
+    declared = getattr(genome, "substrates", None) or []
+    genes = [s for s in declared if getattr(s, "enabled", True)]
     if genes:
         return genes
+    if declared:
+        return []                     # every declared substrate disabled
     return [_ImplicitSubstrateGene()]
 
 
@@ -77,8 +91,10 @@ def default_registry() -> SubstrateRegistry:
     global _DEFAULT
     if _DEFAULT is None:
         from .fba0 import FBA0Adapter
+        from .reflex0 import Reflex0Adapter
         reg = SubstrateRegistry()
         reg.register(FBA0Adapter.substrate_id, FBA0Adapter)
+        reg.register(Reflex0Adapter.substrate_id, Reflex0Adapter)
         _DEFAULT = reg
     return _DEFAULT
 
