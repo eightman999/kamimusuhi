@@ -1,18 +1,26 @@
-"""T0 evaluation: delay generalization, hidden-state interventions, probes.
+"""T0-v2 evaluation: delay generalization, hidden-state interventions, probes.
 
-Splits (spec section 12):
-  seen          training grid delays
-  interpolation unseen delays inside the trained range
-  extrapolation unseen delays beyond the trained range
-  distractor    raised distractor rate
-  scaled        world dynamics at x0.5 / x2.0 (T-C5)
+Splits (v2 spec section 12):
+  seen                 training grid delays
+  interpolation        held-out primary points (40, 56)
+  interpolation_band   full holdout bands (38-42, 54-58) — robustness
+  extrapolation        unseen delays beyond the trained range
+  distractor           raised distractor rate
+  scaled               world dynamics at x0.5 / x2.0 (T-C5)
 
-Causal tests (spec section 9):
-  T-C1 hidden reset   zero the hidden state mid-delay
-  T-C2 hidden noise   add gaussian noise to the hidden state mid-delay
-  T-C3 obs blank      replace delay-period observations with a constant
-  T-C4 distractors    denser distractor pulses during the delay
-  T-C5 time scaling   change world dynamics speed; correct ACT step moves
+Every fixed-delay eval forces ``delay_override`` so the requested delay is
+the delay actually measured (v1 defect: the sampler ran instead).
+
+Causal tests:
+  T-C1 hidden reset     zero the hidden state mid-delay
+  T-C2 hidden noise     add gaussian noise to the hidden state mid-delay
+  T-C3a post-cue blank  constant observation after the cue; never releases
+  T-C3b freeze dynamics replay each episode's first post-cue observation
+  T-C4 distractors      denser distractor pulses during the delay
+  T-C5 time scaling     change world dynamics speed; correct ACT step moves
+
+``protocol_integrity`` is verified before any number is written; a violated
+split raises ``ProtocolViolation`` rather than emitting results.
 """
 import argparse
 import json
@@ -24,13 +32,14 @@ import torch
 from experiments.t0.analysis.plots import (plot_delay_curve, plot_interventions,
                                            plot_probe_bars)
 from experiments.t0.analysis.probes import fit_time_probes
+from experiments.t0.analysis.protocol import (EVAL_SEED, INTERP_HOLDOUT,
+                                              PROTOCOL_VERSION,
+                                              protocol_integrity, require_clean)
 from experiments.t0.analysis.trajectories import per_delay_trajectories
 from experiments.t0.env.interval_env import (EXTRAP_DELAYS, INTERP_DELAYS,
                                              SEEN_DELAYS, IntervalEnv)
 from experiments.t0.models import make_model
 from experiments.t0.train import atomic, collect, episode_metrics
-
-EVAL_SEED = 900001
 
 
 def load_model(checkpoint, device="cpu"):
@@ -57,7 +66,8 @@ def eval_delay(model, device, delay, n=128, config=None, intervention=None,
     """Greedy rollout on a single fixed delay; returns metrics dict."""
     env = _delay_env(n, device, delay, config or {}, **env_overrides)
     out = collect(model, env, greedy=True, intervention=intervention,
-                  record_states=record_states)
+                  record_states=record_states,
+                  reset_kwargs={"delay_override": delay})
     rollout, mask, infos = out[:3]
     metrics = episode_metrics(rollout, mask, infos, env)
     metrics["delay"] = int(delay)
@@ -92,15 +102,35 @@ def hidden_noise(sigma=.5, at_fraction=.5, seed=0):
     return intervention
 
 
-def obs_blank(start=0., end=1.):
-    """Constant observation over the fractional delay interval [start, end)."""
+def post_cue_blank(value=.5):
+    """T-C3a: constant observation from the end of the cue pulse onward.
+
+    The initial cue is preserved, the blank never releases, and
+    ``target_step`` is never read — no target-time transition exists.
+    """
     def intervention(t, state, observation, env):
-        lo = torch.round(env.target_step.float() * start).long()
-        hi = torch.round(env.target_step.float() * end).long()
-        during = (t >= lo) & (t < hi)
-        if bool(during.any()):
-            observation = observation.clone()
-            observation[during] = .5
+        if env.t >= env.pulse_length:
+            observation = torch.full_like(observation, value)
+        return state, observation
+    return intervention
+
+
+def freeze_dynamics():
+    """T-C3b matched control: freeze each episode's first post-cue obs.
+
+    At ``t == pulse_length`` the per-env observation is stored; every later
+    step replays that episode's own stored observation.  Ongoing world-
+    dynamics change (oscillator, OU walk, distractor stream, noise) is
+    removed while the initial observation distribution is preserved.
+    Never reads ``target_step`` and never releases.
+    """
+    frozen = {}
+
+    def intervention(t, state, observation, env):
+        if env.t == env.pulse_length:
+            frozen["obs"] = observation.clone()
+        elif env.t > env.pulse_length and "obs" in frozen:
+            observation = frozen["obs"]
         return state, observation
     return intervention
 
@@ -110,7 +140,9 @@ def eval_with_intervention(model, device, delay, n, config, intervention_fn,
     env = _delay_env(n, device, delay, config, **env_overrides)
     def bound(t, state, observation):
         return intervention_fn(t, state, observation, env)
-    rollout, mask, infos = collect(model, env, greedy=True, intervention=bound)[:3]
+    rollout, mask, infos = collect(
+        model, env, greedy=True, intervention=bound,
+        reset_kwargs={"delay_override": delay})[:3]
     metrics = episode_metrics(rollout, mask, infos, env)
     metrics["delay"] = int(delay)
     metrics["episodes"] = n
@@ -123,8 +155,9 @@ def run_probes(model, device, config, n=128, delays=SEEN_DELAYS):
     t_max = 0
     for d in delays:
         env = _delay_env(n, device, d, config)
-        rollout, mask, infos, states = collect(model, env, greedy=True,
-                                               record_states=True)
+        rollout, mask, infos, states = collect(
+            model, env, greedy=True, record_states=True,
+            reset_kwargs={"delay_override": d})
         if states.shape[-1] == 0:
             return {"note": "memoryless model: no hidden state to probe"}
         states_all.append(states)
@@ -148,10 +181,19 @@ def run_probes(model, device, config, n=128, delays=SEEN_DELAYS):
 def evaluate_checkpoint(checkpoint, artifacts, device="cpu", episodes=128,
                         aux_episodes=64, seed=0):
     model, config, cp = load_model(checkpoint, device)
+    integrity = protocol_integrity(
+        config, interventions={"post_cue_blank": post_cue_blank(),
+                               "freeze_dynamics": freeze_dynamics()},
+        device=device)
+    require_clean(integrity)
     out = {"checkpoint": str(checkpoint), "seed": config.get("seed"),
            "architecture": config.get("architecture"),
-           "model_sha256": cp.get("model_sha256"), "episodes": episodes}
+           "model_sha256": cp.get("model_sha256"), "episodes": episodes,
+           "protocol_version": PROTOCOL_VERSION,
+           "protocol_integrity": integrity,
+           "source_commit": config.get("source_commit")}
     sets = {"seen": SEEN_DELAYS, "interpolation": INTERP_DELAYS,
+            "interpolation_band": INTERP_HOLDOUT,
             "extrapolation": EXTRAP_DELAYS}
     for name, delays in sets.items():
         rows = {}
@@ -175,12 +217,16 @@ def evaluate_checkpoint(checkpoint, artifacts, device="cpu", episodes=128,
         model, device, mid, episodes, config, hidden_reset(.5))
     out["interventions"]["hidden_noise"] = eval_with_intervention(
         model, device, mid, episodes, config, hidden_noise(.5, .5, seed))
-    out["interventions"]["obs_blank"] = eval_with_intervention(
-        model, device, mid, episodes, config, obs_blank(0., 1.))
-    out["probes"] = run_probes(model, device, config, n=aux_episodes)
+    out["interventions"]["post_cue_blank"] = eval_with_intervention(
+        model, device, mid, episodes, config, post_cue_blank())
+    out["interventions"]["freeze_dynamics"] = eval_with_intervention(
+        model, device, mid, episodes, config, freeze_dynamics())
+    out["probes"] = run_probes(model, device, config, n=aux_episodes,
+                               delays=SEEN_DELAYS + INTERP_DELAYS)
     traj_env = _delay_env(aux_episodes, device, mid, config)
-    rollout, mask, infos, states = collect(model, traj_env, greedy=True,
-                                           record_states=True)
+    rollout, mask, infos, states = collect(
+        model, traj_env, greedy=True, record_states=True,
+        reset_kwargs={"delay_override": mid})
     out["trajectory"] = per_delay_trajectories(states, traj_env.delay) \
         if states.shape[-1] else {"explained": [], "trajectories": {}}
     run_name = Path(checkpoint).parent.name + "_" + Path(checkpoint).stem
@@ -198,14 +244,33 @@ def evaluate_checkpoint(checkpoint, artifacts, device="cpu", episodes=128,
     return out
 
 
+def _set_mean(rows, key):
+    return float(np.mean([r["success"] for r in rows.values()]))
+
+
 def consolidate(artifacts):
-    """Per-seed stats across runs: mean/SD/median/bootstrap CI/sign test."""
+    """Per-seed stats across runs: mean/SD/median/bootstrap CI/sign test.
+
+    Every eval row must carry a PASS ``protocol_integrity`` verdict from a
+    ``T0-v2`` evaluation; anything else marks the aggregate
+    ``INVALID_PROTOCOL`` instead of silently absorbing v1/contaminated rows.
+    """
     eval_dir = Path(artifacts) / "eval"
     rows = [json.loads(p.read_text()) for p in sorted(eval_dir.glob("*.json"))
             if not p.name.endswith("_trajectory.json")]
     by_arch = {}
     for row in rows:
         by_arch.setdefault(row["architecture"], []).append(row)
+    statuses = [(r.get("protocol_version") == PROTOCOL_VERSION
+                 and (r.get("protocol_integrity") or {}).get("status") == "PASS")
+                for r in rows]
+    integrity_rows = [r.get("protocol_integrity") or {} for r in rows]
+    first = integrity_rows[0] if integrity_rows else {}
+    consistent = len({json.dumps({k: i.get(k) for k in (
+        "training_support", "excluded_training_delays",
+        "interpolation_primary", "interpolation_holdout", "extrapolation")},
+        sort_keys=True) for i in integrity_rows}) <= 1
+    clean = bool(rows) and all(statuses) and consistent
     rng = np.random.default_rng(0)
     summary = {}
     for arch, items in by_arch.items():
@@ -220,17 +285,36 @@ def consolidate(artifacts):
                     "median": float(np.median(values)),
                     "ci95": [float(np.percentile(boot, 2.5)),
                              float(np.percentile(boot, 97.5))]}
+
+        def interv(name):
+            return stat([r["interventions"][name]["success"] for r in items])
         summary[arch] = {
             "seeds": [r.get("seed") for r in items],
             "seen": stat([r["seen_mean_success"] for r in items]),
             "interpolation": stat([r["interpolation_mean_success"] for r in items]),
+            "interpolation_band": stat(
+                [r["interpolation_band_mean_success"] for r in items]),
             "extrapolation": stat([r["extrapolation_mean_success"] for r in items]),
-            "hidden_reset_success": stat(
-                [r["interventions"]["hidden_reset"]["success"] for r in items]),
-            "baseline_success": stat(
-                [r["interventions"]["baseline"]["success"] for r in items]),
+            "distractor": stat(
+                [_set_mean(r["distractor"], "success") for r in items]),
+            "scaled_0.5": stat(
+                [_set_mean(r["scaled"]["0.5"], "success") for r in items]),
+            "scaled_2.0": stat(
+                [_set_mean(r["scaled"]["2.0"], "success") for r in items]),
+            "hidden_reset_success": interv("hidden_reset"),
+            "hidden_noise_success": interv("hidden_noise"),
+            "post_cue_blank_success": interv("post_cue_blank"),
+            "freeze_dynamics_success": interv("freeze_dynamics"),
+            "baseline_success": interv("baseline"),
             "elapsed_r2": stat([r["probes"].get("elapsed_r2", float("nan"))
                                 for r in items]),
+            "remaining_r2": stat([r["probes"].get("remaining_r2", float("nan"))
+                                  for r in items]),
+            "phase_r2": stat([r["probes"].get("phase_r2", float("nan"))
+                              for r in items]),
+            "shuffle_max_r2": stat(
+                [r["probes"].get("shuffle_max_r2", float("nan"))
+                 for r in items]),
         }
     recurrent = [a for a in summary if a != "mlp"]
     mlp_seen = np.array([r["seen_mean_success"] for r in by_arch.get("mlp", [])])
@@ -245,8 +329,29 @@ def consolidate(artifacts):
                 "mean_delta": float(delta.mean()),
                 "sign_test_wins": wins, "sign_test_n": paired,
                 "sign_test_p": float(min(1., 2 * min(p_one, 1 - p_one)))}
-    atomic(Path(artifacts) / "consolidated.json", summary)
-    return summary
+    out = {"protocol_version": PROTOCOL_VERSION,
+           "protocol_integrity": {
+               "status": "PASS" if clean else "INVALID_PROTOCOL",
+               "n_eval_rows": len(rows),
+               "rows_consistent_split": consistent,
+               "train_interpolation_overlap": first.get(
+                   "train_interpolation_overlap"),
+               "train_holdout_overlap": first.get("train_holdout_overlap"),
+               "train_extrapolation_overlap": first.get(
+                   "train_extrapolation_overlap"),
+               "validation_test_overlap": first.get("validation_test_overlap"),
+               "intervention_target_independence": first.get(
+                   "intervention_target_independence")},
+           "training_support": first.get("training_support"),
+           "validation_support": first.get("validation_support"),
+           "excluded_training_delays": first.get("excluded_training_delays"),
+           "interpolation_primary": first.get("interpolation_primary"),
+           "interpolation_holdout": first.get("interpolation_holdout"),
+           "extrapolation": first.get("extrapolation"),
+           "rng_seeds": first.get("rng_seeds"),
+           "architectures": summary}
+    atomic(Path(artifacts) / "consolidated.json", out)
+    return out
 
 
 def main():

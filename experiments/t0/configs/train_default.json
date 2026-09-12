@@ -17,6 +17,7 @@
     "delays": [8, 16, 24, 32, 48, 64],
     "delay_min": 8,
     "delay_max": 64,
+    "excluded_training_delays": [38, 39, 40, 41, 42, 54, 55, 56, 57, 58],
     "horizon": 96,
     "window": 2,
     "distractor_rate": 0.02,

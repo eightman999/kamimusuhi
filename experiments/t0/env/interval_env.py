@@ -22,6 +22,10 @@ NUM_ACTIONS = len(ACTION_NAMES)
 
 SEEN_DELAYS = (8, 16, 24, 32, 48, 64)
 INTERP_DELAYS = (40, 56)
+# T0-v2: the bands around the primary interpolation points are removed from
+# the training support entirely, so interpolation is tested over an unseen
+# *region*, not unseen points.
+INTERP_HOLDOUT = (38, 39, 40, 41, 42, 54, 55, 56, 57, 58)
 EXTRAP_DELAYS = (80, 96, 128)
 
 
@@ -113,28 +117,66 @@ class IntervalEnv(BaseTemporalEnv):
         self.grade = float(self.config.get("grade", 8.))
         self.never_reward = float(self.config.get("never_reward", -1.))
         self.step_cost = float(self.config.get("step_cost", .01))
+        self.excluded_delays = frozenset(
+            int(d) for d in self.config.get("excluded_training_delays", ()))
+
+    def _allowed_delays(self, lo, hi):
+        allowed = [d for d in range(lo, hi + 1) if d not in self.excluded_delays]
+        if not allowed:
+            raise ValueError(
+                "excluded_training_delays covers all of [delay_min, delay_max]")
+        return allowed
 
     def _sample_delays(self):
+        """Sample training delays; ``excluded_training_delays`` can never be
+        produced by any distribution.  A grid listing an excluded delay is a
+        config error, not a silent filter."""
         n = self.num_envs
         dist = self.config.get("delay_distribution", "grid")
-        grid = list(self.config.get("delays", SEEN_DELAYS))
+        grid = [int(d) for d in self.config.get("delays", SEEN_DELAYS)]
         lo = int(self.config.get("delay_min", min(grid)))
         hi = int(self.config.get("delay_max", max(grid)))
+        if dist in ("grid", "mixed"):
+            overlap = set(grid) & self.excluded_delays
+            if overlap:
+                raise ValueError(
+                    "training grid contains excluded delays: "
+                    f"{sorted(overlap)}")
+
+        def uniform_draw():
+            allowed = torch.tensor(self._allowed_delays(lo, hi),
+                                   device=self.device)
+            return allowed[self._randint(len(allowed), (n,))].long()
+
         if dist == "grid":
             values = torch.tensor(grid, device=self.device)
             return values[self._randint(len(grid), (n,))].long()
         if dist == "uniform":
-            return self._randint(hi - lo + 1, (n,)).long() + lo
+            return uniform_draw()
         if dist == "geometric":
             p = float(self.config.get("geometric_p", .08))
-            draw = torch.distributions.Geometric(p).sample((n,)).to(self.device).long()
-            return (lo + draw).clamp(min=lo, max=hi)
+            geo = torch.distributions.Geometric(p)
+            blocked = torch.zeros(hi - lo + 1, dtype=torch.bool,
+                                  device=self.device)
+            for d in self.excluded_delays:
+                if lo <= d <= hi:
+                    blocked[d - lo] = True
+
+            def geo_draw():
+                return (lo + geo.sample((n,)).to(self.device).long()).clamp(lo, hi)
+
+            delay = geo_draw()
+            for _ in range(64):
+                bad = blocked[delay - lo]
+                if not bool(bad.any()):
+                    return delay
+                delay = torch.where(bad, geo_draw(), delay)
+            return torch.where(blocked[delay - lo], uniform_draw(), delay)
         if dist == "mixed":
             values = torch.tensor(grid, device=self.device)
             from_grid = values[self._randint(len(grid), (n,))].long()
-            from_uniform = self._randint(hi - lo + 1, (n,)).long() + lo
             pick = self._rand(n) < .5
-            return torch.where(pick, from_grid, from_uniform)
+            return torch.where(pick, from_grid, uniform_draw())
         raise ValueError(f"Unknown delay_distribution: {dist}")
 
     def reset(self, delay_override=None):

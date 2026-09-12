@@ -4,7 +4,9 @@
 
 実測結果と仮説判定は [reports/T0_RESULTS.md](reports/T0_RESULTS.md) に集約します。
 
-**スコープ**: 主実験 T0-A は学習・評価・介入・probe まで実測済みです。T0-B/C/D は環境・oracle・smoke test の実装がある段階で、学習済み実験結果はありません。判定表の PASS/FAIL は T0-A にのみ適用されます。
+**Protocol: T0-v2**。v1 (PR #28 初版) には (1) interpolation 評価 delay が training 分布に混入、(2) T-C3 intervention が target step に同期、(3) eval が要求 delay を環境に適用していない、という protocol defect があり、全 v1 数値を破棄しました ([reports/T0_V1_INVALIDATION.md](reports/T0_V1_INVALIDATION.md))。v2 では `38–42` / `54–58` の holdout band を `excluded_training_delays` で training support から除去し、protocol validator が評価・集約・report 生成を gate します。
+
+**スコープ**: 主実験 T0-A は v2 で学習・評価・介入・probe まで実測済みです。T0-B/C/D は環境・oracle・smoke test の実装がある段階で、学習済み実験結果はありません。判定表の PASS/FAIL は T0-A にのみ適用されます。
 
 ## 時間情報の非リーク条件
 
@@ -40,10 +42,13 @@ t=T*: 応答窓 |t - T*| <= window(=2)
 
 訓練 grid: `8, 16, 24, 32, 48, 64`。`delay_distribution` は `grid / uniform / geometric / mixed` を取り、訓練は `mixed` (grid 50% + uniform[8,64] 50%) で固定周期の丸暗記を防ぎます。
 
-評価 split (spec §12):
+v2 では `excluded_training_delays` が全分布の sampler を constrain し、interpolation holdout band (`38–42`, `54–58`) は training support に含まれません。grid に excluded delay があれば config error、uniform/geometric/mixed は allowed set からのみ sample します。`reset(delay_override=...)` は除外の影響を受けないため、評価は holdout delay を強制できます。
 
-- seen: 訓練 grid
-- interpolation: `40, 56`
+評価 split (v2 spec §12):
+
+- seen: 訓練 grid `8,16,24,32,48,64`
+- interpolation primary: `40, 56` (held-out)
+- interpolation band: `38–42, 54–58` 全10点 (held-out robustness)
 - extrapolation: `80, 96, 128` (最大2倍)
 - distractor: `distractor_rate=0.2`
 - scaled: `time_scale` を `0.5 / 2.0` に変更 (T-C5)。世界ダイナミクスの速度が変わり、正解 ACT step も `round(D/s)` に移動します。step counter は失敗し、状態変化ベースの時計だけが追随します。
@@ -64,7 +69,7 @@ t=T*: 応答窓 |t - T*| <= window(=2)
 
 ```bash
 python -m experiments.t0.train --config experiments/t0/configs/train_default.json \
-    --artifacts experiments/t0/artifacts/primary --run-id gru64-s0
+    --artifacts experiments/t0/artifacts/primary_v2 --run-id gru64-s0
 ```
 
 k0 系の慣例に従い、oracle への全系列模倣 (120 update、後半は 80% teacher mix) のあと系列分割なし PPO (80 update) を行います。checkpoint は `initial / imitation_best / imitation_final / ppo_best / ppo_final`、選択基準は固定 validation seed `700001` の `success + 0.1 * reward` です。RNG stream は imitation `100000+seed` / PPO `200000+seed` / eval `900001` で分離しています。
@@ -72,8 +77,11 @@ k0 系の慣例に従い、oracle への全系列模倣 (120 update、後半は 
 ## sweep
 
 ```bash
-python -m experiments.t0.sweep --artifacts experiments/t0/artifacts/primary \
-    --seeds 0,1,2 --imitation-updates 120 --ppo-updates 80 --num-envs 512 --evaluate
+python -m experiments.t0.sweep \
+  --artifacts experiments/t0/artifacts/primary_v2 \
+  --seeds 0,1,2 \
+  --architectures mlp,gru64,gru128,lstm64,lstm128,ssm,leaky \
+  --evaluate --device cpu
 ```
 
 完了 run は `status.json` を見て skip します。`--smoke` で短縮一巡。
@@ -82,11 +90,20 @@ python -m experiments.t0.sweep --artifacts experiments/t0/artifacts/primary \
 
 ```bash
 python -m experiments.t0.evaluate --checkpoint <run>/ppo_best.pt \
-    --artifacts experiments/t0/artifacts/primary --episodes 128
-python -m experiments.t0.evaluate --consolidate-only --artifacts experiments/t0/artifacts/primary
+    --artifacts experiments/t0/artifacts/primary_v2 --episodes 128
+python -m experiments.t0.evaluate --consolidate-only \
+    --artifacts experiments/t0/artifacts/primary_v2
+python -m experiments.t0.analysis.report \
+    --artifacts experiments/t0/artifacts/primary_v2 \
+    --out experiments/t0/reports/T0_RESULTS.md
 ```
 
-primary metrics: `timing error`, `mean |error|`, `success rate`, `early/late action rate`。causal tests: T-C1 hidden reset (delay 中点で state をゼロ化)、T-C2 hidden noise、T-C3 observation blank (delay 中を定数化)、T-C4 distractor 挿入、T-C5 temporal scaling。representation analysis は `analysis/probes.py` の linear probe (elapsed / remaining / phase の held-out episode R² + shuffle 対照) と `analysis/trajectories.py` の PCA です。可視化は判定に使いません。
+primary metrics: `timing error`, `mean |error|`, `success rate`, `early/late action rate`。causal tests (v2): T-C1 hidden reset、T-C2 hidden noise、T-C3a `post_cue_blank` (cue 後に定数化、解除なし・target step 非参照)、T-C3b `freeze_dynamics` (episode 固有の post-cue obs を凍結して再生)、T-C4 distractor 挿入、T-C5 temporal scaling。representation analysis は `analysis/probes.py` の linear probe (elapsed / remaining / phase の held-out episode R² + shuffle 対照) と `analysis/trajectories.py` の PCA です。可視化は判定に使いません。
+
+`analysis/protocol.py` の validator が評価・集約・report 生成の前に
+train/eval split と intervention の target-independence を検査し、違反時は
+`INVALID_PROTOCOL` で停止します。判定ゲートは `analysis/report.py` 冒頭の
+pre-registered threshold に固定されています。
 
 ## 判定
 

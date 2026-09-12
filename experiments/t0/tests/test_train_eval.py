@@ -6,7 +6,8 @@ from pathlib import Path
 import torch
 
 from experiments.t0.env.interval_env import IntervalEnv
-from experiments.t0.evaluate import (hidden_noise, hidden_reset, obs_blank,
+from experiments.t0.evaluate import (freeze_dynamics, hidden_noise,
+                                     hidden_reset, post_cue_blank,
                                      eval_delay, eval_with_intervention,
                                      consolidate)
 from experiments.t0.models import make_model
@@ -83,8 +84,19 @@ class TestInterventions(unittest.TestCase):
         for key in ("success", "act_rate", "early_rate", "late_rate"):
             self.assertIn(key, out)
 
+    def test_eval_delay_forces_requested_delay(self):
+        """v2: the requested delay must be the measured delay, not a sample."""
+        env_config = {"env": {"delay_distribution": "mixed",
+                              "delays": [8, 16, 24, 32, 48, 64],
+                              "delay_min": 8, "delay_max": 64, "horizon": 96}}
+        out = eval_delay(self.model, "cpu", 96, n=8, config=env_config,
+                         record_states=True)
+        self.assertEqual(out["delay"], 96)
+        self.assertTrue(bool((out["delays"] == 96).all()))
+
     def test_interventions_run(self):
-        for fn in (hidden_reset(.5), hidden_noise(.5), obs_blank(0., 1.)):
+        for fn in (hidden_reset(.5), hidden_noise(.5), post_cue_blank(),
+                   freeze_dynamics()):
             out = eval_with_intervention(self.model, "cpu", 16, 16,
                                          self.config, fn)
             self.assertIn("success", out)
@@ -117,20 +129,49 @@ class TestInterventions(unittest.TestCase):
 
 
 class TestConsolidate(unittest.TestCase):
+    def _row(self):
+        integ = {"status": "PASS", "training_support": [8, 16],
+                 "excluded_training_delays": [40],
+                 "interpolation_primary": [40, 56],
+                 "interpolation_holdout": [40],
+                 "extrapolation": [80, 96, 128]}
+        return {"architecture": "gru64", "seed": 0,
+                "protocol_version": "T0-v2", "protocol_integrity": integ,
+                "seen_mean_success": .9, "interpolation_mean_success": .8,
+                "interpolation_band_mean_success": .75,
+                "extrapolation_mean_success": .3,
+                "distractor": {"8": {"success": .8}, "16": {"success": .9}},
+                "scaled": {"0.5": {"8": {"success": .1}},
+                           "2.0": {"8": {"success": .1}}},
+                "interventions": {"hidden_reset": {"success": .2},
+                                  "hidden_noise": {"success": .5},
+                                  "post_cue_blank": {"success": .3},
+                                  "freeze_dynamics": {"success": .6},
+                                  "baseline": {"success": .9}},
+                "probes": {"elapsed_r2": .95}}
+
     def test_consolidate_structure(self):
         with tempfile.TemporaryDirectory() as d:
             eval_dir = Path(d) / "eval"
             eval_dir.mkdir(parents=True)
-            row = {"architecture": "gru64", "seed": 0,
-                   "seen_mean_success": .9, "interpolation_mean_success": .8,
-                   "extrapolation_mean_success": .3,
-                   "interventions": {"hidden_reset": {"success": .2},
-                                     "baseline": {"success": .9}},
-                   "probes": {"elapsed_r2": .95}}
+            (eval_dir / "a.json").write_text(json.dumps(self._row()))
+            summary = consolidate(d)
+            self.assertIn("gru64", summary["architectures"])
+            self.assertEqual(summary["architectures"]["gru64"]["seen"]["n"], 1)
+            self.assertEqual(summary["protocol_integrity"]["status"], "PASS")
+            self.assertEqual(summary["protocol_version"], "T0-v2")
+
+    def test_consolidate_marks_missing_integrity_invalid(self):
+        with tempfile.TemporaryDirectory() as d:
+            eval_dir = Path(d) / "eval"
+            eval_dir.mkdir(parents=True)
+            row = self._row()
+            del row["protocol_integrity"]
+            del row["protocol_version"]
             (eval_dir / "a.json").write_text(json.dumps(row))
             summary = consolidate(d)
-            self.assertIn("gru64", summary)
-            self.assertEqual(summary["gru64"]["seen"]["n"], 1)
+            self.assertEqual(summary["protocol_integrity"]["status"],
+                             "INVALID_PROTOCOL")
 
 
 if __name__ == "__main__":

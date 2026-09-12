@@ -18,6 +18,8 @@ import numpy as np
 import torch
 from torch import nn
 
+from experiments.t0.analysis.protocol import (require_clean,
+                                              validate_split_integrity)
 from experiments.t0.env.temporal_tasks import make_task
 from experiments.t0.models import make_model
 
@@ -66,15 +68,17 @@ def save_checkpoint(path, model, optimizer, config, env, stage, update, **extra)
 
 
 def collect(model, env, teacher_probability=0., greedy=False, intervention=None,
-            record_states=False):
+            record_states=False, reset_kwargs=None):
     """Rollout to horizon; ``alive`` marks steps before each episode's end.
 
     ``intervention(t, state, observation)`` may rewrite the hidden state or the
     observation *before* the forward pass at step t (used for T-C1..T-C3).
-    Returns column tensors [H, N, ...], a bool mask [H, N], per-step infos and
-    optionally the post-forward hidden states [H, N, hidden].
+    ``reset_kwargs`` is forwarded to ``env.reset`` (e.g. ``delay_override`` for
+    fixed-delay evaluation).  Returns column tensors [H, N, ...], a bool mask
+    [H, N], per-step infos and optionally the post-forward hidden states
+    [H, N, hidden].
     """
-    observation = env.reset()
+    observation = env.reset(**(reset_kwargs or {}))
     state = model.initial_state(env.num_envs, env.device)
     h_steps, n = env.horizon, env.num_envs
     cols = {"obs": [], "actions": [], "logp": [], "values": [], "rewards": [],
@@ -224,6 +228,10 @@ def train(config, artifacts, run_id, parent=None):
     config = copy.deepcopy(config)
     config["source_commit"] = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], text=True).strip()
+    if config.get("task", "interval") == "interval":
+        integrity = validate_split_integrity(config)
+        atomic(directory / "protocol_integrity.json", integrity)
+        require_clean(integrity)
     atomic(directory / "config.json", config)
     status = dict(run_id=run_id, architecture=config["architecture"], seed=seed,
                   status="running", pid=os.getpid(), started_at=time.time())
