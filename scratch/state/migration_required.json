@@ -1,0 +1,142 @@
+{
+  "classification": {
+    "changes": [
+      {
+        "classification": "BREAKING",
+        "component": "model.hash",
+        "kind": "modified",
+        "new": "b5c1fb2efc6d6b4674c2fdcc48ce01b43a3b7c03763c0c3355de0099ee0f8c73",
+        "old": "969bf4405a9d6cc23bdc040437b81483ac248652bb9a676d8fc3a9279edee4cc",
+        "reason": "model weights content changed"
+      }
+    ],
+    "overall": "BREAKING"
+  },
+  "diff": [
+    {
+      "component": "model.hash",
+      "kind": "modified",
+      "new": "b5c1fb2efc6d6b4674c2fdcc48ce01b43a3b7c03763c0c3355de0099ee0f8c73",
+      "old": "969bf4405a9d6cc23bdc040437b81483ac248652bb9a676d8fc3a9279edee4cc"
+    }
+  ],
+  "new_manifest": {
+    "components": {
+      "adapter": {
+        "hash": "8d190893327ee8416bd8ff1f22bf8d3cff32c7b4f143ccbee0fc198255a05f02",
+        "link": null,
+        "present": true
+      },
+      "dependency_lock": {
+        "hash": "e02a26e88d2d8c02581cff7e1bb7def94808105b7d25daaba087986dbbec4860"
+      },
+      "model": {
+        "hash": "b5c1fb2efc6d6b4674c2fdcc48ce01b43a3b7c03763c0c3355de0099ee0f8c73",
+        "link": null,
+        "name": "kami-fake-7b",
+        "revision": "hf-rev-0001"
+      },
+      "operational": {
+        "log_dir": "logs/main",
+        "ui_theme": "dark"
+      },
+      "prompt_template": {
+        "canonical_hash": "899d8015383ead57c7779d4a6621fdff7206c089339f56ad7f02021f0dced703",
+        "hash": "3d9f290b6be3ccd1eaeca148403f3697819ffe3dfdb33ffabb0810c80f7957b3"
+      },
+      "sampling": {
+        "context_length": 4096,
+        "repetition_penalty": 1.05,
+        "seed": 1234,
+        "temperature": 0.7,
+        "top_k": 40,
+        "top_p": 0.9
+      },
+      "system_prompt": {
+        "canonical_hash": "fe361f6de6f77f28a9c1adcaee6d626fac3836f0895bf665b3cd2d3ee258363f",
+        "hash": "dd5e8230f8781e9bc49e34d5f6f601c30c5e109d7bb6eab9d5d8729900b270c8"
+      },
+      "tokenizer": {
+        "hash": "c32339aba930c1e2bfe7dfcd2a3cc45244ea1a06f4936d76d129264306e54582",
+        "link": null,
+        "name": "kami-tok-v1"
+      },
+      "tool_schema": {
+        "hash": "eaf68edb90094f82cf4899559c317e4d25e3a8e0f362788f43395aaf882927ca"
+      },
+      "versions": {
+        "memory_schema": "1.0.0",
+        "runtime": "0.3.1",
+        "tool_schema": "2.1.0"
+      }
+    },
+    "manifest_version": 1
+  },
+  "old_manifest": {
+    "components": {
+      "adapter": {
+        "hash": "8d190893327ee8416bd8ff1f22bf8d3cff32c7b4f143ccbee0fc198255a05f02",
+        "link": null,
+        "present": true
+      },
+      "dependency_lock": {
+        "hash": "e02a26e88d2d8c02581cff7e1bb7def94808105b7d25daaba087986dbbec4860"
+      },
+      "model": {
+        "hash": "969bf4405a9d6cc23bdc040437b81483ac248652bb9a676d8fc3a9279edee4cc",
+        "link": null,
+        "name": "kami-fake-7b",
+        "revision": "hf-rev-0001"
+      },
+      "operational": {
+        "log_dir": "logs/main",
+        "ui_theme": "dark"
+      },
+      "prompt_template": {
+        "canonical_hash": "899d8015383ead57c7779d4a6621fdff7206c089339f56ad7f02021f0dced703",
+        "hash": "3d9f290b6be3ccd1eaeca148403f3697819ffe3dfdb33ffabb0810c80f7957b3"
+      },
+      "sampling": {
+        "context_length": 4096,
+        "repetition_penalty": 1.05,
+        "seed": 1234,
+        "temperature": 0.7,
+        "top_k": 40,
+        "top_p": 0.9
+      },
+      "system_prompt": {
+        "canonical_hash": "fe361f6de6f77f28a9c1adcaee6d626fac3836f0895bf665b3cd2d3ee258363f",
+        "hash": "dd5e8230f8781e9bc49e34d5f6f601c30c5e109d7bb6eab9d5d8729900b270c8"
+      },
+      "tokenizer": {
+        "hash": "c32339aba930c1e2bfe7dfcd2a3cc45244ea1a06f4936d76d129264306e54582",
+        "link": null,
+        "name": "kami-tok-v1"
+      },
+      "tool_schema": {
+        "hash": "eaf68edb90094f82cf4899559c317e4d25e3a8e0f362788f43395aaf882927ca"
+      },
+      "versions": {
+        "memory_schema": "1.0.0",
+        "runtime": "0.3.1",
+        "tool_schema": "2.1.0"
+      }
+    },
+    "manifest_version": 1
+  },
+  "record_type": "fi3-migration-required",
+  "record_version": 1,
+  "recorded": {
+    "config": {
+      "accept_review": false,
+      "tool": "verify"
+    },
+    "git_branch": "exp/fi3-runtime-identity",
+    "git_commit": "329e581d15646ec941bd12c7268ec558ee031664",
+    "git_dirty": true,
+    "python_version": "3.12.11",
+    "runtime_dir": "scratch/rt",
+    "seed": null,
+    "timestamp_utc": "2026-09-11T08:48:51.560632+00:00"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "model": {
+    "name": "kami-fake-7b"
+  },
+  "tokenizer": {
+    "name": "kami-tok-v1"
+  },
+  "sampling": {
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "top_k": 40,
+    "seed": 1234,
+    "repetition_penalty": 1.05,
+    "context_length": 4096
+  },
+  "versions": {
+    "runtime": "0.3.1",
+    "memory_schema": "1.0.0",
+    "tool_schema": "2.1.0"
+  },
+  "operational": {
+    "log_dir": "logs/main",
+    "ui_theme": "dark"
+  }
+}

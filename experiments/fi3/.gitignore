@@ -1,0 +1,6 @@
+# Fi3 generated artifacts — guard state, scratch fixtures, run outputs
+.fi3-state/
+fi3-state/
+scratch/
+*.tmp
+__pycache__/
