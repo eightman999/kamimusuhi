@@ -48,6 +48,7 @@ from __future__ import annotations
 
 from ..genome.organ_ir import attachment_signal, organ_ports
 from ..genome.structure import TOPOLOGY_M1_FBA0_LOOP, analyse
+from .lifetime import lifetime_rules_of
 from .rules import apply_development_rules
 from ..substrate.endpoints import parse_endpoint
 from ..substrate.registry import (adapter_for, default_registry,
@@ -160,6 +161,10 @@ def develop(genome, base_neurons: int | None = None,
         # which development rules ran (M2 §13): the genome's rules are
         # heritable; their effects are this individual's body
         "development": dev["report"],
+        # lifetime plasticity contract (M2 §14-15): the *rules* are
+        # heritable; the state they produce is per-individual runtime
+        # state in LifetimeState — never in the genome, never inherited
+        "plasticity": {"rules": lifetime_rules_of(genome)},
         "params": params,
         "ancestry_fraction": ancestry,
         "structural_ancestry_fraction": ancestry,
