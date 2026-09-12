@@ -40,7 +40,7 @@ A spike emitted at step ``t`` arrives at ``t + D`` with
 ``D = round(tDelay/dt)`` — 18 steps = 1.8 ms at the reference
 parameters. M0 propagated the *previous* step's spikes into a
 ``steps_delay + 1`` slot buffer, which delivered them at ``t + D + 2``
-(2.0 ms); that off-by-two is fixed here and pinned by
+(2.0 ms); that off-by-two has been fixed since
 ``simulator_semantics_version = 2``, so M0 recordings are not
 bit-comparable and are refused by replay rather than re-run.
 
@@ -55,10 +55,13 @@ Poisson drive
 ``set_inputs`` keeps only the neurons whose rate is non-zero
 (``self._drive_idx``). M0 drew ``N`` uniforms per lane per step and
 compared them against a vector that was zero for 99% of entries; M1 draws
-one uniform per *driven* neuron. The stimulus is applied with the same
-``scalePoisson`` to the same neurons, but the random stream is consumed
-differently, so M1 trajectories are not comparable to M0 ones — as with
-the topology change, this is a new ``scientific_config_hash``.
+one uniform per *driven* neuron. Each input event adds
+``wScale * scalePoisson`` (68.75 mV) to ``v`` — the reference model's
+PoissonInput weight ``w_syn * f_poi``. Semantics versions <= 2 applied
+``scalePoisson`` alone (a 250 mV kick); the random stream is also
+consumed differently than M0, so M1 trajectories are not comparable to
+M0 ones — as with the topology change, this is a new
+``scientific_config_hash``.
 
 Data
 ----
@@ -606,8 +609,13 @@ class TorchBackend(FbaBackend):
         if self._drive_idx is not None:
             u = torch.stack([torch.rand((self._drive_idx.numel(),), device=d,
                                         generator=g) for g in self._gens])
-            self.v[:, self._drive_idx] += \
-                (u < self._drive_p[None, :]).to(self.v.dtype) * p["scalePoisson"]
+            # stimulus weight is wScale * scalePoisson (0.275*250 = 68.75
+            # mV), matching the reference PoissonInput weight w_syn*f_poi.
+            # Semantics <= 2 applied scalePoisson alone as a raw 250 mV
+            # kick — a porting slip, fixed under semantics version 3.
+            stim = (u < self._drive_p[None, :]).to(self.v.dtype) \
+                * (p["wScale"] * p["scalePoisson"])
+            self.v[:, self._drive_idx] += stim
         spikes = ((self.v >= p["vThr"]) & (self.refrac >= p["tRefrac"])).float()
         if self._force is not None:
             spikes[:, self._force] = 1.0

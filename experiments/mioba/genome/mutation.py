@@ -39,19 +39,19 @@ import math
 import random
 from dataclasses import asdict, dataclass, field
 
-from .schema import (ArtificialOrgan, Attachment, Genome, OrganProvenance,
-                     ParameterMutation)
+from .schema import (SCHEMA_VERSION, ArtificialOrgan, Attachment, Genome,
+                     OrganProvenance, ParameterMutation)
 from .structure import analyse, is_fba0
 
 # Parameters a mutation may scale (Shiu et al. 2024 LIF names).
 MUTABLE_PARAMS = ("wScale", "tauMem", "tauSyn", "vThr", "tRefrac")
+
+# M1's FBA0 region constants — kept for compatibility; the live lists
+# now come from the substrate's port map (see _endpoints /
+# _wiring_ports), which returns exactly these names for an fba0
+# substrate.
 FBA0_REGIONS = ("medulla", "lobula", "lobula_plate", "central_complex",
                 "mushroom_body", "optic_lobe", "antennal_lobe")
-
-# Regions an organ is wired *from* and *to* by default. Keeping the two
-# lists distinct biases new circuits towards sitting on a sensory ->
-# motor-ish path rather than looping inside one region, which is what
-# makes them able to matter (M1 §13).
 UPSTREAM_REGIONS = ("medulla", "lobula", "lobula_plate", "antennal_lobe",
                     "optic_lobe")
 DOWNSTREAM_REGIONS = ("central_complex", "mushroom_body", "lobula_plate")
@@ -62,6 +62,16 @@ STRUCTURAL_OPERATORS = ("NEW_ORGAN", "GROW_ORGAN", "DUPLICATE_ORGAN",
 PRUNE_OPERATORS = ("PRUNE_EDGE", "PRUNE_ORGAN", "DISABLE_ORGAN")
 PARAMETER_OPERATORS = ("SCALE_PARAMETER",)
 ALL_OPERATORS = PARAMETER_OPERATORS + STRUCTURAL_OPERATORS + PRUNE_OPERATORS
+
+# M3 scaffolding: substrate-level structural operators. They are
+# implemented and selectable *explicitly* (apply_operator accepts them)
+# but are deliberately NOT in ALL_OPERATORS — the M2 selection pool
+# never draws them, so they cannot change the M1 mutation distribution
+# or appear in an M2 experiment that did not ask for them.
+SUBSTRATE_OPERATORS = ("DISABLE_SUBSTRATE_REGION",
+                       "BYPASS_SUBSTRATE_REGION",
+                       "PRUNE_SUBSTRATE_REGION",
+                       "REPLACE_SUBSTRATE_REGION")
 
 DEFAULTS = {
     "count": {"base": 1, "poisson_lambda": 1.5, "cap": 4},
@@ -229,13 +239,53 @@ def _attach(genome: Genome, rng: random.Random, prov: OrganProvenance,
     return att
 
 
-def _endpoints(genome: Genome, rng: random.Random, exclude: str | None = None):
-    """Every endpoint an attachment may name: FBA0 regions plus live
-    organs (minus ``exclude``)."""
-    names = [f"fba0:{r}" for r in FBA0_REGIONS]
+def _substrate_adapters(genome: Genome):
+    """The genome's enabled substrate adapters, in declared order."""
+    from ..substrate.registry import (adapter_for, default_registry,
+                                      substrate_genes_of)
+    reg = default_registry()
+    out = []
+    for gene in substrate_genes_of(genome):
+        try:
+            out.append(adapter_for(gene, reg))
+        except KeyError:
+            continue          # an unknown substrate has no ports here
+    return out
+
+
+def _endpoints(genome: Genome, exclude: str | None = None):
+    """Every endpoint an attachment may name: the enabled substrates'
+    ports plus live organs (minus ``exclude``). For an FBA0 genome this
+    is exactly the historical ``fba0:<region>`` list, in the same
+    order."""
+    names: list[str] = []
+    for adapter in _substrate_adapters(genome):
+        names += [p.endpoint for p in adapter.ports()]
     names += [o.organ_id for o in _live_organs(genome)
               if o.organ_id != exclude]
     return names
+
+
+def _wiring_ports(genome: Genome) -> tuple[list[str], list[str]]:
+    """(upstream endpoints, downstream endpoints) for wiring a new organ
+    on a source->sink path (M1 §13). The upstream/downstream split is a
+    property of the substrate (``port_groups``); a substrate without one
+    offers all its ports on both sides. The primary substrate is used —
+    deterministic, and for FBA0 exactly the historical region lists."""
+    adapters = _substrate_adapters(genome)
+    if not adapters:
+        return [], []
+    adapter = adapters[0]
+    by_name = {p.name: p.endpoint for p in adapter.ports()}
+    groups = adapter.port_groups() or {}
+    up = [by_name[n] for n in groups.get("upstream", []) if n in by_name]
+    down = [by_name[n] for n in groups.get("downstream", [])
+          if n in by_name]
+    if not up:
+        up = list(by_name.values())
+    if not down:
+        down = list(by_name.values())
+    return up, down
 
 
 # ------------------------------------------------------------- operators
@@ -268,8 +318,15 @@ def _op_new_organ(genome, rng, cfg, prov, mid) -> MutationRecord:
                             size=size, params={}, provenance=prov)
     genome.artificial_organs.append(organ)
     # §13: wired in and out at birth, on an upstream -> downstream path
-    src = f"fba0:{rng.choice(UPSTREAM_REGIONS)}"
-    dst = f"fba0:{rng.choice(DOWNSTREAM_REGIONS)}"
+    # of the organism's primary substrate (fba0 regions for M1 genomes)
+    upstream, downstream = _wiring_ports(genome)
+    if not upstream or not downstream:
+        genome.artificial_organs.pop()
+        return MutationRecord(mid, "structural", "NEW_ORGAN",
+                              OUTCOME_NO_TARGET, op="add",
+                              detail={"reason": "no_substrate_ports"})
+    src = rng.choice(upstream)
+    dst = rng.choice(downstream)
     a_in = _attach(genome, rng, prov, src, organ.organ_id, cfg)
     a_out = _attach(genome, rng, prov, organ.organ_id, dst, cfg)
     return MutationRecord(mid, "structural", "NEW_ORGAN", OUTCOME_APPLIED,
@@ -352,7 +409,7 @@ def _op_add_attachment(genome, rng, cfg, prov, mid) -> MutationRecord:
         return MutationRecord(mid, "structural", "ADD_ATTACHMENT",
                               OUTCOME_AT_LIMIT, op="add", detail={"limit": hit})
     organ = rng.choice(_live_organs(genome))
-    other = rng.choice(_endpoints(genome, rng, exclude=organ.organ_id))
+    other = rng.choice(_endpoints(genome, exclude=organ.organ_id))
     if rng.random() < 0.5:
         src, tgt = other, organ.organ_id
     else:
@@ -373,7 +430,7 @@ def _op_rewire_attachment(genome, rng, cfg, prov, mid) -> MutationRecord:
     before = {"source": att.source, "target": att.target}
     move_source = rng.random() < 0.5
     fixed = att.target if move_source else att.source
-    choices = [e for e in _endpoints(genome, rng) if e != fixed]
+    choices = [e for e in _endpoints(genome) if e != fixed]
     if not choices:
         return MutationRecord(mid, "structural", "REWIRE_ATTACHMENT",
                               OUTCOME_NO_TARGET, target=att.attachment_id,
@@ -454,6 +511,65 @@ def _op_disable_organ(genome, rng, cfg, prov, mid) -> MutationRecord:
                           detail={"size": organ.size})
 
 
+# ----------------------------------------------------- M3 scaffolding
+def _substrate_region_targets(genome: Genome) -> list[tuple]:
+    """(gene, region) pairs a substrate-region operator may act on."""
+    out = []
+    adapters = {a.substrate_id: a for a in _substrate_adapters(genome)}
+    for gene in getattr(genome, "substrates", []) or []:
+        if not getattr(gene, "enabled", True):
+            continue
+        adapter = adapters.get(gene.substrate_id)
+        if adapter is None:
+            continue
+        for r in adapter.regions():
+            out.append((gene, r))
+    return out
+
+
+def _op_substrate_region(genome, rng, cfg, prov, mid,
+                         operator: str) -> MutationRecord:
+    """Shared handler for the staged M3 substrate operators: they record
+    an intent on the substrate gene's params (a heritable, hashed fact)
+    without entering the M2 selection pool. ``DISABLE_SUBSTRATE_REGION``
+    is real today — the adapter drops the port, so downstream endpoints
+    become dangling; the others are recorded markers for the M3
+    substrate-replacement work."""
+    targets = _substrate_region_targets(genome)
+    if not targets:
+        return MutationRecord(mid, "structural", operator,
+                              OUTCOME_NO_TARGET, op="substrate",
+                              detail={"reason": "no_substrate_regions"})
+    gene, region = targets[rng.randrange(len(targets))]
+    key = {"DISABLE_SUBSTRATE_REGION": "disabled_regions",
+           "BYPASS_SUBSTRATE_REGION": "bypassed_regions",
+           "PRUNE_SUBSTRATE_REGION": "pruned_regions",
+           "REPLACE_SUBSTRATE_REGION": "replaced_regions"}[operator]
+    marked = gene.params.setdefault(key, [])
+    if region in marked:
+        return MutationRecord(mid, "structural", operator,
+                              OUTCOME_NO_TARGET, op="substrate",
+                              target=f"{gene.substrate_id}:{region}",
+                              detail={"reason": "already_marked"})
+    marked.append(region)
+    return MutationRecord(mid, "structural", operator, OUTCOME_APPLIED,
+                          op="substrate",
+                          target=f"{gene.substrate_id}:{region}",
+                          scope=f"substrate:{gene.substrate_id}",
+                          detail={"region": region, "marked": key,
+                                  "consumed": operator ==
+                                  "DISABLE_SUBSTRATE_REGION"})
+
+
+def _staged(op_name):
+    def fn(genome, rng, cfg, prov, mid):
+        return _op_substrate_region(genome, rng, cfg, prov, mid, op_name)
+    return fn
+
+
+_STAGED_OPERATORS = {name: _staged(name) for name in SUBSTRATE_OPERATORS}
+
+
 _OPERATORS = {
     "SCALE_PARAMETER": _op_scale_parameter,
     "NEW_ORGAN": _op_new_organ,
@@ -471,8 +587,11 @@ _OPERATORS = {
 def apply_operator(genome: Genome, rng: random.Random, operator: str,
                    cfg: dict, prov: OrganProvenance,
                    mutation_id: str | None = None) -> MutationRecord:
-    """Apply one named operator in place. Public for the §10 sweep."""
-    fn = _OPERATORS.get(operator)
+    """Apply one named operator in place. Public for the §10 sweep.
+
+    Staged M3 substrate operators are reachable here but are never drawn
+    by ``choose_operator`` — they are not in any pool."""
+    fn = _OPERATORS.get(operator) or _STAGED_OPERATORS.get(operator)
     if fn is None:
         raise ValueError(f"unknown mutation operator {operator!r}")
     return fn(genome, rng, cfg, prov, mutation_id or _mid(rng))
@@ -495,6 +614,10 @@ def mutate(parent: Genome, rng: random.Random, birth_index: int,
     child.generation = generation
     child.birth_index = birth_index
     child.random_seed = rng.randrange(2**31)
+    # a child is a new record authored under the current schema — it does
+    # not inherit the parent's migration provenance
+    child.source_schema_version = None
+    child.schema_version = SCHEMA_VERSION
 
     n = mutation_count(rng, cfg)
     retries = int(cfg.get("retry_no_target", 0) or 0)
@@ -537,6 +660,7 @@ def structural_summary(genome: Genome,
 
 __all__ = ["ALL_OPERATORS", "DEFAULTS", "FBA0_REGIONS", "MUTABLE_PARAMS",
            "MutationRecord", "PARAMETER_OPERATORS", "PRUNE_OPERATORS",
-           "STRUCTURAL_OPERATORS", "apply_operator", "choose_operator",
-           "is_fba0", "merged_config", "mutate", "mutate_child",
+           "STRUCTURAL_OPERATORS", "SUBSTRATE_OPERATORS",
+           "apply_operator", "choose_operator", "is_fba0",
+           "merged_config", "mutate", "mutate_child",
            "mutation_count", "structural_summary"]

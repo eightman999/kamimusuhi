@@ -202,6 +202,31 @@ def test_scientific_vs_runtime_hash_split(smoke_config):
     assert scientific_config_hash(moved) == scientific_config_hash(base)
 
 
+def test_departure_battery_settings_are_scientific(smoke_config):
+    """``functional_departure`` decides which lesion conditions run and
+    feeds ``departure_resistance`` (a selection component): lesion
+    semantics are part of the experiment's scientific identity. Only
+    the battery's lane chunking is operational — the replicate seeds
+    are fixed, exactly as for the main evaluation."""
+    base = copy.deepcopy(smoke_config)
+    dep = copy.deepcopy(base)
+    dep["functional_departure"] = {"enabled": True,
+                                   "severities": [0.1, 0.5]}
+    assert scientific_config_hash(dep) != scientific_config_hash(base)
+    for key, val in (("severities", [0.25]), ("substrate_id", "other"),
+                     ("duration_ms", 50.0), ("replicates", 2)):
+        other = copy.deepcopy(dep)
+        other["functional_departure"][key] = val
+        assert scientific_config_hash(other) != \
+            scientific_config_hash(dep), key
+    batched = copy.deepcopy(dep)
+    batched["functional_departure"]["execution_batch"] = 2
+    # excluded like fba.data_dir: a pure scheduling knob leaves no trace
+    # in either hash
+    assert scientific_config_hash(batched) == scientific_config_hash(dep)
+    assert runtime_config_hash(batched) == runtime_config_hash(dep)
+
+
 def test_resume_allows_runtime_change_blocks_scientific(tmp_path,
                                                         smoke_config):
     svc = MiobaService(copy.deepcopy(smoke_config), tmp_path / "runs")

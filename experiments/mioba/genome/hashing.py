@@ -44,9 +44,14 @@ def config_hash(config: dict) -> str:
 # id must not silently continue). Everything else is operational: GUI,
 # heartbeat/checkpoint intervals, stop timeout, MIE collectors, traces, ...
 SCIENTIFIC_CONFIG_KEYS = ("population", "evolution", "evaluation", "fba",
-                          "env", "fitness", "environment", "dataset")
-# fba.data_dir is a filesystem path, not a research identity
-_SCIENTIFIC_EXCLUDE = {("fba", "data_dir")}
+                          "env", "fitness", "environment", "dataset",
+                          "functional_departure")
+# fba.data_dir is a filesystem path, not a research identity; the
+# departure battery's execution_batch is lane scheduling — the replicate
+# seeds are fixed, so it changes throughput, never a result (same rule as
+# worker.execution_batch)
+_SCIENTIFIC_EXCLUDE = {("fba", "data_dir"),
+                      ("functional_departure", "execution_batch")}
 
 
 def split_config(config: dict) -> tuple[dict, dict]:

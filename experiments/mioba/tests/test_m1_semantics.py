@@ -54,7 +54,7 @@ def test_torch_backend_declares_m1_semantics():
 
     b = TorchBackend(synthetic=True, synthetic_neurons=100)
     assert b.semantics() == {
-        "simulator_semantics_version": 2,
+        "simulator_semantics_version": 3,
         "rng_protocol_version": 2,
         "propagation_backend": "event_csc",
     }
