@@ -167,12 +167,14 @@ differences are informational warnings.
 **Config hashes.** `config_hash` covers the whole config.
 `scientific_config_hash` covers the result-affecting sections
 (`population`, `evolution`, `evaluation`, `fba` minus `data_dir`, `env`,
-`fitness`, `environment`, `dataset`); `runtime_config_hash` covers the
+`fitness`, `environment`, `dataset`, `functional_departure` minus
+`execution_batch`); `runtime_config_hash` covers the
 rest (GUI, heartbeat/checkpoint intervals, `worker.execution_batch`,
 `worker.vram_headroom`, MIE, ...). On `--resume` a runtime change is
 recorded (`runtime_config_changed`) and allowed; a scientific change
 (backend, environment, mutation parameters, population, FBA parameters,
-dataset, duration, fitness, **replicates**) raises
+dataset, duration, fitness, **replicates**, departure-battery settings)
+raises
 `ScientificConfigMismatch` and requires a **new experiment ID**. There is
 no override flag.
 
