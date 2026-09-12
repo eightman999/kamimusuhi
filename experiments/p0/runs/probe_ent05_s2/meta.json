@@ -71,7 +71,7 @@
   "device": "cpu",
   "total_steps": 300000,
   "wall_time_s": 106.2,
-  "ckpt_best": "experiments/p0/runs/probe_ent05_s2/ckpt_best.pt",
-  "ckpt_final": "experiments/p0/runs/probe_ent05_s2/ckpt_final.pt",
+  "ckpt_best": "ckpt_best.pt",
+  "ckpt_final": "ckpt_final.pt",
   "best_eval_reward": -1.6933333333333345
 }

@@ -295,8 +295,8 @@ def train(cfg: Config, run_dir: Path, budget_steps: Optional[int] = None) -> Dic
             "predictor": dataclasses.asdict(cfg.predictor)},
         "device": device, "total_steps": int(total_steps),
         "wall_time_s": round(time.time() - t0, 1),
-        "ckpt_best": str(run_dir / "ckpt_best.pt"),
-        "ckpt_final": str(run_dir / "ckpt_final.pt"),
+        "ckpt_best": "ckpt_best.pt",
+        "ckpt_final": "ckpt_final.pt",
         "best_eval_reward": best_eval,
     }
     (run_dir / "meta.json").write_text(json.dumps(meta, indent=2))

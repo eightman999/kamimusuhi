@@ -67,7 +67,7 @@ configs/base_bonly.yaml).
 ## Reproduce
 
 ```bash
-PY=/Users/eightman/dev/sandbox/kamimusuhi/.venv/bin/python
+PY=.venv/bin/python   # python 3.12+ with torch, numpy, pyyaml, matplotlib
 cd <worktree root>
 # smoke (<60 s)
 P0_SMOKE=1 $PY -m experiments.p0.train --config experiments/p0/configs/base.yaml

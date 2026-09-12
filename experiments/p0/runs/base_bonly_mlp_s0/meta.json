@@ -71,7 +71,7 @@
   "device": "cpu",
   "total_steps": 300000,
   "wall_time_s": 96.6,
-  "ckpt_best": "/Users/eightman/dev/sandbox/kamimusuhi-p0/experiments/p0/runs/base_bonly_mlp_s0/ckpt_best.pt",
-  "ckpt_final": "/Users/eightman/dev/sandbox/kamimusuhi-p0/experiments/p0/runs/base_bonly_mlp_s0/ckpt_final.pt",
+  "ckpt_best": "ckpt_best.pt",
+  "ckpt_final": "ckpt_final.pt",
   "best_eval_reward": -0.8833333333333339
 }
