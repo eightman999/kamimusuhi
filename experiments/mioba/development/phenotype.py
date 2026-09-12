@@ -46,6 +46,7 @@ synthetic mode); defaults to the substrate's own ``neuron_count()``
 """
 from __future__ import annotations
 
+from ..genome.organ_ir import attachment_signal, organ_ports
 from ..genome.structure import TOPOLOGY_M1_FBA0_LOOP, analyse
 from ..substrate.endpoints import parse_endpoint
 from ..substrate.registry import (adapter_for, default_registry,
@@ -120,14 +121,20 @@ def develop(genome, base_neurons: int | None = None,
         "genome_id": genome.genome_id,
         "n_extra_neurons": n_extra,
         "artificial_organs": [
+            # the organ IR the backends simulate: lif_cluster is the
+            # backward-compatible special case; ports/internal/state
+            # carry the M2 IR when declared (schema v4 fields)
             {"organ_id": o.organ_id, "kind": o.kind, "size": o.size,
-             "params": o.params}
+             "params": o.params, "ports": organ_ports(o),
+             "internal": dict(getattr(o, "internal", None) or {}),
+             "state": dict(getattr(o, "state", None) or {})}
             for o in organs
         ],
         "attachments": [
             {"attachment_id": a.attachment_id, "source": a.source,
              "target": a.target, "direction": a.direction,
-             "weight_scale": a.weight_scale}
+             "weight_scale": a.weight_scale,
+             "signal": attachment_signal(a)}
             for a in attachments
         ],
         # where each organ sits in the graph (M1 §4 / M2 generic):
