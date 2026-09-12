@@ -1,161 +1,189 @@
 # MIOA experimental schema (legacy `mioba` implementation)
 
-This document describes the schema currently implemented under
-`experiments/mioba/`. The implementation name **MIOBA** is retained for
-reproducibility, but the organism-level architecture is now called
-**MIOA — Machine Information Organism Architecture**.
+This document describes the schema implemented under `experiments/mioba/`.
+The implementation name **MIOBA** is retained for reproducibility, while the
+organism-level architecture is **MIOA — Machine Information Organism
+Architecture**.
 
-The current schema represents the **ancestral neural-substrate phase** of MIOA:
-an immutable FBA0 reference plus artificial organs, attachments and parameter
-mutations. It does not yet claim to represent the complete future organism
-model (sensory organs, effectors, habitat interfaces or physical replacement of
-FBA0).
+The current genome schema is **v4**. M2 made the ancestral neural substrate an
+explicit, registry-resolved part of the genome and added typed organ IR;
+M3 added `reflex0` as a deliberately small non-FBA substrate to prove that the
+abstraction works end to end. FBA0 remains the M-series founder condition and
+the compatibility default for historical records; it is not the definition of
+the organism and is not required to remain its permanent central substrate.
+
+This schema still does not claim to represent the complete future MIOA model.
+Rich sensory/effectors, habitat interfaces, multi-substrate evolution and
+physical substrate replacement remain later experimental work.
 
 ## Terminology and compatibility
 
 - **MIOA**: whole organism architecture.
 - **MIO**: one organism / individual.
-- **FBA0**: current ancestral neural substrate, not the organism itself.
+- **FBA0**: ancestral FlyWire-derived substrate used to found the M-series.
+- **reflex0**: minimal 48-neuron non-FBA sensor→integrator→motor substrate used
+  by M3 to exercise the generic substrate boundary.
 - **MIOBA**: historical package / CLI / environment-variable / experiment name.
 - Existing paths, DB fields, experiment IDs and recorded M0/M1 artifacts are
   not renamed in place.
 
-## Genome JSON (`schema_version = 1`)
+## Genome JSON (`schema_version = 4`)
 
 | field | type | meaning |
 |---|---|---|
-| `genome_id` | str | content hash `b2b:<blake2b-32>`, filled by `finalize()` |
-| `schema_version` | int | currently 1 |
-| `parent_ids` | list[str] | parent genome_ids (genome lineage, not canonical identity) |
-| `species_base` | str | currently `"fba0"`; founder substrate identifier |
+| `genome_id` | str | content hash `b2b:<blake2b-32>` for native records; stored historical IDs are preserved verbatim on migration |
+| `schema_version` | int | 4; versions 1–3 are historical M0/M1 records without explicit substrate genes |
+| `parent_ids` | list[str] | parent genome IDs; genome lineage, not canonical Kamimusuhi identity |
+| `species_base` | str | historical founder label, currently `"fba0"` |
 | `generation` / `birth_index` | int | evolutionary position |
 | `random_seed` | int | per-genome seed used by evaluation jobs |
-| `ancestral_base` | str | FBA0 reference name (`flywire-v783-shiu-lif`) |
-| `artificial_organs` | list[ArtificialOrgan] | current neural/artificial organ representation: `{organ_id, kind, size, params, provenance}` |
-| `attachments` | list[Attachment] | `{attachment_id, source, target, weight_scale, provenance}`; source `"fba0:<region>"` or an organ_id |
-| `parameter_mutations` | list[ParameterMutation] | `{mutation_id, path, op(set|scale|add), value, scope}`; scope `global`/`region:<x>`/`organ:<id>` |
-| `development_rules` / `plasticity_rules` | list[dict] | reserved |
+| `ancestral_base` | str | ancestral reference name (`flywire-v783-shiu-lif`) |
+| `substrates` | list[SubstrateGene] | `{substrate_id, kind, enabled, params}`; registered implementations currently include `fba0` and `reflex0` |
+| `artificial_organs` | list[ArtificialOrgan] | `{organ_id, kind, size, params, provenance, enabled, ports, internal, state}`; `ports` / `internal` / `state` are the M2 organ IR fields |
+| `attachments` | list[Attachment] | `{attachment_id, source, target, weight_scale, provenance, enabled, signal}`; endpoints are typed and `signal` records the port discipline |
+| `parameter_mutations` | list[ParameterMutation] | `{mutation_id, path, op(set|scale|add), value, scope}` |
+| `development_rules` | list[dict] | deterministic birth-stage rules applied by `develop()` |
+| `plasticity_rules` | list[dict] | heritable rules whose runtime effects live in `LifetimeState`, not in the genome |
+| `source_schema_version` | int \| null | authored schema version when a v1–v3 record is migrated; null for native v4 |
 | `created_at` | str | ISO8601 UTC |
 
-`OrganProvenance`: `{origin: "fba0"|"artificial", parent_gene,
-birth_mutation_id, ancestry}`.
+`OrganProvenance` may name `fba0`, `artificial`, `substrate` or `development`
+origins and keeps the relevant parent gene / birth mutation / ancestry fields.
 
-### What schema v1 means
+### Substrate semantics
 
-Schema v1 should be read as:
+Substrates are resolved through `substrate/registry.py` and the
+`SubstrateProtocol`; generic development code does not import the FBA0
+implementation.
 
-```text
-MIOA individual (current experimental subset)
-├─ immutable ancestral substrate: FBA0
-├─ artificial neural organs
-├─ attachments
-└─ parameter mutations
-```
+The two no-substrate-looking cases are intentionally different:
 
-It should **not** be interpreted as a permanent statement that every MIOA must
-have FBA0 or a single brain-like center. `species_base="fba0"` records the
-founder condition of the present M-series.
+- a legacy document with no substrate records (and the compatibility empty-list
+  form used by programmatic genomes) means the implicit FBA0 founder;
+- a native v4 genome that declares substrate genes but has every one
+  `enabled: false` is **substrate-less**. `develop()` raises
+  `NoEnabledSubstrate`; it does not resurrect FBA0.
 
-### Future organ generalization
+Duplicate enabled `substrate_id` values are rejected because the developed
+phenotype keys substrate neuron populations by ID.
 
-A later schema revision may generalize `artificial_organs` into explicit organ
-roles such as:
+M3's `reflex0` exists as an abstraction proof, not a biological claim. Its
+ports and lesion masks are supplied by its adapter and it passes the same
+registry → develop → evaluate → lesion/departure → mutation → reproduction →
+replay pipeline as the founder substrate.
 
-- sensory / transducer organs;
-- processing / recurrent organs;
-- memory / persistent-state organs;
-- machine-interoceptive organs;
-- action / effector organs;
-- communication / other-organism interfaces.
+### Endpoint and organ IR
 
-This is a design direction, **not implemented schema**. Schema v1 must not be
-silently reinterpreted or extended without a schema-version change.
+Attachment endpoints may use:
 
-For sensory organs, architecture-level semantics should stay general:
+- explicit substrate ports: `substrate:<id>/<port>`;
+- legacy FBA0 endpoint spelling: `fba0:<region>`;
+- habitat endpoints: `env:`, `sensor:` and `effector:`;
+- organ IDs / organ ports as defined by the organ IR.
 
-```text
-information source → transducer → organ encoding/dynamics → attachments
-```
+`Attachment.signal` records the signal discipline; historical M1 edges are
+`event`. Organ ports are typed, allowing later substrates or organs to expose
+other disciplines such as the `continuous` drive input used by `reflex0`.
 
-A camera-backed spatial organ and a microphone-backed resonance organ are early
-possible instances. Human labels such as “eye” and “ear” are presentation or
-phenotype descriptions, not privileged schema primitives. Machine-native
-sources such as network timing, filesystem events or compute state can use the
-same organ abstraction in later experiments.
+The genome is the recipe, not the runtime body. Birth-stage development rules
+are deterministic and heritable. Lifetime plasticity effects live in
+per-individual `LifetimeState`, are not hashed into the genome, and are not
+written back into the parent's genome when children are produced.
 
-### Habitat boundary
+### Migration rule
 
-The planned display-inside sandbox is an **environment/habitat**, not a hidden
-extension of the genome. A genome may encode how an organ consumes an explicit
-habitat channel, but the experiment must separately record which external
-source that channel was connected to.
+Loading a v1–v3 document migrates it to the v4 in-memory representation by
+injecting the implicit ancestral FBA0 substrate gene and setting
+`source_schema_version` to the authored version. The stored `genome_id` is
+**never recomputed** during migration. Historical lineage identity therefore
+remains the identity recorded when that genome was born.
 
-Scientific inputs must therefore remain distinguishable from operational host
-telemetry. A GPU temperature seen by the Observatory is not automatically an
-organism sense; exposing it to the organism requires an explicit experiment
-interface and provenance/trace path.
+Children created from migrated parents are native v4 records.
 
 ### Content hash rule
 
-`genome_hash(genome)` = `"b2b:" + blake2b(canonical_json(genome without
-genome_id, created_at), digest_size=32)`. Canonical JSON = sorted keys,
-compact separators, `ensure_ascii`. `hashlib.blake2b` (stdlib) is used so
-the hash is deterministic across processes; the `b2b:` prefix is a
-version tag allowing a later BLAKE3 (`b3:`) migration without ambiguity.
+`genome_hash(genome)` is `"b2b:" + blake2b(canonical_json(genome without
+genome_id, created_at), digest_size=32)`. Canonical JSON uses sorted keys,
+compact separators and `ensure_ascii`; `hashlib.blake2b` is used for stable
+cross-process behaviour. The `b2b:` prefix is an algorithm/version tag.
 
-The MIOA terminology change does not alter this hash rule and must not change
+The MIOA terminology change does not alter this rule and must not change
 existing genome IDs.
 
-## SQLite tables (`lineage.sqlite`, WAL, foreign keys ON)
+## Development and substrate operators
 
-All tables carry `experiment_id` unless noted. `schema_version(version)`
-records the layout version.
+M2 stages substrate-level operators
+`DISABLE/BYPASS/PRUNE/REPLACE_SUBSTRATE_REGION`. They are callable through the
+operator application path but remain absent from every normal mutation
+selection pool. M3 exercises their contracts but does not turn substrate
+birth/death or physical replacement on as an evolutionary mechanism.
 
-| table | purpose / columns |
+A genome-disabled substrate port is treated as dangling by development and
+structure analysis. Malformed or unknown substrate references fail loudly
+rather than silently falling back to FBA0.
+
+## Functional departure records
+
+`m2/departure.py` measures causal dependence under matched seeds using the
+intact, sham, founder/reference, organ-ablation and graded substrate-lesion
+conditions. Lesion randomness uses its own seed stream. Raw and normalized
+metrics are stored under the evaluation summary; the scientific configuration
+hash includes functional-departure configuration while execution batching
+remains runtime scheduling.
+
+The schema distinguishes:
+
+1. **functional departure** — successful behaviour becomes less dependent on
+   the ancestral substrate while remaining viable;
+2. **structural replacement** — a later experiment actually removes, bypasses
+   or replaces ancestral structure.
+
+M2/M3 establish the machinery and the second-substrate proof. They do not by
+themselves establish long-run evolutionary departure from FBA0.
+
+## Future organ and habitat generalization
+
+M2's typed organ IR is deliberately more general than the original neural-only
+representation, but the stored field remains `artificial_organs` for
+compatibility. Later revisions may make sensory/transducer, processing,
+memory, machine-interoceptive, action/effector and communication roles more
+explicit.
+
+The habitat is not hidden host state. A display-space sandbox, camera,
+microphone, filesystem, network stream or machine-native telemetry source only
+becomes part of an experiment when connected through an explicit, recorded
+interface. Operational worker telemetry is not automatically an organism
+sense.
+
+## SQLite lineage store
+
+`lineage.sqlite` remains the durable experimental lineage/evaluation store.
+Core tables include:
+
+| table | purpose |
 |---|---|
-| `experiments` | one row per experiment: `experiment_id PK, created_at, config_json, config_hash, git_commit, status (created|running|paused|stopping|stopped), rng_state_json, counters_json` |
-| `genomes` | `genome_id PK, parent_ids_json, species_base, generation, birth_index, random_seed, genome_json, content_hash, created_at` |
-| `parents` | edges `child_id + parent_id` (composite PK) |
-| `births` | `birth_id PK, genome_id, birth_index, generation, mutation_ids_json, created_at, kind: initial|mutation|import` |
-| `mutations` | `mutation_id PK, genome_id, kind, path, op, value, scope, provenance_json` |
-| `clades` | `clade_id PK, name, founder_genome_id, created_at`; `genome_clades(genome_id, clade_id)` membership. Current rule: the genome in which the first artificial organ appears founds a new clade; descendants inherit the parent's clade unless they found a new one. Root clade: `fba0-root`. |
-| `evaluation_jobs` | `job_id PK, genome_id, environment_id, seed, evaluation_tier, backend, duration_ms, requested_traces_json, status (QUEUED|RUNNING|SUCCEEDED|FAILED|CANCELLED|UNKNOWN), priority, created_at, claimed_at, claimed_by_worker, finished_at, attempt, last_error` |
-| `evaluations` | `evaluation_id PK, job_id, genome_id, worker_id, backend, seed, batch_size, fitness (placeholder REAL), summary_json, runtime_info_json, config_hash, genome_hash, git_commit, started_at, finished_at, trace_path NULL` |
-| `worker_runs` | `worker_run_id PK, worker_id, hostname, gpu_json, runtime_info_json, bench_json, started_at, last_heartbeat_at, status online|offline|lost, completed_jobs, failed_jobs, current_job_id, batch_size` |
-| `worker_heartbeats` | `worker_id, at, temperature_c, utilization_pct, vram_used_mb, vram_total_mb, current_job_id` — pruned to last 24h |
-| `checkpoints` | `checkpoint_id PK, created_at, reason manual|periodic|stop, manifest_json, path` |
-| `experiment_events` | `event_id PK autoincrement, at, type (plain extensible string), severity info|warn|error, payload_json, source` |
-| `telemetry_samples` | `id PK, at, source, domain, signal_type, value, normalized_value, delta, confidence, metadata_json` |
+| `experiments` | experiment configuration, hashes, status, RNG/counters |
+| `genomes` / `parents` / `births` / `mutations` | genome records and ancestry |
+| `clades` / `genome_clades` | experimental clade membership; historical root remains `fba0-root` |
+| `evaluation_jobs` | queued/running/terminal evaluation work and claim metadata |
+| `evaluations` | results, summaries, runtime identity, hashes and optional trace path |
+| `worker_runs` / `worker_heartbeats` | execution-lane and heartbeat records |
+| `checkpoints` | resumable experiment checkpoints |
+| `experiment_events` | extensible experiment event log |
+| `telemetry_samples` | operational MIE telemetry samples |
 
-## Lineage semantics
+The DB's migration/versioning machinery is separate from the genome JSON
+`schema_version`; do not infer one version number from the other.
 
-Genome lineage records the evolutionary history of the experimental organism.
-It remains distinct from Kamimusuhi canonical identity / continuity. A later
-MIOA individual may change its neural substrate substantially or distribute
-computation across many organs without that implying any automatic change to
-Kamimusuhi identity semantics.
+## Lineage and identity boundary
 
-The current root name `fba0-root` is historical/scientific provenance: it means
-“this lineage was founded from FBA0”, not “FBA0 must remain the dominant organ”.
-
-## Departure measurements
-
-The schema should preserve enough raw evaluation information to distinguish:
-
-1. **functional departure** — the organism becomes less causally dependent on
-   FBA0 while remaining viable;
-2. **structural replacement** — later experiments actually disable/prune/replace
-   ancestral FBA0 structure.
-
-The present schema supports lineage/provenance and raw evaluation summaries but
-schema v1 does not itself encode FBA0 structural deletion. Such mutations need
-an explicit later schema/semantics version rather than overloading existing
-fields.
+Genome lineage records evolutionary ancestry of the experimental organism. It
+is distinct from Kamimusuhi canonical identity / continuity. The historical
+`fba0-root` clade name means “founded from FBA0”; it does not assert that FBA0
+must remain the dominant organ or substrate.
 
 ## Trace storage policy
 
-Full spike trains are **never** stored for ordinary individuals — only
-summaries land in `evaluations.summary_json`. Full traces (`.npz` under
-`<runs>/<exp>/traces/`, path in `evaluations.trace_path`) are written
-only when `requested_traces` is non-empty (elite / novel / debug /
-explicit requests per `traces.store_full_for`).
+Full spike trains are not stored for ordinary individuals. Evaluation summaries
+live in the DB; full `.npz` traces under the run directory are written only
+when explicitly requested by the experiment's trace policy.
