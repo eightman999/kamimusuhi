@@ -48,6 +48,7 @@ from __future__ import annotations
 
 from ..genome.organ_ir import attachment_signal, organ_ports
 from ..genome.structure import TOPOLOGY_M1_FBA0_LOOP, analyse
+from .rules import apply_development_rules
 from ..substrate.endpoints import parse_endpoint
 from ..substrate.registry import (adapter_for, default_registry,
                                   substrate_genes_of)
@@ -69,6 +70,15 @@ def develop(genome, base_neurons: int | None = None,
     # the lineage record but costs nothing to simulate.
     organs = [o for o in genome.artificial_organs
               if getattr(o, "enabled", True)]
+    enabled_atts = [a for a in genome.attachments
+                    if getattr(a, "enabled", True)]
+
+    # M2 development rules: deterministic, heritable, applied in order.
+    # The body the genome describes may grow beyond its literal gene
+    # list — genome != mature phenotype.
+    dev = apply_development_rules(genome, organs, enabled_atts, adapters)
+    organs = dev["organs"]
+    enabled_atts = dev["attachments"]
     live = {o.organ_id for o in organs}
 
     substrate_ids = {a.substrate_id for a in adapters}
@@ -90,9 +100,8 @@ def develop(genome, base_neurons: int | None = None,
                     or ref.port not in disabled.get(ref.id, ()))
         return ref.kind in _HABITAT_KINDS
 
-    attachments = [a for a in genome.attachments if wireable(a.source)
-                   and wireable(a.target)
-                   and getattr(a, "enabled", True)]
+    attachments = [a for a in enabled_atts if wireable(a.source)
+                   and wireable(a.target)]
     n_extra = sum(int(o.size) for o in organs)
     # region/organ-scoped mutations are left to the backend
     params = primary.resolve_params(genome.parameter_mutations)
@@ -138,8 +147,19 @@ def develop(genome, base_neurons: int | None = None,
             for a in attachments
         ],
         # where each organ sits in the graph (M1 §4 / M2 generic):
-        # functional / neutral_structure / invalid_structure / disabled
-        "structure": analyse(genome, topology_mode).to_dict(),
+        # functional / neutral_structure / invalid_structure / disabled.
+        # The report classifies the *developed* body — rule-added organs
+        # are real tissue — while keeping the genome's disabled organs
+        # and dangling attachments in the record.
+        "structure": analyse(
+            genome, topology_mode,
+            _developed=(list(genome.artificial_organs)
+                        + dev["added_organs"],
+                        list(genome.attachments)
+                        + dev["added_attachments"])).to_dict(),
+        # which development rules ran (M2 §13): the genome's rules are
+        # heritable; their effects are this individual's body
+        "development": dev["report"],
         "params": params,
         "ancestry_fraction": ancestry,
         "structural_ancestry_fraction": ancestry,
