@@ -1,0 +1,37 @@
+{
+  "seed": 3,
+  "agent": "cwatch",
+  "condition": "causal:ch_permute_p0",
+  "ablation": "ch_permute",
+  "config": "base",
+  "perm_tag": "ch_permute_p0",
+  "detection_rate": 0.9907407407407407,
+  "mean_cost": 0.019212239583333336,
+  "info_efficiency": 51.61630489779797,
+  "total_reward": -1.0033333333333345,
+  "action_entropy": 0.09255973340697798,
+  "n_detected": 107,
+  "n_missed": 1,
+  "attention": {
+    "IGNORE": 0.039388020833333336,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.9606119791666666,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.08870605217816774,
+    "B": 0.08870605217816774,
+    "C": 0.08870605217816774,
+    "D": 0.18031903166471844
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.08893999630997529
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.27
+}

@@ -1,0 +1,37 @@
+{
+  "seed": 2,
+  "agent": "trigger",
+  "condition": "ood:ood_noise_up",
+  "ablation": "none",
+  "config": "ood_noise_up",
+  "perm_tag": "",
+  "detection_rate": 0.7130434782608696,
+  "mean_cost": 0.011526692708333333,
+  "info_efficiency": 62.09054449791561,
+  "total_reward": -1.8183333333333342,
+  "action_entropy": 0.3772878790952224,
+  "n_detected": 82,
+  "n_missed": 33,
+  "attention": {
+    "IGNORE": 0.4236653645833333,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.5763346354166666,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.1889332127442079,
+    "B": 0.1889332127442079,
+    "C": 0.1889332127442079,
+    "D": 0.24877898010163335
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.13894796972121734
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.04
+}

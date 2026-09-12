@@ -1,0 +1,37 @@
+{
+  "seed": 3,
+  "agent": "fixed",
+  "condition": "causal:trained_pred",
+  "ablation": "trained_pred",
+  "config": "base",
+  "perm_tag": "",
+  "detection_rate": 0.4339622641509434,
+  "mean_cost": 0.007151692708333333,
+  "info_efficiency": 64.3235345663781,
+  "total_reward": -4.828333333333335,
+  "action_entropy": 0.36386728138154023,
+  "n_detected": 46,
+  "n_missed": 60,
+  "attention": {
+    "IGNORE": 0.6424153645833334,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.3575846354166667,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.09038968919533848,
+    "B": 0.09038968919533848,
+    "C": 0.09038968919533848,
+    "D": 0.1760391226180218
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.09383728367425975
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.22
+}

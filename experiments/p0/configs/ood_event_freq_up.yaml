@@ -1,0 +1,7 @@
+# OOD: D events twice as frequent
+name: ood_event_freq_up
+seed: 0
+env:
+  event_freq_mult: 2.0
+agent:
+  kind: mlp

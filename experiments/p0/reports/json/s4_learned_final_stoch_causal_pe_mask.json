@@ -1,0 +1,37 @@
+{
+  "seed": 4,
+  "agent": "learned_final_stoch",
+  "condition": "causal:pe_mask",
+  "ablation": "pe_mask",
+  "config": "base",
+  "perm_tag": "pe_mask",
+  "detection_rate": 0.6,
+  "mean_cost": 0.014707031249999997,
+  "info_efficiency": 39.575457736310945,
+  "total_reward": -5.78,
+  "action_entropy": 0.8183568991024469,
+  "n_detected": 63,
+  "n_missed": 42,
+  "attention": {
+    "IGNORE": 0.3411458333333333,
+    "OBSERVE_A": 0.08284505208333333,
+    "OBSERVE_B": 0.10677083333333333,
+    "OBSERVE_C": 0.059244791666666664,
+    "OBSERVE_D": 0.3717447916666667,
+    "OBSERVE_ALL": 0.038248697916666664
+  },
+  "surprise_mean": {
+    "A": 0.179089117958938,
+    "B": 0.23041060911782552,
+    "C": 0.22986092159044347,
+    "D": 0.17965424452692483
+  },
+  "pred_err_mean": {
+    "A": 0.06858480782348332,
+    "B": 0.12532638497643447,
+    "C": 0.12047208352976278,
+    "D": 0.09858319358585671
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.62
+}

@@ -1,0 +1,37 @@
+{
+  "seed": 2,
+  "agent": "clock2",
+  "condition": "ood:ood_noise_up",
+  "ablation": "none",
+  "config": "ood_noise_up",
+  "perm_tag": "",
+  "detection_rate": 0.5233644859813084,
+  "mean_cost": 0.009999999999999998,
+  "info_efficiency": 50.535714285714285,
+  "total_reward": -4.703333333333336,
+  "action_entropy": 0.3868528072345416,
+  "n_detected": 56,
+  "n_missed": 51,
+  "attention": {
+    "IGNORE": 0.5,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.0,
+    "OBSERVE_D": 0.5,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.08891960694199952,
+    "B": 0.08891960694199952,
+    "C": 0.08891960694199952,
+    "D": 0.26692587750009505
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.0,
+    "D": 0.13167896221026845
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.05
+}

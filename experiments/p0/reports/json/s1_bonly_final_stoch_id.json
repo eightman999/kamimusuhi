@@ -1,0 +1,37 @@
+{
+  "seed": 1,
+  "agent": "bonly_final_stoch",
+  "condition": "id",
+  "ablation": "none",
+  "config": "base_bonly",
+  "perm_tag": "id",
+  "detection_rate": 0.7692307692307693,
+  "mean_cost": 0.01743815104166667,
+  "info_efficiency": 43.015764929126874,
+  "total_reward": -4.261666666666667,
+  "action_entropy": 0.6194722341765578,
+  "n_detected": 80,
+  "n_missed": 24,
+  "attention": {
+    "IGNORE": 0.19840494791666666,
+    "OBSERVE_A": 0.022623697916666668,
+    "OBSERVE_B": 0.036783854166666664,
+    "OBSERVE_C": 0.06868489583333333,
+    "OBSERVE_D": 0.6383463541666666,
+    "OBSERVE_ALL": 0.03515625
+  },
+  "surprise_mean": {
+    "A": 0.18024896227022205,
+    "B": 0.27396293378357467,
+    "C": 0.22360103101163986,
+    "D": 0.16998239098090076
+  },
+  "pred_err_mean": {
+    "A": 0.07063535235601333,
+    "B": 0.1625469695731612,
+    "C": 0.11019956486817933,
+    "D": 0.08874202573588402
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.83
+}

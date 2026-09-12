@@ -1,0 +1,37 @@
+{
+  "seed": 4,
+  "agent": "cwatch",
+  "condition": "ood:ood_event_freq_up",
+  "ablation": "none",
+  "config": "ood_event_freq_up",
+  "perm_tag": "",
+  "detection_rate": 0.768,
+  "mean_cost": 0.011204427083333331,
+  "info_efficiency": 67.90138344865996,
+  "total_reward": -0.15333333333333402,
+  "action_entropy": 0.5789568570112472,
+  "n_detected": 96,
+  "n_missed": 29,
+  "attention": {
+    "IGNORE": 0.4397786458333333,
+    "OBSERVE_A": 0.0,
+    "OBSERVE_B": 0.0,
+    "OBSERVE_C": 0.18473307291666666,
+    "OBSERVE_D": 0.37548828125,
+    "OBSERVE_ALL": 0.0
+  },
+  "surprise_mean": {
+    "A": 0.11225512389501091,
+    "B": 0.11225512389501091,
+    "C": 0.24074004961403261,
+    "D": 0.229596880876367
+  },
+  "pred_err_mean": {
+    "A": 0.0,
+    "B": 0.0,
+    "C": 0.11119690109106138,
+    "D": 0.12626588640692518
+  },
+  "n_episodes": 12,
+  "wall_time_s": 2.28
+}

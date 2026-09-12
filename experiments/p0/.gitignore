@@ -1,0 +1,8 @@
+# P0 experiment artifacts — binary checkpoints and execution logs are not
+# tracked. Raw JSON/JSONL results, configs, and reports ARE tracked.
+*.pt
+*.log
+*.tmp
+__pycache__/
+*.pyc
+.DS_Store
