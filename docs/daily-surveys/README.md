@@ -65,6 +65,7 @@ New surveys start as **未判定**. Record an explicit decision and confirm any 
 
 | Date | Highlights | 反映判断 |
 |---|---|---|
+| [2026-09-13 00:58 delta](./2026-09-13-00-58-08.md) | in-flight continuation principal isolation, scoped interrupt/monitor lifecycle, evidence-backed cross-conversation diagnosis, asymmetric common-ground/co-regulation, embodied affect symbol alignment, decentralized shared-symbol inference; current Symbol Emergence in Robotics watch | **未判定** |
 | [2026-09-12 19:02 delta](./2026-09-12-19-02-01.md) | execution-grant lifecycle and single-use redemption, verifier-progress self-improvement signals, belief-shift compute allocation, causal memory ablation in long-run agent society, topology-preserving world-model transitions, event-driven distributed perception, calibrated human reliance, Japanese serverless autonomous-agent implementation | **未判定** |
 | [2026-09-12 13:01 delta](./2026-09-12-13-01-17.md) | control-boundary retention across compaction, dependency-consistent multimodal deep research, group-affect divergence, held-out modality utility, cross-architecture output information geometry, TTFS SNN expressivity, agent-evaluation coverage taxonomy | **未判定** |
 | [2026-09-12 06:58 delta](./2026-09-12-06-58-54.md) | capability-bound routing, recurrent variable-depth cognition, retrospective streaming speech reasoning, differentiable hard-action feasibility, visual-need-gated raw sensory revisit, synthetic-data supplier-lineage collapse risk, persona specialization vs general-capability retention, stage-aware verifiable HCI | **未判定** |
