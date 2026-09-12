@@ -91,7 +91,6 @@ def collect_rollout(policy, vec: VecU0Env, device, teacher=None,
             logits, v, h = policy(o, h)
             dist = torch.distributions.Categorical(logits=logits)
             act = dist.sample()
-            logp = dist.log_prob(act)
             if teachers is not None:
                 for i, e in enumerate(vec.envs):
                     if e.done:
@@ -100,6 +99,7 @@ def collect_rollout(policy, vec: VecU0Env, device, teacher=None,
                     lab_buf[i, t] = IGNORE if la == STORE else la
                     if np.random.random() < teacher_mix:
                         act[i] = la       # execute full oracle incl. STORE
+            logp = dist.log_prob(act)     # logp of the EXECUTED action
             obs_buf[:, t] = obs
             act_buf[:, t] = act.cpu().numpy()
             logp_buf[:, t] = logp.cpu().numpy()
