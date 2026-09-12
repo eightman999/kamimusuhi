@@ -29,7 +29,9 @@ So M1 classifies every artificial organ by its place in the graph:
 ``m1_fba0_loop`` (default, the M1 historical mode)
     source = sink = the FBA0 substrate. ``functional`` is exactly the
     M1 ``FBA0 -> organ -> FBA0`` loop, and only ``fba0`` endpoints are
-    external nodes. M1 genomes classify identically under both modes.
+    external nodes — provided the genome carries an enabled fba0
+    substrate (every M1 genome does, implicitly or by v4 gene). M1
+    genomes classify identically under both modes.
 ``generic_causal`` (M2)
     sources = the genome's enabled substrates + sensor/env endpoints;
     sinks = the genome's enabled substrates + effector/env endpoints.
@@ -90,7 +92,18 @@ def _external(ref: EndpointRef, substrate_state: dict[str, set[str]],
     exists at all stays the backend's contract (it raises rather than
     wiring at random), so an unknown port still counts as external."""
     if topology_mode == TOPOLOGY_M1_FBA0_LOOP:
-        return ref.is_substrate(FBA0)
+        # the historical rule: only FBA0 endpoints are external — and
+        # only while the genome actually carries the substrate. A genome
+        # whose enabled substrate set excludes fba0 has no external nodes
+        # under this mode: its fba0 endpoints are dangling, matching
+        # generic mode and develop()'s wiring filter. A genome-disabled
+        # region is still a lesion — only reachable via the staged M3
+        # operator, so no M1 genome is affected.
+        if not ref.is_substrate(FBA0):
+            return False
+        if ref.id not in substrate_state:
+            return False
+        return ref.port is None or ref.port not in substrate_state[ref.id]
     if ref.kind == "substrate":
         if ref.id not in substrate_state:
             return False

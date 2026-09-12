@@ -11,7 +11,8 @@ from experiments.mioba.genome import mutation as mut
 from experiments.mioba.genome.mutation import (SUBSTRATE_OPERATORS,
                                                apply_operator,
                                                merged_config)
-from experiments.mioba.genome.schema import fba0_genome
+from experiments.mioba.genome.schema import (ArtificialOrgan, Attachment,
+                                             fba0_genome)
 from experiments.mioba.genome.structure import TOPOLOGY_GENERIC_CAUSAL, analyse
 
 
@@ -64,6 +65,29 @@ def test_disabled_region_removes_the_port_from_development():
     ids = {a["attachment_id"] for a in phen["attachments"]}
     for region in disabled:
         assert f"in_{region}" not in ids
+
+
+def test_disabled_region_is_a_lesion_in_m1_mode_too():
+    """Both topology modes agree that a genome-disabled region's
+    endpoints are dangling — develop() drops the attachments either
+    way, so the structural record must not call them wired. (No M1
+    genome carries disabled_regions; historical results are unchanged.)
+    """
+    g = fba0_genome(seed=4)
+    apply_operator(g, random.Random(0), "DISABLE_SUBSTRATE_REGION",
+                   merged_config(None), _prov(g))
+    disabled = set(g.substrates[0].params["disabled_regions"])
+    g.artificial_organs.append(
+        ArtificialOrgan(organ_id="org_a", kind="lif_cluster", size=8))
+    for region in disabled:
+        g.attachments += [
+            Attachment(attachment_id=f"in_{region}",
+                       source=f"fba0:{region}", target="org_a"),
+            Attachment(attachment_id=f"out_{region}", source="org_a",
+                       target=f"fba0:{region}")]
+    rep = analyse(g.finalize())          # default: the M1 mode
+    for region in disabled:
+        assert f"in_{region}" in rep.dangling_attachments
 
 
 def test_staged_operators_do_not_change_the_m1_distribution():
