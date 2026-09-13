@@ -1,0 +1,1017 @@
+{
+  "experiment_id": "G0-v6",
+  "seed": 2,
+  "lock_hash": "4f2a1c379d3ddbbe58d941635f27a1b4bb410bf0581ba3321ca4f9a4a986593f",
+  "training_manifest": {
+    "device": "cuda:0",
+    "gpu_name": "NVIDIA GeForce RTX 3060",
+    "gpu_uuid": "1d6afaad-67b7-b965-46c7-efe6c9c395f3",
+    "cuda": "12.6",
+    "driver": "0, NVIDIA GeForce RTX 3060, GPU-1d6afaad-67b7-b965-46c7-efe6c9c395f3, 580.178.04",
+    "wall_clock": 56.71998044300017,
+    "epochs_completed": 20
+  },
+  "checks": {
+    "trained_repeat": true,
+    "twin_repeat": true,
+    "initial_state_hash": "5b55262a017a3879b15ce430443eb70fdd5644844e2932c145d18c4f94a7e4ff",
+    "twin_initial_state_hash": "5b55262a017a3879b15ce430443eb70fdd5644844e2932c145d18c4f94a7e4ff",
+    "initial_state_hash_identical": true,
+    "independently_initialized_hash_matches": true,
+    "finite": true
+  },
+  "trained": {
+    "iid": {
+      "auc": 0.5580150462962963,
+      "n_pairs": 288,
+      "same_distance": 1.6637726165913018,
+      "different_distance": 1.7092721457431435,
+      "shortcut_diagnostics": {
+        "context_variance_fraction": 0.1717490893798678,
+        "cause_variance_fraction": 0.12549389555446963
+      }
+    },
+    "midctx": {
+      "stability": 0.9828002134964882,
+      "recovery_stability": 0.8740205275585511,
+      "recovery_curve": {
+        "0": 0.9545132345216769,
+        "1": 0.8998051657774662,
+        "2": 0.8330789450841749,
+        "3": 0.7600435874071109,
+        "4": 0.6846883102048227,
+        "5": 0.607801758302994,
+        "6": 0.5324214568440921,
+        "7": 0.4620241154307666,
+        "8": 0.39583487539155243
+      },
+      "n": 256
+    },
+    "match_ood": {
+      "auc": 0.7058256172839505,
+      "n_pairs": 288,
+      "same_distance": 1.7524877498683518,
+      "different_distance": 2.032403609129156,
+      "shortcut_diagnostics": {
+        "context_variance_fraction": 0.10129828774686324,
+        "cause_variance_fraction": 0.38888773430871915
+      }
+    },
+    "dynseg_ood": {
+      "auc": 0.4839409722222222,
+      "n_pairs": 288,
+      "same_distance": 1.6655124944655502,
+      "different_distance": 1.6495972235001601,
+      "shortcut_diagnostics": {
+        "context_variance_fraction": 0.17730362052556403,
+        "cause_variance_fraction": 0.06389671973631496
+      }
+    },
+    "combo_ood": {
+      "auc": 0.884596836419753,
+      "n_pairs": 288,
+      "same_distance": 1.7306557783978684,
+      "different_distance": 2.346898642061347,
+      "shortcut_diagnostics": {
+        "context_variance_fraction": 0.1681920625863398,
+        "cause_variance_fraction": 0.48251565183168876
+      }
+    },
+    "intervention": {
+      "selectivity": 0.963274192242402,
+      "cause_distance": 1.3665542896491554,
+      "context_distance": 1.25914878205454,
+      "nuisance_distance": 0.15950677900330995,
+      "n": 256
+    },
+    "collapse": {
+      "latent_mean": [
+        -0.014304642928436806,
+        0.017689165595854206,
+        -0.022688062866563996,
+        0.0066837542522080184,
+        0.004480104593312717,
+        -0.015575020776168458,
+        0.011170617792686244,
+        -0.0035030478293265332,
+        -0.015890622151573552,
+        0.027280078861494417,
+        -0.024571256178205658,
+        0.008178165578556218,
+        -0.029242021254503925,
+        0.007753419566938646,
+        -0.0090798701123731,
+        0.009948037307822233,
+        0.016922836271646702,
+        -0.011673173985855101,
+        -0.01629259117521542,
+        0.017050680822649156,
+        -0.006203395058719252,
+        -0.019301211382753536,
+        -0.019676295898079843,
+        -0.0024504894513484032,
+        -0.03440335946970663,
+        0.018330021561723697,
+        -0.022653590785466804,
+        -0.015453039636781796,
+        -0.01552973504522015,
+        0.026317945564642287,
+        -0.0027562053887209004,
+        0.0524516242799109
+      ],
+      "latent_std": 0.2020478103778025,
+      "per_dimension_std": [
+        0.2064126409608384,
+        0.22348421693463275,
+        0.22636882187898535,
+        0.18985796592870513,
+        0.22360257285094617,
+        0.21132259474968637,
+        0.20142089022188198,
+        0.1889898687036481,
+        0.25305340081157063,
+        0.1482746135765022,
+        0.23912745293609372,
+        0.2503286137415279,
+        0.1849817647012921,
+        0.21274082990281698,
+        0.12170768584815775,
+        0.20755211715616406,
+        0.18567567399219373,
+        0.1476471831505849,
+        0.20310616075368573,
+        0.1875025460453165,
+        0.1569449839049426,
+        0.19578125570791452,
+        0.17442089030382574,
+        0.17552879319837894,
+        0.21430584746673437,
+        0.20162736517235044,
+        0.21454774122427722,
+        0.2453435448317967,
+        0.1415017353984106,
+        0.21659083034549878,
+        0.19637136095875155,
+        0.23905521633307894
+      ],
+      "latent_norm": {
+        "mean": 1.1237305282686354,
+        "std": 0.23571937491102618,
+        "quantiles": [
+          0.2619210929136447,
+          0.6769971051747034,
+          1.139398262687164,
+          1.4815221048294585,
+          1.9623530225059167
+        ]
+      },
+      "effective_rank": 11.398689884902323,
+      "effective_rank_ratio": 0.3562090589031976,
+      "effective_rank_threshold": 3.2,
+      "dead_dimension_fraction": 0.0,
+      "active_dimension_fraction": 1.0,
+      "covariance_spectrum": [
+        0.15880793819176786,
+        0.1535822558999918,
+        0.14531141012408733,
+        0.13295498622368193,
+        0.12654901231267043,
+        0.12174566709392429,
+        0.11387418585058108,
+        0.10411433995389326,
+        0.0955927736155068,
+        0.08243966726880038,
+        0.05489183805264661,
+        0.0034221997893051056,
+        0.0019179687538309477,
+        0.00180001431532618,
+        0.0017402401993950687,
+        0.0012515137050108384,
+        0.0011961114855835423,
+        0.0009238595391226076,
+        0.0007762986410866795,
+        0.0005632216554168791,
+        0.0005379326335461834,
+        0.0004081248744926169,
+        0.0003826835576641025,
+        0.0003652887748676095,
+        0.00033483553815467606,
+        0.00026905682720598713,
+        0.00023223410142327722,
+        0.00018688069597515134,
+        0.00013536339519105024,
+        9.884796200522002e-05,
+        6.217051782116549e-05,
+        3.672971401814862e-05
+      ],
+      "pairwise_cosine_distribution": {
+        "mean": 0.009674371044764634,
+        "std": 0.30802380933321044,
+        "quantiles": [
+          -0.885306550560014,
+          -0.5055259512752548,
+          -0.20805534177646862,
+          0.012703853487203477,
+          0.2289326242846318,
+          0.5132759926013597,
+          0.964380443646502
+        ],
+        "histogram": [
+          0,
+          0,
+          2,
+          2,
+          8,
+          13,
+          28,
+          43,
+          47,
+          70,
+          85,
+          118,
+          117,
+          143,
+          195,
+          178,
+          199,
+          241,
+          250,
+          241,
+          263,
+          248,
+          227,
+          228,
+          213,
+          182,
+          173,
+          150,
+          128,
+          76,
+          67,
+          65,
+          33,
+          22,
+          24,
+          7,
+          5,
+          1,
+          1,
+          3
+        ],
+        "bin_edges": [
+          -1.0,
+          -0.95,
+          -0.9,
+          -0.85,
+          -0.8,
+          -0.75,
+          -0.7,
+          -0.6499999999999999,
+          -0.6,
+          -0.55,
+          -0.5,
+          -0.44999999999999996,
+          -0.3999999999999999,
+          -0.35,
+          -0.29999999999999993,
+          -0.25,
+          -0.19999999999999996,
+          -0.1499999999999999,
+          -0.09999999999999998,
+          -0.04999999999999993,
+          0.0,
+          0.050000000000000044,
+          0.10000000000000009,
+          0.15000000000000013,
+          0.20000000000000018,
+          0.25,
+          0.30000000000000004,
+          0.3500000000000001,
+          0.40000000000000013,
+          0.4500000000000002,
+          0.5,
+          0.55,
+          0.6000000000000001,
+          0.6500000000000001,
+          0.7000000000000002,
+          0.75,
+          0.8,
+          0.8500000000000001,
+          0.9000000000000001,
+          0.9500000000000002,
+          1.0
+        ]
+      },
+      "full_collapse": false,
+      "dimensional_collapse_diagnostic": false,
+      "low_effective_rank_diagnostic": false,
+      "failure_class": "NONE",
+      "shortcut_context": false
+    },
+    "runtime": {
+      "evaluation_seconds": 0.185994515999937
+    },
+    "failure_class": "NONE"
+  },
+  "twin": {
+    "iid": {
+      "auc": 0.5863233024691357,
+      "n_pairs": 288,
+      "same_distance": 0.7278865748941307,
+      "different_distance": 0.7918440964008858,
+      "shortcut_diagnostics": {
+        "context_variance_fraction": 0.23494375711945784,
+        "cause_variance_fraction": 0.3138959575450753
+      }
+    },
+    "midctx": {
+      "stability": 0.9023759791635786,
+      "recovery_stability": 0.7550104415435939,
+      "recovery_curve": {
+        "0": 0.8916631270472911,
+        "1": 0.7677575104339891,
+        "2": 0.6869985969107317,
+        "3": 0.639619858933004,
+        "4": 0.6087581639487887,
+        "5": 0.5844626801169901,
+        "6": 0.5637460773707963,
+        "7": 0.5483557075066823,
+        "8": 0.5348362831113337
+      },
+      "n": 256
+    },
+    "match_ood": {
+      "auc": 0.6003568672839505,
+      "n_pairs": 288,
+      "same_distance": 0.7260231482111534,
+      "different_distance": 0.8006953572494386,
+      "shortcut_diagnostics": {
+        "context_variance_fraction": 0.2331342215292861,
+        "cause_variance_fraction": 0.3140833995604723
+      }
+    },
+    "dynseg_ood": {
+      "auc": 0.5352527006172839,
+      "n_pairs": 288,
+      "same_distance": 0.7032224081077395,
+      "different_distance": 0.7369029660939537,
+      "shortcut_diagnostics": {
+        "context_variance_fraction": 0.2769014930504953,
+        "cause_variance_fraction": 0.27209315266476286
+      }
+    },
+    "combo_ood": {
+      "auc": 0.7100694444444444,
+      "n_pairs": 288,
+      "same_distance": 0.6956123235508811,
+      "different_distance": 0.8129619683981297,
+      "shortcut_diagnostics": {
+        "context_variance_fraction": 0.22060005570221342,
+        "cause_variance_fraction": 0.3736373527215146
+      }
+    },
+    "intervention": {
+      "selectivity": 0.8860009402788174,
+      "cause_distance": 0.6045430916228435,
+      "context_distance": 0.6305149181567947,
+      "nuisance_distance": 0.05181290356279917,
+      "n": 256
+    },
+    "collapse": {
+      "latent_mean": [
+        -0.10031105504367588,
+        0.10074362209570609,
+        0.016623066770250716,
+        -0.06685397092036283,
+        0.07829413641138672,
+        -0.13723508393195516,
+        0.01378731839986358,
+        -0.20833439710031598,
+        -0.23835224491767804,
+        0.029450884378036335,
+        0.05531690727980276,
+        0.06461364691222116,
+        0.014076160216518474,
+        -0.0750668969238859,
+        0.07047795183370908,
+        0.12156092128543605,
+        0.05594682243918214,
+        -0.2247676684569342,
+        0.06468012728100803,
+        0.08518927277555122,
+        0.10491705249239658,
+        -0.1411379823016432,
+        0.025449213252159097,
+        0.11609102074680777,
+        -0.09145058153353602,
+        -0.21762924635049785,
+        -0.07920215203012049,
+        0.05359470460899729,
+        0.024362868841080854,
+        0.0682611960187387,
+        0.06896628098172641,
+        -0.0036125550122960703
+      ],
+      "latent_std": 0.09417707706558273,
+      "per_dimension_std": [
+        0.12425480865283574,
+        0.06213064988735448,
+        0.08429658645078261,
+        0.08801874311996791,
+        0.06777952006332791,
+        0.10257080691891073,
+        0.10346999224027124,
+        0.13648821467744968,
+        0.1405517629536567,
+        0.041757939536699144,
+        0.07984646585038012,
+        0.0878518443161678,
+        0.07420343359382661,
+        0.06938652845574453,
+        0.1047539441195963,
+        0.08743421369508508,
+        0.09156498940444271,
+        0.08938310503937119,
+        0.11076961581749219,
+        0.12432749547535875,
+        0.10235525432201441,
+        0.10283769353678165,
+        0.10036275187420021,
+        0.08943376090158647,
+        0.11245781160623272,
+        0.056588852270743006,
+        0.07654169060784356,
+        0.06896130064125258,
+        0.09407136574883106,
+        0.08924613361153134,
+        0.07521072239365766,
+        0.09234024210307905
+      ],
+      "latent_norm": {
+        "mean": 0.8001717000695909,
+        "std": 0.11218855115954214,
+        "quantiles": [
+          0.46973993586091095,
+          0.6030504594036575,
+          0.7998291422996575,
+          0.9787906684656618,
+          1.1249354581524726
+        ]
+      },
+      "effective_rank": 8.551221924651513,
+      "effective_rank_ratio": 0.26722568514535977,
+      "effective_rank_threshold": 3.2,
+      "dead_dimension_fraction": 0.0,
+      "active_dimension_fraction": 1.0,
+      "covariance_spectrum": [
+        0.06898447863029816,
+        0.057276474294433,
+        0.046445445110707036,
+        0.029194077740540635,
+        0.025045274140296184,
+        0.017176563232465934,
+        0.01345691908041229,
+        0.008592649660799421,
+        0.00397177242733007,
+        0.003726369127018596,
+        0.0024052042349104637,
+        0.0019707365332130686,
+        0.001318832692055953,
+        0.0009539582949288524,
+        0.0007890168068561468,
+        0.0005100133659038907,
+        0.0004451015738565779,
+        0.000406403950820772,
+        0.00030249164045984217,
+        0.00023198940014396418,
+        0.0001461310650867484,
+        0.00011248893769834189,
+        0.00010101062062219626,
+        8.114294163729487e-05,
+        4.971482817589502e-05,
+        4.9223469977936654e-05,
+        3.1769093343463974e-05,
+        2.1857543538822394e-05,
+        1.9998947996208586e-05,
+        1.594083129333326e-05,
+        1.0847840447328644e-05,
+        9.050988660356134e-06
+      ],
+      "pairwise_cosine_distribution": {
+        "mean": 0.5680894116351726,
+        "std": 0.21706251257113426,
+        "quantiles": [
+          -0.3325689515882052,
+          0.18580376515572486,
+          0.42086553394294995,
+          0.594678397754024,
+          0.7317390202116758,
+          0.8743533964863097,
+          0.9915195347326017
+        ],
+        "histogram": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          3,
+          7,
+          11,
+          15,
+          9,
+          16,
+          30,
+          75,
+          65,
+          105,
+          169,
+          196,
+          224,
+          242,
+          288,
+          293,
+          333,
+          341,
+          384,
+          393,
+          322,
+          260,
+          184,
+          82,
+          48
+        ],
+        "bin_edges": [
+          -1.0,
+          -0.95,
+          -0.9,
+          -0.85,
+          -0.8,
+          -0.75,
+          -0.7,
+          -0.6499999999999999,
+          -0.6,
+          -0.55,
+          -0.5,
+          -0.44999999999999996,
+          -0.3999999999999999,
+          -0.35,
+          -0.29999999999999993,
+          -0.25,
+          -0.19999999999999996,
+          -0.1499999999999999,
+          -0.09999999999999998,
+          -0.04999999999999993,
+          0.0,
+          0.050000000000000044,
+          0.10000000000000009,
+          0.15000000000000013,
+          0.20000000000000018,
+          0.25,
+          0.30000000000000004,
+          0.3500000000000001,
+          0.40000000000000013,
+          0.4500000000000002,
+          0.5,
+          0.55,
+          0.6000000000000001,
+          0.6500000000000001,
+          0.7000000000000002,
+          0.75,
+          0.8,
+          0.8500000000000001,
+          0.9000000000000001,
+          0.9500000000000002,
+          1.0
+        ]
+      },
+      "full_collapse": false,
+      "dimensional_collapse_diagnostic": false,
+      "low_effective_rank_diagnostic": false,
+      "failure_class": "NONE",
+      "shortcut_context": false
+    },
+    "runtime": {
+      "evaluation_seconds": 0.17121534599982624
+    },
+    "failure_class": "NONE"
+  },
+  "future_observation_readout": {
+    "trained": {
+      "mse": 0.14646155108197484,
+      "horizon": 4,
+      "alpha": 0.01,
+      "train_rows": 11264,
+      "validation_episodes": 128
+    },
+    "twin": {
+      "mse": 0.11640537455781667,
+      "horizon": 4,
+      "alpha": 0.01,
+      "train_rows": 11264,
+      "validation_episodes": 128
+    },
+    "delta_mse": 0.030056176524158165,
+    "delta_percent_trained_vs_twin": 25.820265291298682
+  },
+  "temporal_retrieval": {
+    "trained": {
+      "iid": {
+        "train_like": {
+          "recall_at_1": 0.6039402173913043,
+          "recall_at_5": 0.993546195652174,
+          "mrr": 0.7953868312394128,
+          "mean_rank": 1.4748641304347827,
+          "n_queries": 2944,
+          "horizons": [
+            1,
+            4
+          ],
+          "by_horizon": {
+            "1": {
+              "recall_at_1": 0.7975260416666666,
+              "recall_at_5": 1.0,
+              "mrr": 0.8978949652777778,
+              "mean_rank": 1.2083333333333333,
+              "n_queries": 1536,
+              "candidate_count": 384
+            },
+            "4": {
+              "recall_at_1": 0.3927556818181818,
+              "recall_at_5": 0.9865056818181818,
+              "mrr": 0.6835597759248327,
+              "mean_rank": 1.765625,
+              "n_queries": 1408,
+              "candidate_count": 384
+            }
+          },
+          "query": "CPC predictor(current latent); same episode and future time positive",
+          "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+        },
+        "unseen_horizon": {
+          "recall_at_1": 0.0007102272727272727,
+          "recall_at_5": 0.6225142045454546,
+          "mrr": 0.3146545550954123,
+          "mean_rank": 10.126775568181818,
+          "n_queries": 2816,
+          "horizons": [
+            2,
+            8
+          ],
+          "by_horizon": {
+            "2": {
+              "recall_at_1": 0.0,
+              "recall_at_5": 0.9765625,
+              "mrr": 0.47590246306066614,
+              "mean_rank": 2.24609375,
+              "n_queries": 1536,
+              "candidate_count": 384
+            },
+            "8": {
+              "recall_at_1": 0.0015625,
+              "recall_at_5": 0.19765625,
+              "mrr": 0.1211570655371077,
+              "mean_rank": 19.58359375,
+              "n_queries": 1280,
+              "candidate_count": 384
+            }
+          },
+          "query": "current latent; same episode and future time positive",
+          "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+        }
+      },
+      "context_ood": {
+        "train_like": {
+          "recall_at_1": 0.7041440217391305,
+          "recall_at_5": 0.9952445652173914,
+          "mrr": 0.8454810656921105,
+          "mean_rank": 1.3685461956521738,
+          "n_queries": 2944,
+          "horizons": [
+            1,
+            4
+          ],
+          "by_horizon": {
+            "1": {
+              "recall_at_1": 0.8984375,
+              "recall_at_5": 1.0,
+              "mrr": 0.9483506944444445,
+              "mean_rank": 1.1067708333333333,
+              "n_queries": 1536,
+              "candidate_count": 384
+            },
+            "4": {
+              "recall_at_1": 0.4921875,
+              "recall_at_5": 0.9900568181818182,
+              "mrr": 0.733259652507746,
+              "mean_rank": 1.6541193181818181,
+              "n_queries": 1408,
+              "candidate_count": 384
+            }
+          },
+          "query": "CPC predictor(current latent); same episode and future time positive",
+          "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+        },
+        "unseen_horizon": {
+          "recall_at_1": 0.0,
+          "recall_at_5": 0.62109375,
+          "mrr": 0.31390200945781926,
+          "mean_rank": 7.686079545454546,
+          "n_queries": 2816,
+          "horizons": [
+            2,
+            8
+          ],
+          "by_horizon": {
+            "2": {
+              "recall_at_1": 0.0,
+              "recall_at_5": 0.9856770833333334,
+              "mrr": 0.46740427902537274,
+              "mean_rank": 2.283203125,
+              "n_queries": 1536,
+              "candidate_count": 384
+            },
+            "8": {
+              "recall_at_1": 0.0,
+              "recall_at_5": 0.18359375,
+              "mrr": 0.12969928597675506,
+              "mean_rank": 14.16953125,
+              "n_queries": 1280,
+              "candidate_count": 384
+            }
+          },
+          "query": "current latent; same episode and future time positive",
+          "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+        }
+      },
+      "altered_segment_timing": {
+        "train_like": {
+          "recall_at_1": 0.5879755434782609,
+          "recall_at_5": 0.9887907608695652,
+          "mrr": 0.7832157599345099,
+          "mean_rank": 1.5543478260869565,
+          "n_queries": 2944,
+          "horizons": [
+            1,
+            4
+          ],
+          "by_horizon": {
+            "1": {
+              "recall_at_1": 0.80078125,
+              "recall_at_5": 1.0,
+              "mrr": 0.8994140625,
+              "mean_rank": 1.2057291666666667,
+              "n_queries": 1536,
+              "candidate_count": 384
+            },
+            "4": {
+              "recall_at_1": 0.35582386363636365,
+              "recall_at_5": 0.9765625,
+              "mrr": 0.6564539753176117,
+              "mean_rank": 1.9346590909090908,
+              "n_queries": 1408,
+              "candidate_count": 384
+            }
+          },
+          "query": "CPC predictor(current latent); same episode and future time positive",
+          "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+        },
+        "unseen_horizon": {
+          "recall_at_1": 0.0,
+          "recall_at_5": 0.6182528409090909,
+          "mrr": 0.3102577563537976,
+          "mean_rank": 13.189630681818182,
+          "n_queries": 2816,
+          "horizons": [
+            2,
+            8
+          ],
+          "by_horizon": {
+            "2": {
+              "recall_at_1": 0.0,
+              "recall_at_5": 0.9739583333333334,
+              "mrr": 0.47576964774230396,
+              "mean_rank": 2.2473958333333335,
+              "n_queries": 1536,
+              "candidate_count": 384
+            },
+            "8": {
+              "recall_at_1": 0.0,
+              "recall_at_5": 0.19140625,
+              "mrr": 0.11164348668758994,
+              "mean_rank": 26.3203125,
+              "n_queries": 1280,
+              "candidate_count": 384
+            }
+          },
+          "query": "current latent; same episode and future time positive",
+          "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+        }
+      }
+    },
+    "twin": {
+      "iid": {
+        "train_like": {
+          "recall_at_1": 0.0010190217391304348,
+          "recall_at_5": 0.012907608695652174,
+          "mrr": 0.01518471531618595,
+          "mean_rank": 199.67527173913044,
+          "n_queries": 2944,
+          "horizons": [
+            1,
+            4
+          ],
+          "by_horizon": {
+            "1": {
+              "recall_at_1": 0.0013020833333333333,
+              "recall_at_5": 0.014322916666666666,
+              "mrr": 0.015569701141542075,
+              "mean_rank": 204.9140625,
+              "n_queries": 1536,
+              "candidate_count": 384
+            },
+            "4": {
+              "recall_at_1": 0.0007102272727272727,
+              "recall_at_5": 0.011363636363636364,
+              "mrr": 0.014764730779433816,
+              "mean_rank": 193.96022727272728,
+              "n_queries": 1408,
+              "candidate_count": 384
+            }
+          },
+          "query": "CPC predictor(current latent); same episode and future time positive",
+          "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+        },
+        "unseen_horizon": {
+          "recall_at_1": 0.008167613636363636,
+          "recall_at_5": 0.49857954545454547,
+          "mrr": 0.23840022489562623,
+          "mean_rank": 30.248579545454547,
+          "n_queries": 2816,
+          "horizons": [
+            2,
+            8
+          ],
+          "by_horizon": {
+            "2": {
+              "recall_at_1": 0.013671875,
+              "recall_at_5": 0.8619791666666666,
+              "mrr": 0.38550725255853946,
+              "mean_rank": 3.8502604166666665,
+              "n_queries": 1536,
+              "candidate_count": 384
+            },
+            "8": {
+              "recall_at_1": 0.0015625,
+              "recall_at_5": 0.0625,
+              "mrr": 0.06187179170013045,
+              "mean_rank": 61.9265625,
+              "n_queries": 1280,
+              "candidate_count": 384
+            }
+          },
+          "query": "current latent; same episode and future time positive",
+          "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+        }
+      },
+      "context_ood": {
+        "train_like": {
+          "recall_at_1": 0.0006793478260869565,
+          "recall_at_5": 0.011209239130434782,
+          "mrr": 0.01433207384312201,
+          "mean_rank": 204.8389945652174,
+          "n_queries": 2944,
+          "horizons": [
+            1,
+            4
+          ],
+          "by_horizon": {
+            "1": {
+              "recall_at_1": 0.0,
+              "recall_at_5": 0.011067708333333334,
+              "mrr": 0.013344256777047906,
+              "mean_rank": 211.9453125,
+              "n_queries": 1536,
+              "candidate_count": 384
+            },
+            "4": {
+              "recall_at_1": 0.0014204545454545455,
+              "recall_at_5": 0.011363636363636364,
+              "mrr": 0.015409692460657399,
+              "mean_rank": 197.08664772727272,
+              "n_queries": 1408,
+              "candidate_count": 384
+            }
+          },
+          "query": "CPC predictor(current latent); same episode and future time positive",
+          "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+        },
+        "unseen_horizon": {
+          "recall_at_1": 0.016690340909090908,
+          "recall_at_5": 0.6061789772727273,
+          "mrr": 0.2913023107501724,
+          "mean_rank": 9.691761363636363,
+          "n_queries": 2816,
+          "horizons": [
+            2,
+            8
+          ],
+          "by_horizon": {
+            "2": {
+              "recall_at_1": 0.016927083333333332,
+              "recall_at_5": 0.921875,
+              "mrr": 0.41603698132018446,
+              "mean_rank": 2.9147135416666665,
+              "n_queries": 1536,
+              "candidate_count": 384
+            },
+            "8": {
+              "recall_at_1": 0.01640625,
+              "recall_at_5": 0.22734375,
+              "mrr": 0.1416207060661578,
+              "mean_rank": 17.82421875,
+              "n_queries": 1280,
+              "candidate_count": 384
+            }
+          },
+          "query": "current latent; same episode and future time positive",
+          "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+        }
+      },
+      "altered_segment_timing": {
+        "train_like": {
+          "recall_at_1": 0.001358695652173913,
+          "recall_at_5": 0.013926630434782608,
+          "mrr": 0.015644029791275674,
+          "mean_rank": 201.17221467391303,
+          "n_queries": 2944,
+          "horizons": [
+            1,
+            4
+          ],
+          "by_horizon": {
+            "1": {
+              "recall_at_1": 0.0013020833333333333,
+              "recall_at_5": 0.015625,
+              "mrr": 0.014984967862887581,
+              "mean_rank": 206.427734375,
+              "n_queries": 1536,
+              "candidate_count": 384
+            },
+            "4": {
+              "recall_at_1": 0.0014204545454545455,
+              "recall_at_5": 0.012073863636363636,
+              "mrr": 0.016363006440426316,
+              "mean_rank": 195.43892045454547,
+              "n_queries": 1408,
+              "candidate_count": 384
+            }
+          },
+          "query": "CPC predictor(current latent); same episode and future time positive",
+          "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+        },
+        "unseen_horizon": {
+          "recall_at_1": 0.009943181818181818,
+          "recall_at_5": 0.4786931818181818,
+          "mrr": 0.23300674206571037,
+          "mean_rank": 38.77521306818182,
+          "n_queries": 2816,
+          "horizons": [
+            2,
+            8
+          ],
+          "by_horizon": {
+            "2": {
+              "recall_at_1": 0.012369791666666666,
+              "recall_at_5": 0.8040364583333334,
+              "mrr": 0.36843843097453605,
+              "mean_rank": 5.870442708333333,
+              "n_queries": 1536,
+              "candidate_count": 384
+            },
+            "8": {
+              "recall_at_1": 0.00703125,
+              "recall_at_5": 0.08828125,
+              "mrr": 0.07048871537511955,
+              "mean_rank": 78.2609375,
+              "n_queries": 1280,
+              "candidate_count": 384
+            }
+          },
+          "query": "current latent; same episode and future time positive",
+          "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+        }
+      }
+    }
+  }
+}

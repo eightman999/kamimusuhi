@@ -1,0 +1,28 @@
+START_EVAL seed=1
+{
+  "stage": "evaluate",
+  "seed": 1,
+  "passed": true
+}
+END_EVAL seed=1 code=0
+START_EVAL seed=2
+{
+  "stage": "evaluate",
+  "seed": 2,
+  "passed": true
+}
+END_EVAL seed=2 code=0
+START_EVAL seed=3
+{
+  "stage": "evaluate",
+  "seed": 3,
+  "passed": true
+}
+END_EVAL seed=3 code=0
+START_EVAL seed=4
+{
+  "stage": "evaluate",
+  "seed": 4,
+  "passed": true
+}
+END_EVAL seed=4 code=0

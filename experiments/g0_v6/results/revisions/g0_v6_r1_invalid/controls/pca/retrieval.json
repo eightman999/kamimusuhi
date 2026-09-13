@@ -1,0 +1,194 @@
+{
+  "iid": {
+    "train_like": {
+      "recall_at_1": 0.03294836956521739,
+      "recall_at_5": 0.7289402173913043,
+      "mrr": 0.3421212058627956,
+      "mean_rank": 15.690217391304348,
+      "n_queries": 2944,
+      "horizons": [
+        1,
+        4
+      ],
+      "by_horizon": {
+        "1": {
+          "recall_at_1": 0.0,
+          "recall_at_5": 0.9713541666666666,
+          "mrr": 0.4316041976686507,
+          "mean_rank": 2.564453125,
+          "n_queries": 1536,
+          "candidate_count": 384
+        },
+        "4": {
+          "recall_at_1": 0.06889204545454546,
+          "recall_at_5": 0.46448863636363635,
+          "mrr": 0.24450339662004444,
+          "mean_rank": 30.009232954545453,
+          "n_queries": 1408,
+          "candidate_count": 384
+        }
+      },
+      "query": "current latent; same episode and future time positive",
+      "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+    },
+    "unseen_horizon": {
+      "recall_at_1": 0.07315340909090909,
+      "recall_at_5": 0.5294744318181818,
+      "mrr": 0.27382003797935356,
+      "mean_rank": 35.87961647727273,
+      "n_queries": 2816,
+      "horizons": [
+        2,
+        8
+      ],
+      "by_horizon": {
+        "2": {
+          "recall_at_1": 0.12044270833333333,
+          "recall_at_5": 0.8645833333333334,
+          "mrr": 0.42710563080795155,
+          "mean_rank": 3.3248697916666665,
+          "n_queries": 1536,
+          "candidate_count": 384
+        },
+        "8": {
+          "recall_at_1": 0.01640625,
+          "recall_at_5": 0.12734375,
+          "mrr": 0.08987732658503586,
+          "mean_rank": 74.9453125,
+          "n_queries": 1280,
+          "candidate_count": 384
+        }
+      },
+      "query": "current latent; same episode and future time positive",
+      "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+    }
+  },
+  "context_ood": {
+    "train_like": {
+      "recall_at_1": 0.036345108695652176,
+      "recall_at_5": 0.7941576086956522,
+      "mrr": 0.3697612166953969,
+      "mean_rank": 3.983695652173913,
+      "n_queries": 2944,
+      "horizons": [
+        1,
+        4
+      ],
+      "by_horizon": {
+        "1": {
+          "recall_at_1": 0.0,
+          "recall_at_5": 0.9713541666666666,
+          "mrr": 0.4294317571173039,
+          "mean_rank": 2.5755208333333335,
+          "n_queries": 1536,
+          "candidate_count": 384
+        },
+        "4": {
+          "recall_at_1": 0.07599431818181818,
+          "recall_at_5": 0.6008522727272727,
+          "mrr": 0.3046660816896801,
+          "mean_rank": 5.519886363636363,
+          "n_queries": 1408,
+          "candidate_count": 384
+        }
+      },
+      "query": "current latent; same episode and future time positive",
+      "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+    },
+    "unseen_horizon": {
+      "recall_at_1": 0.08167613636363637,
+      "recall_at_5": 0.5948153409090909,
+      "mrr": 0.31030243648517036,
+      "mean_rank": 7.4772727272727275,
+      "n_queries": 2816,
+      "horizons": [
+        2,
+        8
+      ],
+      "by_horizon": {
+        "2": {
+          "recall_at_1": 0.126953125,
+          "recall_at_5": 0.8736979166666666,
+          "mrr": 0.4314775568164815,
+          "mean_rank": 3.2578125,
+          "n_queries": 1536,
+          "candidate_count": 384
+        },
+        "8": {
+          "recall_at_1": 0.02734375,
+          "recall_at_5": 0.26015625,
+          "mrr": 0.16489229208759712,
+          "mean_rank": 12.540625,
+          "n_queries": 1280,
+          "candidate_count": 384
+        }
+      },
+      "query": "current latent; same episode and future time positive",
+      "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+    }
+  },
+  "altered_segment_timing": {
+    "train_like": {
+      "recall_at_1": 0.025475543478260868,
+      "recall_at_5": 0.6725543478260869,
+      "mrr": 0.3086139144770524,
+      "mean_rank": 25.475203804347824,
+      "n_queries": 2944,
+      "horizons": [
+        1,
+        4
+      ],
+      "by_horizon": {
+        "1": {
+          "recall_at_1": 0.0,
+          "recall_at_5": 0.9166666666666666,
+          "mrr": 0.40042705465393613,
+          "mean_rank": 8.077473958333334,
+          "n_queries": 1536,
+          "candidate_count": 384
+        },
+        "4": {
+          "recall_at_1": 0.053267045454545456,
+          "recall_at_5": 0.40625,
+          "mrr": 0.20845412519317916,
+          "mean_rank": 44.45454545454545,
+          "n_queries": 1408,
+          "candidate_count": 384
+        }
+      },
+      "query": "current latent; same episode and future time positive",
+      "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+    },
+    "unseen_horizon": {
+      "recall_at_1": 0.06995738636363637,
+      "recall_at_5": 0.46484375,
+      "mrr": 0.24708610201070902,
+      "mean_rank": 49.45703125,
+      "n_queries": 2816,
+      "horizons": [
+        2,
+        8
+      ],
+      "by_horizon": {
+        "2": {
+          "recall_at_1": 0.12174479166666667,
+          "recall_at_5": 0.771484375,
+          "mrr": 0.3918812736521122,
+          "mean_rank": 15.045572916666666,
+          "n_queries": 1536,
+          "candidate_count": 384
+        },
+        "8": {
+          "recall_at_1": 0.0078125,
+          "recall_at_5": 0.096875,
+          "mrr": 0.07333189604102522,
+          "mean_rank": 90.75078125,
+          "n_queries": 1280,
+          "candidate_count": 384
+        }
+      },
+      "query": "current latent; same episode and future time positive",
+      "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+    }
+  }
+}

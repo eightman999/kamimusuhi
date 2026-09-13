@@ -1,0 +1,50 @@
+START seed=0
+/home/eightman/mioba-venv/lib/python3.12/site-packages/torch/cuda/__init__.py:827: UserWarning: Can't initialize NVML
+  warnings.warn("Can't initialize NVML")
+{
+  "stage": "train",
+  "seed": 0,
+  "device": "cuda:0",
+  "returncode": 0
+}
+END seed=0 code=0
+START seed=1
+/home/eightman/mioba-venv/lib/python3.12/site-packages/torch/cuda/__init__.py:827: UserWarning: Can't initialize NVML
+  warnings.warn("Can't initialize NVML")
+{
+  "stage": "train",
+  "seed": 1,
+  "device": "cuda:0",
+  "returncode": 0
+}
+END seed=1 code=0
+START seed=2
+/home/eightman/mioba-venv/lib/python3.12/site-packages/torch/cuda/__init__.py:827: UserWarning: Can't initialize NVML
+  warnings.warn("Can't initialize NVML")
+{
+  "stage": "train",
+  "seed": 2,
+  "device": "cuda:0",
+  "returncode": 0
+}
+END seed=2 code=0
+START seed=3
+/home/eightman/mioba-venv/lib/python3.12/site-packages/torch/cuda/__init__.py:827: UserWarning: Can't initialize NVML
+  warnings.warn("Can't initialize NVML")
+{
+  "stage": "train",
+  "seed": 3,
+  "device": "cuda:0",
+  "returncode": 0
+}
+END seed=3 code=0
+START seed=4
+/home/eightman/mioba-venv/lib/python3.12/site-packages/torch/cuda/__init__.py:827: UserWarning: Can't initialize NVML
+  warnings.warn("Can't initialize NVML")
+{
+  "stage": "train",
+  "seed": 4,
+  "device": "cuda:0",
+  "returncode": 0
+}
+END seed=4 code=0
