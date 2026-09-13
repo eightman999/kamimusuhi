@@ -339,7 +339,8 @@ mod tests {
 
     #[test]
     fn negative_results_are_not_promoted() {
-        let experiments: Vec<&str> = validated_experiment_manifest()
+        let manifest = validated_experiment_manifest();
+        let experiments: Vec<&str> = manifest
             .iter()
             .map(|d| d.evidence.experiment.as_str())
             .collect();
