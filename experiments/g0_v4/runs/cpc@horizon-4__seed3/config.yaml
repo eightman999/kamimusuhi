@@ -1,0 +1,78 @@
+name: default
+seed: 0
+env:
+  obs_dim: 16
+  n_features: 4
+  n_noise_dims: 3
+  n_ar_dims: 2
+  n_train_contexts: 6
+  n_contexts: 10
+  context_dense_from: 8
+  episode_len: 64
+  min_segment: 10
+  max_segment: 28
+  switch_prob: 0.05
+  pair_prob: 0.2
+  obs_noise: 0.05
+  noise_dim_std: 0.35
+  ar_coef: 0.9
+  ar_std: 0.25
+  x_clip: 3.0
+  ctx_gain_lo: 0.6
+  ctx_gain_hi: 1.6
+data:
+  episodes: 256
+  val_episodes: 32
+  policy: explore
+  ctx_switch_frac: 0.6
+model:
+  hidden: 48
+  ae_hidden: 64
+  ae_latent: 8
+  codebook_size: 24
+  commitment: 0.25
+  window: 8
+  pca_dim: 8
+  pca_win_dim: 16
+  kmeans_k: 16
+train:
+  batch_size: 32
+  lr: 0.001
+  max_steps: 3000
+  time_budget_sec: 0
+  target_delta: true
+eval:
+  episodes: 48
+  warmup: 4
+  seg_warmup: 2
+  probe_steps: 600
+  probe_lr: 0.05
+  loco: true
+  fewshot:
+  - 1
+  - 5
+  - 20
+  ood:
+    noise_mul: 3.0
+    action_gain_mul: 1.5
+    dropout_frac: 0.5
+    ood_ctx_id: 6
+    ood_dense_ctx_id: 8
+    pair_prob: 0.6
+v4:
+  hidden: 64
+  horizon: 4
+  temperature: 0.1
+  z_dim: 64
+  readout_weight: 0.1
+  vicreg_sim: 10.0
+  vicreg_var: 10.0
+  vicreg_cov: 1.0
+  vicreg_pred: 1.0
+  vicreg_gamma: 1.0
+  ema_decay: 0.99
+  jepa_var: 1.0
+  jepa_cov: 0.1
+  aug_jitter: 0.1
+  aug_drop: 0.15
+  log_every: 15
