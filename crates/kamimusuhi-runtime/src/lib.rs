@@ -22,6 +22,7 @@
 pub mod config;
 pub mod error;
 pub mod inspect;
+pub mod organs;
 pub mod runtime;
 pub mod scenario;
 pub mod trace;
@@ -32,6 +33,7 @@ pub use config::{
 };
 pub use error::RuntimeError;
 pub use inspect::{InspectReport, inspect};
+pub use organs::validated_experiment_manifest;
 pub use runtime::{ClockMode, Runtime, RuntimeOptions, RuntimePaths};
 pub use scenario::{DemoPhase, PhaseReport};
 pub use trace::{JsonlTraceSink, TraceRecorder, read_trace};
