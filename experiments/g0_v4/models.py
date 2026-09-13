@@ -137,6 +137,10 @@ class VICRegModel(V4Base):
         self._init_common(obs_dim, n_actions, hidden)
         self.readout_weight = readout_weight
         self.gru = nn.GRU(obs_dim + n_actions, hidden, batch_first=True)
+        # unbounded projection: the probed latent. VICReg's variance
+        # hinge needs an unbounded space — on tanh-bounded h it forced
+        # saturation to +-1 and rank-1 collapse (pilot finding).
+        self.proj = nn.Linear(hidden, hidden)
         self.pred_net = nn.Sequential(
             nn.Linear(hidden + n_actions, hidden), nn.ReLU(),
             nn.Linear(hidden, hidden))
@@ -144,11 +148,11 @@ class VICRegModel(V4Base):
     def encode(self, obs, act, h0=None):
         x = torch.cat([obs, F.one_hot(act, self.n_actions).float()], -1)
         h, _ = self.gru(x, h0)
-        return h
+        return self.proj(h)
 
     def forward(self, obs, act, h0=None):
-        h = self.encode(obs, act, h0)
-        return self._readout(obs, h), h, {}
+        z = self.encode(obs, act, h0)
+        return self._readout(obs, z), z, {}
 
     def compute_loss(self, obs, nxt, act, cfg, gen=None):
         v = cfg.v4
@@ -158,7 +162,7 @@ class VICRegModel(V4Base):
         h2 = self.encode(v2, act)
         vic, logs = vicreg_terms(h1, h2, v.vicreg_sim, v.vicreg_var,
                                  v.vicreg_cov, v.vicreg_gamma)
-        # latent forward model: (h_t, a_t) -> h_{t+1}, target stop-grad
+        # latent forward model: (z_t, a_{t+1}) -> z_{t+1}, stop-grad
         act_next = F.one_hot(act[:, 1:], self.n_actions).float()
         pred_h = self.pred_net(torch.cat([h1[:, :-1], act_next], -1))
         lpred = F.mse_loss(pred_h, h1[:, 1:].detach())
@@ -188,28 +192,36 @@ class JEPAModel(V4Base):
         self.ema_decay = ema_decay
         self.readout_weight = readout_weight
         self.gru = nn.GRU(obs_dim + n_actions, hidden, batch_first=True)
+        # unbounded projection = the probed latent (EMA'd with the GRU);
+        # same anti-collapse rationale as VICRegModel.proj
+        self.proj = nn.Linear(hidden, hidden)
         self.target_gru = copy.deepcopy(self.gru)
-        for p in self.target_gru.parameters():
-            p.requires_grad_(False)
+        self.target_proj = copy.deepcopy(self.proj)
+        for mod in (self.target_gru, self.target_proj):
+            for p in mod.parameters():
+                p.requires_grad_(False)
         self.cell = nn.GRUCell(n_actions, hidden)
         self.pred_proj = nn.Linear(hidden, hidden)
 
-    def _run_gru(self, gru, obs, act, h0=None):
+    def _run_enc(self, gru, proj, obs, act, h0=None):
         x = torch.cat([obs, F.one_hot(act, self.n_actions).float()], -1)
         h, _ = gru(x, h0)
-        return h
+        return proj(h)
 
     def encode(self, obs, act, h0=None):
-        return self._run_gru(self.gru, obs, act, h0)
+        return self._run_enc(self.gru, self.proj, obs, act, h0)
 
     def encode_target(self, obs, act):
-        return self._run_gru(self.target_gru, obs, act)
+        return self._run_enc(self.target_gru, self.target_proj, obs, act)
 
     @torch.no_grad()
     def ema_update(self):
         m = self.ema_decay
         for pt, po in zip(self.target_gru.parameters(),
                           self.gru.parameters()):
+            pt.mul_(m).add_(po.detach(), alpha=1.0 - m)
+        for pt, po in zip(self.target_proj.parameters(),
+                          self.proj.parameters()):
             pt.mul_(m).add_(po.detach(), alpha=1.0 - m)
 
     def forward(self, obs, act, h0=None):
