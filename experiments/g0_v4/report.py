@@ -31,12 +31,14 @@ H1_H2_DELTA = 0.10
 NULL_MARGIN = 0.05        # "clearly above" the shuffle null
 H4_AUC = 0.70
 
+# (label, key in sweep summary) — keys are METRIC_PATHS *names*, not
+# the eval.json paths
 PRIMARY = [("acc_in", "acc_in"), ("acc_loco", "acc_loco"),
            ("acc_ood_ctx", "acc_ood_ctx"),
            ("dynseg_loco", "dynseg_acc_loco"),
            ("dynseg_ood", "dynseg_acc_ood_ctx"),
-           ("NMI", "nmi_pooled"), ("match_ood", "match_ood_ctx"),
-           ("match_null", "match_ood_ctx_null"),
+           ("NMI", "nmi_pooled"), ("match_ood", "match_ood"),
+           ("match_null", "match_ood_null"),
            ("midctx", "midctx_acc"),
            ("midctx_null", "midctx_acc_null"),
            ("combo_oodctx", "combo_oodctx_auc")]
@@ -89,11 +91,11 @@ def hypothesis_verdicts(summary, controls, methods):
             "midctx_npos": mid_d.get("n_pos"),
             "midctx_n": mid_d.get("n"),
             "midctx_null": mid_null,
-            "match": _m(summary, m, "match_ood_ctx"),
-            "match_untr": _m(summary, u, "match_ood_ctx"),
+            "match": _m(summary, m, "match_ood"),
+            "match_untr": _m(summary, u, "match_ood"),
             "match_diff": (_diff(controls, m, "match_ood") or {})
             .get("mean_diff"),
-            "match_null": _m(summary, m, "match_ood_ctx_null"),
+            "match_null": _m(summary, m, "match_ood_null"),
             "dynseg_ood": _m(summary, m, "dynseg_acc_ood_ctx"),
             "dynseg_ood_untr": _m(summary, u, "dynseg_acc_ood_ctx"),
             "combo": _m(summary, m, "combo_oodctx_auc"),
@@ -325,13 +327,13 @@ def generate(summary_jsons, controls_json: Path,
                 continue
             a(f"| g0:{rep} | {_f(_m(g0, rep, 'acc_ood_ctx'))} | "
               f"{_f(_m(g0, rep, 'dynseg_acc_ood_ctx'))} | "
-              f"{_f(_m(g0, rep, 'match_ood_ctx'))} | "
+              f"{_f(_m(g0, rep, 'match_ood'))} | "
               f"{_f(_m(g0, rep, 'midctx_acc'))} | "
               f"{_f(_m(g0, rep, 'combo_oodctx_auc'))} |\n")
         for m in methods:
             a(f"| v4:{m} | {_f(_m(summary, m, 'acc_ood_ctx'))} | "
               f"{_f(_m(summary, m, 'dynseg_acc_ood_ctx'))} | "
-              f"{_f(_m(summary, m, 'match_ood_ctx'))} | "
+              f"{_f(_m(summary, m, 'match_ood'))} | "
               f"{_f(_m(summary, m, 'midctx_acc'))} | "
               f"{_f(_m(summary, m, 'combo_oodctx_auc'))} |\n")
 
