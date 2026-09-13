@@ -18,7 +18,6 @@ import numpy as np
 
 EVICT_FIFO = "fifo"    # evict the earliest inserted slot
 EVICT_LRU = "lru"      # evict the least recently touched slot
-EVICT_RANDOM = "random"  # evict a uniformly random occupied slot
 
 
 class SlotMemory:
@@ -64,8 +63,8 @@ class SlotMemory:
     def _evict(self, evict: str) -> int:
         if evict == EVICT_LRU:
             return int(np.argmin(self.last_used))
-        if evict == EVICT_RANDOM:
-            return int(np.random.randint(self.num_slots))
+        if evict != EVICT_FIFO:
+            raise ValueError(f"unknown evict policy {evict!r}")
         return int(np.argmin(self.insert_counter))  # fifo
 
     # -- reads ----------------------------------------------------------
@@ -91,6 +90,19 @@ class SlotMemory:
     # -- causal-test manipulations --------------------------------------
     def clear(self) -> None:
         self.__init__(self.num_slots, self.payload_dim)
+
+    def remove_func(self, func: int) -> int:
+        """Targeted erase: free every occupied slot serving `func`.
+        Returns the number of slots removed."""
+        mask = self.occupied & (self.funcs == func)
+        n = int(mask.sum())
+        if n:
+            self.occupied[mask] = False
+            self.funcs[mask] = -1
+            self.locs[mask] = -1
+            self.potencies[mask] = 0.0
+            self.payloads[mask] = 0.0
+        return n
 
     def permute(self, order: np.ndarray) -> None:
         order = np.asarray(order)

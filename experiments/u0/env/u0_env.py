@@ -1,30 +1,43 @@
 """U0 need-guided memory environment.
 
-An episode is a fixed-length life stream on a 4-location ring:
+An episode is a fixed-length life stream on a num_locations ring
+(default 12, labelled A-L):
 
   * Early on, the agent *observes events*: truthful reports of service
     sites ("RESOURCE at C, potency 1.0"), plus DISTRACTOR and NOISE
     items. Whether a report will ever matter is NOT labeled.
-  * Later, one or two internal variables enter a *need crisis* (they
-    drift toward their lethal bound). Which variable crises is sampled
-    per episode, weighted by how far that variable already sits outside
-    its preferred range at reset: a currently-depleted variable is the
-    most likely future need, so the value of storing a given event is
-    conditioned on the agent's own internal state.
-  * To resolve a crisis the agent must RECALL the site serving the
-    matching function from slot memory, MOVE to its location, and ACT.
-    It can also wander and try sites by trial-and-error: memory is the
-    fast path, not the only path.
+  * Later, one or two internal variables enter a *need crisis*: an
+    onset shock pushes the variable toward its lethal bound and it
+    keeps drifting there until resolved or death. Which variable
+    crises is sampled per episode, weighted by how far that variable
+    already sits outside its preferred range at reset: a
+    currently-depleted variable is the most likely future need, so
+    the value of storing a given event is conditioned on the agent's
+    own internal state.
+  * After the event window the current observation carries NO
+    location->function information: post-onset the agent may know
+    *which* variable crises (its internal channels) but not *where*
+    the serving site is. To resolve a crisis the agent must RECALL
+    the site serving the matching function from slot memory, MOVE to
+    its location, and ACT. Trial-and-error wandering exists but the
+    needed potent site is one of twelve locations inside a short crisis
+    budget, so a memoryless agent faces principled uncertainty.
 
 Sites: each of the 4 functions (resource->energy, shelter->temperature,
-safe_zone->risk, obs_point->certainty) is installed at TWO locations per
-episode, one potent (1.0) and one meager (0.45) site. Eight useful event
-reports therefore exceed the 4 memory slots: keeping "everything useful"
-is impossible and what is worth keeping depends on anticipated need.
+safe_zone->risk, obs_point->certainty) is installed at TWO distinct
+locations per episode, one potent (1.0) and one meager (0.35) site.
+Eight useful event reports therefore exceed the 4 memory slots: keeping
+"everything useful" is impossible and what is worth keeping depends on
+anticipated need. A site resolves a crisis only if its pull brings the
+variable back inside its preferred range, so a meager site is a partial
+rescue, not a reliable fix — the potent site is the real target.
 
 Actions (6): IGNORE, STORE, RECALL, WAIT, MOVE, ACT.
-STORE/RECALL carry explicit reward costs; MOVE/ACT/WAIT act through the
-internal dynamics.
+MOVE walks +1 while searching; once RECALL has produced a destination
+(recall_valid), MOVE becomes directed — it steps the short way around
+the ring toward the recalled location, since a known destination makes
+locomotion purposeful. STORE/RECALL carry explicit reward costs;
+MOVE/ACT/WAIT act through the internal dynamics.
 
 reward = -homeostatic_error - memory_op_costs - survival_violation.
 No signal ever marks an event as relevant; memory usefulness exists only
@@ -82,14 +95,18 @@ PREFERRED_RANGES = {
 }
 ERROR_WEIGHTS = {"energy": 1.0, "temperature": 1.0, "risk": 1.0,
                  "certainty": 0.7}
-# Critical (lethal) thresholds; None = unbounded side.
+# Critical (lethal) thresholds; None = unbounded side. Every variable
+# that can crisis must be able to kill, otherwise that need type could
+# always be resolved by leisurely trial-and-error (no principled
+# uncertainty) — certainty collapse counts as death for the same reason.
 CRITICAL_THRESHOLDS = {
     "energy": (0.05, None),
     "temperature": (0.05, 0.95),
     "risk": (None, 0.98),
+    "certainty": (0.05, None),
 }
 
-OBS_DIM = 24
+OBS_DIM = 32
 PAYLOAD_DIM = 11  # event type one-hot(7) + loc sin/cos(2) + potency(1) + t(1)
 
 
@@ -101,8 +118,11 @@ PAYLOAD_DIM = 11  # event type one-hot(7) + loc sin/cos(2) + potency(1) + t(1)
 @dataclass
 class U0Config:
     episode_len: int = 192
-    num_locations: int = 6
-    memory_slots: int = 4
+    num_locations: int = 12
+    memory_slots: int = 3     # 4 useful functions > 3 slots: coverage of
+                            # every function is impossible — selection is
+                            # forced and the need-conditioned choice of
+                            # WHICH func to hold is the experiment
     evict_policy: str = "fifo"
 
     # --- event schedule ---
@@ -113,7 +133,7 @@ class U0Config:
     noise_rate: float = 0.25       # fraction of free window steps -> NOISE
     sites_per_function: int = 2    # one potent + one meager site
     potency_rich: float = 1.0
-    potency_meager: float = 0.45
+    potency_meager: float = 0.35
 
     # --- need (crisis) schedule ---
     needs_per_episode: int = 2
@@ -121,14 +141,22 @@ class U0Config:
     delay_max: int = 80
     need_gap_min: int = 8          # need_k onset = need_{k-1} + U[min,max]
     need_gap_max: int = 24
-    need_beta: float = 6.0         # softmax over deviation at reset
+    need_beta: float = 10.0        # softmax over deviation at reset
     need_floor: float = 0.05       # baseline weight for comfortable vars
-    resolve_margin: int = 32       # ep_len headroom after latest need onset
 
     # --- crisis dynamics (drift toward lethal bound while active) ---
-    crisis_drain: float = 0.030    # energy/certainty downward rate
-    crisis_temp_rate: float = 0.020
-    crisis_risk_rate: float = 0.020
+    # Rates are tuned so a crisis is a ~8-12 step emergency from the
+    # post-shock onset state: long enough for recall+directed-move+act
+    # (<= ~7 steps) and too short for a blind ring tour (~2 tries/site).
+    crisis_shock: float = 0.15     # at onset, push the var toward its bound
+    crisis_drain: float = 0.035    # energy downward rate
+    crisis_cert_rate: float = 0.030
+    crisis_temp_rate: float = 0.030
+    crisis_risk_rate: float = 0.080
+    # crisis drains accelerate with age: a crisis is a compounding
+    # emergency — the recall->move->act chain (~4 steps) still fits the
+    # early window, but a wanderer trying sites one at a time runs out
+    crisis_accel: float = 0.12
 
     # --- passive internal dynamics ---
     passive_energy: float = 0.0025
@@ -154,22 +182,35 @@ class U0Config:
     wait_cert: float = 0.004
     move_energy: float = 0.004
     act_energy: float = 0.003
-    act_boost: float = 0.10        # preventive top-up per site potency
-    act_wrong_energy: float = 0.040  # ACT that resolves nothing
-    act_wrong_risk: float = 0.08     # wrong doors during an emergency
+    act_boost: float = 0.10        # preventive pull toward range midpoint
+    act_wrong_energy: float = 0.045  # ACT that resolves nothing
+    act_wrong_risk: float = 0.10     # wrong doors during an emergency
 
     # --- memory operation costs (reward terms, not energy) ---
     store_cost: float = 0.005
     recall_cost: float = 0.005
+    # potential-based navigation shaping: a directed MOVE that reduces
+    # ring distance to the recalled target earns a small bonus — policy-
+    # invariant (Ng et al.) so it does not change the optimal policy, and
+    # it rewards following your own recall readout, not which events are
+    # worth storing
+    nav_bonus: float = 0.02
 
     # --- reward ---
     death_penalty: float = 2.0
     death_forfeit: float = 0.05    # per remaining step, alive-bonus form
 
     # --- initial state ---
-    init_perturb_prob: float = 0.5  # chance one var starts outside range
+    init_perturb_prob: float = 0.75  # chance one var starts outside range
     init_perturb_lo: float = 0.05
     init_perturb_hi: float = 0.18
+    # TRAINING AID ONLY — must be 0 for any reported run. With this
+    # probability, a newly-active need's potent site is injected into
+    # memory at onset (a mechanics scaffold: it teaches the
+    # recall->move->act chain and lets the critic learn "needed func held
+    # -> resolution", after which the student's own stores must create
+    # that state). It never marks which *events* to store.
+    prefill_need_prob: float = 0.0
 
     # --- causal/OOD hooks ---
     # function_shift[f] = which variable function f heals (OOD semantic
@@ -246,6 +287,7 @@ class _Need:
     retention_at_onset: bool = False
     resolve_t: int = -1
     dir: float = 0.0          # temperature crisis direction (set at onset)
+    auc: float = 0.0          # homeostatic error integrated while active
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +313,7 @@ class U0Env:
         self.death_cause: str | None = None
         self.recall_valid = False
         self.recall_loc = -1
+        self.vuln = np.zeros(N_INTERNAL, dtype=np.float32)
         self.store_log: list[dict] = []
         self.action_counts = np.zeros(N_ACTIONS, dtype=np.int64)
         self._ep_seed = 0
@@ -300,6 +343,14 @@ class U0Env:
         self.position = int(rng.integers(self.cfg.num_locations))
         self.ambient_phase = float(rng.uniform(0, 2 * np.pi))
         self.internal = self._initial_internal(rng)
+        # vulnerability profile: the reset-time deviation the need plan
+        # is sampled from. It is *constitutional* knowledge — the agent
+        # may observe its own chronic weakness at any time — and is the
+        # only persistent channel that predicts the coming crisis; the
+        # live internal state drifts and forgets it.
+        self.vuln = np.array([var_deviation(self.internal, i)
+                              for i in range(N_INTERNAL)],
+                             dtype=np.float32)
         self.sites = self._make_sites(rng)
         self.schedule, last_func_t = self._make_schedule(rng)
         self.needs = self._make_needs(rng, last_func_t)
@@ -393,8 +444,11 @@ class U0Env:
         # rewarded exponentially (expm1 keeps dev=0 -> 0)
         w = c.need_floor + np.expm1(c.need_beta * devs)
         w /= w.sum()
-        n = min(c.needs_per_episode, N_INTERNAL)
-        vars_ = rng.choice(N_INTERNAL, size=n, replace=False, p=w)
+        # needs are iid draws from the vulnerability-weighted
+        # distribution; repeats are allowed — a chronically weak variable
+        # can crisis twice, and one stored item then pays off twice
+        n = c.needs_per_episode
+        vars_ = rng.choice(N_INTERNAL, size=n, replace=True, p=w)
         needs = []
         onset = last_func_t + int(rng.integers(c.delay_min, c.delay_max + 1))
         for v in vars_:
@@ -440,8 +494,20 @@ class U0Env:
         active = [n for n in self.needs if n.active and not n.resolved]
         crisis_age = (self.t - active[0].onset) / c.episode_len \
             if active else 0.0
+        # best stored potency per function (0 when absent). The agent's
+        # own memory contents are internal state — the critic must be
+        # able to see "needed func held" for the store->outcome credit
+        # assignment to exist at all. Locations still require RECALL.
+        stored_pot = np.zeros(N_FUNCTIONS, dtype=np.float32)
+        occ = (self.memory.occupied & (self.memory.funcs >= 0)
+               & (self.memory.funcs < N_FUNCTIONS))
+        if occ.any():
+            np.maximum.at(stored_pot, self.memory.funcs[occ],
+                          self.memory.potencies[occ])
         parts = [
             self.internal.astype(np.float32),                    # 4
+            self.vuln,                                           # 4
+            stored_pot,                                          # 4
             self._pos_vec(self.position),                        # 2
             self._event_vec(e),                                  # 10
             np.array([self.memory.num_occupied / c.memory_slots],
@@ -490,14 +556,38 @@ class U0Env:
         for n in self.needs:
             if not n.active and not n.resolved and self.t >= n.onset:
                 n.active = True
+                # onset shock: the need announces itself by pushing its
+                # variable partway toward the lethal bound. This keeps the
+                # crisis budget (~steps until death) roughly uniform across
+                # need types instead of depending on pre-crisis drift.
+                if n.var == TEMPERATURE and n.dir == 0.0:
+                    n.dir = 1.0 if self.internal[TEMPERATURE] >= 0.5 \
+                        else -1.0
+                lo_c, hi_c = CRITICAL_THRESHOLDS[INTERNAL_NAMES[n.var]]
+                bound = lo_c if lo_c is not None else hi_c
+                if n.var == TEMPERATURE:
+                    bound = hi_c if n.dir > 0 else lo_c
+                self.internal[n.var] += c.crisis_shock * (
+                    bound - self.internal[n.var])
+                if self.rng.random() < c.prefill_need_prob:
+                    f = self._func_of_var(n.var)
+                    potent = [s for s in self.sites
+                              if s["func"] == f and s["potency"] > 0.9]
+                    if potent:
+                        b = potent[0]
+                        self.memory.store(
+                            self._event_vec_raw(_Event(
+                                _ev_of_func(f), loc=b["loc"],
+                                potency=b["potency"])),
+                            f, b["loc"], b["potency"], c.evict_policy)
                 n.retention_at_onset = (
                     self.memory.best_for_function(
                         self._func_of_var(n.var)) is not None)
 
         # --- memory operations ---
         if action == STORE:
-            reward -= c.store_cost
             if e.kind != EV_NONE:
+                reward -= c.store_cost
                 payload = np.concatenate(
                     [self._event_vec_raw(e),
                      np.array([self.t / c.episode_len], np.float32)])
@@ -513,7 +603,26 @@ class U0Env:
 
         # --- locomotion / interaction ---
         if action == MOVE:
-            self.position = (self.position + 1) % c.num_locations
+            if self.recall_valid and self.recall_loc >= 0:
+                # directed walk: a known destination makes locomotion
+                # purposeful — step the short way around the ring, briskly
+                def _ring_dist(a, b):
+                    d = (a - b) % c.num_locations
+                    return min(d, c.num_locations - d)
+                before = _ring_dist(self.position, self.recall_loc)
+                diff = (self.recall_loc - self.position) % c.num_locations
+                if diff != 0:
+                    step_dir = 1 if diff <= c.num_locations / 2 else -1
+                    hop = min(3, diff if step_dir > 0
+                              else c.num_locations - diff)
+                    self.position = (self.position + step_dir * hop) \
+                        % c.num_locations
+                else:
+                    self.position = (self.position + 1) % c.num_locations
+                reward += c.nav_bonus * (
+                    before - _ring_dist(self.position, self.recall_loc))
+            else:
+                self.position = (self.position + 1) % c.num_locations
         elif action == ACT:
             self._do_act(info)
 
@@ -524,6 +633,11 @@ class U0Env:
         err = homeostatic_error(self.internal)
         self._err_sum += err
         self._err_last = err
+        # crisis-error integral: every step an unresolved need stays
+        # active contributes its post-update error to that need's AUC
+        for n in self.needs:
+            if n.active and not n.resolved:
+                n.auc += err
         self._stable_steps += int(stable_mask(self.internal))
         reward -= err
 
@@ -574,10 +688,16 @@ class U0Env:
                     mid = 0.5 * (lo + hi)
                     self.internal[n.var] += best["potency"] * (
                         mid - self.internal[n.var])
-                    n.resolved = True
-                    n.active = False
-                    n.resolve_t = self.t
-                    info["resolved_need"] = n.var
+                    if var_deviation(self.internal, n.var) <= 0.0:
+                        n.resolved = True
+                        n.active = False
+                        n.resolve_t = self.t
+                        info["resolved_need"] = n.var
+                    else:
+                        # a weak site gives partial relief but no
+                        # resolution — the agent must re-ACT or find the
+                        # potent site. Not penalized as a wrong door.
+                        info["partial_act"] = True
                     return
             self.internal[ENERGY] -= c.act_wrong_energy
             self.internal[RISK] += c.act_wrong_risk
@@ -587,10 +707,15 @@ class U0Env:
                 self.internal[ENERGY] -= c.act_wrong_energy
                 info["failed_act"] = True
                 return
-            # preventive use: each local site tops up its variable
+            # preventive use: each local site nudges its variable toward
+            # the preferred midpoint — a weak form of crisis resolution
+            # that can never push a variable out of range
             for s in local:
                 var = self._func_map[s["func"]]
-                self.internal[var] += c.act_boost * s["potency"]
+                lo, hi = PREFERRED_RANGES[INTERNAL_NAMES[var]]
+                mid = 0.5 * (lo + hi)
+                self.internal[var] += c.act_boost * s["potency"] * (
+                    mid - self.internal[var])
             info["act_sites"] = len(local)
 
     def _update_internal(self, action: int) -> None:
@@ -621,20 +746,22 @@ class U0Env:
             s[ENERGY] -= c.move_energy
         elif action == ACT:
             s[ENERGY] -= c.act_energy
-        # active crises drive their variable toward the lethal bound
+        # active crises drive their variable toward the lethal bound,
+        # accelerating with crisis age — an unresolved emergency compounds
         for n in self.needs:
             if not n.active or n.resolved:
                 continue
+            accel = 1.0 + c.crisis_accel * max(0, self.t - n.onset)
             if n.var == ENERGY:
-                s[ENERGY] -= c.crisis_drain
+                s[ENERGY] -= c.crisis_drain * accel
             elif n.var == CERTAINTY:
-                s[CERTAINTY] -= c.crisis_drain
+                s[CERTAINTY] -= c.crisis_cert_rate * accel
             elif n.var == RISK:
-                s[RISK] += c.crisis_risk_rate
+                s[RISK] += c.crisis_risk_rate * accel
             elif n.var == TEMPERATURE:
                 if n.dir == 0.0:
                     n.dir = 1.0 if s[TEMPERATURE] >= 0.5 else -1.0
-                s[TEMPERATURE] += n.dir * c.crisis_temp_rate
+                s[TEMPERATURE] += n.dir * c.crisis_temp_rate * accel
         s += rng.normal(0.0, c.state_noise, size=N_INTERNAL)
         np.clip(s, 0.0, 1.0, out=s)
 
@@ -644,10 +771,15 @@ class U0Env:
         self.recall_valid = False
         self.recall_loc = -1
 
-    def permute_memory(self, rng: np.random.Generator) -> None:
-        self.memory.permute(rng.permutation(self.memory.num_slots))
+    def erase_for_need(self, var: int) -> int:
+        """Targeted erase (U-C1b / U-H4b): drop only the stored items
+        whose function serves `var` — the memories the agent stored
+        *for this need*. Returns the number of slots removed."""
+        f = self._func_of_var(var)
+        n = self.memory.remove_func(f) if f >= 0 else 0
         self.recall_valid = False
         self.recall_loc = -1
+        return n
 
     def swap_memory(self, state: dict) -> dict:
         prev = self.memory.clone_state()
@@ -658,13 +790,29 @@ class U0Env:
 
     # ------------------------------------------------------------------
     def episode_stats(self) -> dict:
-        fired = [n for n in self.needs]
-        useful_funcs = {self._func_of_var(n.var) for n in fired}
+        planned = list(self.needs)
+        fired = [n for n in planned if n.active or n.resolved]
+        died = self.death_cause is not None
+        useful_funcs = {self._func_of_var(n.var) for n in planned}
         stores = [s for s in self.store_log]
         n_func = sum(1 for s in stores if s["cls"] == CLS_FUNCTIONAL)
         n_useful = sum(1 for s in stores
                        if s["cls"] == CLS_FUNCTIONAL
                        and s["func"] in useful_funcs)
+        # Per-need crisis AUC: homeostatic error integrated from onset to
+        # resolution / death / episode end. Steps the agent did not live
+        # (death before resolution, or before the need even fired) are
+        # forfeited at the error measured at death, mirroring error_full,
+        # so an early death cannot shrink the integral.
+        aucs = []
+        for n in planned:
+            remaining = max(0, self.cfg.episode_len - max(self.t, n.onset))
+            aucs.append(n.auc + (self._err_last * remaining
+                                 if not n.resolved else 0.0))
+        ttr = [(n.resolve_t - n.onset) if n.resolved
+               else (self.cfg.episode_len - n.onset) for n in planned]
+        survived = [1.0 if (n.resolved or not died) else 0.0
+                    for n in planned]
         return {
             "mean_error": self._err_sum / max(1, self.t),
             "error_full": (self._err_sum + self._err_last *
@@ -674,10 +822,15 @@ class U0Env:
             "died": self.death_cause is not None,
             "death_cause": self.death_cause,
             "stable_fraction": self._stable_steps / max(1, self.t),
+            "needs_planned": len(planned),
             "needs_fired": len(fired),
-            "needs_resolved": sum(n.resolved for n in fired),
-            "need_resolution": (sum(n.resolved for n in fired)
-                                / max(1, len(fired))),
+            "needs_resolved": sum(n.resolved for n in planned),
+            "need_resolution": (sum(n.resolved for n in planned)
+                                / max(1, len(planned))),
+            "crisis_error_auc": float(np.mean(aucs)) if aucs else 0.0,
+            "time_to_resolution": float(np.mean(ttr)) if ttr else 0.0,
+            "survival_after_need": float(np.mean(survived))
+                                   if survived else 1.0,
             "important_retention": (
                 sum(n.retention_at_onset for n in fired)
                 / max(1, len(fired))),

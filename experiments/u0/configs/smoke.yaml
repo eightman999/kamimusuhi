@@ -1,8 +1,8 @@
 name: u0_smoke
 env:
   episode_len: 128
-  num_locations: 6
-  memory_slots: 4
+  num_locations: 12
+  memory_slots: 3
   evict_policy: fifo
   event_start: 8
   event_spacing: 5
@@ -11,17 +11,20 @@ env:
   noise_rate: 0.25
   sites_per_function: 2
   potency_rich: 1.0
-  potency_meager: 0.45
+  potency_meager: 0.35
   needs_per_episode: 1
   delay_min: 16
   delay_max: 32
   need_gap_min: 8
   need_gap_max: 16
-  need_beta: 6.0
+  need_beta: 10.0
   need_floor: 0.05
-  crisis_drain: 0.030
-  crisis_temp_rate: 0.020
-  crisis_risk_rate: 0.020
+  crisis_shock: 0.20
+  crisis_drain: 0.045
+  crisis_cert_rate: 0.045
+  crisis_temp_rate: 0.040
+  crisis_risk_rate: 0.100
+  crisis_accel: 0.15
   passive_energy: 0.0025
   temp_relax: 0.02
   ambient_amp: 0.10
@@ -44,12 +47,13 @@ env:
   move_energy: 0.004
   act_energy: 0.003
   act_boost: 0.10
-  act_wrong_energy: 0.040
+  act_wrong_energy: 0.045
+  act_wrong_risk: 0.10
   store_cost: 0.005
   recall_cost: 0.005
   death_penalty: 2.0
   death_forfeit: 0.05
-  init_perturb_prob: 0.5
+  init_perturb_prob: 0.75
   init_perturb_lo: 0.05
   init_perturb_hi: 0.18
 

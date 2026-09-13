@@ -15,7 +15,7 @@ Isolated from M/H/S/T/J systems. Standalone under `experiments/u0/`.
 ## Scientific question
 
 ```text
-same event, same world, same history
+same event, same world, same history, same memory state
         different internal need state
                     ↓
         different STORE probability
@@ -39,38 +39,74 @@ Event types alone do not determine value:
   location/type memorization is penalized (and explicitly tested by
   `event_perm` / `need_mapping_shift`).
 
-Eight functional event reports exceed the 4 memory slots, so "store
-everything useful" is impossible; the correct subset depends on which
-variables are vulnerable. Need identities are **never labeled**: needs are
+Four useful functions compete for **3 memory slots**, so covering every
+function is impossible; the correct subset depends on which variables are
+vulnerable. Need identities are **never labeled**: needs are
 sampled per episode weighted by the reset-time deviation profile
 (`need_beta` softmax + `need_floor`), so the only available signal is the
 correlation between the agent's observed internal state and the identity
 of the coming crisis.
 
+## Memory is required — the protocol fix
+
+After the event window, the current observation carries **no**
+location↔function information. Post-onset the agent may know *which*
+variable is failing (its internal channels) but never *where* the serving
+site is. To make the memoryless search fail in principle:
+
+- the ring has **12 locations** with only **8 sites**; a crisis resolves
+  only at the potent site (a meager site gives partial relief, no
+  resolution once the variable is deep) — the effective target is one
+  location out of twelve;
+- crisis drains **accelerate with age** (`crisis_accel`) — the
+  recall→move→act chain fits the early window, but a wanderer trying
+  sites one at a time runs out of time;
+- **memory is smaller than the useful set**: 4 functions but only
+  **3 slots**, so covering every function is impossible — which function
+  to hold is the need-conditioned decision the experiment measures;
+- each need onset applies a **shock** pushing the variable 15% toward its
+  lethal bound, then keeps draining — every crisis is a ~8–12 step
+  emergency, far shorter than a blind ring tour (~2 steps per location
+  tried);
+- all four variables can die (certainty collapse < 0.05 counts as death),
+  so no need type can be waited out.
+
+Sanity, verified before any training (`protocol_check.py`, P0 gates):
+oracle resolves ≈ 0.99 of needs while the `no_memory` baseline resolves
+≈ 0.30; erasing the oracle's memory at need onset collapses it to the
+no_memory level.
+
 ## Environment
 
-- 6-location ring (A–F). `MOVE` advances one step; positions are
+- 12-location ring (A–L). `MOVE` wanders +1 step while searching; once a
+  RECALL produced a destination (`recall_valid`), MOVE becomes directed
+  — it steps the short way around the ring, 2 locations per step, since
+  locomotion toward a known destination is purposeful. Positions are
   observed as sin/cos so the encoding scales with the ring size.
 - Internal state: `energy`, `temperature`, `risk`, `certainty` with
   preferred ranges energy [0.40, 0.80], temperature [0.35, 0.65],
   risk [0.00, 0.30], certainty [0.40, 1.00]. Death: energy < 0.05,
-  temperature outside [0.05, 0.95], risk > 0.98.
+  temperature outside [0.05, 0.95], risk > 0.98, certainty < 0.05.
 - Sites: each of the 4 functions (resource→energy, shelter→temperature,
-  safe_zone→risk, obs_point→certainty) exists at 2 locations — one
-  `potent` (1.0) and one `meager` (0.45) site. `ACT` at a matching site
-  during a crisis stops the drain and recovers by `potency × gap`;
-  `ACT` elsewhere costs energy and raises risk (trial-and-error
-  fallback exists: memory is the fast path, not the only path — but
-  during a fast crisis, wandering the ring is often lethal).
+  safe_zone→risk, obs_point→certainty) exists at 2 distinct locations —
+  one `potent` (1.0) and one `meager` (0.35) site. `ACT` at a matching
+  site during a crisis pulls the variable `potency × (mid − x)` toward
+  the preferred midpoint and resolves the need **only if the variable
+  lands back inside its range** — the meager pull usually cannot reach
+  from a deep crisis state. `ACT` elsewhere costs energy and raises risk.
 - Events: 8 functional reports (truthful type+location+potency) early in
   the episode, plus DISTRACTOR (typed junk) and NOISE items.
 - Needs: 2 per episode; onset = last functional event + U[24,80], second
-  need +U[8,24] later. While active, the variable drifts toward its
-  lethal bound (drain 0.03/step for energy/certainty, 0.02 for
-  temperature/risk).
-- Observation: 24 dims — internal(4) + position sin/cos(2) + event
-  type one-hot(7) + event location sin/cos(2) + event potency(1) +
-  memory occupancy(1) + crisis flag(1) + recall readout valid(1) +
+  need +U[8,24] later. At onset the variable is shocked 15% toward its
+  lethal bound, then drains (energy 0.035, certainty 0.030,
+  temperature 0.030, risk 0.080 per step) until resolved or death.
+- Observation: 32 dims — internal(4) + vulnerability profile(4: the
+  reset-time deviation the need plan was sampled from; constitutional
+  knowledge the agent can always see) + stored potency per function(4:
+  the agent's own memory contents — the critic must see "needed func
+  held" for store->outcome credit to exist) + position sin/cos(2) +
+  event type one-hot(7) + event location sin/cos(2) + event potency(1)
+  + memory occupancy(1) + crisis flag(1) + recall readout valid(1) +
   recall target sin/cos(2) + active-need count(1) + crisis age(1) +
   time(1).
 - RECALL readout answers "where is the best stored site for the
@@ -96,41 +132,66 @@ truth for analysis only.
   storage rule: `random` (p=0.2), `fifo`, `lru`, `store_all`,
   `heuristic_current_need` (stores events for *currently* deviated
   variables — myopic), `oracle` (stores exactly the potent sites of the
-  to-be-needed functions — upper bound).
+  to-be-needed functions — upper bound), `no_memory` (never stores or
+  recalls — wanders and tries each location once; the U0 lower bound).
 
 ## Metrics
 
-`error_full` (episode-integrated homeostatic error; post-death steps
-count at the death error), `survival_fraction`, `stable_fraction`,
-`need_resolution`, `important_retention` (needed-function site present at
-need onset), `store_precision` (stores matching fired needs / all
-stores), action counts, `oracle_gap`.
+Primary (the U0 loss): `crisis_error_auc` — per-need homeostatic error
+integrated from onset to resolution / death / episode end, averaged over
+planned needs (unlived steps forfeited at the death error).
+
+Also primary: `need_resolution` (resolved / planned), `time_to_resolution`
+(censored mean), `survival_after_need` (fraction of planned needs
+survived).
+
+Secondary/context: `error_full` (whole-episode error integral),
+`survival_fraction`, `stable_fraction`, `important_retention` (needed
+site held at onset, over fired needs), `store_precision`, action counts.
 
 ## Causal tests
 
 | id | manipulation | expectation if memory is causal |
 |----|--------------|--------------------------------|
-| U-C1 | `erase` memory at need onset | error ↑ ≥30% |
-| U-C2 | `shuffle`: swap with a donor episode's memory | error ↑ |
-| U-C3 | `need_intervention`: pin internal state during the event window, identical event streams | P(STORE\|func) shifts ≥0.20 between adverse and safe states |
+| U-H3 | `targeted_erase` / `donor_shuffle` in the store→onset window | crisis AUC ≥ 1.30× clean, or resolution drop ≥ 0.20 |
+| U-H4 | `need_intervention`: pin internal state AND memory during the event window | mean \|ΔP(STORE)\| ≥ 0.20 |
+| U-H4b | `targeted_mediation`: erase only need-serving items at onset | mediation AUC closes ≥ half the clean→no_memory gap |
 | U-C4 | `event_perm`: permute observed type/location channels | breaks channel-position memorization |
+
+`erase` (blanket clear) remains available for the protocol sanity gate
+(P0-5) but is not part of the main battery.
 
 ## OOD conditions
 
 `delay96`, `delay128`, `delay160` (episode length extended),
 `distractor2x`, `distractor4x`, `need_mapping_shift` (function→variable
-rotation: sites still heal, the association moves), `event_perm`.
+rotation: sites still heal, the association moves), `event_perm`,
+`capacity2` (2 slots for 4 functions — harsher selection pressure).
 
 ## Pre-registered gates (recorded before seeing results)
 
+Protocol sanity (P0, must ALL pass before any PPO — see
+`reports/U0_PROTOCOL_CHECK.md`):
+
 | gate | criterion | threshold |
 |------|-----------|-----------|
-| U-H1 | learned `error_full` below min(random, fifo) | ≥ 20% improvement |
+| P0-1 | oracle need_resolution | ≥ 0.90 |
+| P0-2 | no_memory need_resolution | < 0.40 |
+| P0-3 | oracle crisis_error_auc | < no_memory |
+| P0-4 | oracle vs fifo/random | not worse on resolution AND auc |
+| P0-5 | oracle + memory erase | resolution drop ≥ 0.30 |
+
+Main gates:
+
+| gate | criterion | threshold |
+|------|-----------|-----------|
+| U-H1 | `need_resolution` AND `normalized_regret` on crisis_error_auc (0 = oracle, 1 = no_memory) | ≥ 0.80 AND ≤ 0.50 |
 | U-H2 | `store_precision` AND `important_retention` | both ≥ 0.75 |
-| U-H3 | erase OR shuffle degradation | ≥ 30% `error_full` increase |
+| U-H3 | targeted_erase OR donor_shuffle | auc ≥ 1.30× clean or resolution drop ≥ 0.20 |
 | U-H4 | need-intervention mean \|ΔP(STORE)\| | ≥ 0.20 |
-| U-H5 | main conclusions sign-consistent | across ≥ 3 seeds |
-| **Strong PASS** | U-H1..U-H5 AND delay128 degradation ≤ 20% AND distractor4x precision ≥ 0.70 AND `oracle_gap` ≤ 0.15 | all |
+| U-H4b | targeted_mediation gap closed toward no_memory | ≥ 0.50 |
+| U-H5 | learned > no_memory, erase hurts, probe Δ > 0 | sign-consistent across ≥ 3 seeds |
+| **Strong PASS** | U-H1..U-H5 AND delay128 regret ≤ 0.70 AND distractor4x precision ≥ 0.70 AND need_mapping_shift resolution ≥ 0.50 AND capacity2 regret ≤ 0.50 | all |
 
 Results that meet only part of the gates are reported as PASS/FAIL per
 gate — no silent aggregation.
@@ -138,6 +199,9 @@ gate — no silent aggregation.
 ## Run
 
 Uses the repo `.venv` (torch 2.x, numpy, pyyaml, pytest, matplotlib).
+Apple Silicon settings (avoid oversubscription):
+`OMP_NUM_THREADS=8 VECLIB_MAXIMUM_THREADS=8 OPENBLAS_NUM_THREADS=1`,
+`torch_num_threads=8`.
 
 ```bash
 # smoke (seconds): wiring check, not a quality signal
@@ -145,10 +209,14 @@ python -m pytest experiments/u0/tests
 python -m experiments.u0.train --config experiments/u0/configs/smoke.yaml \
     --model gru64 --seed 0 --run-id smoke
 
-# device benchmark (cpu vs mps, ~8 updates each)
+# protocol sanity gate — MUST pass before any training
+python -m experiments.u0.protocol_check --episodes 512
+
+# device benchmark (cpu vs mps, ~100 updates each; adopts mps only if >=1.2x)
 python -m experiments.u0.bench_device --config experiments/u0/configs/smoke.yaml
 
-# full matrix: 3 models x 3 seeds, then eval + causal + OOD + probes
+# full matrix: P0 gate -> 3 models x 3 seeds -> eval + causal + OOD + probes
+# --device accepts cpu|mps|auto; auto always resolves to cpu (CPU-first)
 caffeinate -ims python -m experiments.u0.sweep \
     --config experiments/u0/configs/default.yaml \
     --models mlp gru64 gru128 --seeds 0 1 2 --device cpu
@@ -163,12 +231,20 @@ Budget controls honored without code edits: `U0_TIME_BUDGET` (seconds),
 ## Run artifacts
 
 Per run under `experiments/u0/artifacts/runs/{model}_s{seed}/`:
-`config.json` (env+train+git commit+device), `metrics.jsonl` (per
-update), `best.pt` (lowest val `error_full`), `last.pt` (every
-`checkpoint_every` updates), `done.json` (wall clock, device, threads,
-commit). Sweep distinguishes completed (skip) / partial (resume) /
-missing (start). Metrics are logged per update; only evaluation records
-retain per-episode stats. Run artifacts are not committed.
+`config.yaml` (env+train+git commit+device), `metrics.jsonl` (per
+update), `best.pt` (lowest val `crisis_error_auc`), `latest.pt` (every
+`checkpoint_every` updates), `meta.json` (wall clock, device, threads,
+commit; doubles as the completion marker). Sweep distinguishes
+completed (skip) / partial (resume) / missing (start), and records any
+failed stage to `artifacts/results/failures.json` instead of aborting.
+Metrics are logged per update; only evaluation records retain
+per-episode stats. Run artifacts are not committed.
+
+Optional mechanics-only teacher bootstrapping (`train.imitation_iters`
+> 0) lets an oracle demonstrate the memory API / recall→move→act
+sequence; steps where the oracle stores are masked out of the BC loss,
+so need relevance is never taught. Teacher runs are tagged in
+`config.yaml` and reported separately from U0-main.
 
 ## Claims boundary
 

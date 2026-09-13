@@ -6,21 +6,29 @@ metrics: homeostatic error (alive and full-episode), survival, need
 resolution, important retention and store precision.
 
 Causal tests (--causal), applied just before each need onset:
-    erase    U-C1: clear memory entirely
-    shuffle  U-C2: swap memory contents with a parallel donor episode
+    erase               U-C1: clear memory entirely (blanket; used by the
+                        protocol sanity gate)
+    targeted_erase      U-H3: remove only the stored items whose function
+                        serves the need about to fire
+    targeted_mediation  U-H4b: same manipulation as targeted_erase,
+                        reported as its own arm for the mediation test
+    donor_shuffle       U-H3: swap memory contents with a parallel donor
+                        episode
 
-Counterfactual probe (--probe need_intervention), U-C3: re-run episodes
-with the internal state pinned to a fixed profile during the event
-window, and measure P(STORE | event function) per condition. The
-headline statistic is the mean absolute shift in store probability
+Counterfactual probe (--probe need_intervention), U-C3/U-H4: re-run
+episodes with the internal state pinned to a fixed profile AND slot
+memory cleared each step during the event window, so world seed,
+observation stream, event, and memory state are identical across
+conditions — only the internal need state differs. The headline
+statistic is the mean absolute shift in P(STORE | event function)
 between an adverse internal state and its paired safe state.
 
-Encoding-permutation test (--ood event_perm), U-C4: permute event type
+Encoding-permutation test (--ood event_permutation), U-C4: permute event type
 and location channels in the observation; semantics are unchanged, so a
 policy that memorized channel positions breaks.
 
 OOD (--ood): delay96/delay128/delay160, distractor2x/distractor4x,
-need_mapping_shift, event_perm.
+need_mapping_shift, event_permutation, capacity2.
 
 Usage:
     python -m experiments.u0.evaluate --checkpoint RUN/best.pt --episodes 256
@@ -36,7 +44,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .config import env_config, load_config
+from .config import env_config, load_config, resolve_device
 from .env.u0_env import (STORE, INTERNAL_NAMES, FUNCTION_NAMES, U0Config)
 from .policies.baselines import BASELINES, FIFOPolicy
 
@@ -52,11 +60,15 @@ OOD_OVERRIDES = {
     # Event reports stay truthful; the type<->variable association shifts.
     "need_mapping_shift": {"function_shift": (1, 2, 3, 0)},
     # U-C4: scramble the observed channel positions (semantics intact)
-    "event_perm": {"obs_func_perm": (2, 0, 3, 1),
-                   "obs_loc_perm": (1, 3, 0, 2, 5, 4)},
+    "event_permutation": {"obs_func_perm": (2, 0, 3, 1),
+                   "obs_loc_perm": (1, 4, 0, 3, 2, 6, 8, 5, 10, 7,
+                                    11, 9)},
+    # finite-capacity stress: only 2 slots for 2 planned needs
+    "capacity2": {"memory_slots": 2},
 }
 OOD_MODES = list(OOD_OVERRIDES)
-CAUSAL_MODES = ["erase", "shuffle"]
+CAUSAL_MODES = ["erase", "targeted_erase", "donor_shuffle",
+                "targeted_mediation"]
 
 # counterfactual internal-state profiles for the need-intervention probe.
 # every variable is pinned to a comfortable mid value except the named
@@ -91,15 +103,26 @@ def make_ood_config(cfg: U0Config, ood: str | None) -> U0Config:
 
 
 def _apply_causal(env, donor, causal: str | None) -> None:
-    """Fire the manipulation just before a need onset (t == onset step)."""
+    """Fire the manipulation inside the window between the relevant
+    event being stored and the need onset (t == onset step, before the
+    step activates the need).
+
+    targeted_erase / targeted_mediation remove only the stored items
+    whose function serves the need about to fire — the memories the
+    agent kept *for* this need. donor_shuffle swaps the whole memory
+    with a parallel donor episode. erase clears everything."""
     if causal is None:
         return
-    if not any(n.onset == env.t and not n.active and not n.resolved
-               for n in env.needs):
+    firing = [n for n in env.needs
+              if n.onset == env.t and not n.active and not n.resolved]
+    if not firing:
         return
     if causal == "erase":
         env.erase_memory()
-    elif causal == "shuffle" and donor is not None:
+    elif causal in ("targeted_erase", "targeted_mediation"):
+        for n in firing:
+            env.erase_for_need(n.var)
+    elif causal == "donor_shuffle" and donor is not None:
         env.swap_memory(donor.memory.clone_state())
 
 
@@ -148,8 +171,9 @@ def evaluate_learned(model, cfg: U0Config, device: str = "cpu",
                      causal: str | None = None,
                      batch: int = 32) -> dict:
     from .env.u0_env import U0Env
+    dev = torch.device(resolve_device(device))
+    model.to(dev)
     model.eval()
-    dev = torch.device(device)
     records = []
     for ep0 in range(0, episodes, batch):
         n = min(batch, episodes - ep0)
@@ -157,7 +181,7 @@ def evaluate_learned(model, cfg: U0Config, device: str = "cpu",
                                   "seed": seed + ep0 * 97 + i}))
                 for i in range(n)]
         donors = donor_gates = None
-        if causal == "shuffle":
+        if causal == "donor_shuffle":
             donors, donor_gates = [], []
             for i in range(n):
                 d, g = _fresh_donor(cfg, seed + 500000 + ep0 * 97 + i)
@@ -203,7 +227,7 @@ def evaluate_baseline(name: str, cfg: U0Config, episodes: int = 256,
     env = U0Env(U0Config(**{**cfg.__dict__, "seed": seed,
                            "evict_policy": gate.evict_policy}))
     donor = donor_gate = None
-    if causal == "shuffle":
+    if causal == "donor_shuffle":
         donor, donor_gate = _fresh_donor(cfg, seed + 500000)
     records = []
     for ep in range(episodes):
@@ -230,8 +254,15 @@ def evaluate_baseline(name: str, cfg: U0Config, episodes: int = 256,
 
 
 def _pin_internal(env, profile: dict) -> None:
+    """Counterfactual need state: pin the internal channels AND the
+    vulnerability profile so both reflect the same counterfactual —
+    the only thing differing between probe conditions."""
+    from .env.u0_env import N_INTERNAL, var_deviation
     for i, name in enumerate(INTERNAL_NAMES):
         env.internal[i] = profile.get(name, _SAFE_PROFILE[name])
+    env.vuln = np.array([var_deviation(env.internal, i)
+                         for i in range(N_INTERNAL)],
+                        dtype=np.float32)
 
 
 def need_intervention_probe(model, cfg: U0Config, device: str = "cpu",
@@ -244,6 +275,8 @@ def need_intervention_probe(model, cfg: U0Config, device: str = "cpu",
     shift between each adverse state and its paired safe state.
     """
     from .env.u0_env import U0Env, CLS_FUNCTIONAL
+    dev = torch.device(resolve_device(device))
+    model.to(dev)
     model.eval()
     cond_results: dict = {}
     for cond, pin in NEED_CONDITIONS.items():
@@ -254,13 +287,14 @@ def need_intervention_probe(model, cfg: U0Config, device: str = "cpu",
         for ep in range(episodes):
             env = U0Env(U0Config(**{**cfg.__dict__, "seed": seed + ep}))
             env.reset()
-            pol = PolicyWrapper(model, device)
+            pol = PolicyWrapper(model, str(dev))
             pol.reset()
             last_func_t = max(
                 (t for t, e in enumerate(env.schedule)
                  if e.cls == CLS_FUNCTIONAL), default=0)
             for t in range(last_func_t + 1):
                 _pin_internal(env, profile)   # counterfactual state
+                env.erase_memory()            # identical memory channel
                 e = env.schedule[env.t]
                 obs = env._obs()
                 a = pol.act(obs)
@@ -309,10 +343,12 @@ def main() -> None:
     ap.add_argument("--causal", default=None, choices=CAUSAL_MODES)
     ap.add_argument("--ood", default=None, choices=OOD_MODES)
     ap.add_argument("--probe", default=None, choices=["need_intervention"])
-    ap.add_argument("--device", default="cpu")
+    ap.add_argument("--device", default="cpu",
+                    choices=["cpu", "mps", "auto"])
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
+    device = resolve_device(args.device)
     raw = load_config(args.config)
     cfg = make_ood_config(env_config(raw, seed=args.seed), args.ood)
 
@@ -323,7 +359,7 @@ def main() -> None:
             state = torch.load(args.checkpoint, map_location="cpu",
                                weights_only=True)
             model.load_state_dict(state["model"])
-        result = need_intervention_probe(model, cfg, args.device,
+        result = need_intervention_probe(model, cfg, device,
                                          episodes=args.episodes,
                                          seed=args.seed)
         result.update({"probe": args.probe, "ood": args.ood})
@@ -339,7 +375,7 @@ def main() -> None:
         state = torch.load(args.checkpoint, map_location="cpu",
                            weights_only=True)
         model.load_state_dict(state["model"])
-        metrics = evaluate_learned(model, cfg, args.device, args.episodes,
+        metrics = evaluate_learned(model, cfg, device, args.episodes,
                                    args.seed, args.causal)
         result = {"subject": Path(args.checkpoint).parent.name,
                   "causal": args.causal or "none",

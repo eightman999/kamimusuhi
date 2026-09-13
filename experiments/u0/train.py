@@ -7,19 +7,27 @@ re-runs the stored observation sequences through the policy, which keeps
 recurrent models correct without storing hidden states.
 
 Optional teacher bootstrapping (`imitation_iters` > 0) is
-*mechanics-only*: an oracle demonstrates how the memory API and the
-recall->move->act recovery sequence work, but its STORE decisions are
-relabelled IGNORE before becoming BC targets, so need relevance itself
-is never taught. Runs that use it are tagged "teacher" in run metadata
-and must not be conflated with U0-main (pure reward) results.
+*mechanics-only*. Two teacher policies are available:
+
+  * `oracle`  — demonstrates the full recall->move->act recovery
+    sequence and good housekeeping; event-present steps are left
+    unlabeled (-1) and masked out of the BC loss, because the oracle's
+    store-or-ignore choice on an event encodes relevance either way.
+  * `store_all` — stores every event indiscriminately, so its labels
+    carry no relevance signal at all; labeling is unmasked and the
+    student learns the STORE API plus recovery mechanics, while *which*
+    events are worth keeping is still left for PPO to discover.
+
+Runs that use a teacher are tagged in run metadata and must not be
+conflated with U0-main (pure reward) results.
 
 Budget controls (honored without code changes):
     U0_TIME_BUDGET  seconds; training stops at the next update boundary
     U0_MAX_ITERS    hard cap on PPO iterations
     U0_NUM_ENVS     override env count
 
-Artifacts per run: artifacts/runs/<run_id>/{config.json, metrics.jsonl,
-best.pt, last.pt, done.json}. --resume continues from last.pt.
+Artifacts per run: artifacts/runs/<run_id>/{config.yaml, metrics.jsonl,
+best.pt, latest.pt, meta.json}. --resume continues from latest.pt.
 
 Usage:
     python -m experiments.u0.train --config experiments/u0/configs/default.yaml \
@@ -38,12 +46,18 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
+import yaml
 
-from .config import env_config, load_config, train_config
-from .env.u0_env import IGNORE, STORE, VecU0Env
+from .config import (env_config, load_config, resolve_device,
+                     train_config)
+from .env.u0_env import EV_NONE, RECALL, U0Config, VecU0Env
 from .evaluate import evaluate_learned
 from .models.nets import build_policy
-from .policies.baselines import OraclePolicy
+from .policies.baselines import (FIFOPolicy, OraclePolicy,
+                                 StoreAllPolicy)
+
+TEACHERS = {"oracle": OraclePolicy, "fifo": FIFOPolicy,
+            "store_all": StoreAllPolicy}
 
 
 def git_commit() -> str:
@@ -57,13 +71,24 @@ def git_commit() -> str:
 
 
 def collect_rollout(policy, vec: VecU0Env, device, teacher=None,
-                    teacher_mix: float = 0.5):
+                    teacher_mix=0.5, mask_events: bool = True,
+                    label_teacher: bool = True,
+                    teacher_scope: str = "all",
+                    keep_student_recall: bool = False):
+    """teacher_mix may be a scalar or a per-env array — a selfplay
+    fraction of envs at mix 0 gives DAgger-style coverage of the
+    student's own state distribution while the rest still demonstrate
+    good trajectories for the value function."""
     """One iteration = one complete episode per env.
 
     When `teacher` (an OraclePolicy) is given, each step is labeled with
     the action the oracle would take in the student's state — except
-    STORE, which is relabelled IGNORE so only memory *mechanics* and the
-    recovery sequence are taught, never what is worth remembering.
+    event-present steps, which are left unlabeled (-1) and masked out of
+    the BC loss entirely. On an event step the oracle either STOREs or
+    IGNOREs depending on relevance, so labeling either way would leak
+    the answer ("store this" or "do not store that"); only memory
+    *mechanics* and the recall->move->act recovery sequence are taught,
+    never what is worth remembering.
     """
     T = vec.envs[0].cfg.episode_len
     B, D = vec.num_envs, vec.obs_dim
@@ -73,7 +98,7 @@ def collect_rollout(policy, vec: VecU0Env, device, teacher=None,
     rew_buf = np.zeros((B, T), dtype=np.float32)
     val_buf = np.zeros((B, T), dtype=np.float32)
     alive_buf = np.zeros((B, T), dtype=bool)   # True while episode lives
-    lab_buf = np.zeros((B, T), dtype=np.int64)
+    lab_buf = np.full((B, T), -1, dtype=np.int64)  # -1 = no BC target
     ep_stats = []
     teachers = None
     if teacher is not None:
@@ -96,9 +121,22 @@ def collect_rollout(policy, vec: VecU0Env, device, teacher=None,
                     if e.done:
                         continue
                     la = teachers[i].decide(e)
-                    lab_buf[i, t] = IGNORE if la == STORE else la
-                    if np.random.random() < teacher_mix:
-                        act[i] = la       # execute full oracle incl. STORE
+                    if label_teacher and not (
+                            mask_events
+                            and e.schedule[e.t].kind != EV_NONE):
+                        lab_buf[i, t] = la   # event steps may be unlabeled
+                    if teacher_scope == "crisis" and not any(
+                            n.active and not n.resolved
+                            for n in e.needs):
+                        continue          # store decisions stay the
+                                          # student's — only crisis
+                                          # mechanics are demonstrated
+                    if keep_student_recall and act[i] == RECALL:
+                        continue  # the student's own retrieval decision
+                                  # always executes — it must experience
+                                  # "I recalled -> it worked" itself
+                    if np.random.random() < teacher_mix[i]:
+                        act[i] = la       # execute full teacher action
             logp = dist.log_prob(act)     # logp of the EXECUTED action
             obs_buf[:, t] = obs
             act_buf[:, t] = act.cpu().numpy()
@@ -184,7 +222,7 @@ def ppo_update(policy, opt, bufs, tc, device):
             pi_loss = (pi_el * m).sum() / m.sum().clamp(min=1)
             v_el = 0.5 * (v_s - ret_t[idx]).pow(2)
             v_loss = (v_el * m).sum() / m.sum().clamp(min=1)
-            ent_b = dist.entropy().mean()
+            ent_b = (dist.entropy() * m).sum() / m.sum().clamp(min=1)
             loss = pi_loss + vfc * v_loss - ent * ent_b
             opt.zero_grad()
             loss.backward()
@@ -199,7 +237,13 @@ def ppo_update(policy, opt, bufs, tc, device):
 
 
 def bc_update(policy, opt, obs_buf, lab_buf, alive_buf, tc, device):
-    """Mechanics-only behavioral cloning on oracle-labeled student steps."""
+    """Mechanics-only behavioral cloning on teacher-labeled student steps.
+
+    lab_buf entries are -1 on masked steps (oracle-teacher event steps,
+    where either label would leak relevance) and on padded steps; they
+    are excluded from the loss so the teacher never reveals which events
+    are worth remembering.
+    """
     B, T, D = obs_buf.shape
     obs_t = torch.as_tensor(obs_buf, device=device)
     lab_t = torch.as_tensor(lab_buf, device=device)
@@ -212,16 +256,17 @@ def bc_update(policy, opt, obs_buf, lab_buf, alive_buf, tc, device):
         perm = torch.randperm(B, device=device)
         for lo in range(0, B, mb):
             idx = perm[lo:lo + mb]
-            m = mask_t[idx].reshape(-1)
             al_s, _v = _seq_forward(policy, obs_t[idx], device)
             al = al_s.reshape(-1, al_s.shape[-1])
             lab = lab_t[idx].reshape(-1)
-            freq = torch.bincount(lab, minlength=al.shape[-1]).float()
+            valid = (mask_t[idx].reshape(-1) > 0) & (lab >= 0)
+            freq = torch.bincount(lab[valid],
+                                  minlength=al.shape[-1]).float()
             w = (1.0 / freq.clamp(min=1))
             w = w * (al.shape[-1] / w.sum())   # class-balanced act CE
             el = torch.nn.functional.cross_entropy(
-                al, lab, weight=w, reduction="none")
-            loss = (el * m).sum() / m.sum().clamp(min=1)
+                al, lab.clamp(min=0), weight=w, reduction="none")
+            loss = (el * valid.float()).sum() / valid.sum().clamp(min=1)
             opt.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(policy.parameters(),
@@ -245,7 +290,16 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--artifacts", default="experiments/u0/artifacts")
     ap.add_argument("--run-id", default=None)
-    ap.add_argument("--device", default="cpu")
+    ap.add_argument("--device", default="cpu",
+                    choices=["cpu", "mps", "auto"])
+    ap.add_argument("--imitation-iters", type=int, default=None,
+                    help="override train.imitation_iters (mechanics-only "
+                         "teacher bootstrap)")
+    ap.add_argument("--teacher", default=None,
+                    choices=list(TEACHERS),
+                    help="override train.teacher (oracle masks event "
+                         "steps; fifo/store_all are relevance-blind so "
+                         "their labels are used verbatim)")
     ap.add_argument("--resume", action="store_true")
     args = ap.parse_args()
 
@@ -253,6 +307,10 @@ def main() -> None:
     cfg = load_config(args.config)
     ecfg = env_config(cfg, seed=args.seed)
     tc = train_config(cfg)
+    if args.imitation_iters is not None:
+        tc["imitation_iters"] = args.imitation_iters
+    if args.teacher is not None:
+        tc["teacher"] = args.teacher
     iters = int(os.environ.get("U0_MAX_ITERS", tc["iters"]))
     num_envs = int(os.environ.get("U0_NUM_ENVS", tc["num_envs"]))
     budget = float(os.environ.get("U0_TIME_BUDGET", "0"))
@@ -263,43 +321,135 @@ def main() -> None:
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-    device = torch.device(args.device)
+    device = torch.device(resolve_device(args.device))
     vec = VecU0Env(ecfg, num_envs, seed=args.seed * 977 + 13)
     policy = build_policy(args.model, vec.obs_dim).to(device)
     opt = torch.optim.Adam(policy.parameters(), lr=tc["lr"])
 
     start_iter = 0
-    last_pt = run_dir / "last.pt"
+    best_err = float("inf")
+    last_pt = run_dir / "latest.pt"
     if args.resume and last_pt.exists():
         state = torch.load(last_pt, map_location="cpu", weights_only=True)
         policy.load_state_dict(state["model"])
         start_iter = int(state.get("iter", 0))
         metrics_path = run_dir / "metrics.jsonl"
         if metrics_path.exists():
-            lines = metrics_path.read_text().strip().splitlines()
-            if lines:
-                start_iter = max(start_iter,
-                                 int(json.loads(lines[-1])["iter"]))
-        print(f"[{run_id}] resume at iter {start_iter}", flush=True)
+            # drop rows recorded after the checkpoint being resumed:
+            # they belong to an orphaned suffix of the trajectory the
+            # restored weights never saw
+            lines = [l for l in metrics_path.read_text().splitlines()
+                     if l.strip()]
+            kept = [l for l in lines
+                    if int(json.loads(l)["iter"]) <= start_iter]
+            if len(kept) != len(lines):
+                metrics_path.write_text(
+                    "\n".join(kept) + ("\n" if kept else ""))
+        best_pt = run_dir / "best.pt"
+        if best_pt.exists():
+            st = torch.load(best_pt, map_location="cpu",
+                            weights_only=True)
+            # selection metric is crisis_error_auc; tolerate older
+            # checkpoints that only recorded val_error_full
+            best_err = float(st.get("val_crisis_error_auc",
+                                    st.get("val_error_full",
+                                           float("inf"))))
+        print(f"[{run_id}] resume at iter {start_iter} "
+              f"(best_err={best_err:.4f})", flush=True)
 
-    (run_dir / "config.json").write_text(json.dumps(
+    teacher_name = tc.get("teacher", "oracle")
+    teacher = TEACHERS[teacher_name](seed=args.seed) \
+        if tc.get("imitation_iters", 0) else None
+    # an oracle teacher's event-step choices encode relevance, so those
+    # steps are masked out of BC; a relevance-blind teacher (store_all /
+    # fifo) can label everything — it teaches the STORE API without
+    # revealing what is worth keeping
+    mask_events = teacher_name == "oracle"
+
+    (run_dir / "config.yaml").write_text(yaml.safe_dump(
         {"env": {k: (list(v) if isinstance(v, tuple) else v)
                  for k, v in ecfg.__dict__.items()},
          "train": tc, "model": args.model, "seed": args.seed,
          "run_id": run_id, "git_commit": git_commit(),
-         "torch_version": torch.__version__, "device": args.device,
-         "teacher": "mechanics_oracle" if tc.get("imitation_iters") else None},
-        indent=2))
+         "torch_version": str(torch.__version__), "device": str(device),
+         "teacher": teacher_name if tc.get("imitation_iters")
+         else None}, sort_keys=False))
     metrics_f = open(run_dir / "metrics.jsonl", "a")
 
-    teacher = OraclePolicy(seed=args.seed) \
-        if tc.get("imitation_iters", 0) else None
-    best_err = float("inf")
+    it = start_iter   # keeps it bound if the range below is empty
+    # optional delay curriculum: begin with needs firing soon after the
+    # event window (tight store->outcome credit) and grow toward the
+    # configured delay. Only *newly reset* episodes see the current
+    # delay, so the change takes effect as episodes roll over.
+    delay_start = tc.get("delay_curriculum_start")
+    delay_anneal = tc.get("delay_curriculum_iters", 0)
+    delay_target = (ecfg.delay_min, ecfg.delay_max)
+    if delay_start is not None:
+        ecfg.delay_min = ecfg.delay_max = int(delay_start)
+    # optional memory-prefill scaffold: early in training the env injects
+    # the needed site at onset (teaches the recall chain and lets the
+    # critic learn "needed func held -> resolution"); annealed to 0 so
+    # the student's own stores must produce that state. The gate itself
+    # is still learned from reward — nothing labels which events matter.
+    prefill_start = tc.get("prefill_start")
+    prefill_iters = tc.get("prefill_iters", 0)
+    if prefill_start is not None:
+        ecfg.prefill_need_prob = float(prefill_start)
+    # checkpoint selection always evaluates the *target* task, not the
+    # current curriculum stage
+    if delay_start is not None or prefill_start is not None:
+        ecfg_eval = U0Config(**ecfg.__dict__)
+        ecfg_eval.delay_min, ecfg_eval.delay_max = delay_target
+        ecfg_eval.prefill_need_prob = 0.0
+    else:
+        ecfg_eval = ecfg
     t0 = time.time()
     for it in range(start_iter + 1, iters + 1):
-        in_imit = teacher is not None and it <= tc["imitation_iters"]
-        bufs = collect_rollout(policy, vec, device,
-                               teacher=teacher if in_imit else None)
+        if delay_start is not None and delay_anneal > 0:
+            frac = min(1.0, it / delay_anneal)
+            ecfg.delay_min = int(round(
+                delay_start + frac * (delay_target[0] - delay_start)))
+            ecfg.delay_max = int(round(
+                delay_start + frac * (delay_target[1] - delay_start)))
+        if prefill_start is not None and prefill_iters > 0:
+            ecfg.prefill_need_prob = float(prefill_start) * max(
+                0.0, 1.0 - it / prefill_iters)
+        imit = tc["imitation_iters"]
+        fade = tc.get("teacher_fade_iters", 0)
+        floor = tc.get("teacher_mix_floor", 0.0)
+        in_imit = teacher is not None and it <= imit
+        if teacher is None:
+            mix = 0.0
+        elif in_imit:
+            mix = tc["teacher_mix"]
+        elif it <= imit + fade:
+            mix = floor + (tc["teacher_mix"] - floor) \
+                * (1.0 - (it - imit) / max(fade, 1))
+        else:
+            mix = floor     # assisted exploration never fully switches
+                            # off when floor > 0: the value function keeps
+                            # seeing resolved crises so the store->outcome
+                            # gradient stays alive
+        if teacher is None or (not in_imit and mix <= 0):
+            mix_vec = None
+        else:
+            # per-env mix: the selfplay fraction runs purely on the
+            # student's own actions (its labels still come from the
+            # teacher, so its own states are covered — DAgger), while
+            # the rest get teacher-executed demonstrations
+            mix_vec = np.full(tc["num_envs"], float(mix))
+            n_self = int(round(tc.get("teacher_selfplay_frac", 0.0)
+                               * tc["num_envs"]))
+            mix_vec[:n_self] = 0.0
+        bufs = collect_rollout(
+            policy, vec, device,
+            teacher=teacher if mix_vec is not None else None,
+            teacher_mix=(mix_vec if mix_vec is not None else 0.0),
+            mask_events=mask_events,
+            label_teacher=in_imit,
+            teacher_scope=tc.get("teacher_scope", "all"),
+            keep_student_recall=tc.get(
+                "teacher_keep_student_recall", False))
         if in_imit:
             losses = bc_update(policy, opt, bufs[0], bufs[6], bufs[7],
                                tc, device)
@@ -314,18 +464,22 @@ def main() -> None:
                "mean_return": float(bufs[3].sum(1).mean()),
                **{f"ep_{k}": v for k, v in agg.items()}, **losses}
         if it % tc["eval_every"] == 0 or it == iters:
-            val = evaluate_learned(policy, ecfg, args.device,
+            val = evaluate_learned(policy, ecfg_eval, str(device),
                                    episodes=tc["eval_episodes"],
                                    seed=tc["val_seed"])
             rec["val_error_full"] = val["error_full"]
+            rec["val_crisis_error_auc"] = val["crisis_error_auc"]
             rec["val_need_resolution"] = val["need_resolution"]
             rec["val_important_retention"] = val["important_retention"]
             rec["val_store_precision"] = val["store_precision"]
-            if val["error_full"] < best_err:
-                best_err = val["error_full"]
+            # checkpoint selection tracks the primary loss: mean
+            # crisis-window error integral (lower = faster recovery)
+            if val["crisis_error_auc"] < best_err:
+                best_err = val["crisis_error_auc"]
                 save_ckpt(policy, run_dir / "best.pt",
                           model_name=args.model, iter=it,
-                          val_error_full=best_err)
+                          val_crisis_error_auc=best_err,
+                          val_error_full=val["error_full"])
         if it % tc.get("checkpoint_every", 10) == 0 or it == iters:
             save_ckpt(policy, last_pt, model_name=args.model, iter=it)
         metrics_f.write(json.dumps(rec) + "\n")
@@ -339,13 +493,13 @@ def main() -> None:
             break
 
     save_ckpt(policy, last_pt, model_name=args.model, iter=it)
-    (run_dir / "done.json").write_text(json.dumps(
-        {"iters": it, "best_val_error_full": best_err,
+    (run_dir / "meta.json").write_text(json.dumps(
+        {"iters": it, "best_val_crisis_error_auc": best_err,
          "elapsed_sec": round(time.time() - t0, 1),
-         "device": args.device,
+         "device": str(device),
          "torch_num_threads": torch.get_num_threads(),
          "git_commit": git_commit()}, indent=2))
-    print(f"[{run_id}] done iters={it} best_val_err={best_err:.4f}")
+    print(f"[{run_id}] done iters={it} best_val_auc={best_err:.4f}")
 
 
 if __name__ == "__main__":

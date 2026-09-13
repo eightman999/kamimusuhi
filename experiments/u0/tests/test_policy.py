@@ -1,13 +1,26 @@
 """Policy/model and intervention-probe plumbing tests."""
 
 import numpy as np
+import pytest
 import torch
 
-from experiments.u0.env.u0_env import OBS_DIM, U0Config
+from experiments.u0.config import resolve_device
+from experiments.u0.env.u0_env import OBS_DIM, PAYLOAD_DIM, U0Config
 from experiments.u0.evaluate import (NEED_CONDITIONS, PolicyWrapper,
                                      need_intervention_probe)
 from experiments.u0.models.nets import build_policy
 from experiments.u0.policies.baselines import BASELINES
+
+
+def test_resolve_device():
+    assert resolve_device("auto") == "cpu"      # CPU-first, never MPS
+    assert resolve_device("cpu") == "cpu"
+    if torch.backends.mps.is_available():
+        assert resolve_device("mps") == "mps"
+    else:
+        assert resolve_device("mps") == "cpu"   # graceful fallback
+    with pytest.raises(ValueError):
+        resolve_device("cuda")
 
 
 def test_model_shapes():
@@ -71,3 +84,51 @@ def test_probe_returns_deltas():
     assert set(out["delta_by_func"]) == {"resource", "shelter",
                                         "safe_zone", "obs_point"}
     assert 0.0 <= out["mean_abs_delta"] <= 1.0
+
+
+def test_no_memory_baseline_never_stores():
+    """no_memory is the lower bound: zero STORE/RECALL actions."""
+    from experiments.u0.env.u0_env import U0Env
+    env = U0Env(U0Config(seed=0, episode_len=128))
+    env.reset()
+    gate = BASELINES["no_memory"](seed=0)
+    gate.reset()
+    while not env.done:
+        env.step(gate.decide(env))
+    st = env.episode_stats()
+    assert st["stores"] == 0 and st["recalls"] == 0
+
+
+def test_oracle_separates_from_no_memory():
+    """Protocol sanity (small n): oracle must resolve far more needs
+    than the memoryless policy — the environment's causal core."""
+    from experiments.u0.evaluate import evaluate_baseline
+    cfg = U0Config(seed=0, episode_len=128, delay_min=16, delay_max=32,
+                   needs_per_episode=1)
+    o = evaluate_baseline("oracle", cfg, episodes=48, seed=12345)
+    n = evaluate_baseline("no_memory", cfg, episodes=48, seed=12345)
+    assert o["need_resolution"] > n["need_resolution"] + 0.3
+    assert o["crisis_error_auc"] < n["crisis_error_auc"]
+
+
+def test_targeted_erase_removes_relevant_memory():
+    """targeted_erase at onset removes only the need-serving items."""
+    from experiments.u0.env.u0_env import CLS_FUNCTIONAL, U0Env
+    from experiments.u0.evaluate import _apply_causal
+    env = U0Env(U0Config(seed=0, needs_per_episode=1,
+                         delay_min=4, delay_max=4))
+    env.reset()
+    n = env.needs[0]
+    func = env._func_of_var(n.var)
+    # store the relevant site plus an unrelated one
+    site = next(s for s in env.sites if s["func"] == func)
+    other = next(s for s in env.sites if s["func"] != func)
+    for s in (site, other):
+        env.memory.store(np.zeros(PAYLOAD_DIM, np.float32),
+                         s["func"], s["loc"], s["potency"])
+    while env.t < n.onset:
+        env.step(0)                     # IGNORE until onset step
+    _apply_causal(env, None, "targeted_erase")
+    funcs = env.memory.funcs[env.memory.occupied]
+    assert func not in funcs.tolist()
+    assert other["func"] in funcs.tolist()

@@ -14,6 +14,9 @@ Storage rules:
     heuristic_current_need  store iff the event's variable is currently
                             outside its preferred range (myopic: reads
                             present need, does not anticipate future need)
+    no_memory               never stores/recalls — current observation
+                            only; during crisis it wanders and tries each
+                            location once (the U0 lower bound)
     oracle                  stores exactly the potent site of each
                             function that will actually be needed
 """
@@ -127,6 +130,29 @@ class CurrentNeedPolicy(HeuristicPolicy):
         return var_deviation(env.internal, var) > self.dev_threshold
 
 
+class NoMemoryPolicy(HeuristicPolicy):
+    """Lower bound: never stores, never recalls, acts on the current
+    observation only. During a crisis it wanders the ring and tries each
+    location once — with no memory the location->function mapping is
+    unknowable, so this is a slow blind search under a death clock.
+    This is the U0 lower bound the learned policy must beat."""
+
+    name = "no_memory"
+
+    def want_store(self, env) -> bool:
+        return False
+
+    def decide(self, env) -> int:
+        active = [n for n in env.needs if n.active and not n.resolved]
+        if active:
+            if env.position not in self._tried:
+                self._tried.add(env.position)
+                return ACT
+            return MOVE
+        self._tried = set()
+        return _housekeep(env)
+
+
 class OraclePolicy(HeuristicPolicy):
     """Upper bound: stores the potent site of every to-be-needed function."""
 
@@ -153,5 +179,6 @@ BASELINES = {
     "lru": LRUPolicy,
     "store_all": StoreAllPolicy,
     "heuristic_current_need": CurrentNeedPolicy,
+    "no_memory": NoMemoryPolicy,
     "oracle": OraclePolicy,
 }

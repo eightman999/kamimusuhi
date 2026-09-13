@@ -23,8 +23,15 @@ def _save(fig, path: Path) -> None:
     plt.close(fig)
 
 
+def _legend(ax, **kw) -> None:
+    """Legend only when labeled artists exist (avoids empty-legend
+    warnings on partial data)."""
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(**kw)
+
+
 def plot_learning_curve(run_metrics: dict[str, list[dict]], path: Path,
-                        metric: str = "val_error_full") -> None:
+                        metric: str = "val_crisis_error_auc") -> None:
     """run_metrics: run_id -> list of metrics.jsonl records."""
     fig, ax = plt.subplots(figsize=(7, 4))
     for run_id, recs in sorted(run_metrics.items()):
@@ -35,7 +42,7 @@ def plot_learning_curve(run_metrics: dict[str, list[dict]], path: Path,
     ax.set_xlabel("PPO iteration")
     ax.set_ylabel(metric)
     ax.set_title("U0 learning curve (validation)")
-    ax.legend(fontsize=7)
+    _legend(ax, fontsize=7)
     _save(fig, path)
 
 
@@ -60,8 +67,9 @@ def _bar_panel(rows: list[dict], metric: str, title: str, path: Path,
 
 
 def plot_homeostatic_error(rows: list[dict], path: Path) -> None:
-    _bar_panel(rows, "error_full", "U0 homeostatic error (full episode)",
-               path, ylabel="error_full")
+    _bar_panel(rows, "crisis_error_auc",
+               "U0 crisis error AUC (primary loss)", path,
+               ylabel="crisis_error_auc")
 
 
 def plot_store_precision(rows: list[dict], path: Path) -> None:
@@ -92,7 +100,8 @@ def plot_need_intervention(probe: dict, path: Path) -> None:
         ps = conds[safe]["store_prob_by_func"].get(fname, float("nan"))
         ax.bar(i - w / 2, pa, w, color="#d95f02", label="adverse" if i == 0 else None)
         ax.bar(i + w / 2, ps, w, color="#7570b3", label="safe" if i == 0 else None)
-        ax.text(i, max(pa, ps) + 0.03, f"Δ={abs(pa - ps):.2f}",
+        top = max((v for v in (pa, ps) if np.isfinite(v)), default=0.0)
+        ax.text(i, top + 0.03, f"Δ={abs(pa - ps):.2f}",
                 ha="center", fontsize=8)
     ax.set_xticks(x)
     ax.set_xticklabels([f"{f}\n({a} vs {s})" for f, (a, s) in pairs.items()],
@@ -101,35 +110,39 @@ def plot_need_intervention(probe: dict, path: Path) -> None:
     ax.set_ylim(0, 1.15)
     ax.set_title(f"U0 need intervention (mean |ΔP| = "
                  f"{probe.get('mean_abs_delta', float('nan')):.3f})")
-    ax.legend()
+    _legend(ax)
     _save(fig, path)
 
 
-def plot_causal_ablation(rows: list[dict], path: Path) -> None:
-    """rows: {subject, clean, erase, shuffle} error_full values."""
+def plot_causal_ablation(rows: list[dict], path: Path,
+                         conds: tuple | list = (
+                             "none", "targeted_erase",
+                             "donor_shuffle", "targeted_mediation")
+                         ) -> None:
+    """rows: {subject, <cond>...} crisis_error_auc values."""
     subs = [r["subject"] for r in rows]
     fig, ax = plt.subplots(figsize=(max(6, len(subs) * 0.9), 4))
     x = np.arange(len(subs))
-    w = 0.28
-    for j, cond in enumerate(("clean", "erase", "shuffle")):
+    w = 0.8 / max(1, len(conds))
+    for j, cond in enumerate(conds):
         vals = [r.get(cond, float("nan")) for r in rows]
-        ax.bar(x + (j - 1) * w, vals, w, label=cond)
+        ax.bar(x + (j - (len(conds) - 1) / 2) * w, vals, w, label=cond)
     ax.set_xticks(x)
     ax.set_xticklabels(subs, rotation=45, ha="right", fontsize=7)
-    ax.set_ylabel("error_full")
-    ax.set_title("U0 causal ablation (error change under memory attack)")
-    ax.legend()
+    ax.set_ylabel("crisis_error_auc")
+    ax.set_title("U0 causal ablation (crisis AUC under memory attack)")
+    _legend(ax)
     _save(fig, path)
 
 
 def plot_ood_delay(rows: list[dict], path: Path) -> None:
-    """rows: {subject, clean, delay96, delay128, delay160} error_full."""
+    """rows: {subject, clean, delay96, delay128, delay160} auc."""
     conds = ["clean", "delay96", "delay128", "delay160"]
     fig, ax = plt.subplots(figsize=(7, 4))
     for r in rows:
         ys = [r.get(c, float("nan")) for c in conds]
         ax.plot(conds, ys, marker="o", label=r["subject"], alpha=0.8)
-    ax.set_ylabel("error_full")
+    ax.set_ylabel("crisis_error_auc")
     ax.set_title("U0 OOD delay robustness")
-    ax.legend(fontsize=7)
+    _legend(ax, fontsize=7)
     _save(fig, path)
