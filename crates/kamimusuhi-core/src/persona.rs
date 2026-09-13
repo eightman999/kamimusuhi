@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{EvidenceId, IndividualId, MemoryId, PersonaBackendId, SessionId, TurnId};
 use crate::mutation::{MutationDomain, MutationOperation, OriginClass};
+use crate::organs::OrganSignal;
 use crate::persona_seed::PersonaSeed;
 use crate::workspace::{Workspace, WorkspaceDomain, WorkspaceItem};
 
@@ -85,6 +86,13 @@ pub struct PersonaEnvelope {
     /// Output of delegated cognition. External material, and specifically not
     /// the individual speaking.
     pub external_results: Vec<WorkspaceItem>,
+    /// Active, transient signals produced by promoted cognitive organs.
+    ///
+    /// These are derived internal control/cognition state, not canonical
+    /// evidence, memory, durable self-state, or mutation authority. Shadow
+    /// outputs are intentionally excluded before this boundary.
+    #[serde(default)]
+    pub organ_signals: Vec<OrganSignal>,
     /// The operator-authored disposition in force for this turn.
     ///
     /// Its own section, and never merged into any of the others: a seed is not
@@ -118,6 +126,7 @@ impl PersonaEnvelope {
             episodic: of(WorkspaceDomain::EpisodicMemory),
             library: of(WorkspaceDomain::LibraryEvidence),
             external_results: of(WorkspaceDomain::ExternalResourceResult),
+            organ_signals: Vec::new(),
             // No workspace domain maps here. A seed cannot arrive as workspace
             // material, so no amount of retrieved content can become one.
             persona_seed: None,
@@ -134,6 +143,20 @@ impl PersonaEnvelope {
     #[must_use]
     pub fn with_seed(mut self, seed: PersonaSeed) -> Self {
         self.persona_seed = Some(seed);
+        self
+    }
+
+    /// Attach only signals admitted to the live cognitive path.
+    ///
+    /// The filter is a second structural guard in addition to
+    /// `OrganSupervisor`: a shadow-mode result can be recorded and compared,
+    /// but cannot become Persona context by being passed to this helper.
+    #[must_use]
+    pub fn with_active_organ_signals(mut self, signals: Vec<OrganSignal>) -> Self {
+        self.organ_signals = signals
+            .into_iter()
+            .filter(OrganSignal::influences_cognition)
+            .collect();
         self
     }
 
@@ -155,6 +178,7 @@ impl PersonaEnvelope {
             && self.episodic.is_empty()
             && self.library.is_empty()
             && self.external_results.is_empty()
+            && self.organ_signals.is_empty()
     }
 }
 
@@ -330,6 +354,9 @@ pub trait PersonaCore: Send + Sync {
 mod tests {
     use super::*;
     use crate::ids::MemoryId;
+    use crate::organs::{
+        ExperimentVerdict, OrganDescriptor, OrganEvidence, OrganKey, OrganRole, PromotionMode,
+    };
     use crate::persona_seed::{V0_SEED_ID, v0_seed};
     use crate::time::UtcTimestamp;
     use crate::workspace::{
@@ -368,6 +395,33 @@ mod tests {
         }
     }
 
+    fn organ_signal(promotion: PromotionMode) -> OrganSignal {
+        OrganSignal {
+            descriptor: OrganDescriptor {
+                key: OrganKey::new("test-organ").unwrap(),
+                role: OrganRole::Regulation,
+                implementation: "fixture".to_owned(),
+                version: "1".to_owned(),
+                promotion,
+                evidence: OrganEvidence {
+                    experiment: "fixture".to_owned(),
+                    verdict: match promotion {
+                        PromotionMode::Active => ExperimentVerdict::Pass,
+                        PromotionMode::Shadow => ExperimentVerdict::Partial,
+                        PromotionMode::Excluded => ExperimentVerdict::Fail,
+                    },
+                    source_revision: None,
+                    report_path: None,
+                },
+            },
+            produced_at: AT,
+            ttl_ms: 100,
+            confidence_milli: Some(900),
+            payload: serde_json::json!({"state": "ok"}),
+            evidence_refs: Vec::new(),
+        }
+    }
+
     #[test]
     fn no_workspace_content_can_become_a_seed() {
         // The attack this rules out: material that *claims* to be a
@@ -393,6 +447,18 @@ mod tests {
         let envelope =
             PersonaEnvelope::from_workspace(&claims_to_be_a_seed, SessionWorkingState::default());
         assert!(envelope.persona_seed.is_none());
+        assert!(envelope.organ_signals.is_empty());
+    }
+
+    #[test]
+    fn only_active_organ_signals_enter_persona_context() {
+        let envelope = PersonaEnvelope::default().with_active_organ_signals(vec![
+            organ_signal(PromotionMode::Shadow),
+            organ_signal(PromotionMode::Active),
+        ]);
+        assert_eq!(envelope.organ_signals.len(), 1);
+        assert!(envelope.organ_signals[0].influences_cognition());
+        assert!(!envelope.organ_signals[0].authorizes_mutation());
     }
 
     #[test]
@@ -415,6 +481,7 @@ mod tests {
         assert!(envelope.durable_self.is_empty());
         assert!(envelope.episodic.is_empty());
         assert!(envelope.external_results.is_empty());
+        assert!(envelope.organ_signals.is_empty());
 
         // And it is not external material either: it did not arrive to be
         // evaluated, it is part of how the individual is set up.
@@ -431,7 +498,9 @@ mod tests {
         // An envelope written before seeds existed still parses, without one.
         let mut without: serde_json::Value = serde_json::from_str(&json).unwrap();
         without.as_object_mut().unwrap().remove("persona_seed");
+        without.as_object_mut().unwrap().remove("organ_signals");
         let old: PersonaEnvelope = serde_json::from_value(without).unwrap();
         assert!(old.persona_seed.is_none());
+        assert!(old.organ_signals.is_empty());
     }
 }
