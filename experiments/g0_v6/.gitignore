@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+results/controls/*
+results/full/*
+plots/*.png
+plots/*.pdf
+plots/*.svg
+!results/controls/.gitkeep
+!results/full/.gitkeep
+!plots/.gitkeep
