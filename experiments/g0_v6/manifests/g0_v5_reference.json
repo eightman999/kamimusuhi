@@ -1,0 +1,22 @@
+{
+  "reference_experiment": "G0-v5",
+  "reference_scope": "read-only dataset/evaluator contract only; no checkpoint/result/failure reuse",
+  "dataset_manifest_sha256": "6536bd70146113555b20fb8ef78eac224fe401ef451d73e495f018e73c83d69a",
+  "dataset_files": {
+    "training/train.npz": "2b6322cb432393dc436f20528ff5a91ce56a73ed48fe0743e8ec79044b720b51",
+    "training/validation.npz": "ca0a782c979ab0ad915ad1ca665d3a3a4c0fa936070fcd1b6fb8f844db0e63c6",
+    "evaluation/combo_oodctx.npz": "99bda6b106eb436e715bf8f66cf3147194beeb906b70286e56c818ec982e8332",
+    "evaluation/dynseg_ood.npz": "ca6f4ad165456a67dab53bf4dbca2a7b3937cfa1049702bdb03db6b7665d048a",
+    "evaluation/iid_test.npz": "174a27defc793640a5063883a710949bc33bd2d732f5e32b52f58014e3fb8bbe",
+    "evaluation/intervention.npz": "255943887f84dfb40a1719e42b0fa13e87e77121cba3358ff757fea3c683e95b",
+    "evaluation/match_ood.npz": "0b97b7f63adac1dbb4ac8491bc818056aff39ccbe9e6f895f4c486bd4a778991",
+    "evaluation/midctx.npz": "96d75f1d6d58cca61d54fb197266052fb84e0177e21245e0ca334b503a99daae"
+  },
+  "source_contract_hashes": {
+    "src/dataset.py": "b1a97ba4ac1629ea6d3f7591600125cd630674f2738914341a18d825537829ee",
+    "src/evaluate.py": "13fd56f44694b2839ebe2ccb674c4d9f48da41d61492b423a308ece89cf151e1",
+    "src/controls.py": "317c056f610dfd532d9b78a06b90649177389171ccef3d3e275d85a5b36e98e5",
+    "src/models/__init__.py": "6b418dac6c42daf8ecc658fcc839fb73e2c57610c6cf1c5dcea609bb7947f19c",
+    "src/losses/__init__.py": "f8a98ca8d1e7bd5f47ac60af000d62aa10ede0b96e686e418ccc73c7356c4fe5"
+  }
+}
