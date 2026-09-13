@@ -5,11 +5,17 @@
 //! bounded process adapter so the existing Python experiment implementations
 //! can be wrapped without teaching `kamimusuhi-core` about Python or PyTorch.
 //!
-//! A child process receives one [`OrganInput`] JSON document on stdin and must
-//! return one small JSON object on stdout. It cannot choose its descriptor,
-//! evidence references, promotion mode or authority: those are supplied by the
-//! runtime. A process therefore cannot turn model output into canonical state
-//! simply by printing fields with authoritative-sounding names.
+//! A child process receives one JSON document on stdin and must return one
+//! small JSON object on stdout. It cannot choose its descriptor, evidence
+//! references, promotion mode or authority: those are supplied by the runtime.
+//! A process therefore cannot turn model output into canonical state simply by
+//! printing fields with authoritative-sounding names.
+//!
+//! Stateful experimental policies are supported without making their hidden
+//! state canonical. The process reply may carry an opaque JSON `state`, which
+//! the adapter holds only in memory and sends back on the next invocation. A
+//! runtime restart loses that hidden state unless a higher-level organ-specific
+//! recovery mechanism deliberately reconstructs it from canonical evidence.
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -18,10 +24,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use kamimusuhi_core::organs::{
-    CognitiveOrgan, ExperimentVerdict, OrganDescriptor, OrganError, OrganEvidence, OrganInput,
-    OrganKey, OrganRole, OrganSignal, PromotionMode,
+    CognitiveOrgan, ExperimentVerdict, OrganCycle, OrganDescriptor, OrganError, OrganEvidence,
+    OrganInput, OrganKey, OrganRole, OrganSignal, OrganSupervisor, PromotionMode,
 };
-use serde::Deserialize;
+use kamimusuhi_core::persona::PersonaEnvelope;
+use serde::{Deserialize, Serialize};
 
 fn descriptor(
     key: &str,
@@ -169,21 +176,44 @@ impl ProcessOrganConfig {
     }
 }
 
-/// One-shot local-process adapter for a promoted experiment implementation.
+/// Local-process adapter for a promoted experiment implementation.
 #[derive(Debug, Clone)]
 pub struct ProcessOrgan {
     config: ProcessOrganConfig,
+    /// Opaque recurrent/tracker state. Operational only, never canonical.
+    state: Option<serde_json::Value>,
 }
 
 impl ProcessOrgan {
     pub fn new(config: ProcessOrganConfig) -> Result<Self, OrganError> {
         config.validate()?;
-        Ok(Self { config })
+        Ok(Self {
+            config,
+            state: None,
+        })
     }
 
     pub const fn config(&self) -> &ProcessOrganConfig {
         &self.config
     }
+
+    pub fn state(&self) -> Option<&serde_json::Value> {
+        self.state.as_ref()
+    }
+
+    /// Drop transient recurrent state without changing descriptor or evidence.
+    pub fn reset_state(&mut self) {
+        self.state = None;
+    }
+}
+
+/// What the runtime sends to a process-backed organ.
+#[derive(Debug, Serialize)]
+struct ProcessRequest<'a> {
+    input: &'a OrganInput,
+    /// Previous opaque state, if the organ returned one. This state is not a
+    /// memory record and has no continuity authority.
+    state: Option<&'a serde_json::Value>,
 }
 
 /// The only fields a child process is allowed to choose.
@@ -197,6 +227,10 @@ struct ProcessReply {
     ttl_ms: u64,
     #[serde(default)]
     confidence_milli: Option<u16>,
+    /// Opaque next recurrent/tracker state. It is retained only after the
+    /// signal itself passes validation.
+    #[serde(default)]
+    state: Option<serde_json::Value>,
 }
 
 impl CognitiveOrgan for ProcessOrgan {
@@ -206,7 +240,11 @@ impl CognitiveOrgan for ProcessOrgan {
 
     fn process(&mut self, input: &OrganInput) -> Result<OrganSignal, OrganError> {
         self.config.validate()?;
-        let request = serde_json::to_vec(input).map_err(|_| OrganError::Backend {
+        let request = serde_json::to_vec(&ProcessRequest {
+            input,
+            state: self.state.as_ref(),
+        })
+        .map_err(|_| OrganError::Backend {
             code: "request_serialize".to_owned(),
         })?;
 
@@ -307,13 +345,50 @@ impl CognitiveOrgan for ProcessOrgan {
             evidence_refs: input.evidence_refs.clone(),
         };
         signal.validate()?;
+        // Invalid output must not advance a recurrent policy's hidden state.
+        self.state = reply.state;
         Ok(signal)
     }
+}
+
+/// Run one organ cycle and attach only admitted active signals to the Persona
+/// envelope. Shadow outputs and failures remain available in the returned
+/// cycle for trace/evaluation, but they cannot influence the Persona turn.
+pub fn run_organs_for_persona(
+    supervisor: &mut OrganSupervisor,
+    input: &OrganInput,
+    envelope: PersonaEnvelope,
+) -> (PersonaEnvelope, OrganCycle) {
+    let cycle = supervisor.run(input);
+    let envelope = envelope.with_active_organ_signals(cycle.active.clone());
+    (envelope, cycle)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kamimusuhi_core::time::UtcTimestamp;
+
+    struct FixtureOrgan {
+        descriptor: OrganDescriptor,
+    }
+
+    impl CognitiveOrgan for FixtureOrgan {
+        fn descriptor(&self) -> OrganDescriptor {
+            self.descriptor.clone()
+        }
+
+        fn process(&mut self, input: &OrganInput) -> Result<OrganSignal, OrganError> {
+            Ok(OrganSignal {
+                descriptor: self.descriptor.clone(),
+                produced_at: input.observed_at,
+                ttl_ms: 100,
+                confidence_milli: Some(900),
+                payload: serde_json::json!({"key": self.descriptor.key.as_str()}),
+                evidence_refs: input.evidence_refs.clone(),
+            })
+        }
+    }
 
     #[test]
     fn pass_results_are_active_and_o0_is_shadow() {
@@ -356,5 +431,39 @@ mod tests {
             .validate()
             .unwrap_err();
         assert_eq!(error.code(), "INVALID_DESCRIPTOR");
+    }
+
+    #[test]
+    fn persona_integration_keeps_shadow_outputs_out_of_context() {
+        let manifest = validated_experiment_manifest();
+        let active = manifest
+            .iter()
+            .find(|d| d.promotion == PromotionMode::Active)
+            .unwrap()
+            .clone();
+        let shadow = manifest
+            .iter()
+            .find(|d| d.promotion == PromotionMode::Shadow)
+            .unwrap()
+            .clone();
+        let mut supervisor = OrganSupervisor::new();
+        supervisor
+            .register(Box::new(FixtureOrgan { descriptor: shadow }))
+            .unwrap();
+        supervisor
+            .register(Box::new(FixtureOrgan { descriptor: active }))
+            .unwrap();
+
+        let input = OrganInput {
+            observed_at: UtcTimestamp::from_unix_millis(1),
+            payload: serde_json::json!({"observation": [0.0, 1.0]}),
+            evidence_refs: Vec::new(),
+        };
+        let (envelope, cycle) =
+            run_organs_for_persona(&mut supervisor, &input, PersonaEnvelope::default());
+        assert_eq!(cycle.active.len(), 1);
+        assert_eq!(cycle.shadow.len(), 1);
+        assert_eq!(envelope.organ_signals.len(), 1);
+        assert_eq!(envelope.organ_signals[0], cycle.active[0]);
     }
 }
