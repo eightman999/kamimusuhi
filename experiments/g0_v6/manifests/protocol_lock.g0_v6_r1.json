@@ -1,0 +1,66 @@
+{
+  "dataset_manifest_sha256": "6536bd70146113555b20fb8ef78eac224fe401ef451d73e495f018e73c83d69a",
+  "g0_v5_reference_sha256": "312b0a5782dacc06ab19fd1616d28dccdf8f244307ffba05edb0ff5a17d2340b",
+  "lock_hash": "4f2a1c379d3ddbbe58d941635f27a1b4bb410bf0581ba3321ca4f9a4a986593f",
+  "protocol": {
+    "checkpoint_selection": "validation SSL loss only; no oracle labels",
+    "dataset_reference": "G0-v5 frozen dataset, byte-identical copy",
+    "dataset_seed": 20260913,
+    "episode_length": 48,
+    "epochs": 20,
+    "eval_repeat_atol": 1e-07,
+    "eval_repeat_rtol": 1e-06,
+    "experiment_id": "G0-v6",
+    "horizons": [
+      1,
+      4
+    ],
+    "latent_dim": 32,
+    "n_eval": 256,
+    "n_train": 1024,
+    "obs_dim": 24,
+    "partial": "match and combo improve in >=4/5 while dynseg deteriorates in >=4/5",
+    "pca_dimensions": 16,
+    "retrieval_max_episodes": 128,
+    "retrieval_primary": "iid/train_like/recall_at_1",
+    "retrieval_stride": 4,
+    "revision": 1,
+    "seeds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "strong_pass": "match and combo improve in >=4/5; primary retrieval improves in >=4/5; IS or midctx improves in >=4/5; no invalidity",
+    "unseen_horizons": [
+      2,
+      8
+    ]
+  },
+  "source_files": {
+    "EXPERIMENT_INSTRUCTIONS.md": "76db4ef62db9507892190c738d6259668c9cacd4e0b3e0bf1845536daaa6616c",
+    "EXPERIMENT_LINEAGE.md": "07e8edaf7e9e3985e11a78fcc0039bc483df7c6c2f5eaf1bf63faea9a5d95e3e",
+    "README.md": "6f17d9075065f1ec66fe4e90f1e26a38f8853e10c41795fc21d391e08cb62bef",
+    "__init__.py": "2a6a52aeec9facfc47ecf06c50a6a278d050cd607e24f8d6b22f968f6b03e74d",
+    "configs/cpc.yaml": "21bfe55227088f2201e9164df5b7c462a0014d8130b9f9fa1888d2db9a39dc01",
+    "scripts/run_full.sh": "08b28fdab9549bbe829468fa4b47a5020c30c84e1abfb71eb2677d0578338642",
+    "scripts/summarize.sh": "4899d32a74bff06666cba065bf5ce3bdde9a7a309abfeb9c3ef45d655ba9407f",
+    "src/__init__.py": "961862c3b1afcf2665886b9c53776010dd539bbac7a88c8f26ee58e703e90cc2",
+    "src/controls.py": "2b8c0c812c5b5fb046daeedff126cca3a2c016f6d82baf7e8b8ac68ed578da6f",
+    "src/dataset.py": "5d3ee437f8873cb90c2d2ca135d821459dac3f59758326868b28796f08ef93f1",
+    "src/evaluate.py": "92bfa96cd6f3d9c9c88260b5fa839335642a4ba15e398049178f6e3068ea158a",
+    "src/health.py": "c9eab42ef84f816c985debb0b2f0a4f4b5edd4bc9835477b560d4fc4ff169d09",
+    "src/losses/__init__.py": "328d2e84682af0f5dc47a7f1c3d892da63163add1ef33a270d421a9cff17cdef",
+    "src/models/__init__.py": "392f36a2fc384a8810fe2493a6b46d60f212eb533d6de394170baa3b1a7736f9",
+    "src/protocol.py": "2b9497e8782f17dcc16635966e8e5be0b84ff0e5802037f3e9ff76cac7389ac8",
+    "src/report.py": "2c70893bdac6b9444e1702b5b6920590f249f4a4bf7ac5acfbb7e2bf2454e039",
+    "src/retrieval.py": "3329f8b40cbc1c79a1bb3da353d3128f77ec8cf0f76bb5c7535048a6c512fe43",
+    "src/run.py": "b522aedfda5a08992a1de9f2f2c896ee3e1240f9b544397ae27c6ab9851aaf61",
+    "src/train.py": "c4450aa2fca696608ac1813e88c99e5f30d0d85f15a96aef4d1936499d88d23a",
+    "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tests/test_evaluate.py": "177b7f0f20e7c5de34dd3847572eeb025272023f398934f3f77c052ab9d7f932",
+    "tests/test_health_retrieval.py": "57acaa11066a46a6e9771c032db34f78e23099d51d205ad6df72be6748d860e4",
+    "tests/test_protocol.py": "cb33c0065ff2cd8c1535d394203ab52f58cc264f7422c94fc5e8e5286ea1aeea"
+  }
+}

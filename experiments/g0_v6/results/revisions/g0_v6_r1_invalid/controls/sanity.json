@@ -1,0 +1,7 @@
+{
+  "experiment_id": "G0-v6",
+  "lock_hash": "4f2a1c379d3ddbbe58d941635f27a1b4bb410bf0581ba3321ca4f9a4a986593f",
+  "dataset_manifest_sha256": "6536bd70146113555b20fb8ef78eac224fe401ef451d73e495f018e73c83d69a",
+  "raw_pca_repeat": true,
+  "old_g0": "SKIP: historical results/checkpoints prohibited"
+}

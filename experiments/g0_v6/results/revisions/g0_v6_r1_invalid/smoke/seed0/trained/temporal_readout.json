@@ -1,0 +1,7 @@
+{
+  "mse": 0.12398356540722523,
+  "horizon": 4,
+  "alpha": 0.01,
+  "train_rows": 11264,
+  "validation_episodes": 128
+}

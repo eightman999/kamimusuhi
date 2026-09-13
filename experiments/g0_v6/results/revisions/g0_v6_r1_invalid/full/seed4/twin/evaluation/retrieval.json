@@ -1,0 +1,194 @@
+{
+  "iid": {
+    "train_like": {
+      "recall_at_1": 0.002717391304347826,
+      "recall_at_5": 0.016644021739130436,
+      "mrr": 0.018515228934434032,
+      "mean_rank": 187.19565217391303,
+      "n_queries": 2944,
+      "horizons": [
+        1,
+        4
+      ],
+      "by_horizon": {
+        "1": {
+          "recall_at_1": 0.001953125,
+          "recall_at_5": 0.01953125,
+          "mrr": 0.019356487430453845,
+          "mean_rank": 179.58463541666666,
+          "n_queries": 1536,
+          "candidate_count": 384
+        },
+        "4": {
+          "recall_at_1": 0.0035511363636363635,
+          "recall_at_5": 0.013494318181818182,
+          "mrr": 0.01759749239332151,
+          "mean_rank": 195.49857954545453,
+          "n_queries": 1408,
+          "candidate_count": 384
+        }
+      },
+      "query": "CPC predictor(current latent); same episode and future time positive",
+      "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+    },
+    "unseen_horizon": {
+      "recall_at_1": 0.00887784090909091,
+      "recall_at_5": 0.5046164772727273,
+      "mrr": 0.2436092621943227,
+      "mean_rank": 29.24715909090909,
+      "n_queries": 2816,
+      "horizons": [
+        2,
+        8
+      ],
+      "by_horizon": {
+        "2": {
+          "recall_at_1": 0.014322916666666666,
+          "recall_at_5": 0.8658854166666666,
+          "mrr": 0.39047977422322727,
+          "mean_rank": 3.7604166666666665,
+          "n_queries": 1536,
+          "candidate_count": 384
+        },
+        "8": {
+          "recall_at_1": 0.00234375,
+          "recall_at_5": 0.07109375,
+          "mrr": 0.06736464775963716,
+          "mean_rank": 59.83125,
+          "n_queries": 1280,
+          "candidate_count": 384
+        }
+      },
+      "query": "current latent; same episode and future time positive",
+      "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+    }
+  },
+  "context_ood": {
+    "train_like": {
+      "recall_at_1": 0.002377717391304348,
+      "recall_at_5": 0.018342391304347828,
+      "mrr": 0.018756077359950083,
+      "mean_rank": 187.15251358695653,
+      "n_queries": 2944,
+      "horizons": [
+        1,
+        4
+      ],
+      "by_horizon": {
+        "1": {
+          "recall_at_1": 0.0032552083333333335,
+          "recall_at_5": 0.021484375,
+          "mrr": 0.021380522128001983,
+          "mean_rank": 178.142578125,
+          "n_queries": 1536,
+          "candidate_count": 384
+        },
+        "4": {
+          "recall_at_1": 0.0014204545454545455,
+          "recall_at_5": 0.014914772727272728,
+          "mrr": 0.01589304670389347,
+          "mean_rank": 196.9815340909091,
+          "n_queries": 1408,
+          "candidate_count": 384
+        }
+      },
+      "query": "CPC predictor(current latent); same episode and future time positive",
+      "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+    },
+    "unseen_horizon": {
+      "recall_at_1": 0.01065340909090909,
+      "recall_at_5": 0.62890625,
+      "mrr": 0.29653587897658934,
+      "mean_rank": 8.636363636363637,
+      "n_queries": 2816,
+      "horizons": [
+        2,
+        8
+      ],
+      "by_horizon": {
+        "2": {
+          "recall_at_1": 0.01171875,
+          "recall_at_5": 0.9466145833333334,
+          "mrr": 0.42080953262593884,
+          "mean_rank": 2.7903645833333335,
+          "n_queries": 1536,
+          "candidate_count": 384
+        },
+        "8": {
+          "recall_at_1": 0.009375,
+          "recall_at_5": 0.24765625,
+          "mrr": 0.14740749459736985,
+          "mean_rank": 15.6515625,
+          "n_queries": 1280,
+          "candidate_count": 384
+        }
+      },
+      "query": "current latent; same episode and future time positive",
+      "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+    }
+  },
+  "altered_segment_timing": {
+    "train_like": {
+      "recall_at_1": 0.001358695652173913,
+      "recall_at_5": 0.014605978260869566,
+      "mrr": 0.017228636304439902,
+      "mean_rank": 186.99320652173913,
+      "n_queries": 2944,
+      "horizons": [
+        1,
+        4
+      ],
+      "by_horizon": {
+        "1": {
+          "recall_at_1": 0.0026041666666666665,
+          "recall_at_5": 0.016927083333333332,
+          "mrr": 0.019620068109475867,
+          "mean_rank": 178.42903645833334,
+          "n_queries": 1536,
+          "candidate_count": 384
+        },
+        "4": {
+          "recall_at_1": 0.0,
+          "recall_at_5": 0.012073863636363636,
+          "mrr": 0.014619801608037032,
+          "mean_rank": 196.3359375,
+          "n_queries": 1408,
+          "candidate_count": 384
+        }
+      },
+      "query": "CPC predictor(current latent); same episode and future time positive",
+      "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+    },
+    "unseen_horizon": {
+      "recall_at_1": 0.008522727272727272,
+      "recall_at_5": 0.4815340909090909,
+      "mrr": 0.23363815192993923,
+      "mean_rank": 37.98970170454545,
+      "n_queries": 2816,
+      "horizons": [
+        2,
+        8
+      ],
+      "by_horizon": {
+        "2": {
+          "recall_at_1": 0.011067708333333334,
+          "recall_at_5": 0.802734375,
+          "mrr": 0.3671698883886849,
+          "mean_rank": 6.552734375,
+          "n_queries": 1536,
+          "candidate_count": 384
+        },
+        "8": {
+          "recall_at_1": 0.00546875,
+          "recall_at_5": 0.09609375,
+          "mrr": 0.07340006817944436,
+          "mean_rank": 75.7140625,
+          "n_queries": 1280,
+          "candidate_count": 384
+        }
+      },
+      "query": "current latent; same episode and future time positive",
+      "negatives": "all episodes at exact target time plus same-episode adjacent target times"
+    }
+  }
+}

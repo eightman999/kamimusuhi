@@ -1,0 +1,48 @@
+{
+  "experiment_id": "G0-v6",
+  "dataset_manifest_sha256": "6536bd70146113555b20fb8ef78eac224fe401ef451d73e495f018e73c83d69a",
+  "g0_v5_reference_sha256": "312b0a5782dacc06ab19fd1616d28dccdf8f244307ffba05edb0ff5a17d2340b",
+  "dataset_manifest": {
+    "generator_sha256": "b1a97ba4ac1629ea6d3f7591600125cd630674f2738914341a18d825537829ee",
+    "dataset_version": "g0-v5-synthetic-1",
+    "seed": 20260913,
+    "n_train": 1024,
+    "n_eval": 256,
+    "effective_matching_pairs": 288,
+    "length": 48,
+    "obs_dim": 24,
+    "training_keys": [
+      "obs"
+    ],
+    "oracle_isolation": "evaluation/ only; trainer is passed training/ only",
+    "heldout_rule": "cause % 4 == context",
+    "files": {
+      "evaluation/combo_oodctx.npz": "99bda6b106eb436e715bf8f66cf3147194beeb906b70286e56c818ec982e8332",
+      "evaluation/dynseg_ood.npz": "ca6f4ad165456a67dab53bf4dbca2a7b3937cfa1049702bdb03db6b7665d048a",
+      "evaluation/iid_test.npz": "174a27defc793640a5063883a710949bc33bd2d732f5e32b52f58014e3fb8bbe",
+      "evaluation/intervention.npz": "255943887f84dfb40a1719e42b0fa13e87e77121cba3358ff757fea3c683e95b",
+      "evaluation/match_ood.npz": "0b97b7f63adac1dbb4ac8491bc818056aff39ccbe9e6f895f4c486bd4a778991",
+      "evaluation/midctx.npz": "96d75f1d6d58cca61d54fb197266052fb84e0177e21245e0ca334b503a99daae",
+      "training/train.npz": "2b6322cb432393dc436f20528ff5a91ce56a73ed48fe0743e8ec79044b720b51",
+      "training/validation.npz": "ca0a782c979ab0ad915ad1ca665d3a3a4c0fa936070fcd1b6fb8f844db0e63c6"
+    },
+    "mechanism": "six shared cause features plus six context-rotated cause features, four nuisance features, two dynamic phase features, fixed dense mixing and tanh",
+    "train_schedule": "context fixed per episode; independently sampled allowed cause every 12 steps",
+    "midctx_schedule": "fixed cause with context switch at half episode; both contexts are allowed for cause",
+    "dynseg_schedule": "context fixed and allowed cause support unchanged; variable 3..17-step segments, final segment 5 steps",
+    "matching_protocol": "iid_test has train schedule; match_ood uses fixed-cause independent trajectories across distinct contexts, never temporally paired in training; context pair frequencies exactly balanced across same/different labels",
+    "limitation": "Synthetic identity is identifiable in principle because of shared cause channels; this does not demonstrate grounding in real sensors. Matching is conditioned on eligible cross-context endpoint causes. IID refers to rollout schedule and allowed support, not unconditioned endpoint frequency. All distance evaluation is label-free; oracle only determines pair labels."
+  },
+  "training_input_keys": [
+    "obs"
+  ],
+  "isolation": {
+    "passed": true,
+    "findings": [],
+    "boundary": "trainer subprocess receives training/*.npz only; evaluation archives are orchestration-only",
+    "limitation": "static/code boundary, not an OS sandbox against the same user"
+  },
+  "old_results_reused": false,
+  "old_checkpoints_reused": false,
+  "evaluator_equivalence": "byte-identical frozen dataset and declared split contract"
+}
