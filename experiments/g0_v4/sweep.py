@@ -21,6 +21,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import time
 from pathlib import Path
@@ -33,7 +34,7 @@ from experiments.g0.evaluate import _eval_datasets, eval_dynfeat
 from experiments.g0.representations import build_analytic_rep
 from experiments.g0.sweep import METRIC_PATHS, _get, mean_std, summarize
 
-from .config import load_config
+from .config import apply_overrides, load_config
 from .evaluate import eval_model
 from .models import MODEL_REGISTRY_V4, build_model
 from .train import RUNS_DIR, load_ckpt, train_one
@@ -41,6 +42,30 @@ from .train import RUNS_DIR, load_ckpt, train_one
 REPORTS = Path(__file__).parent / "reports"
 
 ANALYTIC = ("raw", "raw_win", "pca", "pca_win")
+
+
+def parse_method_spec(spec: str, cfg):
+    """`name` or `name@section.key=val,...` — bounded per-method hyper
+    trials (spec §17). Returns (rep_name, method, cfg_with_overrides).
+
+    All trials land in the summary under their own rep name, so every
+    explored configuration is reported (no silent cherry-picking)."""
+    name, _, ov = spec.partition("@")
+    if name not in MODEL_REGISTRY_V4:
+        raise KeyError(f"unknown v4 method {name!r}")
+    if not ov:
+        return name, name, cfg
+    overrides = {}
+    for kv in ov.split(","):
+        k, _, v = kv.partition("=")
+        try:
+            overrides[k] = int(v)
+        except ValueError:
+            overrides[k] = float(v)
+    c2 = apply_overrides(copy.deepcopy(cfg), overrides)
+    tag = "_".join(f"{k.split('.')[-1]}-{v}" for k, v in
+                   overrides.items())
+    return f"{name}@{tag}", name, c2
 
 # metrics where trained−untrained > 0 would indicate learned structure
 DIFF_METRICS = ("acc_in", "acc_loco", "acc_ood_ctx", "acc_dense_ctx",
@@ -115,8 +140,9 @@ def run_sweep(cfg, seeds, methods, device="cpu", eval_only=False,
             all_results.setdefault(name, {})[seed] = \
                 eval_dynfeat(cfg, seed, seed, dss, source)
 
-        for method in methods:
-            out_dir = RUNS_DIR / f"{method}__seed{seed}"
+        for spec in methods:
+            rep_name, method, mcfg = parse_method_spec(spec, cfg)
+            out_dir = RUNS_DIR / f"{rep_name}__seed{seed}"
             if eval_only:
                 ckpt = out_dir / "best.pt"
                 if not ckpt.exists():
@@ -126,17 +152,18 @@ def run_sweep(cfg, seeds, methods, device="cpu", eval_only=False,
                 res = {"model": model, "val_loss": None,
                        "env_seed": env_seed, "train_ds": train_ds}
             else:
-                res = train_one(method, seed, cfg, device, out_dir,
+                res = train_one(method, seed, mcfg, device, out_dir,
                                 time_budget, max_steps, quiet,
-                                datasets=(train_ds, val_ds))
+                                datasets=(train_ds, val_ds),
+                                run_name=rep_name)
             model, env_seed = res["model"], res["env_seed"]
-            ev = eval_model(model, method, cfg, seed, device,
+            ev = eval_model(model, rep_name, mcfg, seed, device,
                             train_ds, env_seed, dss)
             ev["val_loss"] = res["val_loss"]
-            all_results.setdefault(method, {})[seed] = ev
+            all_results.setdefault(rep_name, {})[seed] = ev
             with open(out_dir / "eval.json", "w") as f:
                 json.dump(ev, f, indent=2, default=float)
-            print(f"== {method} s{seed}: acc_in "
+            print(f"== {rep_name} s{seed}: acc_in "
                   f"{ev['probes']['acc_in']:.3f} ood "
                   f"{ev['probes']['acc_ood_ctx']:.3f} midctx "
                   f"{ev['causal']['midctx_acc']:.3f} match "
@@ -145,13 +172,14 @@ def run_sweep(cfg, seeds, methods, device="cpu", eval_only=False,
             # untrained twin: identical arch + init seed, no training
             torch.manual_seed(seed)
             np.random.seed(seed)
-            mu = build_model(method, cfg, cfg.env.obs_dim, 4)
-            evu = eval_model(mu, f"{method}_untrained", cfg, seed,
+            mu = build_model(method, mcfg, cfg.env.obs_dim, 4)
+            evu = eval_model(mu, f"{rep_name}_untrained", mcfg, seed,
                              device, train_ds, env_seed, dss)
-            all_results.setdefault(f"{method}_untrained", {})[seed] = evu
+            all_results.setdefault(f"{rep_name}_untrained", {})[seed] \
+                = evu
             with open(out_dir / "eval_untrained.json", "w") as f:
                 json.dump(evu, f, indent=2, default=float)
-            print(f"== {method}_untrained s{seed}: acc_in "
+            print(f"== {rep_name}_untrained s{seed}: acc_in "
                   f"{evu['probes']['acc_in']:.3f} ood "
                   f"{evu['probes']['acc_ood_ctx']:.3f} midctx "
                   f"{evu['causal']['midctx_acc']:.3f} match "
@@ -188,6 +216,7 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = load_config(args.config)
+    rep_names = [parse_method_spec(s, cfg)[0] for s in args.methods]
     t0 = time.time()
     res = run_sweep(cfg, args.seeds, args.methods, args.device,
                     args.eval_only, args.max_steps, args.time_budget,
@@ -196,12 +225,12 @@ def main() -> None:
     REPORTS.mkdir(exist_ok=True)
     out = Path(args.out) if args.out else REPORTS / "sweep_summary.json"
     payload = {**res, "config": args.config, "seeds": args.seeds,
-               "methods": args.methods, "wall_sec": time.time() - t0,
-               "protocol": "g0_v4"}
+               "methods": rep_names, "method_specs": args.methods,
+               "wall_sec": time.time() - t0, "protocol": "g0_v4"}
     with open(out, "w") as f:
         json.dump(payload, f, indent=2, default=float)
 
-    pairs = [(m, f"{m}_untrained") for m in args.methods]
+    pairs = [(m, f"{m}_untrained") for m in rep_names]
     diffs = paired_diffs(res["per_run"], pairs)
     with open(REPORTS / "controls_untrained.json", "w") as f:
         json.dump({"paired_diffs": diffs, "seeds": args.seeds}, f,

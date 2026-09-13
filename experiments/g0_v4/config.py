@@ -72,7 +72,27 @@ class Config:
     name: str = "run"
 
 
-def load_config(path: str | Path) -> Config:
+def apply_overrides(cfg: Config, overrides: Dict[str, Any]) -> Config:
+    """Apply dotted overrides like {"v4.temperature": 0.07}. Strict:
+    unknown section/key raises."""
+    secmap = {"env": EnvConfig, "data": DataConfig, "model": ModelConfig,
+              "train": TrainConfig, "eval": EvalConfig, "v4": V4Config}
+    for key, val in overrides.items():
+        sec, _, name = key.partition(".")
+        if sec not in secmap or not name:
+            raise ValueError(f"bad override {key!r} (want section.key)")
+        sub = getattr(cfg, sec)
+        if not hasattr(sub, name):
+            raise ValueError(f"unknown override {key!r}")
+        cur = getattr(sub, name)
+        setattr(sub, name, type(cur)(val)
+                if isinstance(cur, (int, float)) and not isinstance(
+                    cur, bool) else val)
+    return cfg
+
+
+def load_config(path: str | Path,
+                overrides: Dict[str, Any] | None = None) -> Config:
     path = Path(path)
     with open(path) as f:
         raw: Dict[str, Any] = yaml.safe_load(f) or {}
@@ -105,6 +125,8 @@ def load_config(path: str | Path) -> Config:
                 **_filter(OODConfig, dict(ood_d), "eval.ood"))
     if "v4" in raw:
         cfg.v4 = V4Config(**_filter(V4Config, dict(raw["v4"]), "v4"))
+    if overrides:
+        apply_overrides(cfg, overrides)
     return cfg
 
 

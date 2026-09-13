@@ -80,9 +80,11 @@ def _ckpt_payload(method: str, cfg: Config, seed: int, env_seed: int,
 def train_one(method: str, seed: int, cfg: Config, device: str = "cpu",
               out_dir: Path | None = None, time_budget: float = 0.0,
               max_steps: int | None = None, quiet: bool = False,
-              datasets: tuple[dict, dict] | None = None) -> dict:
+              datasets: tuple[dict, dict] | None = None,
+              run_name: str | None = None) -> dict:
     if method not in MODEL_REGISTRY_V4:
         raise KeyError(f"unknown v4 method {method!r}")
+    run_name = run_name or method
     if device.startswith("cuda"):
         if not torch.cuda.is_available():
             raise RuntimeError(
@@ -125,7 +127,8 @@ def train_one(method: str, seed: int, cfg: Config, device: str = "cpu",
         save_config(cfg, out_dir / "config.yaml")
     metrics_path = out_dir / "metrics.jsonl" if out_dir else None
     meta = {
-        "method": method, "seed": seed, "env_seed": env_seed,
+        "method": method, "run": run_name, "seed": seed,
+        "env_seed": env_seed,
         "git": git_commit(), "device": device,
         "gpu_name": (torch.cuda.get_device_name(device)
                      if device.startswith("cuda") else None),
