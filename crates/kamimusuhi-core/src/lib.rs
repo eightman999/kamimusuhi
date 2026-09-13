@@ -23,6 +23,7 @@ pub mod ids;
 pub mod library;
 pub mod memory;
 pub mod mutation;
+pub mod organs;
 pub mod persona;
 pub mod persona_seed;
 pub mod resources;
