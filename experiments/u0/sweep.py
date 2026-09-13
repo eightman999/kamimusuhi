@@ -92,6 +92,10 @@ def main() -> None:
                     help="add a second arm per model with mechanics-only "
                          "teacher bootstrapping (run ids get a T suffix; "
                          "teacher settings come from train.* config)")
+    ap.add_argument("--scaffold", action="store_true",
+                    help="add a curriculum arm per model (C suffix): "
+                         "crisis action-mask + functional-only stores + "
+                         "delay annealing — disclosed in run config")
     ap.add_argument("--skip-train", action="store_true")
     ap.add_argument("--eval-only", action="store_true")
     args = ap.parse_args()
@@ -144,10 +148,14 @@ def main() -> None:
     # main arm ({model}) is always pure reward learning.
     subjects = []  # (tag, checkpoint, model_name_or_baseline)
     if not args.eval_only:
-        arms = [(m, "", None) for m in args.models]
+        arms = [(m, "", ()) for m in args.models]
         if args.teacher_iters:
-            arms += [(m, "T", args.teacher_iters) for m in args.models]
-        for model, tag, t_iters in arms:
+            arms += [(m, "T", ("--imitation-iters",
+                              str(args.teacher_iters)))
+                     for m in args.models]
+        if args.scaffold:
+            arms += [(m, "C", ("--scaffold",)) for m in args.models]
+        for model, tag, extra in arms:
             for seed in args.seeds:
                 run_id = f"{model}{tag}_s{seed}"
                 run_dir = art / "runs" / run_id
@@ -159,9 +167,7 @@ def main() -> None:
                            "--config", args.config, "--model", model,
                            "--seed", str(seed), "--artifacts",
                            str(art), "--run-id", run_id,
-                           "--device", device]
-                    if t_iters:
-                        cmd += ["--imitation-iters", str(t_iters)]
+                           "--device", device, *extra]
                     if status == "partial":
                         cmd.append("--resume")
                     run(cmd, failures, run_id, "train")

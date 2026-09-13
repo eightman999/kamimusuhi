@@ -129,14 +129,18 @@ class U0Config:
     event_start: int = 12          # first functional event ~ this step
     event_spacing: int = 6
     event_jitter: int = 2
-    n_distractors: int = 4
-    noise_rate: float = 0.25       # fraction of free window steps -> NOISE
+    n_distractors: int = 2
+    noise_rate: float = 0.08       # fraction of free window steps -> NOISE
     sites_per_function: int = 2    # one potent + one meager site
     potency_rich: float = 1.0
     potency_meager: float = 0.35
 
     # --- need (crisis) schedule ---
     needs_per_episode: int = 2
+    # distinct vars: each need hits a different variable — covering two
+    # needs requires two stored functions (stronger selectivity) and the
+    # oracle is not asked to re-crisis an already-damaged var.
+    distinct_needs: bool = True
     delay_min: int = 24            # need1 onset = last functional + U[min,max]
     delay_max: int = 80
     need_gap_min: int = 8          # need_k onset = need_{k-1} + U[min,max]
@@ -148,15 +152,15 @@ class U0Config:
     # Rates are tuned so a crisis is a ~8-12 step emergency from the
     # post-shock onset state: long enough for recall+directed-move+act
     # (<= ~7 steps) and too short for a blind ring tour (~2 tries/site).
-    crisis_shock: float = 0.15     # at onset, push the var toward its bound
-    crisis_drain: float = 0.035    # energy downward rate
-    crisis_cert_rate: float = 0.030
-    crisis_temp_rate: float = 0.030
-    crisis_risk_rate: float = 0.080
+    crisis_shock: float = 0.28     # at onset, push the var toward its bound
+    crisis_drain: float = 0.030    # energy downward rate
+    crisis_cert_rate: float = 0.025
+    crisis_temp_rate: float = 0.028
+    crisis_risk_rate: float = 0.070
     # crisis drains accelerate with age: a crisis is a compounding
     # emergency — the recall->move->act chain (~4 steps) still fits the
     # early window, but a wanderer trying sites one at a time runs out
-    crisis_accel: float = 0.12
+    crisis_accel: float = 0.45
 
     # --- passive internal dynamics ---
     passive_energy: float = 0.0025
@@ -211,6 +215,10 @@ class U0Config:
     # -> resolution", after which the student's own stores must create
     # that state). It never marks which *events* to store.
     prefill_need_prob: float = 0.0
+    # TRAINING AID — as above: at onset the recall readout is populated
+    # for free (the agent did not have to press RECALL). Fades before the
+    # prefill so the student must add the RECALL action itself.
+    auto_recall_prob: float = 0.0
 
     # --- causal/OOD hooks ---
     # function_shift[f] = which variable function f heals (OOD semantic
@@ -444,11 +452,15 @@ class U0Env:
         # rewarded exponentially (expm1 keeps dev=0 -> 0)
         w = c.need_floor + np.expm1(c.need_beta * devs)
         w /= w.sum()
-        # needs are iid draws from the vulnerability-weighted
-        # distribution; repeats are allowed — a chronically weak variable
-        # can crisis twice, and one stored item then pays off twice
+        # needs are draws from the vulnerability-weighted distribution;
+        # with distinct_needs the draws are without replacement so two
+        # needs cover two functions (one stored item can only ever pay
+        # off once — the selectivity requirement is harder)
         n = c.needs_per_episode
-        vars_ = rng.choice(N_INTERNAL, size=n, replace=True, p=w)
+        vars_ = rng.choice(N_INTERNAL,
+                           size=min(n, N_INTERNAL) if c.distinct_needs
+                           else n,
+                           replace=not c.distinct_needs, p=w)
         needs = []
         onset = last_func_t + int(rng.integers(c.delay_min, c.delay_max + 1))
         for v in vars_:
@@ -580,6 +592,13 @@ class U0Env:
                                 _ev_of_func(f), loc=b["loc"],
                                 potency=b["potency"])),
                             f, b["loc"], b["potency"], c.evict_policy)
+                if self.rng.random() < c.auto_recall_prob:
+                    f = self._func_of_var(n.var)
+                    hit = self.memory.best_for_function(f)
+                    if hit is not None:
+                        _s, loc = hit
+                        self.recall_valid = True
+                        self.recall_loc = loc
                 n.retention_at_onset = (
                     self.memory.best_for_function(
                         self._func_of_var(n.var)) is not None)

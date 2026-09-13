@@ -50,7 +50,8 @@ import yaml
 
 from .config import (env_config, load_config, resolve_device,
                      train_config)
-from .env.u0_env import EV_NONE, RECALL, U0Config, VecU0Env
+from .env.u0_env import (CLS_FUNCTIONAL, EV_NONE, IGNORE, RECALL, STORE,
+                         U0Config, VecU0Env, WAIT)
 from .evaluate import evaluate_learned
 from .models.nets import build_policy
 from .policies.baselines import (FIFOPolicy, OraclePolicy,
@@ -74,11 +75,9 @@ def collect_rollout(policy, vec: VecU0Env, device, teacher=None,
                     teacher_mix=0.5, mask_events: bool = True,
                     label_teacher: bool = True,
                     teacher_scope: str = "all",
-                    keep_student_recall: bool = False):
-    """teacher_mix may be a scalar or a per-env array — a selfplay
-    fraction of envs at mix 0 gives DAgger-style coverage of the
-    student's own state distribution while the rest still demonstrate
-    good trajectories for the value function."""
+                    keep_student_recall: bool = False,
+                    crisis_mask: bool = False,
+                    functional_store_only: bool = False):
     """One iteration = one complete episode per env.
 
     When `teacher` (an OraclePolicy) is given, each step is labeled with
@@ -89,6 +88,14 @@ def collect_rollout(policy, vec: VecU0Env, device, teacher=None,
     the answer ("store this" or "do not store that"); only memory
     *mechanics* and the recall->move->act recovery sequence are taught,
     never what is worth remembering.
+
+    teacher_mix may be a scalar or a per-env array — a selfplay
+    fraction of envs at mix 0 gives DAgger-style coverage of the
+    student's own state distribution while the rest still demonstrate
+    good trajectories for the value function. The scaffold flags
+    (crisis_mask / functional_store_only) constrain the *sampled*
+    action set during early training; they never label which events
+    matter.
     """
     T = vec.envs[0].cfg.episode_len
     B, D = vec.num_envs, vec.obs_dim
@@ -114,6 +121,25 @@ def collect_rollout(policy, vec: VecU0Env, device, teacher=None,
         for t in range(T):
             o = torch.as_tensor(obs, device=device)
             logits, v, h = policy(o, h)
+            if crisis_mask:
+                # scaffold: during an active crisis the idle actions are
+                # masked so the student must choose among {STORE, RECALL,
+                # MOVE, ACT} — RECALL gets sampled and, when memory holds
+                # the item, visibly works. The mask lifts with the
+                # scaffold.
+                for i, e in enumerate(vec.envs):
+                    if not e.done and any(n.active and not n.resolved
+                                          for n in e.needs):
+                        logits[i, [IGNORE, WAIT]] = -1e9
+            if functional_store_only:
+                # scaffold: STORE is only available on functional events
+                # — junk stores are masked out so the student's memory
+                # always holds real sites and the recall pathway can be
+                # discovered. Lifts with the scaffold.
+                for i, e in enumerate(vec.envs):
+                    if (not e.done and e.schedule[e.t].kind != EV_NONE
+                            and e.schedule[e.t].cls != CLS_FUNCTIONAL):
+                        logits[i, STORE] = -1e9
             dist = torch.distributions.Categorical(logits=logits)
             act = dist.sample()
             if teachers is not None:
@@ -300,6 +326,12 @@ def main() -> None:
                     help="override train.teacher (oracle masks event "
                          "steps; fifo/store_all are relevance-blind so "
                          "their labels are used verbatim)")
+    ap.add_argument("--scaffold", action="store_true",
+                    help="apply the scaffold curriculum arm: crisis "
+                         "action-masking + functional-only stores early "
+                         "in training + delay annealing. Disclosed in "
+                         "the run config — the gate itself is still "
+                         "reward-learned")
     ap.add_argument("--resume", action="store_true")
     args = ap.parse_args()
 
@@ -311,6 +343,15 @@ def main() -> None:
         tc["imitation_iters"] = args.imitation_iters
     if args.teacher is not None:
         tc["teacher"] = args.teacher
+    if args.scaffold:
+        tc.update(ent_coef=max(tc.get("ent_coef", 0.01), 0.008),
+                  crisis_mask_iters=tc.get("crisis_mask_iters") or 200,
+                  functional_store_iters=tc.get("functional_store_iters")
+                  or 200,
+                  delay_curriculum_start=tc.get("delay_curriculum_start")
+                  or 8,
+                  delay_curriculum_iters=tc.get("delay_curriculum_iters")
+                  or 300)
     iters = int(os.environ.get("U0_MAX_ITERS", tc["iters"]))
     num_envs = int(os.environ.get("U0_NUM_ENVS", tc["num_envs"]))
     budget = float(os.environ.get("U0_TIME_BUDGET", "0"))
@@ -393,14 +434,26 @@ def main() -> None:
     # is still learned from reward — nothing labels which events matter.
     prefill_start = tc.get("prefill_start")
     prefill_iters = tc.get("prefill_iters", 0)
+    prefill_hold = tc.get("prefill_hold", 0)
+    auto_recall_iters = tc.get("auto_recall_iters", 0)
     if prefill_start is not None:
         ecfg.prefill_need_prob = float(prefill_start)
+    if auto_recall_iters:
+        ecfg.auto_recall_prob = 1.0
+    crisis_mask_iters = tc.get("crisis_mask_iters", 0)
+    store_cost_target = ecfg.store_cost
+    if crisis_mask_iters:
+        # while the crisis action-mask is on, memory ops are free so the
+        # STORE action is not suppressed before the gate can form
+        ecfg.store_cost = 0.0
     # checkpoint selection always evaluates the *target* task, not the
     # current curriculum stage
-    if delay_start is not None or prefill_start is not None:
+    if (delay_start is not None or prefill_start is not None
+            or auto_recall_iters):
         ecfg_eval = U0Config(**ecfg.__dict__)
         ecfg_eval.delay_min, ecfg_eval.delay_max = delay_target
         ecfg_eval.prefill_need_prob = 0.0
+        ecfg_eval.auto_recall_prob = 0.0
     else:
         ecfg_eval = ecfg
     t0 = time.time()
@@ -411,9 +464,17 @@ def main() -> None:
                 delay_start + frac * (delay_target[0] - delay_start)))
             ecfg.delay_max = int(round(
                 delay_start + frac * (delay_target[1] - delay_start)))
-        if prefill_start is not None and prefill_iters > 0:
-            ecfg.prefill_need_prob = float(prefill_start) * max(
-                0.0, 1.0 - it / prefill_iters)
+        if auto_recall_iters:
+            ecfg.auto_recall_prob = max(0.0, 1.0 - it / auto_recall_iters)
+        if crisis_mask_iters:
+            ecfg.store_cost = 0.0 if it <= crisis_mask_iters \
+                else store_cost_target
+        if prefill_start is not None:
+            if it <= prefill_hold:
+                ecfg.prefill_need_prob = float(prefill_start)
+            elif prefill_iters > 0:
+                ecfg.prefill_need_prob = float(prefill_start) * max(
+                    0.0, 1.0 - (it - prefill_hold) / prefill_iters)
         imit = tc["imitation_iters"]
         fade = tc.get("teacher_fade_iters", 0)
         floor = tc.get("teacher_mix_floor", 0.0)
@@ -449,7 +510,12 @@ def main() -> None:
             label_teacher=in_imit,
             teacher_scope=tc.get("teacher_scope", "all"),
             keep_student_recall=tc.get(
-                "teacher_keep_student_recall", False))
+                "teacher_keep_student_recall", False),
+            crisis_mask=bool(tc.get("crisis_mask_iters", 0)
+                             and it <= tc["crisis_mask_iters"]),
+            functional_store_only=bool(
+                tc.get("functional_store_iters", 0)
+                and it <= tc["functional_store_iters"]))
         if in_imit:
             losses = bc_update(policy, opt, bufs[0], bufs[6], bufs[7],
                                tc, device)

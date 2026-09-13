@@ -19,12 +19,12 @@ env:
   need_gap_max: 16
   need_beta: 10.0
   need_floor: 0.05
-  crisis_shock: 0.20
-  crisis_drain: 0.045
-  crisis_cert_rate: 0.045
-  crisis_temp_rate: 0.040
-  crisis_risk_rate: 0.100
-  crisis_accel: 0.15
+  crisis_shock: 0.28
+  crisis_drain: 0.030
+  crisis_cert_rate: 0.025
+  crisis_temp_rate: 0.028
+  crisis_risk_rate: 0.070
+  crisis_accel: 0.45
   passive_energy: 0.0025
   temp_relax: 0.02
   ambient_amp: 0.10

@@ -122,6 +122,19 @@ def _apply_causal(env, donor, causal: str | None) -> None:
     elif causal in ("targeted_erase", "targeted_mediation"):
         for n in firing:
             env.erase_for_need(n.var)
+            if causal == "targeted_mediation":
+                # ablation-restoration: after removing the need's items,
+                # re-implant the *correct* potent site. If resolution
+                # recovers toward clean levels, the stored content — not
+                # mere occupancy — is the mediator of recovery.
+                f = env._func_of_var(n.var)
+                potent = [s for s in env.sites
+                          if s["func"] == f and s["potency"] > 0.9]
+                if potent:
+                    b = potent[0]
+                    env.memory.store(np.zeros(
+                        env.memory.payload_dim, np.float32),
+                        f, b["loc"], b["potency"], env.cfg.evict_policy)
     elif causal == "donor_shuffle" and donor is not None:
         env.swap_memory(donor.memory.clone_state())
 

@@ -21,7 +21,8 @@ TRAIN_KEYS = {
     "teacher_mix", "teacher_fade_iters", "teacher_mix_floor",
     "teacher_scope", "teacher_selfplay_frac", "teacher_keep_student_recall",
     "delay_curriculum_start", "delay_curriculum_iters",
-    "prefill_start", "prefill_iters", "checkpoint_every",
+    "prefill_start", "prefill_iters", "prefill_hold", "auto_recall_iters",
+    "crisis_mask_iters", "functional_store_iters", "checkpoint_every",
 }
 
 TOP_KEYS = {"env", "train", "name", "seed"}
@@ -62,7 +63,9 @@ def train_config(cfg: dict) -> dict:
         "teacher_scope": "all", "teacher_selfplay_frac": 0.0,
         "teacher_keep_student_recall": False,
         "delay_curriculum_start": None, "delay_curriculum_iters": 0,
-        "prefill_start": None, "prefill_iters": 0,
+        "prefill_start": None, "prefill_iters": 0, "prefill_hold": 0,
+        "auto_recall_iters": 0, "crisis_mask_iters": 0,
+        "functional_store_iters": 0,
         "checkpoint_every": 10,
     }
     return {**defaults, **cfg.get("train", {})}

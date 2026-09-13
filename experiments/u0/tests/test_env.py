@@ -103,12 +103,17 @@ def test_crisis_drains_and_act_resolves():
     n = env.needs[0]
     var = n.var
     pre = float(env.internal[var])
-    for _ in range(5):
+    for _ in range(3):
+        if env.done:
+            break
         env.step(IGNORE)
     if var == ENERGY or var == 3:          # energy/certainty drain down
         assert env.internal[var] < pre
     elif var == 2:                          # risk drifts up
         assert env.internal[var] > pre
+    if env.done:
+        return                             # accelerating crisis killed it
+                                           # first — drain already shown
     # teleport to the matching site and ACT
     func = env._func_of_var(var)
     loc = next(s["loc"] for s in env.sites

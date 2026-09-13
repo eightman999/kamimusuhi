@@ -217,9 +217,12 @@ python -m experiments.u0.bench_device --config experiments/u0/configs/smoke.yaml
 
 # full matrix: P0 gate -> 3 models x 3 seeds -> eval + causal + OOD + probes
 # --device accepts cpu|mps|auto; auto always resolves to cpu (CPU-first)
+# --scaffold adds the curriculum arm (C suffix); --teacher-iters adds the
+# mechanics-only teacher arm (T suffix). Both are tagged and disclosed.
 caffeinate -ims python -m experiments.u0.sweep \
     --config experiments/u0/configs/default.yaml \
-    --models mlp gru64 gru128 --seeds 0 1 2 --device cpu
+    --models mlp gru64 gru128 --seeds 0 1 2 --device cpu \
+    --scaffold
 
 # report + figures
 python -m experiments.u0.report
@@ -245,6 +248,30 @@ Optional mechanics-only teacher bootstrapping (`train.imitation_iters`
 sequence; steps where the oracle stores are masked out of the BC loss,
 so need relevance is never taught. Teacher runs are tagged in
 `config.yaml` and reported separately from U0-main.
+
+**Learning note (honest).** Pure PPO in this environment reliably
+learns *crisis-response by search* (wander + ACT) but stalls on the
+memory pathway: a memoryless policy resolves ~25–35% of needs, which is
+a strong local optimum — RECALL and the right STORE are never sampled
+enough to discover the chain. The `--scaffold` arm adds a disclosed
+training curriculum that breaks the deadlock *without* labeling which
+events matter:
+
+- `crisis_mask_iters`: during an active crisis, idle actions are masked
+  so the sampled choice set is {STORE, RECALL, MOVE, ACT} — RECALL gets
+  sampled and visibly works when memory holds the item.
+- `functional_store_iters`: STORE is only available on functional events
+  early on, so the student's memory always holds real sites (junk stores
+  otherwise evict the needed item and hide the recall payoff).
+- `delay_curriculum_start/iters`: needs fire ~8 steps after the event
+  window at first (tight store→outcome credit), annealing to the
+  configured delay.
+
+All evaluation/validation still runs the un-scaffolded target task. The
+agent still discovers *which* function to store from reward — the masks
+only prune provably-irrelevant choices. Whether pure PPO or the scaffold
+arm is needed is itself a reported result (U-H5 asks for the effect
+across seeds).
 
 ## Claims boundary
 

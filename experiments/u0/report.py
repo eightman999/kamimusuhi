@@ -155,7 +155,8 @@ def evaluate_gates(table: dict, probes: dict, learned: list[str],
     best_per_seed: dict[int, str] = {}
     for s in seeds:
         names = [f"{m}_s{s}" for m in MODELS] + \
-                [f"{m}T_s{s}" for m in MODELS]
+                [f"{m}T_s{s}" for m in MODELS] + \
+                [f"{m}C_s{s}" for m in MODELS]
         cands = [(n, clean(n)) for n in names if n in table]
         cands = [(n, c) for n, c in cands
                  if c.get("crisis_error_auc") is not None]
