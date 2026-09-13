@@ -88,7 +88,11 @@ def train_one(method: str, seed: int, cfg: Config, device: str = "cpu",
             raise RuntimeError(
                 f"--device={device} requested but CUDA unavailable — "
                 "silent CPU fallback is forbidden by the v4 spec")
-        torch.cuda.set_device(device)
+        dev = torch.device(device)
+        if dev.index is None:
+            dev = torch.device("cuda", 0)
+            device = str(dev)
+        torch.cuda.set_device(dev)
 
     torch.manual_seed(seed)
     np.random.seed(seed)
