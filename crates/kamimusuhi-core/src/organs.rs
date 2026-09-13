@@ -278,7 +278,9 @@ pub struct OrganSupervisor {
 impl fmt::Debug for OrganSupervisor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let keys: Vec<OrganKey> = self.organs.iter().map(|o| o.descriptor().key).collect();
-        f.debug_struct("OrganSupervisor").field("organs", &keys).finish()
+        f.debug_struct("OrganSupervisor")
+            .field("organs", &keys)
+            .finish()
     }
 }
 
@@ -345,7 +347,11 @@ mod tests {
 
     const AT: UtcTimestamp = UtcTimestamp::from_unix_millis(1_788_825_600_000);
 
-    fn descriptor(key: &str, verdict: ExperimentVerdict, promotion: PromotionMode) -> OrganDescriptor {
+    fn descriptor(
+        key: &str,
+        verdict: ExperimentVerdict,
+        promotion: PromotionMode,
+    ) -> OrganDescriptor {
         OrganDescriptor {
             key: OrganKey::new(key).unwrap(),
             role: OrganRole::Regulation,
@@ -385,14 +391,22 @@ mod tests {
 
     #[test]
     fn active_requires_pass() {
-        let partial = descriptor("o0-object-state", ExperimentVerdict::Partial, PromotionMode::Active);
+        let partial = descriptor(
+            "o0-object-state",
+            ExperimentVerdict::Partial,
+            PromotionMode::Active,
+        );
         assert_eq!(partial.validate().unwrap_err().code(), "INVALID_DESCRIPTOR");
     }
 
     #[test]
     fn signal_never_authorizes_mutation() {
         let signal = OrganSignal {
-            descriptor: descriptor("h0-regulation", ExperimentVerdict::Pass, PromotionMode::Active),
+            descriptor: descriptor(
+                "h0-regulation",
+                ExperimentVerdict::Pass,
+                PromotionMode::Active,
+            ),
             produced_at: AT,
             ttl_ms: 100,
             confidence_milli: Some(1000),
@@ -418,11 +432,7 @@ mod tests {
             .unwrap();
         supervisor
             .register(Box::new(FixtureOrgan {
-                descriptor: descriptor(
-                    "a-active",
-                    ExperimentVerdict::Pass,
-                    PromotionMode::Active,
-                ),
+                descriptor: descriptor("a-active", ExperimentVerdict::Pass, PromotionMode::Active),
                 value: 1,
             }))
             .unwrap();
