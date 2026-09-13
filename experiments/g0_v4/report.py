@@ -161,13 +161,30 @@ def hypothesis_verdicts(summary, controls, methods):
     return out
 
 
-def generate(summary_json: Path, controls_json: Path,
+def generate(summary_jsons, controls_json: Path,
              validator_json: Path | None, out_md: Path) -> str:
-    sweep = json.loads(Path(summary_json).read_text())
-    summary = sweep.get("summary", {})
-    per_run = sweep.get("per_run", {})
-    controls = json.loads(Path(controls_json).read_text()) \
-        if Path(controls_json).exists() else {}
+    """Accepts several sweep-summary JSONs (pilot / grid / stage2) and
+    merges their per_run entries, then re-summarizes — every trial is
+    reported, none dropped."""
+    from experiments.g0.sweep import summarize
+
+    per_run: dict = {}
+    method_specs: list = []
+    for p in str(summary_jsons).split(","):
+        sweep = json.loads(Path(p).read_text())
+        for rep, by_seed in (sweep.get("per_run") or {}).items():
+            per_run.setdefault(rep, {}).update(by_seed)
+        method_specs += sweep.get("methods", [])
+    summary = summarize(per_run)
+    sweep = {"summary": summary, "per_run": per_run,
+             "methods": list(dict.fromkeys(method_specs))}
+    # controls_untrained.json may also be a comma list — merge the
+    # paired_diffs blocks (later files win per pair key)
+    controls = {"paired_diffs": {}}
+    for p in str(controls_json).split(","):
+        if Path(p).exists():
+            c = json.loads(Path(p).read_text())
+            controls["paired_diffs"].update(c.get("paired_diffs", {}))
     validator = json.loads(Path(validator_json).read_text()) \
         if validator_json and Path(validator_json).exists() else None
 

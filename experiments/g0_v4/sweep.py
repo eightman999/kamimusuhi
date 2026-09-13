@@ -232,7 +232,8 @@ def main() -> None:
 
     pairs = [(m, f"{m}_untrained") for m in rep_names]
     diffs = paired_diffs(res["per_run"], pairs)
-    with open(REPORTS / "controls_untrained.json", "w") as f:
+    controls_out = out.with_name(out.stem + "_controls.json")
+    with open(controls_out, "w") as f:
         json.dump({"paired_diffs": diffs, "seeds": args.seeds}, f,
                   indent=2)
     print(json.dumps(res["summary"], indent=2, default=float))
