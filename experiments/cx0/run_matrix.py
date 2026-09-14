@@ -93,7 +93,8 @@ def worker(q, out, organ_dir, bc_rounds, bc_eps, ppo_iters, ppo_eps,
                                     "n_params": count_params(arm),
                                     "stage": "ppo"},
                                    run_dir / "ppo_best.pt")
-            rows = run_eval(task, arm_name, [seed], eval_eps, out, organ_dir)
+            rows = run_eval(task, arm_name, [seed], eval_eps, out, organ_dir,
+                            organs=organs)
             res = Path(out) / task / arm_name
             res.mkdir(parents=True, exist_ok=True)
             with open(res / "results.jsonl", "a") as f:

@@ -124,3 +124,13 @@ runs_v2 dataset. The v4 data stays in `runs_v3/` as the rejection
 evidence. A targeted variant (penalty only on nav tasks, or a recall
 cooldown instead of a cost) remains a candidate if the ctx4 gap is
 revisited.
+
+## Post-session note (kernel fix)
+
+A post-window review found that `_perceived_event()` rolled fresh RNG
+per call while being consumed by `step()`, `_obs()`, recall queries,
+cause labels, and the oracle — obs and stored events could disagree
+(~23% of steps). Perception is now rolled once per step and cached;
+STORE on empty perception is a no-op. All data above was generated
+under the pre-fix kernel (history.md §11); regenerate before citing
+exact numbers.

@@ -31,7 +31,7 @@ class Intervention:
 
 @dataclass
 class Trajectory:
-    bundles: list = field(default_factory=list)      # (T,65) float
+    bundles: list = field(default_factory=list)      # (T,BUNDLE_DIM) float
     actions: list = field(default_factory=list)
     rewards: list = field(default_factory=list)
     logits: list = field(default_factory=list)

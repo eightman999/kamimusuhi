@@ -78,16 +78,20 @@ def crisis_step(task: str, env_probe_seed: int = 0) -> int:
     return EP_LEN // 2
 
 
-def ridge_probe(X: np.ndarray, y: np.ndarray, n_classes: int,
+def ridge_probe(X: np.ndarray, y: np.ndarray,
                 frac_train: float = 0.7, seed: int = 0) -> float:
     """Closed-form ridge readout: one-hot targets, argmax accuracy.
-    Used for C-G6 (context decodable from a population)."""
+    Used for C-G6 (context decodable from a population). Labels are
+    remapped to contiguous ids so -1 ("no context") is its own class
+    rather than clipping into class 0."""
     rng = np.random.default_rng(seed)
     idx = rng.permutation(len(X))
     ntr = int(len(X) * frac_train)
     Xtr, Xte = X[idx[:ntr]], X[idx[ntr:]]
-    ytr, yte = y[idx[:ntr]], y[idx[ntr:]]
-    Ytr = np.eye(n_classes)[np.clip(ytr, 0, n_classes - 1)]
+    classes = np.unique(y)
+    yi = np.searchsorted(classes, y)
+    ytr, yte = yi[idx[:ntr]], yi[idx[ntr:]]
+    Ytr = np.eye(len(classes))[ytr]
     Xm = np.concatenate([Xtr, np.ones((len(Xtr), 1))], 1)
     W = np.linalg.solve(Xm.T @ Xm + 1e-3 * np.eye(Xm.shape[1]), Xm.T @ Ytr)
     Xe = np.concatenate([Xte, np.ones((len(Xte), 1))], 1)
@@ -118,9 +122,11 @@ def eval_condition(task, arm, organs, itv, seeds, donor_seq=None,
     return out
 
 
-def run_eval(task, arm_name, seeds, eps, out_dir, organ_dir, device="cpu"):
+def run_eval(task, arm_name, seeds, eps, out_dir, organ_dir, device="cpu",
+             organs=None):
     from .env.ctx_world import TASKS
-    organs = build_organ_set(organ_dir, device=device)
+    if organs is None:
+        organs = build_organ_set(organ_dir, device=device)
     rows = []
     for seed in seeds:
         run_dir = Path(out_dir) / task / arm_name / f"s{seed}"
@@ -170,10 +176,9 @@ def run_eval(task, arm_name, seeds, eps, out_dir, organ_dir, device="cpu"):
                        n_params=meta.get("n_params"))
             if rec_pops:
                 labels = r["_labels"]
-                ncls = int(labels.max()) + 1 if labels.size else 1
                 for pop, arrs in r["_pops"].items():
                     X = np.concatenate(arrs)
-                    row[f"probe_{pop}"] = ridge_probe(X, labels, ncls)
+                    row[f"probe_{pop}"] = ridge_probe(X, labels)
             rows.append(row)
             print(f"[{task}/{arm_name}/s{seed}] {cname}: "
                   f"success={r['success']:.3f}", flush=True)

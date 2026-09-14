@@ -169,6 +169,12 @@ class CtxWorld:
         self.crisis_onset = -1        # step the crisis need was picked
         self._phantom_ttl = 0         # CTX-2: phantom pulses persist 2 steps
         self._phantom_et = 0
+        # perception is rolled once per step (t-keyed cache); every
+        # consumer — step, obs, recall query, cause labels, oracle —
+        # must see the SAME event and burn the phantom TTL once per
+        # step, not once per call
+        self._evt_cache_t = -1
+        self._evt_cache = (0, 0.0, False)
 
         if task == "ctx3":
             self.cue_delay = int(self.rng.integers(*s.resp_delay_range))
@@ -186,31 +192,43 @@ class CtxWorld:
     # observation
     # ------------------------------------------------------------------
     def _perceived_event(self) -> tuple[int, float, bool]:
-        """(etype, strength, phantom) currently visible on event dims."""
+        """(etype, strength, phantom) currently visible on event dims.
+
+        Rolled once per env step and cached — all per-step consumers see
+        the same event: the obs the agent acted on is what STORE writes
+        and what the oracle/cause labels read. Phantom TTL decrements
+        once per step, giving real 2-step persistence."""
+        if self._evt_cache_t == self.t:
+            return self._evt_cache
         s = self.spec
         t = self.t
+        et, strength, phantom = 0, 0.0, False
         if self.task == "ctx3" and s.announce_window[0] <= t < s.announce_window[1]:
-            return 5, self.cue_resp / 3.0, False          # ambient cue
-        if s.announce_window[0] <= t < s.announce_window[1]:
-            et = int(self.sites[self.pos])
-            if et != 0:
-                return et, 1.0, False
+            et, strength = 5, self.cue_resp / 3.0       # ambient cue
+        elif s.announce_window[0] <= t < s.announce_window[1]:
+            e = int(self.sites[self.pos])
+            if e != 0:
+                et, strength = e, 1.0
         # CTX-2 phantom: self-caused pulses (action-correlated), 2-step
         # persistence so attribution (S0, one step behind) can gate STORE.
         # Dense during announce so naive store-everything fails; S0 gating
         # is what makes the task solvable reliably.
-        if s.phantom_prob > 0:
+        if et == 0 and s.phantom_prob > 0:
             if self._phantom_ttl > 0:
                 self._phantom_ttl -= 1
-                return self._phantom_et, 0.6, True
-            in_announce = (s.announce_window[0] <= self.t
-                           < s.announce_window[1])
-            rate = s.phantom_prob * (2.0 if in_announce else 0.15)
-            if self.rng.random() < rate * (0.4 + 0.6 * abs(self.move_vel)):
-                self._phantom_et = int(self.rng.integers(1, 5))
-                self._phantom_ttl = 1
-                return self._phantom_et, float(self.rng.uniform(0.4, 1.0)), True
-        return 0, 0.0, False
+                et, strength, phantom = self._phantom_et, 0.6, True
+            else:
+                in_announce = s.announce_window[0] <= t < s.announce_window[1]
+                rate = s.phantom_prob * (2.0 if in_announce else 0.15)
+                if self.rng.random() < rate * (0.4 + 0.6 * abs(self.move_vel)):
+                    self._phantom_et = int(self.rng.integers(1, 5))
+                    self._phantom_ttl = 1
+                    et, strength, phantom = (self._phantom_et,
+                                             float(self.rng.uniform(0.4, 1.0)),
+                                             True)
+        self._evt_cache_t = t
+        self._evt_cache = (et, strength, phantom)
+        return self._evt_cache
 
     def _cue_level(self) -> float:
         s = self.spec
@@ -299,10 +317,13 @@ class CtxWorld:
                     int(self.sites[self.pos]) != NEED_TO_ETYPE[self.crisis_need]:
                 reward -= 0.4
         elif action == STORE and memory is not None:
-            payload = self._event_payload(et, strength)
-            key = np.zeros(6, dtype=np.float32)
-            key[et] = 1.0 if et else 0.0
-            memory.store(payload, key)
+            # only a perceived event is storable — writing on et=0 used
+            # to burn a slot under a zero key no query could match
+            if et:
+                payload = self._event_payload(et, strength)
+                key = np.zeros(6, dtype=np.float32)
+                key[et] = 1.0
+                memory.store(payload, key)
         elif action == RECALL and memory is not None:
             prev_pl, prev_sc, _s = self.last_recall
             self.last_recall = memory.recall(self._recall_query())
@@ -562,6 +583,8 @@ class CtxWorld:
                     answer_failed=self._answer_failed,
                     crisis_onset=self.crisis_onset, probe_idx=self.probe_idx,
                     phantom_ttl=self._phantom_ttl, phantom_et=self._phantom_et,
+                    evt_cache_t=self._evt_cache_t,
+                    evt_cache=tuple(self._evt_cache),
                     rng=self.rng.bit_generator.state)
 
     def set_state(self, st: dict) -> None:
@@ -582,6 +605,8 @@ class CtxWorld:
         self.probe_idx = st["probe_idx"]
         self._phantom_ttl = st["phantom_ttl"]
         self._phantom_et = st["phantom_et"]
+        self._evt_cache_t = st["evt_cache_t"]
+        self._evt_cache = tuple(st["evt_cache"])
         self.rng.bit_generator.state = st["rng"]
 
 
@@ -682,6 +707,8 @@ class Oracle:
     # -- CTX-3: store the cue; fire RESP_k when elapsed≈D ----------------
     def _act_ctx3(self, w: CtxWorld, memory) -> int:
         s = w.spec
+        if w.t < s.announce_window[0]:
+            return NOOP                      # nothing perceivable yet
         if w.t < s.announce_window[1]:
             return STORE                     # covers the cue window
         if w.cue_delay <= w.t <= w.cue_delay + 5:

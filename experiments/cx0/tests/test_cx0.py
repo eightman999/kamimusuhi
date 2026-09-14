@@ -8,8 +8,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from experiments.cx0.env.ctx_world import (EP_LEN, N_LOCS, CtxWorld, Oracle,
-                                           TASKS)
+from experiments.cx0.env.ctx_world import (EP_LEN, N_ETYPES, N_LOCS, CtxWorld,
+                                           Oracle, TASKS)
 from experiments.cx0.memory.slot_memory import SlotMemory
 from experiments.cx0.organs.base import BUNDLE_DIM, DIMS, OrganSignals
 
@@ -80,6 +80,48 @@ class TestWorld:
             if w.crisis_need >= 0 and prev_need < 0:
                 fired += 1
         assert fired <= 1
+
+    @pytest.mark.parametrize("task", ["ctx1", "ctx2", "ctx4"])
+    def test_perception_matches_obs(self, task):
+        # The event dims the agent saw in obs_t must equal the event
+        # step() uses/stores at t — perception is one roll per step.
+        w = CtxWorld(task, seed=3)
+        m = SlotMemory(3, 8, 6)
+        prev_obs_et = None
+        for t in range(EP_LEN):
+            if w.dead:
+                break
+            info = w.step(1, m)   # FWD
+            if prev_obs_et is not None:
+                assert info.event_etype == prev_obs_et, (
+                    f"{task} t={t}: step perceived {info.event_etype} "
+                    f"but obs showed {prev_obs_et}")
+            prev_obs_et = (int(round(info.obs[9] * N_ETYPES))
+                           if info.obs[8] > 0.5 else 0)
+
+    def test_perceived_event_cached_within_step(self):
+        # Repeat calls in the same step return the same event and burn
+        # no RNG — the phantom TTL is step-scoped, not call-scoped.
+        w = CtxWorld("ctx2", seed=3)
+        m = SlotMemory(3, 8, 6)
+        for t in range(40):
+            if w.dead:
+                break
+            w.step(1, m)
+            a = w._perceived_event()
+            st = w.rng.bit_generator.state
+            assert w._perceived_event() == a
+            assert w.rng.bit_generator.state == st
+
+    def test_store_noop_without_event(self):
+        # STORE with nothing perceived must not occupy a slot.
+        w = CtxWorld("ctx1", seed=3)
+        m = SlotMemory(3, 8, 6)
+        # park off-site after the announce window so no event is visible
+        w.t = TASKS["ctx1"].announce_window[1] + 1
+        w.pos = int(np.flatnonzero(w.sites == 0)[0])
+        w.step(5, m)   # STORE
+        assert m.occupied.sum() == 0
 
 
 # ----------------------------------------------------------------------

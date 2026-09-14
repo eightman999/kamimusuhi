@@ -317,3 +317,26 @@ but net-negative (ctx3 −0.114, ctx2 −0.03…−0.08 across arms). C-G2 still
 fails. `RECALL_REDUNDANT_COST` is held at 0.0 — mechanism documented
 inert; shipped code ≡ v3 semantics, so `CX0_RESULTS.md` still reports the
 runs_v2 dataset. runs_v3/ is kept as the rejection evidence.
+
+## 11. Post-review kernel hardening
+
+Review after the overnight window found a consistency bug in the CTX
+kernel: `_perceived_event()` rolled fresh RNG and decremented the
+phantom TTL on *every call*, while being invoked by `step()`, `_obs()`,
+recall queries, cause labels, and the oracle. The event the agent saw
+in obs therefore differed from what `step()` stored/acted on in ~23% of
+steps, STORE could write payloads for unperceived events (~11% of
+stores), and the "2-step" phantom persistence collapsed to ~1 obs frame.
+
+Fixed: perception is rolled once per step and cached (t-keyed), so all
+consumers see one event stream; STORE on empty perception is a no-op
+instead of burning a zero-key slot; probe labels remap −1 ("no
+context") to its own class instead of clipping into class 0;
+`run_eval` accepts a shared OrganSet instead of reloading checkpoints
+per cell. Verified: obs↔step mismatches 0/395 (was ~23%), suite 24 pass
++ 1 skip, matrix smoke OK.
+
+Data caveat: `runs/`, `runs_v2/`, `runs_v3/` were generated under the
+pre-fix kernel. Qualitative conclusions are unlikely to move (phantoms
+are noise by design and the fix mainly removes bookkeeping noise), but
+exact numbers should be regenerated before being cited.
