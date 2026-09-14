@@ -17,8 +17,8 @@ flowchart TB
     DESIGN --> RS["RESEARCH.md / RESEARCH_SYNTHESIS.md"]
 
     ROOT --> CRATES["crates/ — Rust workspace"]
-    CRATES --> CORE["kamimusuhi-core\n中核の型・状態・ポリシー"]
-    CRATES --> RUNTIME["kamimusuhi-runtime\n実行時オーケストレーション"]
+    CRATES --> CORE["kamimusuhi-core\n中核の型・状態・ポリシー\n+ CognitiveOrgan contract"]
+    CRATES --> RUNTIME["kamimusuhi-runtime\n実行時オーケストレーション\n+ OrganSupervisor / process adapter"]
     CRATES --> STORE["kamimusuhi-store-sqlite\n永続化"]
     CRATES --> PERSONA["kamimusuhi-persona-http\nPersona model HTTP adapter"]
     CRATES --> RESOURCE["kamimusuhi-resource-http\n外部 resource HTTP adapter"]
@@ -50,6 +50,7 @@ flowchart LR
     PCM["Persona model"]
     RES["Cognitive resources\nsearch / code / local & frontier models"]
     EXP["experiments/"]
+    ORG["Promoted cognitive organs\nH0 regulation / R0 memory gate\nS0 agency / T0 temporal\nO0 shadow"]
     TK["testkit / evaluation"]
 
     SURF --> RT
@@ -64,6 +65,11 @@ flowchart LR
     RT --> RESOURCE_ADAPTER["kamimusuhi-resource-http"]
     RESOURCE_ADAPTER --> RES
 
+    RT -->|organ observation| ORG
+    EXP -->|validated promotion evidence| ORG
+    ORG -->|active transient ORGAN_SIGNALS| PERSONA_ADAPTER
+    ORG -. shadow / failures .-> TK
+
     RT -->|candidate transition / result integration| KC
     KC -->|accepted canonical state| DB
 
@@ -72,6 +78,8 @@ flowchart LR
     TK -->|continuity / behavior checks| KC
     TK --> RT
 ```
+
+`Promoted cognitive organs` は canonical state の owner ではありません。`Active` な signal は Persona の typed context へ入れますが、それ自体は evidence / memory / durable self / mutation authority ではありません。`Partial` の O0 は shadow-only、FAIL の G0/P0 は promotion manifest から除外しています。実装境界は `docs/implementation/experimental-organ-integration.md` を参照してください。
 
 ## Research loop
 
@@ -84,7 +92,9 @@ flowchart LR
     EXP --> EVIDENCE["計測・比較・失敗記録"]
     EVIDENCE --> DECIDE["採用 / 棄却 / 保留"]
     DECIDE --> ARCH["architecture.md / spec.md"]
+    DECIDE --> PROMOTE["organ promotion\nactive / shadow / excluded"]
     ARCH --> IMPL["crates/"]
+    PROMOTE --> IMPL
     IMPL --> TEST["testkit / CI"]
     TEST --> EVIDENCE
 ```
@@ -94,6 +104,7 @@ flowchart LR
 - **人格・連続性・全体思想**: `architecture.md`
 - **規範的な要求**: `spec.md`
 - **現在の Rust 実装**: `crates/`
+- **実験→runtime organ の昇格境界**: `docs/implementation/experimental-organ-integration.md`
 - **MIOBA を含む探索的実験**: `experiments/`
 - **調査知見の蒸留**: `RESEARCH_SYNTHESIS.md`
 - **個別の背景資料**: `docs/`, `papers/`
