@@ -24,6 +24,7 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 
 | Date / time (JST) | Survey | Main blind spots | 反映判断 |
 |---|---|---|---|
+| 2026-09-14 13:00:28 | [2026-09-14-13-00-28.md](./2026-09-14-13-00-28.md) | per-message participation-role separation / approval-plane survivability / typed self-invocation & reentrancy / recovery-authority revalidation | 未判定 |
 | 2026-09-14 06:59:25 | [2026-09-14-06-59-25.md](./2026-09-14-06-59-25.md) | recovery-intent / expected-continuation barrier / historical semantic upcasting / motor working state | 未判定 |
 | 2026-09-14 00:57:29 | [2026-09-14-00-57-29.md](./2026-09-14-00-57-29.md) | distributed erasure completion / active-reader quiescence / replica resurrection / derived-belief retraction / endogenous retention feedback | 未判定 |
 | 2026-09-13 19:02:09 | [2026-09-13-19-02-09.md](./2026-09-13-19-02-09.md) | in-flight continuation liveness / continuity commit durability & session visibility / execution-placement fallback authority / run resource accounting | 未判定 |
