@@ -1,0 +1,7 @@
+# Smoke config — wiring check only, NOT evidence.
+seed_set: [0]
+tasks: [ctx3]
+arms: [c1, c3]
+stage_b: {bc_rounds: 4, episodes_per_round: 24, epochs_per_round: 3, lr: 0.0015}
+stage_b2: {ppo_iters: 5, episodes_per_iter: 16}
+eval: {episodes_per_condition: 16}
