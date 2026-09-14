@@ -230,7 +230,7 @@ class C3Mantle(BaseArm):
                                 _block_mask(d["predict"], 4, cross_p, rng))
         self.feedback = LeakyPop(d["context"] + d["slow"], d["feedback"],
                                  self.TAUS["feedback"])
-        self.heads = Heads(d["context"] + d["predict"] + d["assoc"])
+        self.heads = Heads(d["context"] + d["predict"])
 
     def initial_state(self, batch: int = 1):
         return {k: torch.zeros(batch, v) for k, v in self.dims.items()}
@@ -244,7 +244,7 @@ class C3Mantle(BaseArm):
         f = self.feedback(torch.cat([state["context"], state["slow"]], -1),
                           state["feedback"])
         new = dict(assoc=a, context=c, slow=s, predict=p, feedback=f)
-        out = torch.cat([c, p, a], -1)
+        out = torch.cat([c, p], -1)
         return out, new, {k: new[k] for k in ("assoc", "context", "slow",
                                               "predict", "feedback")}
 

@@ -232,13 +232,16 @@ on the memory-navigation tasks and survives only on short-horizon tasks
   `erase_memory` ≈ shuffle_r0). Achieved by requiring the last env-visible
   recall to carry the needed etype (`_memory_proof`) + an R0 direction
   pointer + navigation shaping.
-- **T0 is load-bearing only on ctx3** (the task it was designed for).
-- **S0 remains bypassed**: even with dense announce-phase phantoms, the
-  learned policy needs no attribution — it stores once at the first real
-  perception (s0 p_world≈0.5 passively consistent). `shuffle_s0` ≈ 0.
-- **H0 processed signals remain bypassed**: raw internals already leak
-  through the sensory field, so the organ's urgency/emergency channels
-  are redundant. (Raw internals in sensory is the leak to fix.)
+- **T0 is load-bearing on ctx2/3/4** (lesion drops .4–.75), not just its
+  own task — donor-shuffle under-reports t0 use where cue/due schedules
+  are stereotyped.
+- **Field lesions vs shuffles**: donor-shuffle is a near-no-op for
+  stereotyped signals (h0 internals, partially t0/s0). Zeroing the field
+  (`lesion_{h0,s0,t0,r0}`) reveals the true dependence — see the
+  field-lesion table in the report: **every organ field is load-bearing
+  somewhere**. h0 lesions cost .3–.8 on ctx1–4; s0 lesions cost .2–.8
+  (strongest for c0 and c3-on-ctx3). C-G3 is thus supported across all
+  organs, not just r0.
 - `cortex_off` → ~0 on all tasks (drop .44–.85): the integration layer is
   causally required (null check OK).
 - `reset_hidden`: ctx2 +.42, ctx3 +.23 — context state is causal where
@@ -252,9 +255,9 @@ on the memory-navigation tasks and survives only on short-horizon tasks
 
 1. **Organs get used only when the task makes them load-bearing.**
    Memory became causal exactly when success required a real retrieval
-   (proof), not before. Timing was always causal on its own task.
-   Attribution and homeostatic *channels* are bypassed because simpler
-   affordances exist (persistent real events, raw internals in sensory).
+   (proof), not before. Timing is causal on all timed tasks. Under field
+   lesions every organ (h0, s0, t0, r0, sensory) is load-bearing
+   somewhere — the organ bundle is genuinely integrative.
 2. **Generic GRU is sufficient at this scale.** C2's layered
    decomposition loses where it hurts (ctx4 −0.17) and never wins
    significantly. The cortex hypothesis is NOT confirmed — answer: no
@@ -264,9 +267,15 @@ on the memory-navigation tasks and survives only on short-horizon tasks
    navigation chains; leaky Jacobian ~0.9^step decays credit over long
    horizons vs gated recurrence. Four rescue attempts (connectivity,
    dense assoc, fast-path predict, head access to assoc) all fail ≤0.13.
-   It survives on short-horizon tasks (RESP timing, probe answers).
-4. **ctx5 drive-conflict is near-chance for all arms (~0.5)** — the
-   probe-agreement metric is noisy; not currently discriminative.
+   It survives on short-horizon tasks (RESP timing, probe answers) and
+   routes attribution on ctx3 (lesion_s0 +0.78 — the strongest single
+   organ dependence of any arm).
+4. **c0 flat relies most on organ affordances** (lesion drops ≈ clean on
+   ctx1–4); c1/c2 partly compensate via hidden state. Recurrence's edge
+   over flat shows only where context must be maintained (ctx2, ctx3).
+5. **ctx5 drive-conflict is near-chance for all arms (~0.5)** and
+   insensitive to any single field lesion — the probe metric is noisy;
+   not currently discriminative.
 
 ### Verdict & gate
 
@@ -277,9 +286,14 @@ is closed at this scale.
 
 ### Next candidates (unscheduled)
 
-- h0: stop leaking raw internals through sensory (make the organ's
-  processed signal the only channel) → would test C-G3 for homeostasis.
-- s0: make last-write-wins lose (e.g., phantom overwriting also erases,
-  or require attribution-gated store for success).
+- s0: make last-write-wins lose (e.g., phantom stores also corrupt
+  matching payload slots, or require attribution-gated store) so the
+  gate becomes load-bearing for GRU arms too.
 - c3: gated sparse populations or GRU-per-population hybrid.
 - ctx5: denser probes or continuous agreement metric for resolution.
+- Caveat on c3 rows: seeds 0–4 were trained under the pre-rewire
+  predict input (context+assoc); seeds 5–9 under assoc+feedback.
+  Conclusions hold under both, but exact c3 numbers mix wirings.
+- Method note: field lesions can include OOD-input effects; the
+  consistency across arms/tasks and agreement with shuffle where signals
+  vary (r0) supports interpreting them as functional dependence.

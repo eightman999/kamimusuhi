@@ -74,6 +74,27 @@ def fmt_table(clean, cond, tasks, arms):
     return "\n".join(lines)
 
 
+def fmt_lesion_table(clean, cond, tasks, arms):
+    """Field-lesion drops (clean - lesion_f): zeroing an organ's whole
+    signal field. Complements shuffle columns — the causality test for
+    fields whose donor signal is a near-no-op (stereotyped trajectories)."""
+    lines = ["| task | arm | clean | lesion(h0) | lesion(s0) | lesion(t0)"
+             " | lesion(r0) |",
+             "|---|---|---|---|---|---|---|"]
+    for t in tasks:
+        for a in arms:
+            c = np.mean(clean.get((t, a), [np.nan]))
+            cc = cond.get((t, a), {})
+
+            def d(name):
+                v = cc.get(name)
+                return f"{c - np.mean(v):+.3f}" if v else "-"
+            lines.append(
+                f"| {t} | {a} | {c:.3f} | {d('lesion_h0')} |"
+                f" {d('lesion_s0')} | {d('lesion_t0')} | {d('lesion_r0')} |")
+    return "\n".join(lines)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", default=str(Path(__file__).parents[1] / "runs"))
@@ -140,6 +161,8 @@ def main():
               f"(mean clean {mean_by_arm[best_arm]:.3f})\n")
     md.append("## Clean + intervention success matrix\n")
     md.append(fmt_table(clean, cond, tasks, arms))
+    md.append("\n## Field-lesion drops (clean − lesion)\n")
+    md.append(fmt_lesion_table(clean, cond, tasks, arms))
     md.append("\n## Gates\n")
     md.append(f"| gate | criterion | value | verdict |")
     md.append(f"|---|---|---|---|")

@@ -546,7 +546,8 @@ class CtxWorld:
                     success=self.success, crisis_need=self.crisis_need,
                     crisis_t=self.crisis_t, cue_delay=self.cue_delay,
                     cue_resp=self.cue_resp, last_recall=(self.last_recall[0].copy(),
-                                                         self.last_recall[1]),
+                                                         self.last_recall[1],
+                                                         self.last_recall[2]),
                     temp_setpoint=getattr(self, "_temp_setpoint", None),
                     need_drift=self._need_drift.copy(),
                     rng=self.rng.bit_generator.state)
@@ -559,7 +560,8 @@ class CtxWorld:
         self.dead = st["dead"]; self.success = st["success"]
         self.crisis_need = st["crisis_need"]; self.crisis_t = st["crisis_t"]
         self.cue_delay = st["cue_delay"]; self.cue_resp = st["cue_resp"]
-        self.last_recall = (st["last_recall"][0].copy(), st["last_recall"][1])
+        self.last_recall = (st["last_recall"][0].copy(),
+                            st["last_recall"][1], st["last_recall"][2])
         if st["temp_setpoint"] is not None:
             self._temp_setpoint = st["temp_setpoint"]
         self._need_drift = st["need_drift"].copy()

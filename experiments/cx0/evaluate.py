@@ -134,6 +134,10 @@ def run_eval(task, arm_name, seeds, eps, out_dir, organ_dir, device="cpu"):
         conds["erase_memory"] = Intervention(erase_memory_at=t_int)
         for p in ("context", "feedback", "slow"):
             conds[f"lesion_{p}"] = Intervention(lesion_pop=p)
+        # field lesions: zero a whole organ field — the causality test for
+        # fields whose donor-shuffle is a near-no-op (stereotyped signals)
+        for f in ("h0", "s0", "t0", "r0"):
+            conds[f"lesion_{f}"] = Intervention(lesion=f)
 
         for cname, itv in conds.items():
             donor = donor_fields.get(itv.shuffle) if itv.shuffle else None
