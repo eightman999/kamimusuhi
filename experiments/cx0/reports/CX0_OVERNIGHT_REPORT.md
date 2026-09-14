@@ -67,6 +67,14 @@ just can't execute.
 2. **Generic GRU ≈ structured cortex at this scale.** C2 never wins
    significantly and loses ctx4 badly. C-G2 fails → **no cortex winner**
    → MIOBA substrate/genome integration stays gated out.
+   *Diagnosed cause of the ctx4 gap:* c2 **recall-dithers** — in failed
+   episodes it re-issues RECALL ~8× consecutively, each retrieval
+   refreshing the direction pointer, and never commits to INTERACT
+   (rollout trace: FWD×62, RECALL×8, INTERACT×0). The layered
+   context pop appears to keep the "must recall" state alive. A small
+   penalty on redundant recall (when a matching payload is already held)
+   or a recall cooldown would likely close much of the −0.165 gap —
+   queued as a candidate fix, not applied inside this window.
 3. **C3's leaky sparse pops can't run multi-step programs.** BC fits
    (CE≈1.0) but execution collapses: ungated leak decays credit ~0.9^step
    over 80-step horizons. Four rescues failed (connectivity 0.3/0.5,
