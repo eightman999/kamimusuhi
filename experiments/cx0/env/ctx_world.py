@@ -150,7 +150,7 @@ class CtxWorld:
         self.rest_flag = 0.0
         self.dead = False
         self.success = False
-        self.last_recall = (np.zeros(8, dtype=np.float32), -1.0)  # payload, score
+        self.last_recall = (np.zeros(8, dtype=np.float32), -1.0, -1)  # pl, score, slot
 
         # --- task-specific schedule ----------------------------------
         s = self.spec
@@ -191,12 +191,17 @@ class CtxWorld:
             if et != 0:
                 return et, 1.0, False
         # CTX-2 phantom: self-caused pulses (action-correlated), 2-step
-        # persistence so attribution (S0, one step behind) can gate STORE
+        # persistence so attribution (S0, one step behind) can gate STORE.
+        # Dense during announce so naive store-everything fails; S0 gating
+        # is what makes the task solvable reliably.
         if s.phantom_prob > 0:
             if self._phantom_ttl > 0:
                 self._phantom_ttl -= 1
                 return self._phantom_et, 0.6, True
-            if self.rng.random() < s.phantom_prob * (0.4 + 0.6 * abs(self.move_vel)):
+            in_announce = (s.announce_window[0] <= self.t
+                           < s.announce_window[1])
+            rate = s.phantom_prob * (2.0 if in_announce else 0.15)
+            if self.rng.random() < rate * (0.4 + 0.6 * abs(self.move_vel)):
                 self._phantom_et = int(self.rng.integers(1, 5))
                 self._phantom_ttl = 1
                 return self._phantom_et, float(self.rng.uniform(0.4, 1.0)), True
@@ -255,6 +260,7 @@ class CtxWorld:
         p = self.spec
         et, strength, phantom = self._perceived_event()
         reward = 0.0
+        prev_pos = self.pos
 
         # movement / internal costs
         if action == FWD:
@@ -296,6 +302,20 @@ class CtxWorld:
             self.last_recall = memory.recall(self._recall_query())
         elif action >= RESP0:
             reward += self._respond(action - RESP0)
+
+        # navigation shaping (PPO signal; disclosed): reward moving toward
+        # the site named by the last retrieval, small bonus on arrival —
+        # active only when a goal exists (crisis or go window)
+        pl_r, sc_r, _sr = self.last_recall
+        shaping_on = ((self.task in ("ctx1", "ctx4") and self.crisis_need >= 0)
+                      or (self.task == "ctx2" and self._go()))
+        if sc_r > 0.5 and shaping_on and action in (FWD, BACK):
+            tgt = _payload_site(pl_r)
+            d_b = _ring_dist(prev_pos, tgt)
+            d_a = _ring_dist(self.pos, tgt)
+            reward += 0.05 * (d_b - d_a)
+            if d_a == 0:
+                reward += 0.15
 
         # intrinsic drift + task drift (decides crisis need)
         self.internal[ENERGY] -= 0.0022 + self._need_drift[ENERGY]
@@ -381,6 +401,9 @@ class CtxWorld:
         if self.task == "ctx3" and self.t >= self.spec.announce_window[1]:
             q[5] = 1.0
             return q
+        if self.task == "ctx2" and self._go():
+            q[1] = 1.0
+            return q
         if self.crisis_need >= 0 and self.crisis_need in NEED_TO_ETYPE:
             q[NEED_TO_ETYPE[self.crisis_need]] = 1.0
         else:
@@ -437,21 +460,32 @@ class CtxWorld:
             return 0.0   # success still measured by probe agreement
         return -0.05
 
+    def _memory_proof(self, et: int) -> bool:
+        """C-G3 gate: the agent must have *retrieved* the needed etype from
+        slot memory — the last recall scored and its payload carries this
+        etype. Hidden-state-only policies cannot pass; duplicate-site
+        instance ambiguity is tolerated (position need not match)."""
+        pl, score, _s = self.last_recall
+        return score > 0.5 and bool(pl[et - 1] > 0.5)
+
     def _check_success(self, action: int) -> bool:
         if self.task == "ctx1":
             return (self.crisis_need >= 0 and action == INTERACT
-                    and int(self.sites[self.pos]) == NEED_TO_ETYPE[self.crisis_need])
+                    and int(self.sites[self.pos]) == NEED_TO_ETYPE[self.crisis_need]
+                    and self._memory_proof(NEED_TO_ETYPE[self.crisis_need]))
         if self.task == "ctx2":
             if self._answer_failed:
                 return False
             return (self._go() and action == INTERACT
-                    and int(self.sites[self.pos]) == 1)
+                    and int(self.sites[self.pos]) == 1
+                    and self._memory_proof(1))
         if self.task == "ctx3":
             return action >= RESP0 and (action - RESP0) == self.cue_resp \
                 and self.cue_delay <= self.t <= self.cue_delay + 5
         if self.task == "ctx4":
             return (self.crisis_need >= 0 and action == INTERACT
-                    and int(self.sites[self.pos]) == NEED_TO_ETYPE[self.crisis_need])
+                    and int(self.sites[self.pos]) == NEED_TO_ETYPE[self.crisis_need]
+                    and self._memory_proof(NEED_TO_ETYPE[self.crisis_need]))
         if self.task == "ctx5":
             return False   # success measured as probe agreement, set by eval
         return False
@@ -548,10 +582,12 @@ class Oracle:
         self._stored = set()
         self._plan_site: int | None = None
         self._moved_this_probe = 0
+        self._recalled_onset = -1
 
     def reset(self) -> None:
         self._stored = set()
         self._plan_site = None
+        self._recalled_onset = -1
 
     def act(self, w: CtxWorld, memory) -> int:
         m = getattr(self, f"_act_{w.task}")
@@ -591,6 +627,12 @@ class Oracle:
         if score < 0.5:
             # recall for a few onset steps, then keep exploring
             return RECALL if w.t - w.crisis_onset < 4 else self._explore(w)
+        if (self._recalled_onset != w.crisis_onset
+                or (w.t - w.crisis_onset) % 4 == 0):
+            # register + periodically refresh the env-visible recall so
+            # _memory_proof passes and BC sees dense RECALL labels
+            self._recalled_onset = w.crisis_onset
+            return RECALL
         site = _payload_site(pl)
         if w.pos == site:
             return INTERACT
@@ -608,6 +650,10 @@ class Oracle:
             return FWD if s.announce_window[0] <= w.t < s.announce_window[1] else self._explore(w)
         pl, score, _s = memory.recall(_etype_query(1))
         site = _payload_site(pl) if score >= 0 else -1
+        if site >= 0 and self._recalled_onset < 0:
+            # register the recall through env (once at go time)
+            self._recalled_onset = 1
+            return RECALL
         if site >= 0 and w.pos == site:
             return INTERACT
         if site >= 0:
@@ -642,6 +688,12 @@ class Oracle:
         if score < 0.5:
             # recall for a few onset steps, then keep exploring
             return RECALL if w.t - w.crisis_onset < 5 else self._explore(w)
+        if (w.crisis_need >= 0
+                and (self._recalled_onset != w.crisis_onset
+                     or (w.t - w.crisis_onset) % 4 == 0)):
+            # register + periodically refresh the env-visible recall
+            self._recalled_onset = w.crisis_onset
+            return RECALL
         site = _payload_site(pl)
         if w.pos == site:
             return INTERACT if w.crisis_need >= 0 else NOOP

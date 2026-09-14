@@ -199,10 +199,19 @@ class R0Organ:
         self._payload = payload.astype(np.float32)
         self._score = score
 
-    def signal(self) -> np.ndarray:
+    def signal(self, obs: np.ndarray | None = None) -> np.ndarray:
         avail = 1.0 if self._score > 0.3 else 0.0
+        # direction pointer: sign of shortest arc from current pos to the
+        # recalled payload's site — makes "go where memory says" a readable
+        # organ output (spatial pointer, not a policy decision).
+        dirv = 0.0
+        if avail and obs is not None:
+            sin_d = float(self._payload[5]) * float(obs[1]) \
+                - float(self._payload[6]) * float(obs[0])
+            dirv = float(np.sign(sin_d)) if abs(sin_d) > 0.15 else 0.0
         return np.concatenate(
-            [self._payload, [avail], self.memory.summary()]).astype(np.float32)
+            [self._payload, [avail, dirv],
+             self.memory.summary()]).astype(np.float32)
 
     # interventions
     def erase(self):
@@ -255,7 +264,7 @@ class OrganSet:
         self._bundle = OrganSignals(
             sensory=obs.astype(np.float32), h0=self.h0.signal(),
             s0=self.s0.signal(), t0=self.t0.signal(),
-            r0=self.r0.signal(), o0=np.zeros(5, dtype=np.float32))
+            r0=self.r0.signal(obs), o0=np.zeros(5, dtype=np.float32))
         return self._bundle
 
     @property

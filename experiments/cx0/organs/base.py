@@ -15,8 +15,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-DIMS = {"sensory": 16, "h0": 9, "s0": 8, "t0": 18, "r0": 12, "o0": 5}
-BUNDLE_DIM = sum(DIMS.values())  # 68
+DIMS = {"sensory": 16, "h0": 9, "s0": 8, "t0": 18, "r0": 13, "o0": 5}
+BUNDLE_DIM = sum(DIMS.values())  # 69
 FIELDS = tuple(DIMS.keys())
 
 
@@ -26,7 +26,7 @@ class OrganSignals:
     h0: np.ndarray        # internal(5) + urgency(1) + emergency(1) + drive_emb(2)
     s0: np.ndarray        # err decomposition + confidence + attribution
     t0: np.ndarray        # elapsed_hat + conf + embedding(14)
-    r0: np.ndarray        # retrieved payload(8) + avail + summary(3)
+    r0: np.ndarray        # retrieved payload(8) + avail + dir + summary(3)
     o0: np.ndarray        # reserved shadow slot (zeros in v1)
 
     @classmethod

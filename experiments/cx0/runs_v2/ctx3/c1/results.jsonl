@@ -1,0 +1,65 @@
+{"task": "ctx3", "arm": "c1", "seed": 0, "condition": "clean", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null, "probe_h": 0.8706597222222222}
+{"task": "ctx3", "arm": "c1", "seed": 0, "condition": "shuffle_sensory", "success": 0.9791666666666666, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 0, "condition": "shuffle_h0", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 0, "condition": "shuffle_s0", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 0, "condition": "shuffle_t0", "success": 0.3333333333333333, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 0, "condition": "shuffle_r0", "success": 0.3333333333333333, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 0, "condition": "cortex_off", "success": 0.25, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 0, "condition": "reset_hidden", "success": 0.875, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 0, "condition": "reset_organs", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 0, "condition": "erase_memory", "success": 0.625, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 0, "condition": "lesion_context", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 0, "condition": "lesion_feedback", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 0, "condition": "lesion_slow", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 1, "condition": "clean", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null, "probe_h": 0.9105902777777778}
+{"task": "ctx3", "arm": "c1", "seed": 1, "condition": "shuffle_sensory", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 1, "condition": "shuffle_h0", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 1, "condition": "shuffle_s0", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 1, "condition": "shuffle_t0", "success": 0.375, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 1, "condition": "shuffle_r0", "success": 0.2916666666666667, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 1, "condition": "cortex_off", "success": 0.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 1, "condition": "reset_hidden", "success": 0.6458333333333334, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 1, "condition": "reset_organs", "success": 0.5833333333333334, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 1, "condition": "erase_memory", "success": 0.5625, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 1, "condition": "lesion_context", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 1, "condition": "lesion_feedback", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 1, "condition": "lesion_slow", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 2, "condition": "clean", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null, "probe_h": 0.8342013888888888}
+{"task": "ctx3", "arm": "c1", "seed": 2, "condition": "shuffle_sensory", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 2, "condition": "shuffle_h0", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 2, "condition": "shuffle_s0", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 2, "condition": "shuffle_t0", "success": 0.4375, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 2, "condition": "shuffle_r0", "success": 0.20833333333333334, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 2, "condition": "cortex_off", "success": 0.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 2, "condition": "reset_hidden", "success": 0.8125, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 2, "condition": "reset_organs", "success": 0.625, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 2, "condition": "erase_memory", "success": 0.6041666666666666, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 2, "condition": "lesion_context", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 2, "condition": "lesion_feedback", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 2, "condition": "lesion_slow", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 3, "condition": "clean", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null, "probe_h": 0.8333333333333334}
+{"task": "ctx3", "arm": "c1", "seed": 3, "condition": "shuffle_sensory", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 3, "condition": "shuffle_h0", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 3, "condition": "shuffle_s0", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 3, "condition": "shuffle_t0", "success": 0.2916666666666667, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 3, "condition": "shuffle_r0", "success": 0.1875, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 3, "condition": "cortex_off", "success": 0.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 3, "condition": "reset_hidden", "success": 0.5208333333333334, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 3, "condition": "reset_organs", "success": 0.6458333333333334, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 3, "condition": "erase_memory", "success": 0.5416666666666666, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 3, "condition": "lesion_context", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 3, "condition": "lesion_feedback", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 3, "condition": "lesion_slow", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 4, "condition": "clean", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null, "probe_h": 0.828125}
+{"task": "ctx3", "arm": "c1", "seed": 4, "condition": "shuffle_sensory", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 4, "condition": "shuffle_h0", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 4, "condition": "shuffle_s0", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 4, "condition": "shuffle_t0", "success": 0.2916666666666667, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 4, "condition": "shuffle_r0", "success": 0.125, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 4, "condition": "cortex_off", "success": 0.2708333333333333, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 4, "condition": "reset_hidden", "success": 0.625, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 4, "condition": "reset_organs", "success": 0.5208333333333334, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 4, "condition": "erase_memory", "success": 0.5416666666666666, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 4, "condition": "lesion_context", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 4, "condition": "lesion_feedback", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}
+{"task": "ctx3", "arm": "c1", "seed": 4, "condition": "lesion_slow", "success": 1.0, "dead": 0, "probe_agree": null, "n_params": null}

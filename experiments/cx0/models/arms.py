@@ -210,9 +210,9 @@ class C3Mantle(BaseArm):
 
     name = "c3"
 
-    TAUS = dict(assoc=4.0, context=16.0, slow=64.0, predict=4.0, feedback=8.0)
+    TAUS = dict(assoc=4.0, context=16.0, slow=32.0, predict=4.0, feedback=8.0)
 
-    def __init__(self, dims: dict | None = None, cross_p: float = 0.08,
+    def __init__(self, dims: dict | None = None, cross_p: float = 0.12,
                  seed: int = 0):
         super().__init__()
         d = dims or dict(assoc=64, context=96, slow=48, predict=64, feedback=48)
@@ -225,7 +225,7 @@ class C3Mantle(BaseArm):
                                 _block_mask(d["context"], 4, cross_p, rng))
         self.slow = LeakyPop(d["context"], d["slow"], self.TAUS["slow"],
                              _block_mask(d["slow"], 2, cross_p, rng))
-        self.predict = LeakyPop(d["context"] + d["assoc"], d["predict"],
+        self.predict = LeakyPop(d["assoc"] + d["feedback"], d["predict"],
                                 self.TAUS["predict"],
                                 _block_mask(d["predict"], 4, cross_p, rng))
         self.feedback = LeakyPop(d["context"] + d["slow"], d["feedback"],
@@ -239,7 +239,8 @@ class C3Mantle(BaseArm):
         a = self.assoc(e, state["assoc"])
         c = self.context(torch.cat([a, state["feedback"]], -1), state["context"])
         s = self.slow(state["context"], state["slow"])
-        p = self.predict(torch.cat([state["context"], a], -1), state["predict"])
+        p = self.predict(torch.cat([a, state["feedback"]], -1),
+                         state["predict"])
         f = self.feedback(torch.cat([state["context"], state["slow"]], -1),
                           state["feedback"])
         new = dict(assoc=a, context=c, slow=s, predict=p, feedback=f)
