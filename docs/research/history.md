@@ -191,3 +191,95 @@ Key observations:
 
 Gate outcome per plan: **no C0–C3 winner identified** → noise/development
 and MIOBA substrate integration remain blocked (step 14-15 not entered).
+
+## 9. CX0 second matrix (v2/v3, 10 seeds) — organ-causal, still PARTIAL
+
+After a→b→c fixes (memory-proof success, phantom persistence+density,
+C3 rewire), the matrix was rerun: 5 tasks × 4 arms × 10 seeds × 13
+conditions = 2600 rows in `experiments/cx0/runs_v2/**/results.jsonl`;
+report `experiments/cx0/reports/CX0_RESULTS.md`.
+
+**Verdict: PARTIAL** (C-G1/G3/G4/G5/G6 pass; C-G2 fails).
+
+### Clean success, mean±sem (10 seeds)
+
+| task | c0 (flat) | c1 (GRU) | c2 (layered) | c3 (sparse) |
+|---|---|---|---|---|
+| ctx1 | 0.654±.035 | 0.708±.027 | 0.631±.034 | 0.023±.014 |
+| ctx2 | 0.812±.014 | 0.898±.023 | 0.906±.019 | 0.000±.000 |
+| ctx3 | 0.856±.046 | 0.919±.077 | 0.908±.054 | 0.829±.086 |
+| ctx4 | 0.752±.025 | 0.756±.023 | 0.592±.038 | 0.035±.016 |
+| ctx5 | 0.510±.052 | 0.490±.046 | 0.529±.036 | 0.519±.062 |
+
+Paired seed diffs: c2−c1 = −0.165±.039 (ctx4), −0.077±.040 (ctx1),
+≈0 elsewhere → **structured cortex does NOT beat the parameter-matched
+generic GRU at this scale** (C-G2 FAIL). c0−c1 = −0.085±.031 on ctx2
+only (waiting for the go window is where recurrence pays). c3 collapses
+on the memory-navigation tasks and survives only on short-horizon tasks
+(ctx3 0.83, ctx5 0.52) — see findings.
+
+### Organ usage map (mean success drop under field shuffle, 10 seeds)
+
+| task | sensory | h0 | s0 | t0 | r0 |
+|---|---|---|---|---|---|
+| ctx1 | .03 | .01 | −.02 | .00 | **.37** |
+| ctx2 | **.57** | −.01 | .00 | .01 | **.54** |
+| ctx3 | .01 | −.01 | .00 | **.60** | **.61** |
+| ctx4 | .09 | .00 | .03 | .05 | **.45** |
+| ctx5 | .00 | −.01 | −.01 | .00 | .00 |
+
+- **R0 is now load-bearing** on ctx1/2/3/4 (C-G3 PASS: pooled drop 0.165;
+  `erase_memory` ≈ shuffle_r0). Achieved by requiring the last env-visible
+  recall to carry the needed etype (`_memory_proof`) + an R0 direction
+  pointer + navigation shaping.
+- **T0 is load-bearing only on ctx3** (the task it was designed for).
+- **S0 remains bypassed**: even with dense announce-phase phantoms, the
+  learned policy needs no attribution — it stores once at the first real
+  perception (s0 p_world≈0.5 passively consistent). `shuffle_s0` ≈ 0.
+- **H0 processed signals remain bypassed**: raw internals already leak
+  through the sensory field, so the organ's urgency/emergency channels
+  are redundant. (Raw internals in sensory is the leak to fix.)
+- `cortex_off` → ~0 on all tasks (drop .44–.85): the integration layer is
+  causally required (null check OK).
+- `reset_hidden`: ctx2 +.42, ctx3 +.23 — context state is causal where
+  waiting/timing is required; c0 flat is unaffected (reactive policy).
+- `reset_organs`: ctx4 +.34 (drift state), ctx3 +.29.
+- `lesion_context`: ctx3 +.39, others +.15–.18 — context pop specialized.
+- `lesion_feedback`: ctx3 +.23, ctx5 +.11. `lesion_slow` ≈ 0 — the slow
+  population contributes nothing measurable at 80-step horizons.
+
+### Findings
+
+1. **Organs get used only when the task makes them load-bearing.**
+   Memory became causal exactly when success required a real retrieval
+   (proof), not before. Timing was always causal on its own task.
+   Attribution and homeostatic *channels* are bypassed because simpler
+   affordances exist (persistent real events, raw internals in sensory).
+2. **Generic GRU is sufficient at this scale.** C2's layered
+   decomposition loses where it hurts (ctx4 −0.17) and never wins
+   significantly. The cortex hypothesis is NOT confirmed — answer: no
+   cortex advantage in this regime.
+3. **C3's sparse multi-τ leaky pops cannot sustain multi-step motor
+   programs.** It fits BC (CE≈1.0) but collapses at execution on
+   navigation chains; leaky Jacobian ~0.9^step decays credit over long
+   horizons vs gated recurrence. Four rescue attempts (connectivity,
+   dense assoc, fast-path predict, head access to assoc) all fail ≤0.13.
+   It survives on short-horizon tasks (RESP timing, probe answers).
+4. **ctx5 drive-conflict is near-chance for all arms (~0.5)** — the
+   probe-agreement metric is noisy; not currently discriminative.
+
+### Verdict & gate
+
+PARTIAL. No C0–C3 winner → per plan, **MIOBA substrate/genome
+integration remains gated out**; noise/development work stays blocked
+until a cortex variant shows an advantage or the architecture question
+is closed at this scale.
+
+### Next candidates (unscheduled)
+
+- h0: stop leaking raw internals through sensory (make the organ's
+  processed signal the only channel) → would test C-G3 for homeostasis.
+- s0: make last-write-wins lose (e.g., phantom overwriting also erases,
+  or require attribution-gated store for success).
+- c3: gated sparse populations or GRU-per-population hybrid.
+- ctx5: denser probes or continuous agreement metric for resolution.
