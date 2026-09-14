@@ -282,6 +282,11 @@ class CtxWorld:
                     int(self.sites[self.pos]) != 1:
                 self._answer_failed = True
                 reward -= 1.0
+            # CTX-1/CTX-4: blind tour-and-interact is not free during a
+            # crisis — wrong-site attempts cost, so recall actually pays
+            if self.task in ("ctx1", "ctx4") and self.crisis_need >= 0 and \
+                    int(self.sites[self.pos]) != NEED_TO_ETYPE[self.crisis_need]:
+                reward -= 0.4
         elif action == STORE and memory is not None:
             payload = self._event_payload(et, strength)
             key = np.zeros(6, dtype=np.float32)

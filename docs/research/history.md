@@ -155,3 +155,39 @@ general-purpose NN.
 | #39 | runtime: integrate validated experiments as cognitive organs | **OPEN** |
 
 Experiment PRs #27–#34 are listed in §3. MIOBA PRs in §4.
+
+## 8. CX0 Synthetic Cortex — first matrix (this branch)
+
+The CTX-1..5 world + organ bundle (H0/R0/S0/T0 live; O0 reserved shadow)
++ C0/C1/C2/C3 arms were trained (BC→PPO) and evaluated with the full
+intervention battery: 5 tasks × 4 arms × 5 seeds × 13 conditions = 1300
+rows in `experiments/cx0/runs/**/results.jsonl`; report:
+`experiments/cx0/reports/CX0_RESULTS.md`.
+
+**Verdict: PARTIAL.**
+
+| gate | result |
+|---|---|
+| C-G1 solvability | PASS — best arm mean clean 0.382; ctx3 0.97–1.0 |
+| C-G2 cortex edge | FAIL — generic GRU (c1) is the best arm; no structured-cortex advantage in v1 |
+| C-G3 organ causal | FAIL — mean shuffle drop 0.064; organ fields largely bypassed on ctx1/ctx4 (hidden state holds site maps), though t0/r0 shuffles halve ctx3 (0.97→0.35/0.34) |
+| C-G4 context state | PASS — reset_hidden drops (ctx5 c3: 0.62→0.07; ctx3 c3: 1.0→0.51) |
+| C-G5 no harm | MIXED — ctx5: c1 0.346 < c0 0.458 (cortex hurt), c3 0.621 ≥ c0 |
+| C-G6 decode | PASS — context probe 0.627 from recurrent populations |
+| null check | OK — cortex_off → ~0 across arms (integration load-bearing) |
+
+Key observations:
+
+- The memory organs are *available* but often *bypassed*: recurrent cores
+  learn the site→function map in-context, so `erase_memory`/`shuffle_r0`
+  only hurt where the task truly needs the slot readout (ctx3).
+- CTX-2 (phantom filtering) is unsolved by all arms (~0.05) — the S0
+  attribution signal discriminates (p_self 0.10 vs p_world 0.70 in
+  pretraining checks) but the confirm-then-store policy did not emerge
+  under this budget.
+- C3 (sparse multi-τ) wins on ctx5 (drive-conflict) and is competitive on
+  ctx3, but underperforms c1 on ctx1/ctx4 — sparsity cost exceeds benefit
+  at this scale.
+
+Gate outcome per plan: **no C0–C3 winner identified** → noise/development
+and MIOBA substrate integration remain blocked (step 14-15 not entered).

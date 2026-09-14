@@ -1,6 +1,0 @@
-{"round": 0, "beta": 0.9, "loss": 68.71018346150716, "val_success": 0.0, "val_probe_agree": null, "n_eps": 64}
-{"round": 1, "beta": 0.7, "loss": 35.201388359069824, "val_success": 0.0, "val_probe_agree": null, "n_eps": 128}
-{"round": 2, "beta": 0.5, "loss": 28.955031712849934, "val_success": 0.0, "val_probe_agree": null, "n_eps": 192}
-{"round": 3, "beta": 0.3, "loss": 30.75950288772583, "val_success": 0.0, "val_probe_agree": null, "n_eps": 256}
-{"round": 4, "beta": 0.15, "loss": 49.78740768432617, "val_success": 0.0, "val_probe_agree": null, "n_eps": 320}
-{"round": 5, "beta": 0.05, "loss": 62.23675855000814, "val_success": 0.0, "val_probe_agree": null, "n_eps": 384}

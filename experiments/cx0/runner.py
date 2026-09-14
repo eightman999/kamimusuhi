@@ -100,8 +100,9 @@ def rollout(task: str, seed: int, organs: OrganSet, arm,
         if itv.erase_memory_at is not None and t == itv.erase_memory_at:
             organs.memory.erase()
 
-        eff = _apply_interventions(bundle, itv,
-                                   donor[t] if donor is not None else None)
+        eff = _apply_interventions(
+            bundle, itv,
+            donor[t] if donor is not None and t < len(donor) else None)
         x = torch.tensor(eff.concat()[None], dtype=torch.float32)
         arm.set_core_off(itv.cortex_off)
         arm.set_lesioned({itv.lesion_pop} if itv.lesion_pop else frozenset())
