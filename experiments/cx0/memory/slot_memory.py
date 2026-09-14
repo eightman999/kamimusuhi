@@ -18,10 +18,12 @@ EVICT_RANDOM = "random"
 
 
 class SlotMemory:
-    def __init__(self, num_slots: int, payload_dim: int, key_dim: int):
+    def __init__(self, num_slots: int, payload_dim: int, key_dim: int,
+                 rng: np.random.Generator | None = None):
         self.num_slots = num_slots
         self.payload_dim = payload_dim
         self.key_dim = key_dim
+        self._rng = rng or np.random.default_rng()
         self.payloads = np.zeros((num_slots, payload_dim), dtype=np.float32)
         self.key_vecs = np.zeros((num_slots, key_dim), dtype=np.float32)
         self.occupied = np.zeros(num_slots, dtype=bool)
@@ -61,12 +63,13 @@ class SlotMemory:
         if evict == EVICT_LRU:
             return int(occ[np.argmin(self.last_used[occ])])
         if evict == EVICT_RANDOM:
-            return int(np.random.randint(self.num_slots))
+            return int(occ[self._rng.integers(len(occ))])
         return int(occ[np.argmin(self.insert_counter[occ])])
 
     # -- reads ----------------------------------------------------------
     def recall(self, query: np.ndarray) -> tuple[np.ndarray, float, int]:
         """Return (payload, match_score, slot). score<0 => nothing occupied."""
+        self._clock += 1
         occ = np.flatnonzero(self.occupied)
         if len(occ) == 0 or np.linalg.norm(query) == 0:
             return np.zeros(self.payload_dim, dtype=np.float32), -1.0, -1
@@ -95,6 +98,7 @@ class SlotMemory:
             payloads=self.payloads.copy(), key_vecs=self.key_vecs.copy(),
             occupied=self.occupied.copy(), insert_counter=self.insert_counter.copy(),
             last_used=self.last_used.copy(), clock=self._clock,
+            rng=self._rng.bit_generator.state,
         )
 
     def set_state(self, st: dict) -> None:
@@ -104,6 +108,8 @@ class SlotMemory:
         self.insert_counter = st["insert_counter"].copy()
         self.last_used = st["last_used"].copy()
         self._clock = st["clock"]
+        if st.get("rng") is not None:
+            self._rng.bit_generator.state = st["rng"]
 
     def summary(self) -> np.ndarray:
         """(n_used/num_slots, mean_age, max_last_used/clock) occupancy summary."""

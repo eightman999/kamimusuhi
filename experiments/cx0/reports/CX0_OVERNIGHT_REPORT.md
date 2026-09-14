@@ -134,3 +134,10 @@ cause labels, and the oracle — obs and stored events could disagree
 STORE on empty perception is a no-op. All data above was generated
 under the pre-fix kernel (history.md §11); regenerate before citing
 exact numbers.
+
+A second pass then found `_check_success()` ran after `self.t += 1`,
+judging the ctx2/ctx3 windows one step late (pre-window actions scored;
+the last in-window step failed) and letting ctx1/ctx4 serve one step
+before the crisis was observable. Success is now judged at action time;
+`ctx_labels`, the validation-seed stride, and slot-memory clock/rng
+were aligned in the same pass (history.md §12). Same data caveat.

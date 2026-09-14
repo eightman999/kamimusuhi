@@ -22,10 +22,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from .env.ctx_world import EP_LEN, N_ACTIONS, Oracle
+from .env.ctx_world import N_ACTIONS, Oracle
 from .models.arms import ARMS, build_arm, count_params
 from .organs.pretrain import build_organ_set
-from .runner import Intervention, rollout
+from .runner import rollout
 
 CKPT_ORGANS = Path(__file__).parent / "runs" / "organs"
 BETA0, BETA_FLOOR, BETA_DECAY = 0.9, 0.2, 0.06
@@ -97,8 +97,8 @@ def train_epochs(arm, data, opt, class_w, n_epochs=3, aux_w=0.1, rng=None,
 def eval_success(task, seeds, organs, arm):
     wins = 0
     agree = []
-    for i, s in enumerate(seeds):
-        tr = rollout(task, seed=s + i, organs=organs, arm=arm, oracle=None,
+    for s in seeds:
+        tr = rollout(task, seed=s, organs=organs, arm=arm, oracle=None,
                      record_pops=False)
         wins += int(tr.success)
         if tr.probe_agree is not None:

@@ -15,14 +15,14 @@ import sys
 from pathlib import Path
 
 
-def work(q, organ_dir):
+def work(q, organ_dir, eps):
     import torch
     torch.set_num_threads(1)
     from .organs.pretrain import build_organ_set
     from .evaluate import load_arm, eval_condition, EVAL_SEED0
     from .runner import Intervention
     organs = build_organ_set(organ_dir)
-    eval_seeds = [EVAL_SEED0 + 37 * i for i in range(48)]
+    eval_seeds = [EVAL_SEED0 + 37 * i for i in range(eps)]
     while True:
         it = q.get()
         if it is None:
@@ -53,6 +53,8 @@ def main():
                                                / 'runs' / 'organs'))
     ap.add_argument('--workers', type=int, default=6)
     ap.add_argument('--only-arm', default=None)
+    ap.add_argument('--eps', type=int, default=48,
+                    help='episodes per condition; match the matrix --eval-eps')
     a = ap.parse_args()
     runs = Path(a.runs)
     q = mp.Queue()
@@ -69,7 +71,7 @@ def main():
         q.put((str(ck), task, arm_name, seed, str(out)))
     for _ in range(a.workers):
         q.put(None)
-    procs = [mp.Process(target=work, args=(q, a.organ_dir))
+    procs = [mp.Process(target=work, args=(q, a.organ_dir, a.eps))
              for _ in range(a.workers)]
     for p in procs:
         p.start()

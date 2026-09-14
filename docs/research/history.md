@@ -340,3 +340,33 @@ Data caveat: `runs/`, `runs_v2/`, `runs_v3/` were generated under the
 pre-fix kernel. Qualitative conclusions are unlikely to move (phantoms
 are noise by design and the fix mainly removes bookkeeping noise), but
 exact numbers should be regenerated before being cited.
+
+## 12. Action-time success predicates
+
+A second kernel review found `_check_success()` ran *after* `self.t += 1`
+inside `step()`, while `_respond()`, the obs GO flag, the oracle, and the
+ctx2 wrong-site penalty all judge windows at action time `t`. Windowed
+success predicates were therefore evaluated one step late:
+
+- CTX-3: a `RESP_k` fired at `t = cue_delay − 1` latched success (+0.95
+  net reward — an exploitable leak); the last in-window step
+  `t = cue_delay + 5` scored `StepInfo.success=False` (the episode still
+  latched via `_respond`, but the field and bonus disagreed).
+- CTX-2: `INTERACT` at `t = go_start − 1` (GO=0 in obs) counted; the
+  last in-window step `t = go_end` could not succeed.
+- CTX-1/4: `INTERACT` at `t = crisis_t − 1` — one step before the crisis
+  was observable — could resolve it.
+
+Fixed: `_check_success` is called before `self.t += 1` so every window
+predicate is judged at the step the action was taken; the redundant
+success latch inside `_respond` was removed (single latch authority);
+`event_site` records the pre-move position; `ctx_labels` in the runner
+now pair with the same step's population state (were off by one);
+`eval_success` uses the intended 1000-stride validation grid; lesion
+eval takes `--eps`; `EVICT_RANDOM` draws from a seeded rng over occupied
+slots only, and recalls advance the slot clock so LRU/`last_used` is
+meaningful. Regression tests pin both window edges.
+
+Data caveat: unchanged — `runs/`, `runs_v2/`, `runs_v3/` predate this
+fix too. The ctx2/ctx3 boundary shifts are ~1 step in 6/19-step windows;
+regenerate before citing exact numbers.

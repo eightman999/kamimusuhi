@@ -8,8 +8,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from experiments.cx0.env.ctx_world import (EP_LEN, N_ETYPES, N_LOCS, CtxWorld,
-                                           Oracle, TASKS)
+from experiments.cx0.env.ctx_world import (EP_LEN, INTERACT, N_ETYPES, N_LOCS,
+                                           RESP0, CtxWorld, Oracle, TASKS)
 from experiments.cx0.memory.slot_memory import SlotMemory
 from experiments.cx0.organs.base import BUNDLE_DIM, DIMS, OrganSignals
 
@@ -122,6 +122,45 @@ class TestWorld:
         w.pos = int(np.flatnonzero(w.sites == 0)[0])
         w.step(5, m)   # STORE
         assert m.occupied.sum() == 0
+
+    def test_resp_window_judged_at_action_time(self):
+        # CTX-3: the response window is judged at the step the action was
+        # taken — firing one step early must not count, firing on the
+        # last in-window step must count.
+        w = CtxWorld("ctx3", seed=0)
+        m = SlotMemory(3, 8, 6)
+        w.t = w.cue_delay - 1
+        info = w.step(RESP0 + w.cue_resp, m)
+        assert not w.success and not info.success
+
+        w2 = CtxWorld("ctx3", seed=0)
+        w2.t = w2.cue_delay + 5
+        info2 = w2.step(RESP0 + w2.cue_resp, m)
+        assert w2.success and info2.success
+
+    def test_go_window_judged_at_action_time(self):
+        # CTX-2: INTERACT on the KEY site counts only inside the go
+        # window shown in obs — one step early fails, the last
+        # in-window step succeeds.
+        k = np.zeros(6, dtype=np.float32); k[1] = 1.0
+        pl = np.zeros(8, dtype=np.float32); pl[0] = 1.0
+        w = CtxWorld("ctx2", seed=0)
+        m = SlotMemory(3, 8, 6)
+        w.pos = int(np.flatnonzero(w.sites == 1)[0])
+        m.store(pl, k)
+        w.last_recall = m.recall(k)
+        w.t = TASKS["ctx2"].go_window[0] - 1
+        w.step(INTERACT, m)
+        assert not w.success
+
+        w2 = CtxWorld("ctx2", seed=0)
+        m2 = SlotMemory(3, 8, 6)
+        w2.pos = int(np.flatnonzero(w2.sites == 1)[0])
+        m2.store(pl, k)
+        w2.last_recall = m2.recall(k)
+        w2.t = TASKS["ctx2"].go_window[1]
+        w2.step(INTERACT, m2)
+        assert w2.success
 
 
 # ----------------------------------------------------------------------

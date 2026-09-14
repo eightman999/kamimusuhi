@@ -163,7 +163,6 @@ class CtxWorld:
         self.cue_resp = 0
         self.crisis_t = -1
         self.crisis_need = -1
-        self.probe_idx = 0
         self._need_drift = np.zeros(N_INTERNAL)
         self._answer_failed = False   # CTX-2: wrong one-shot INTERACT used
         self.crisis_onset = -1        # step the crisis need was picked
@@ -280,7 +279,6 @@ class CtxWorld:
     # dynamics
     # ------------------------------------------------------------------
     def step(self, action: int, memory=None) -> StepInfo:
-        p = self.spec
         et, strength, phantom = self._perceived_event()
         reward = 0.0
         prev_pos = self.pos
@@ -363,6 +361,19 @@ class CtxWorld:
 
         self.move_vel *= 0.5
         self.rest_flag *= 0.5
+
+        # success is judged at action time — the same step index whose
+        # GO flag the agent observed and whose window _respond() pays
+        # on. Checking after `self.t += 1` shifted the ctx2/ctx3 windows
+        # one step late: a pre-window action scored while the last
+        # in-window action failed.
+        success = self._check_success(action)
+        if success:
+            self.success = True
+            reward += 1.0
+            self.crisis_need = -1   # crisis resolved
+            self.crisis_t = -1      # single crisis per episode
+
         self.t += 1
 
         # crisis dynamics
@@ -382,12 +393,6 @@ class CtxWorld:
             self.dead = True
             reward -= 1.0
 
-        success = self._check_success(action)
-        if success:
-            self.success = True
-            reward += 1.0
-            self.crisis_need = -1   # crisis resolved
-            self.crisis_t = -1      # single crisis per episode
         # episode-end miss penalty: silence is not free
         if self.t >= EP_LEN and self.task in ("ctx3", "ctx2") \
                 and not self.success and not self.dead:
@@ -396,7 +401,7 @@ class CtxWorld:
 
         return StepInfo(
             t=self.t, obs=self._obs(), internal=self.internal.copy(),
-            event_etype=et, event_site=self.pos if et and not self._is_ambient(et) else None,
+            event_etype=et, event_site=prev_pos if et and not self._is_ambient(et) else None,
             event_strength=strength, phantom=phantom, dead=self.dead,
             reward=reward, success=success, go=self._go(),
         )
@@ -448,8 +453,7 @@ class CtxWorld:
             dev = np.array([1.0 - self.internal[ENERGY],
                             self.internal[FATIGUE],
                             abs(self.internal[TEMP] - 0.55)])
-            return int(np.argmax(dev) if dev.argmax() == 0 else
-                       [ENERGY, FATIGUE, TEMP][int(np.argmax(dev))])
+            return int(np.argmax(dev))
         if self.task == "ctx4":
             dev = np.array([self._need_drift[ENERGY], self._need_drift[FATIGUE],
                             self._need_drift[TEMP]])
@@ -480,8 +484,7 @@ class CtxWorld:
         if self.task == "ctx3":
             in_window = self.cue_delay <= self.t <= self.cue_delay + 5
             if in_window and k == self.cue_resp:
-                self.success = True
-                return 1.0
+                return 1.0        # success latched by _check_success
             return -0.05          # mild: silence is worse (miss penalty at end)
         if self.task == "ctx5":
             # probe-step reward shaping: correct context response pays off
@@ -581,7 +584,7 @@ class CtxWorld:
                     temp_setpoint=getattr(self, "_temp_setpoint", None),
                     need_drift=self._need_drift.copy(),
                     answer_failed=self._answer_failed,
-                    crisis_onset=self.crisis_onset, probe_idx=self.probe_idx,
+                    crisis_onset=self.crisis_onset,
                     phantom_ttl=self._phantom_ttl, phantom_et=self._phantom_et,
                     evt_cache_t=self._evt_cache_t,
                     evt_cache=tuple(self._evt_cache),
@@ -602,7 +605,6 @@ class CtxWorld:
         self._need_drift = st["need_drift"].copy()
         self._answer_failed = st["answer_failed"]
         self.crisis_onset = st["crisis_onset"]
-        self.probe_idx = st["probe_idx"]
         self._phantom_ttl = st["phantom_ttl"]
         self._phantom_et = st["phantom_et"]
         self._evt_cache_t = st["evt_cache_t"]

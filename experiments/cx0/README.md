@@ -4,7 +4,8 @@ Status: **PARTIAL** — overnight matrix complete (v3, 10 seeds; see
 `reports/CX0_OVERNIGHT_REPORT.md`). C-G2 failed: no cortex advantage over
 the parameter-matched GRU at this scale. Kernel hardened post-review:
 perception is rolled once per step (t-cached), so obs/STORE/oracle see
-one event stream; runs_v2/runs_v3 were generated under the pre-fix kernel.
+one event stream, and success is judged at action time `t` (history.md
+§11–12); runs_v2/runs_v3 were generated under the pre-fix kernel.
 Series: Phase F — integration of previously validated cognitive organs
 Depends on verdicts: H0 PASS · R0 PASS · S0 PASS · T0 PASS · O0 PARTIAL (shadow) · P0/G0 FAIL (excluded)
 

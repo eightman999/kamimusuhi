@@ -123,6 +123,7 @@ def rollout(task: str, seed: int, organs: OrganSet, arm,
             n_probe += 1
             n_agree += int(act - 7 == int(np.argmax(env.probe_options()))) if act >= 7 else 0
 
+        ctx_label = env.context_label()
         organs.pre_step(obs, act)
         info = env.step(act, organs.memory)
         recall = env.last_recall if act == RECALL else None
@@ -137,7 +138,7 @@ def rollout(task: str, seed: int, organs: OrganSet, arm,
         tr.logps.append(float(np.log(max(probs[act], 1e-9))))
         tr.aux_pred.append(aux.squeeze(0).numpy())
         tr.next_sensory.append(obs.astype(np.float32))
-        tr.ctx_labels.append(env.context_label())
+        tr.ctx_labels.append(ctx_label)
         tr.oracle_actions.append(oa)
         if record_pops:
             for k, v in pops.items():

@@ -26,10 +26,10 @@ def worker(q, out, organ_dir, bc_rounds, bc_eps, ppo_iters, ppo_eps,
            eval_eps, verbose):
     import torch
     torch.set_num_threads(1)
-    from .env.ctx_world import Oracle
+    import dataclasses
+    from .env.ctx_world import Oracle, TASKS
     from .models.arms import build_arm, count_params
     from .organs.pretrain import build_organ_set
-    from .runner import rollout
     from .train_bc import collect_round, train_epochs, eval_success
     from .train_ppo import collect_batch, ppo_update
     from .evaluate import run_eval
@@ -75,8 +75,6 @@ def worker(q, out, organ_dir, bc_rounds, bc_eps, ppo_iters, ppo_eps,
             opt = torch.optim.Adam(arm.parameters(), lr=8e-4)
             best_ppo = best
             for it in range(ppo_iters):
-                import dataclasses
-                from .env.ctx_world import TASKS
                 spec = TASKS[task]
                 if task == "ctx3" and it < ppo_iters // 2:
                     spec = dataclasses.replace(spec, resp_delay_range=(16, 40))

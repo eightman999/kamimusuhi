@@ -25,7 +25,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from ..env.ctx_world import CtxWorld, EP_LEN, N_ACTIONS, Oracle, RECALL
+from ..env.ctx_world import CtxWorld, EP_LEN, N_ACTIONS, Oracle
 from ..memory.slot_memory import SlotMemory
 from .modules import H0Net, H0Organ, OrganSet, R0Organ, S0Net, S0Organ, T0Net, T0Organ
 
@@ -137,7 +137,7 @@ def pretrain_s0(n_eps: int = 400, epochs: int = 4, seed: int = ORGAN_SEED,
                     + 0.3 * nn.functional.cross_entropy(
                         attr, torch.tensor([lab_seq[t]], device=device))
             opt.zero_grad(); loss.backward(); opt.step()
-            tot += float(loss)
+            tot += float(loss.detach())
     return net
 
 

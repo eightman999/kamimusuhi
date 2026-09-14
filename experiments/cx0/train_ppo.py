@@ -24,10 +24,10 @@ import torch.nn as nn
 
 import dataclasses
 
-from .env.ctx_world import EP_LEN, TASKS
+from .env.ctx_world import TASKS
 from .models.arms import ARMS, build_arm, count_params
 from .organs.pretrain import build_organ_set
-from .runner import Intervention, rollout
+from .runner import rollout
 from .train_bc import CKPT_ORGANS, eval_success
 
 GAMMA, LAM = 0.97, 0.95
