@@ -40,10 +40,10 @@ def pivot(rows):
     clean = defaultdict(list)
     cond = defaultdict(lambda: defaultdict(list))
     probes = defaultdict(list)
-    params = {}
+    params = defaultdict(set)
     for r in rows:
         key = (r["task"], r["arm"])
-        params[key[1]] = r.get("n_params")
+        params[key[1]].add(r.get("n_params"))
         if r["condition"] == "clean":
             clean[key].append(r["success"])
             for k, v in r.items():
@@ -117,7 +117,9 @@ def main():
     best_arm = max(ctx_arms, key=lambda a: mean_by_arm[a])
     g1 = max(mean_by_arm.values()) >= 0.30
     c1_mean = mean_by_arm.get("c1", np.nan)
-    g2 = mean_by_arm[best_arm] > c1_mean + 0.05 if "c1" in mean_by_arm else False
+    struct = [a for a in ("c2", "c3") if a in mean_by_arm]
+    struct_best = max((mean_by_arm[a] for a in struct), default=float("nan"))
+    g2 = bool(struct_best > c1_mean + 0.05) if "c1" in mean_by_arm else False
     drops = []
     for t in tasks:
         c = np.mean(clean.get((t, best_arm), [np.nan]))
@@ -156,7 +158,9 @@ def main():
     md = []
     md.append("# CX0 Synthetic Cortex — Results\n")
     md.append(f"- generated from `{runs}` ({len(rows)} rows)")
-    md.append(f"- params: " + ", ".join(f"{k}={v}" for k, v in params.items()))
+    md.append(f"- params: " + ", ".join(
+        f"{k}={sorted(v, key=lambda x: (x is None, x))}"
+        for k, v in sorted(params.items())))
     md.append(f"- best cortex arm: **{best_arm}** "
               f"(mean clean {mean_by_arm[best_arm]:.3f})\n")
     md.append("## Clean + intervention success matrix\n")
@@ -168,8 +172,8 @@ def main():
     md.append(f"|---|---|---|---|")
     md.append(f"| C-G1 solvability | best-arm mean clean ≥ 0.30 |"
               f" {mean_by_arm[best_arm]:.3f} | {'PASS' if g1 else 'FAIL'} |")
-    md.append(f"| C-G2 cortex edge | {best_arm} > c1+0.05 |"
-              f" {mean_by_arm[best_arm]:.3f} vs {c1_mean:.3f} |"
+    md.append(f"| C-G2 cortex edge | max(c2,c3) > c1+0.05 |"
+              f" {struct_best:.3f} vs {c1_mean:.3f} |"
               f" {'PASS' if g2 else 'FAIL'} |")
     md.append(f"| C-G3 organ causal | mean shuffle drop > 0.10 |"
               f" {np.mean(drops) if drops else float('nan'):.3f} |"
@@ -177,10 +181,13 @@ def main():
     md.append(f"| C-G4 context state | reset drop > 0.05 |"
               f" {np.nanmean(resets):.3f} | {'PASS' if g4 else 'FAIL'} |")
     g5s = "n/a" if g5 is None else ('PASS' if g5 else 'FAIL')
-    g6s = "n/a" if g6 is None else (
-        f"{'PASS' if g6 else 'FAIL'} (acc {np.mean(probe_hits):.3f})")
-    md.append(f"| C-G5 no harm | ctx5 {best_arm} ≥ c0−0.05 | - | {g5s} |")
-    md.append(f"| C-G6 decode | context probe > 0.45 | - | {g6s} |")
+    g6s = "n/a" if g6 is None else ('PASS' if g6 else 'FAIL')
+    g5v = "-" if g5 is None else (
+        f"{np.mean(clean.get(('ctx5', best_arm), [np.nan])):.3f} vs"
+        f" {np.mean(clean.get(('ctx5', 'c0'), [np.nan])):.3f}")
+    g6v = "-" if g6 is None else f"{np.mean(probe_hits):.3f}"
+    md.append(f"| C-G5 no harm | ctx5 {best_arm} ≥ c0−0.05 | {g5v} | {g5s} |")
+    md.append(f"| C-G6 decode | context probe > 0.45 | {g6v} | {g6s} |")
     md.append(f"| null check | cortex_off ≈ clean (bad) |"
               f" drop {np.nanmean(off_drop):.3f} |"
               f" {'OK' if not cortex_off_null else 'WARN'} |")

@@ -1,8 +1,11 @@
 # CX0 Synthetic Cortex — Overnight Iteration Report
 
-Session: autonomous a→b→c improvement + train/eval loop, local PC, ~01:00–05:00.
+Session: autonomous a→b→c improvement + train/eval loop, local PC,
+2026-09-14 23:35 → 2026-09-15 ~05:00 JST (with a ~02:53–03:10 pause before
+review fixes resumed the loop).
 Branch: `exp/cx0-synthetic-cortex`. Data: `experiments/cx0/runs_v2/`
-(2,600 eval rows + field-lesion pass), report: `reports/CX0_RESULTS.md`.
+(2,600 eval rows + field-lesion pass) and `experiments/cx0/runs_v3/`
+(v4 protocol: redundant-recall cost), report: `reports/CX0_RESULTS.md`.
 
 ## Final verdict: PARTIAL
 
@@ -95,3 +98,29 @@ just can't execute.
 - ctx5: continuous agreement metric or denser probes.
 - Decide whether "no cortex advantage at this scale" is the final C-G2
   answer or whether a harder task family is warranted before closing.
+
+## v4 — recall-dithering candidate fix: TESTED, REJECTED
+
+The queued fix from finding 2 was applied and measured (10-seed matrix,
+`runs_v3/`, 3,400 rows): a 0.02 cost on RECALLs that re-fetch an
+identical already-held payload (`RECALL_REDUNDANT_COST`, `ctx_world.py`).
+
+| task/arm | v3 | v4 | Δ paired |
+|---|---|---|---|
+| ctx4/c2 | 0.592 | 0.690 | **+0.098 ± .052** — dithering reduced (s0 fail→pass; s1 3-recall fail → 1-recall) |
+| ctx3/c2 | 0.908 | 0.794 | **−0.114** — pre-window recall block suppressed |
+| ctx1/c2 | 0.631 | 0.583 | −0.048 ± .057 |
+| ctx4/c1 | 0.756 | 0.760 | +0.004 ± .040 |
+| ctx2 (all arms) | — | — | −0.03…−0.08 |
+| **c2 mean** | 0.713 | 0.702 | **−0.011** |
+
+Verdict on the fix: **rejected by the data**. It confirmed the dithering
+mechanism (+0.098 on the diagnosed task) but regressed ctx3's legitimate
+pre-window recall pattern (−0.114) and ctx2 broadly — net c2 −0.011, and
+C-G2 still fails (c1 0.746 > c2 0.702). `RECALL_REDUNDANT_COST` is set
+to 0.0 in `env/ctx_world.py`: mechanism kept, documented, inert —
+current code ≡ v3 semantics, so `CX0_RESULTS.md` continues to report the
+runs_v2 dataset. The v4 data stays in `runs_v3/` as the rejection
+evidence. A targeted variant (penalty only on nav tasks, or a recall
+cooldown instead of a cost) remains a candidate if the ctx4 gap is
+revisited.

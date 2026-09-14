@@ -25,7 +25,7 @@ import torch.nn as nn
 import dataclasses
 
 from .env.ctx_world import EP_LEN, TASKS
-from .models.arms import ARMS, build_arm
+from .models.arms import ARMS, build_arm, count_params
 from .organs.pretrain import build_organ_set
 from .runner import Intervention, rollout
 from .train_bc import CKPT_ORGANS, eval_success
@@ -147,6 +147,7 @@ def run(task, arm_name, seed, iters, n_eps, out_dir, organ_dir, device="cpu",
                 best = val
                 torch.save({"arm": arm.state_dict(), "arm_name": arm_name,
                             "task": task, "seed": seed, "val_success": val,
+                            "n_params": count_params(arm),
                             "stage": "ppo"}, out / "ppo_best.pt")
             (out / "ppo_metrics.jsonl").write_text(
                 "\n".join(json.dumps(x) for x in log))

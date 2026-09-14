@@ -94,7 +94,7 @@ def train_epochs(arm, data, opt, class_w, n_epochs=3, aux_w=0.1, rng=None,
 
 
 @torch.no_grad()
-def eval_success(task, seeds, organs, arm, n_eps=32):
+def eval_success(task, seeds, organs, arm):
     wins = 0
     agree = []
     for i, s in enumerate(seeds):

@@ -36,6 +36,26 @@ from .runner import Intervention, rollout
 
 EVAL_SEED0 = 900001
 DONOR_SEED = 999999
+RESULT_KEY = ("task", "arm", "seed", "condition")
+
+
+def dedup_jsonl(path: Path) -> int:
+    """Drop earlier duplicate rows (same task/arm/seed/condition), keeping
+    the latest write. results.jsonl files are append-only, so rerunning a
+    cell would otherwise silently double-count in report means."""
+    if not path.exists():
+        return 0
+    rows = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    seen, out = set(), []
+    for r in reversed(rows):
+        k = tuple(r.get(f) for f in RESULT_KEY)
+        if k not in seen:
+            seen.add(k)
+            out.append(r)
+    out.reverse()
+    if len(out) != len(rows):
+        path.write_text("".join(json.dumps(r) + "\n" for r in out))
+    return len(rows) - len(out)
 
 
 # ----------------------------------------------------------------------
@@ -119,7 +139,7 @@ def run_eval(task, arm_name, seeds, eps, out_dir, organ_dir, device="cpu"):
         for i in range(min(4, eps)):
             tr_d = rollout(task, seed=DONOR_SEED + 31 * i, organs=organs,
                            arm=arm, record_pops=False)
-            donor_seq.append(tr_d.bundles)   # list of (65,) arrays
+            donor_seq.append(tr_d.bundles)   # list of (BUNDLE_DIM,) arrays
         donor_fields = {
             f: [[np.asarray(b)[_slice(f)] for b in d] for d in donor_seq]
             for f in FIELDS
@@ -184,6 +204,7 @@ def main():
     with open(res / "results.jsonl", "a") as f:
         for r in rows:
             f.write(json.dumps(r) + "\n")
+    dedup_jsonl(res / "results.jsonl")
 
 
 if __name__ == "__main__":

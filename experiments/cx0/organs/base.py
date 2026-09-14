@@ -6,7 +6,7 @@ are fixed so that shuffles/lesions are exact and the C0/C1/C2/C3 arms all
 consume identical information.
 
 Fields (concat order):
-  sensory 16 | h0 9 | s0 8 | t0 18 | r0 12 | o0 5   => 68 dims
+  sensory 16 | h0 9 | s0 8 | t0 18 | r0 13 | o0 5   => 69 dims
 """
 
 from __future__ import annotations

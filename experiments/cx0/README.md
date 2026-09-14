@@ -52,10 +52,10 @@ including C0 — what differs is whether a *cross-organ* recurrent state exists.
 | Field | Dims | Source organ | Content |
 |---|---|---|---|
 | `sensory` | 16 | env | current observation (self-coupled + world + event/cue channels) |
-| `h0` | 8 | H0 organ | internal vars (energy, fatigue, temperature, novelty, certainty) + urgency embedding summary |
+| `h0` | 9 | H0 organ | internal vars (energy, fatigue, temperature, novelty, certainty) + urgency + emergency flag + drive embedding (2) |
 | `s0` | 8 | S0 organ | self-prob, world-prob, agency confidence, prediction-error summary, attribution moments |
 | `t0` | 18 | T0 organ | elapsed estimate + decoded delay + temporal confidence + due channel + embedding (14) |
-| `r0` | 12 | R0 organ | retrieved payload + availability flag + slot occupancy summary |
+| `r0` | 13 | R0 organ | retrieved payload (8) + availability flag + direction pointer + slot occupancy summary (3) |
 | `o0` | 5 | O0 shadow (optional, default off) | hidden-state position estimate + confidence |
 
 Action side: a fixed 11-action space shared by all tasks

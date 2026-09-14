@@ -27,7 +27,7 @@ def worker(q, out, organ_dir, bc_rounds, bc_eps, ppo_iters, ppo_eps,
     import torch
     torch.set_num_threads(1)
     from .env.ctx_world import Oracle
-    from .models.arms import build_arm
+    from .models.arms import build_arm, count_params
     from .organs.pretrain import build_organ_set
     from .runner import rollout
     from .train_bc import collect_round, train_epochs, eval_success
@@ -68,6 +68,7 @@ def worker(q, out, organ_dir, bc_rounds, bc_eps, ppo_iters, ppo_eps,
                         torch.save({"arm": arm.state_dict(),
                                     "arm_name": arm_name, "task": task,
                                     "seed": seed, "val_success": val,
+                                    "n_params": count_params(arm),
                                     "stage": "bc"},
                                    run_dir / "best.pt")
             # PPO fine-tune
@@ -89,6 +90,7 @@ def worker(q, out, organ_dir, bc_rounds, bc_eps, ppo_iters, ppo_eps,
                         torch.save({"arm": arm.state_dict(),
                                     "arm_name": arm_name, "task": task,
                                     "seed": seed, "val_success": val,
+                                    "n_params": count_params(arm),
                                     "stage": "ppo"},
                                    run_dir / "ppo_best.pt")
             rows = run_eval(task, arm_name, [seed], eval_eps, out, organ_dir)
@@ -142,6 +144,11 @@ def main():
         p.start()
     for p in procs:
         p.join()
+    # workers append concurrently; dedup once it is safe to rewrite files
+    from .evaluate import dedup_jsonl
+    dropped = sum(dedup_jsonl(f) for f in Path(a.out).rglob("results.jsonl"))
+    if dropped:
+        print(f"dedup: {dropped} duplicate rows removed", flush=True)
     print(f"matrix done in {(time.time() - t0) / 60:.1f} min", flush=True)
 
 

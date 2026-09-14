@@ -75,6 +75,11 @@ def main():
         p.start()
     for p in procs:
         p.join()
+    # workers append concurrently; dedup once it is safe to rewrite files
+    from .evaluate import dedup_jsonl
+    dropped = sum(dedup_jsonl(f) for f in runs.rglob('results.jsonl'))
+    if dropped:
+        print(f'dedup: {dropped} duplicate rows removed')
     print(f'lesion eval done over {len(cells)} checkpoints')
 
 

@@ -1,7 +1,7 @@
 # CX0 Synthetic Cortex — Results
 
 - generated from `experiments/cx0/runs_v2` (3300 rows)
-- params: c0=None, c1=None, c3=None, c2=None
+- params: c0=[37084], c1=[76177], c2=[74748], c3=[69340, 72412]
 - best cortex arm: **c1** (mean clean 0.754)
 
 ## Clean + intervention success matrix
@@ -59,11 +59,11 @@
 | gate | criterion | value | verdict |
 |---|---|---|---|
 | C-G1 solvability | best-arm mean clean ≥ 0.30 | 0.754 | PASS |
-| C-G2 cortex edge | c1 > c1+0.05 | 0.754 vs 0.754 | FAIL |
+| C-G2 cortex edge | max(c2,c3) > c1+0.05 | 0.713 vs 0.754 | FAIL |
 | C-G3 organ causal | mean shuffle drop > 0.10 | 0.165 | PASS |
 | C-G4 context state | reset drop > 0.05 | 0.239 | PASS |
-| C-G5 no harm | ctx5 c1 ≥ c0−0.05 | - | PASS |
-| C-G6 decode | context probe > 0.45 | - | PASS (acc 0.590) |
+| C-G5 no harm | ctx5 c1 ≥ c0−0.05 | 0.490 vs 0.510 | PASS |
+| C-G6 decode | context probe > 0.45 | 0.590 | PASS |
 | null check | cortex_off ≈ clean (bad) | drop 0.739 | OK |
 
 ## Verdict

@@ -9,8 +9,9 @@ pops)` where `pops` exposes named populations for probes/lesions.
 
 C3 sparsity: block-diagonal recurrent masks (4 modules per population) plus
 sparse long-range projections; per-population fixed leak rates implement
-the plan's multi-timescale dynamics (sensory τ=1, assoc τ=4, context τ=16,
-slow τ=64). Noise/Dale constraints are intentionally absent in v0 — they
+the plan's multi-timescale dynamics (assoc τ=4, context τ=16, slow τ=32 —
+halved from 64 after v2 showed ungated leak decay over 80-step horizons).
+Noise/Dale constraints are intentionally absent in v0 — they
 gate on a C-series winner (plan §23).
 """
 
@@ -201,11 +202,11 @@ class C3Mantle(BaseArm):
     """Modular sparse multi-timescale cortex (Mio Cortical Mantle v0).
 
     Populations and routing (hierarchy enforced by inputs, not labels):
-      assoc   (48, τ=4)  <- encoder
-      context (64, τ=16) <- assoc + feedback        (no raw input)
-      slow    (32, τ=64) <- context (sparse proj)   (episode-scale)
-      predict (48, τ=4)  <- context + assoc
-      feedback(32, τ=8)  <- context + slow
+      assoc   (64, τ=4)  <- encoder
+      context (96, τ=16) <- assoc + feedback        (no raw input)
+      slow    (48, τ=32) <- context (sparse proj)   (episode-scale)
+      predict (64, τ=4)  <- assoc + feedback        (fast path, post-v2 rewire)
+      feedback(48, τ=8)  <- context + slow
     """
 
     name = "c3"

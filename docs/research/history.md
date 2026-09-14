@@ -297,3 +297,23 @@ is closed at this scale.
 - Method note: field lesions can include OOD-input effects; the
   consistency across arms/tasks and agreement with shuffle where signals
   vary (r0) supports interpreting them as functional dependence.
+
+## 10. CX0 v4 — recall-dithering fix: tested and rejected
+
+The first queued candidate was run inside the same window: a 0.02 cost on
+RECALL actions that re-fetch an identical already-held payload
+(`RECALL_REDUNDANT_COST`, `ctx_world.py`; 10-seed full matrix,
+`experiments/cx0/runs_v3/`, 3,400 rows).
+
+| cell | v3 | v4 | paired Δ |
+|---|---|---|---|
+| ctx4/c2 | 0.592 | 0.690 | **+0.098 ± .052** — dithering reduced |
+| ctx3/c2 | 0.908 | 0.794 | **−0.114** — pre-window recall suppressed |
+| ctx1/c2 | 0.631 | 0.583 | −0.048 ± .057 |
+| c2 mean | 0.713 | 0.702 | −0.011 |
+
+Verdict: **rejected** — mechanism confirmed (dithering down, ctx4 +0.098)
+but net-negative (ctx3 −0.114, ctx2 −0.03…−0.08 across arms). C-G2 still
+fails. `RECALL_REDUNDANT_COST` is held at 0.0 — mechanism documented
+inert; shipped code ≡ v3 semantics, so `CX0_RESULTS.md` still reports the
+runs_v2 dataset. runs_v3/ is kept as the rejection evidence.

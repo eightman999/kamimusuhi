@@ -37,6 +37,11 @@ N_INTERNAL = 5
 N_ACTIONS = 11
 N_ETYPES = 6  # 0 none, 1 FOOD, 2 SHELTER, 3 REST, 4 HAZARD, 5 CUE
 EP_LEN = 80
+# v4 candidate fix (runs_v3, 10 seeds): a 0.02 cost on identical-payload
+# re-recalls was TESTED AND REJECTED — it cut c2/ctx4 dithering (+0.098)
+# but regressed c2/ctx3 (−0.114) and ctx2 broadly; net c2 −0.011.
+# Kept at 0.0 so the mechanism stays documented but inert.
+RECALL_REDUNDANT_COST = 0.0
 
 NOOP, FWD, BACK, INTERACT, REST, STORE, RECALL = range(7)
 RESP0 = 7
@@ -299,7 +304,11 @@ class CtxWorld:
             key[et] = 1.0 if et else 0.0
             memory.store(payload, key)
         elif action == RECALL and memory is not None:
+            prev_pl, prev_sc, _s = self.last_recall
             self.last_recall = memory.recall(self._recall_query())
+            pl, sc, _s = self.last_recall
+            if sc > 0.5 and prev_sc > 0.5 and np.array_equal(pl, prev_pl):
+                reward -= RECALL_REDUNDANT_COST
         elif action >= RESP0:
             reward += self._respond(action - RESP0)
 
@@ -550,6 +559,9 @@ class CtxWorld:
                                                          self.last_recall[2]),
                     temp_setpoint=getattr(self, "_temp_setpoint", None),
                     need_drift=self._need_drift.copy(),
+                    answer_failed=self._answer_failed,
+                    crisis_onset=self.crisis_onset, probe_idx=self.probe_idx,
+                    phantom_ttl=self._phantom_ttl, phantom_et=self._phantom_et,
                     rng=self.rng.bit_generator.state)
 
     def set_state(self, st: dict) -> None:
@@ -565,6 +577,11 @@ class CtxWorld:
         if st["temp_setpoint"] is not None:
             self._temp_setpoint = st["temp_setpoint"]
         self._need_drift = st["need_drift"].copy()
+        self._answer_failed = st["answer_failed"]
+        self.crisis_onset = st["crisis_onset"]
+        self.probe_idx = st["probe_idx"]
+        self._phantom_ttl = st["phantom_ttl"]
+        self._phantom_et = st["phantom_et"]
         self.rng.bit_generator.state = st["rng"]
 
 
