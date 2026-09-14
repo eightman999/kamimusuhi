@@ -1,0 +1,3 @@
+# Bulky run artifacts: keep small JSONs (raw results/metrics) in git,
+# drop model checkpoints.
+/runs/**/*.pt
