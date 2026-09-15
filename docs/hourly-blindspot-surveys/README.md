@@ -24,6 +24,17 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 
 | Date / time (JST) | Survey | Main blind spots | 反映判断 |
 |---|---|---|---|
+| 2026-09-15 19:02:49 | [2026-09-15-19-02-49.md](./2026-09-15-19-02-49.md) | persistent-identity contract evaluation / mixed-reliability cognitive transport / hermetic persistent test worlds / hydration retry taxonomy delta | 未判定 |
+| 2026-09-15 13:01:45 | [2026-09-15-13-01-45.md](./2026-09-15-13-01-45.md) | completion-publication barrier & global quiescence / dependency-scoped memory hydration / stable semantic telemetry type / restart recovery journal delta | 未判定 |
+| 2026-09-15 06:57:04 | [2026-09-15-06-57-04.md](./2026-09-15-06-57-04.md) | policy-versioned admission verdicts / UI-control-plane vs conversational agency / spawn-time failure ownership / namespace-complete durable references | 未判定 |
+| 2026-09-15 00:59:53 | [2026-09-15-00-59-53.md](./2026-09-15-00-59-53.md) | controlled cognitive islanding & safe reconnection / preverified hot-path policy switching / hidden kernel writeback stalls & storage-liveness observability | 未判定 |
+| 2026-09-14 19:00:54 | [2026-09-14-19-00-54.md](./2026-09-14-19-00-54.md) | perturbational continuity / observer-maintenance vs execution authority / relational continuity across model updates / runtime consequence closure / attribution-preserving telemetry batching | 未判定 |
+| 2026-09-14 13:00:28 | [2026-09-14-13-00-28.md](./2026-09-14-13-00-28.md) | per-message participation-role separation / approval-plane survivability / typed self-invocation & reentrancy / recovery-authority revalidation | 未判定 |
+| 2026-09-14 06:59:25 | [2026-09-14-06-59-25.md](./2026-09-14-06-59-25.md) | recovery-intent / expected-continuation barrier / historical semantic upcasting / motor working state | 未判定 |
+| 2026-09-14 00:57:29 | [2026-09-14-00-57-29.md](./2026-09-14-00-57-29.md) | distributed erasure completion / active-reader quiescence / replica resurrection / derived-belief retraction / endogenous retention feedback | 未判定 |
+| 2026-09-13 19:02:09 | [2026-09-13-19-02-09.md](./2026-09-13-19-02-09.md) | in-flight continuation liveness / continuity commit durability & session visibility / execution-placement fallback authority / run resource accounting | 未判定 |
+| 2026-09-13 12:57:34 | [2026-09-13-12-57-34.md](./2026-09-13-12-57-34.md) | persistent information-flow policy / dynamic capability membership freshness / multiparty protocol choreography / memory interoperability / co-adaptive interface attribution | 未判定 |
+| 2026-09-13 07:02:13 | [2026-09-13-07-02-13.md](./2026-09-13-07-02-13.md) | async causal principal propagation / coordination necessity via CALM / liveness suspicion / supervision & microreboot / execution-owner binding | 未判定 |
 | 2026-09-13 00:58:26 | [2026-09-13-00-58-26.md](./2026-09-13-00-58-26.md) | developmental reaction norms / differential canalization / homeorhetic recovery / genetic assimilation / plasticity-to-inheritance boundary | 未判定 |
 | 2026-09-12 18:59:03 | [2026-09-12-18-59-03.md](./2026-09-12-18-59-03.md) | deterministic replay / software-version continuity / mixed-criticality cognition / decision-oriented freshness / exact learning-trace fidelity / recomputable effect-admission verdicts | 未判定 |
 | 2026-09-12 13:02:29 | [2026-09-12-13-02-29.md](./2026-09-12-13-02-29.md) | ambient/stigmergic communication channels / operational skill resurrection after revocation / capability-attenuation implementation evidence / resource-instance identity across restart | 未判定 |

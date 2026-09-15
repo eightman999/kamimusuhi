@@ -1,0 +1,51 @@
+# CX0 Synthetic Cortex — default experiment config.
+# Stage A (organ pretraining) runs once into runs/organs/ and is frozen.
+# Stage B (BC bootstrap) -> Stage B2 (PPO fine-tune) -> eval battery.
+
+seed_set: [0, 1, 2, 3, 4]          # integration seeds (organ seed fixed 777)
+tasks: [ctx1, ctx2, ctx3, ctx4, ctx5]
+arms: [c0, c1, c2, c3]
+
+stage_b:
+  bc_rounds: 16                   # DAGGER-style oracle-mix rounds
+  episodes_per_round: 48
+  buffer_cap: 480
+  epochs_per_round: 5
+  lr: 0.0015
+  beta_start: 0.9
+  beta_floor: 0.2
+  beta_decay: 0.06
+
+stage_b2:
+  ppo_iters: 30
+  episodes_per_iter: 32
+  lr: 0.0008
+  gamma: 0.97
+  lam: 0.95
+  clip: 0.2
+  entropy_w: 0.01
+  value_w: 0.5
+  aux_w: 0.1
+  curriculum:                    # disclosed scaffold (u0-style)
+    ctx3_resp_delay_first_half: [16, 40]
+
+eval:
+  eval_seeds_base: 900001          # stride 37
+  episodes_per_condition: 48
+  donor_seed_base: 999999
+  conditions:
+    - clean
+    - shuffle_sensory
+    - shuffle_h0
+    - shuffle_s0
+    - shuffle_t0
+    - shuffle_r0
+    - cortex_off
+    - reset_hidden
+    - reset_organs
+    - erase_memory
+    - lesion_context
+    - lesion_feedback
+    - lesion_slow
+
+hardware: cpu
