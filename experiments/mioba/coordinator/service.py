@@ -244,6 +244,7 @@ class MiobaService:
         grow = self.db.get_genome(job["genome_id"])
         return {
             "job_id": job["job_id"],
+            "genome_id": job["genome_id"],
             "genome_json": grow["genome_json"] if grow else None,
             "seed": job["seed"],
             "duration_ms": job["duration_ms"],

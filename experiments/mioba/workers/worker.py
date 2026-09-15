@@ -46,6 +46,7 @@ from ..storage import models as M
 from . import gpu_info
 from .bench import (DEFAULT_CANDIDATES, DEFAULT_VRAM_HEADROOM, bench_phenotype,
                     choose_batch, profile_backend_kwargs, startup_benchmark)
+from .neural_activity import NeuralActivityObserver, NeuralActivityPublisher
 
 _stop = threading.Event()
 _current_job_started = None
@@ -248,7 +249,8 @@ def make_timer(device: str, enabled: bool = True) -> PhaseTimer:
 def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
                         execution_batch: int, grace_s: float = 30.0,
                         deadline_started: float | None = None,
-                        timer: PhaseTimer | None = None) -> dict:
+                        timer: PhaseTimer | None = None,
+                        observer: NeuralActivityObserver | None = None) -> dict:
     """Run every scientific replicate of ``job`` in chunks of
     ``execution_batch`` lanes and aggregate per-replicate results.
 
@@ -284,6 +286,8 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
                            device=device,
                            replicate_seeds=[seeds[i] for i in lanes],
                            timer=timer)
+        if observer is not None:
+            observer.begin_batch(backend, lanes, seeds)
         n_drive = backend.n_base if hasattr(backend, "n_base") else 512
         t_chunk = time.perf_counter()
         if env_enabled:
@@ -295,7 +299,9 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
             with timer.phase("state_init"):
                 pass
             ep = run_episode(backend, envs, duration, target_rate,
-                             task_rate_hz(config), timer=timer)
+                             task_rate_hz(config), timer=timer,
+                             observer=(lambda: observer.sample(backend))
+                             if observer is not None else None)
             episodes.append(ep)
             for lane_idx, lane in enumerate(lanes):
                 lane_reports[lane] = ep["per_lane"][lane_idx]
@@ -312,6 +318,10 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
                     chunk = min(50.0, remaining)
                     backend.run(chunk)
                     remaining -= chunk
+                    if observer is not None:
+                        observer.sample(backend)
+        if observer is not None:
+            observer.sample(backend, final=True)
         total_wall += time.perf_counter() - t_chunk
         with timer.phase("metrics"):
             s = backend.get_state_summary()
@@ -435,7 +445,8 @@ def run_job(client, worker_id: str, job: dict, device: str,
             execution_batch: int, grace_s: float = 30.0,
             runtime_info: dict | None = None, state: WorkerState = STATE,
             deliver: bool = True, data_dir: str | None = None,
-            profile: bool = True) -> dict:
+            profile: bool = True, neural_activity: bool = False,
+            neural_activity_sample_size: int = 256) -> dict:
     """Execute one claimed job and deliver its result until acknowledged.
     Returns the result body (with ``delivery`` = accepted|duplicate|
     rejected|gone|abandoned when delivered).
@@ -449,6 +460,7 @@ def run_job(client, worker_id: str, job: dict, device: str,
     timer = make_timer(device, enabled=profile)
     config = job.get("config") or {}
     backend = None
+    publisher = observer = None
     started = utcnow()
     _current_job_started = time.time()
     result_id = result_id_for(job["job_id"], worker_id,
@@ -465,19 +477,34 @@ def run_job(client, worker_id: str, job: dict, device: str,
         backend = get_backend(
             job["backend"],
             **backend_kwargs(config, job.get("run_dir"), data_dir=data_dir))
+        if neural_activity and job["backend"] in {"mock", "torch"}:
+            # A missing observer capability must never invalidate a job.
+            try:
+                activity_job = {**job, "genome_id": job.get("genome_id")
+                                or genome.genome_id}
+                publisher = NeuralActivityPublisher(client)
+                observer = NeuralActivityObserver(
+                    activity_job, worker_id, publisher.publish,
+                    sample_size=neural_activity_sample_size)
+            except Exception:
+                observer = None
         used_batch = max(1, int(execution_batch))
+        evaluation_pass = 0
         while True:
             try:
+                if observer is not None:
+                    observer.start_pass(evaluation_pass)
                 rep = evaluate_replicates(
                     backend, phenotype, job, device, used_batch,
                     grace_s=grace_s, deadline_started=_current_job_started,
-                    timer=timer)
+                    timer=timer, observer=observer)
                 break
             except Exception as exc:
                 if _is_oom(exc) and used_batch > 1:
                     # halve the lanes first: cheaper than giving the job
                     # back, and the replicate set is unchanged
                     used_batch = max(1, used_batch // 2)
+                    evaluation_pass += 1
                     _clear_cuda_cache(device)
                     continue
                 raise
@@ -532,6 +559,8 @@ def run_job(client, worker_id: str, job: dict, device: str,
             status, retry_reason = M.JOB_FAILED, None
         error = f"{type(exc).__name__}: {exc}"
     finally:
+        if publisher is not None:
+            publisher.close()
         _current_job_started = None
     body = {"job_id": job["job_id"], "worker_id": worker_id,
             "result_id": result_id, "status": status,
@@ -687,7 +716,13 @@ def main(argv=None) -> int:
                          "the replicate set or fitness.")
     ap.add_argument("--no-profile", action="store_true",
                     help="skip the per-evaluation phase breakdown")
+    ap.add_argument("--no-neural-activity", action="store_true",
+                    help="disable best-effort neuron activity monitoring")
+    ap.add_argument("--neural-activity-sample-size", type=int, default=256,
+                    help="maximum evenly spaced observed neurons (1-512)")
     args = ap.parse_args(argv)
+    if not 1 <= args.neural_activity_sample_size <= 512:
+        ap.error("--neural-activity-sample-size must be between 1 and 512")
 
     import httpx
     signal.signal(signal.SIGTERM, _sigterm)
@@ -774,7 +809,10 @@ def main(argv=None) -> int:
                                batch_size or 1, grace_s=args.grace_s,
                                runtime_info=runtime_info,
                                data_dir=args.data_dir,
-                               profile=not args.no_profile)
+                               profile=not args.no_profile,
+                               neural_activity=not args.no_neural_activity,
+                               neural_activity_sample_size=
+                               args.neural_activity_sample_size)
             finally:
                 GOVERNOR.release()
             if body.get("retry_reason") == M.RETRY_RUNTIME_RESOURCE:

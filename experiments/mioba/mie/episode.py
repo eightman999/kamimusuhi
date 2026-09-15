@@ -37,7 +37,7 @@ def _lane_totals(backend) -> list[int]:
 
 
 def run_episode(backend, envs, duration_ms: float, target_rate_hz: float,
-                task_rate_hz: float, timer=None) -> dict:
+                task_rate_hz: float, timer=None, observer=None) -> dict:
     """Run one chunk of lanes through their environments.
 
     ``envs`` is one :class:`VirtualEnvironment` per lane, seeded from that
@@ -110,6 +110,8 @@ def run_episode(backend, envs, duration_ms: float, target_rate_hz: float,
                 "sensor_noise": cons[lane]["sensor_noise"],
             })
         prev = now
+        if observer is not None:
+            observer()
 
     # slices never run (early termination) are failures, not absences
     worst = -float(target_rate_hz)

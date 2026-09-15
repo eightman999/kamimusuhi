@@ -117,6 +117,11 @@ require the `X-Mioba-Token` header, whose value is written to
 Closing or losing the GUI never affects the experiment — the coordinator
 and its DB are the only source of truth.
 
+The individual inspector also shows sampled neuron spike counts during the
+primary evaluation (Torch/Mock), with replicate identity and freshness.
+See [neuron activity v0](../../docs/implementation/neuron-activity-v0.md)
+for sampling limits, temporary storage, the opt-out flag, and validation scope.
+
 ## Checkpoint & resume
 
 Checkpoints = `PRAGMA wal_checkpoint(TRUNCATE)` + a manifest JSON under

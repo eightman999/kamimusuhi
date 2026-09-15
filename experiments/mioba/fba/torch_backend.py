@@ -107,7 +107,7 @@ from pathlib import Path
 import numpy as np
 
 from ..perf import PhaseTimer
-from .backend import BackendUnavailable, FbaBackend
+from .backend import BackendUnavailable, FbaBackend, validate_neuron_selection
 from .eventgraph import EventGraph
 from .fba0 import DATA_FILES
 from .params import DEFAULT_PARAMS, UnsupportedAttachmentRegion
@@ -667,6 +667,14 @@ class TorchBackend(FbaBackend):
                 "reserved": int(torch.cuda.memory_reserved(self.device)),
                 "total": int(torch.cuda.get_device_properties(
                     self.device).total_memory)}
+
+    def get_neuron_activity(self, neuron_indices: list[int], lane: int = 0):
+        validate_neuron_selection(neuron_indices, lane, self.n, self.batch_size)
+        indices = torch.tensor(neuron_indices, dtype=torch.long, device=self.device)
+        counts = self.spike_counts[lane].index_select(0, indices)
+        return {"t_ms": float(self.t_ms), "n_neurons": self.n,
+                "n_base": self.n_base, "neuron_indices": list(neuron_indices),
+                "spike_counts": counts.detach().cpu().tolist()}
 
     def get_state_summary(self) -> dict:
         rates = self._rates_hz()

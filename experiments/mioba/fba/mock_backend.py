@@ -11,7 +11,7 @@ import time
 
 import numpy as np
 
-from .backend import BackendUnavailable, FbaBackend
+from .backend import BackendUnavailable, FbaBackend, validate_neuron_selection
 from .params import DEFAULT_PARAMS
 from .replicates import replicate_seeds as _default_replicate_seeds
 
@@ -140,6 +140,12 @@ class MockBackend(FbaBackend):
     def _rates_hz(self) -> np.ndarray:
         t_s = max(self.t_ms, 1e-9) / 1000.0
         return self.spike_counts / t_s
+
+    def get_neuron_activity(self, neuron_indices: list[int], lane: int = 0):
+        validate_neuron_selection(neuron_indices, lane, self.n, self.batch_size)
+        return {"t_ms": float(self.t_ms), "n_neurons": self.n,
+                "n_base": self.n_neurons, "neuron_indices": list(neuron_indices),
+                "spike_counts": self.spike_counts[lane, neuron_indices].tolist()}
 
     def get_state_summary(self) -> dict:
         rates = self._rates_hz()

@@ -13,6 +13,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from ..gui import mount_gui
+from ..gui.neural_activity import (InvalidFrame, MAX_FRAME_BYTES,
+                                  NeuralActivityCache, StaleFrame)
 from ..storage import models as M
 from ..storage.db import InvalidTransition
 from . import lifecycle
@@ -21,6 +23,7 @@ from . import lifecycle
 def create_app(service) -> FastAPI:
     app = FastAPI(title="mioba-coordinator")
     app.state.service = service
+    app.state.neural_activity = NeuralActivityCache(service)
 
     def require_token(x_mioba_token: str | None = Header(default=None)):
         if x_mioba_token != service.token:
@@ -35,6 +38,13 @@ def create_app(service) -> FastAPI:
     def workers():
         return {"kind": "LIVE",
                 "workers": service.db.list_workers(service.experiment_id)}
+
+    @app.get("/api/gui/individual/{genome_id}/neural-activity")
+    def neural_activity(genome_id: str):
+        snapshot = app.state.neural_activity.snapshot(genome_id)
+        if snapshot is None:
+            raise HTTPException(404, "no such genome in this experiment")
+        return snapshot
 
     @app.get("/api/workers/{worker_id}")
     def worker(worker_id: str):
@@ -189,6 +199,22 @@ def create_app(service) -> FastAPI:
     def wheartbeat(body: dict):
         service.heartbeat(body["worker_id"], body,
                           body.get("mie_samples") or [])
+        return {"ok": True}
+
+    @app.post("/api/worker/neural-activity")
+    async def wneural_activity(request: Request):
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > MAX_FRAME_BYTES:
+                raise HTTPException(413, "activity frame too large")
+            raw.extend(chunk)
+        try:
+            frame = json.loads(raw)
+            app.state.neural_activity.publish(frame)
+        except (InvalidFrame, ValueError, TypeError, RecursionError) as exc:
+            if isinstance(exc, StaleFrame):
+                raise HTTPException(409, "activity frame is stale or belongs to another job") from None
+            raise HTTPException(400, "invalid activity frame") from None
         return {"ok": True}
 
     @app.post("/api/worker/claim")

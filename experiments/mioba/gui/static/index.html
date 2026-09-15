@@ -81,6 +81,19 @@
   .spark { display:flex; align-items:flex-end; gap:1px; height:44px; }
   .spark i { flex:1; display:block; background:var(--live); min-height:1px; }
   .spark i.d { background:var(--warn); }
+  .neural-panel { margin-top:12px; }
+  .neural-layout { display:grid; grid-template-columns:minmax(0,3fr) minmax(240px,2fr); gap:16px; }
+  .neural-grid { height:300px; background:#0f141c; border-radius:6px; }
+  .neural-state { display:flex; align-items:center; gap:7px; }
+  .neural-dot { width:8px; height:8px; border-radius:50%; background:var(--dim); display:inline-block; }
+  .neural-dot.is-live { background:var(--live); box-shadow:0 0 7px #3ddc8460; }
+  .neural-history { height:64px; display:flex; align-items:flex-end; gap:2px; background:#0f141c; padding:5px; border-radius:4px; }
+  .neural-history i { flex:1; display:block; background:var(--rec); min-height:1px; max-width:18px; }
+  .neural-history.is-recorded i { background:#657386; }
+  .neural-brain { height:340px; background:#0f141c; border-radius:6px; }
+  .neural-note { color:var(--dim); font-size:12px; margin-top:8px; overflow-wrap:anywhere; }
+  .neural-meta { font-size:12px; }
+  @media (max-width:700px) { .neural-layout { grid-template-columns:1fr; } .neural-grid { height:280px; } }
 </style>
 </head>
 <body>
@@ -98,7 +111,7 @@ const I18N = {
   ja: {
     nav: { live:'ライブ観測', population:'個体群・系譜', organism:'個体インスペクター', dashboard:'インフラ / ダッシュボード', telemetry:'MIE / テレメトリ', events:'イベント' },
     readonly: '監視専用（操作不可）',
-    kind: { LIVE:'ライブ', RECORDED:'記録済み', DERIVED:'算出値' },
+    kind: { LIVE:'ライブ', RECORDED:'記録済み', DERIVED:'算出値', UNAVAILABLE:'取得できません' },
     kindTip: { LIVE:'現在の実行状態', RECORDED:'データベースに保存された実測・履歴データ', DERIVED:'保存データから計算された値' },
     status: { RUNNING:'実行中', PAUSED:'一時停止', STOPPING:'停止処理中', STOPPED:'停止', QUEUED:'待機中', SUCCEEDED:'成功', FAILED:'失敗', UNKNOWN:'状態不明', CANCELLED:'キャンセル',
               running:'実行中', paused:'一時停止', stopping:'停止処理中', stopped:'停止', created:'作成済み', online:'オンライン', offline:'オフライン', lost:'切断',
@@ -151,13 +164,16 @@ const I18N = {
          canonicalNote:'fitness入力とGUI表示は同一の evaluation 行の同一フィールドを参照します',
          spikes:'スパイク数', popsize:'母集団', simms:'シミュレーション時間', recomputed:'再計算値',
          terminated:'早期終了', activity:'活動率', edgeRatio:'活性エッジ率' },
+    n: { title:'評価中のニューロン活動', loading:'読込中', running:'評価中・更新中', stale:'更新停止・最後の記録', recorded:'評価終了・記録表示', waiting:'活動データを待っています', unavailable:'活動を取得できません', failure:'通信またはデータ確認に失敗しました。取得不能はゼロ発火ではありません。',
+         sample:'標本数 / 総ニューロン数', replicate:'代表replicate', realTime:'受信した実時刻', simTime:'シミュレーション時刻', window:'発火を数えた窓', age:'最終フレームからの経過', pass:'評価pass / attempt', sequence:'フレーム番号', job:'ジョブ / ワーカー', backend:'バックエンド', mock:'mock（模擬バックエンド）',
+         base:'基盤ニューロン', artificial:'人工ニューロン', zero:'この窓で0発火', legend:'色の濃さ = 標本内の発火回数。灰色は0発火。', layout:'セルは標本のneuron index順です。脳の形や接続を表す配置ではありません。', brain:'領域配置（模式図）', brainNote:'模式図: 位置はsynthetic-region-v0疑似領域アンカー（実測解剖ではない）。青い線は共有基質の実辺の一様標本（DERIVED）、橙の線はこの個体の実attachment。', brainLayout:'ニューロン位置 = 疑似領域アンカー + 決定的オフセット。', history:'直近48窓の標本活動率', historyNote:'取得した新しい窓だけを追加します。途切れた時間を0で補いません。', historyEmpty:'新しい活動窓の履歴はまだありません。', spikes:'標本の発火回数', active:'発火した標本の割合', neuron:'ニューロン', count:'発火回数', frozen:'最後に取得できた窓を記録として表示しています。', canvas:'標本ニューロンの発火回数を示す格子' },
     misc: { none:'—', title:'MIOBA Observatory', fetchErr:'取得に失敗しました' },
   },
   /* i18n-en-start */
   en: {
     nav: { live:'Live Observatory', population:'Population / Lineage', organism:'Organism Inspector', dashboard:'Infrastructure / Dashboard', telemetry:'MIE / Telemetry', events:'Events' },
     readonly: 'read-only observatory',
-    kind: { LIVE:'LIVE', RECORDED:'RECORDED', DERIVED:'DERIVED' },
+    kind: { LIVE:'LIVE', RECORDED:'RECORDED', DERIVED:'DERIVED', UNAVAILABLE:'Unavailable' },
     kindTip: { LIVE:'current runtime state', RECORDED:'rows persisted in the database', DERIVED:'computed from recorded rows' },
     status: {},
     event: {},
@@ -203,6 +219,9 @@ const I18N = {
          canonicalNote:'the fitness input and this display read the same field of the same evaluation row',
          spikes:'spikes', popsize:'population size', simms:'simulated ms', recomputed:'recomputed',
          terminated:'terminated early', activity:'activity', edgeRatio:'active edge ratio' },
+    n: { title:'Neuron activity during evaluation', loading:'Loading', running:'Evaluating · receiving frames', stale:'Updates stopped · last recording', recorded:'Evaluation ended · recorded frame', waiting:'Waiting for activity data', unavailable:'Activity unavailable', failure:'Connection or data validation failed. Missing data does not mean zero spikes.',
+         sample:'Sampled / total neurons', replicate:'Representative replicate', realTime:'Frame received at', simTime:'Simulation time', window:'Spike counting window', age:'Age of last frame', pass:'Evaluation pass / attempt', sequence:'Frame sequence', job:'Job / worker', backend:'Backend', mock:'mock (simulated backend)',
+         base:'Substrate neurons', artificial:'Artificial neurons', zero:'Zero spikes in this window', legend:'Intensity = spike count within this sample. Grey = zero spikes.', layout:'Cells follow sampled neuron indices, not brain anatomy or connectivity.', brain:'Region layout (schematic)', brainNote:'Schematic positions (synthetic-region-v0 pseudo-regions, not measured anatomy). Blue lines = uniform sample of the shared substrate\'s real edges (DERIVED); orange lines = this individual\'s real attachments.', brainLayout:'Neuron position = pseudo-region anchor + deterministic offset.', history:'Sample activity in the last 48 windows', historyNote:'Only newly received windows are appended; gaps are not filled with zeros.', historyEmpty:'No new activity windows recorded yet.', spikes:'Spikes in sample', active:'Share of sampled neurons firing', neuron:'Neuron', count:'Spike count', frozen:'The last received window is shown as a recording.', canvas:'Grid of sampled neuron spike counts' },
     misc: { none:'—', title:'MIOBA Observatory', fetchErr:'fetch failed' },
   },
   /* i18n-en-end */
@@ -238,9 +257,20 @@ const fmtVram = (usedMb, totalMb) => usedMb == null && totalMb == null ? t('misc
 const fmtTemp = c => c == null ? t('misc','none') : `${num(c,0)} ℃`;
 const fmtPct = p => p == null ? t('misc','none') : `${num(p,0)} %`;
 const pj = s => { try { return typeof s === 'string' ? JSON.parse(s) : (s||{}); } catch { return {}; } };
-async function api(p) { const r = await fetch(p); if (!r.ok) throw new Error(`${t('misc','fetchErr')}: ${p} → ${r.status}`); return r.json(); }
+let routeGeneration = 0;
+let routeController = new AbortController();
+let routeCleanup = () => {};
+const currentRoute = generation => generation === routeGeneration && !routeController.signal.aborted;
+async function api(p, generation=routeGeneration, signal=routeController.signal) {
+  const r = await fetch(p, { signal, cache:'no-store' });
+  if (!currentRoute(generation)) throw new DOMException('route changed', 'AbortError');
+  if (!r.ok) throw new Error(`${t('misc','fetchErr')}: ${p} → ${r.status}`);
+  const data = await r.json();
+  if (!currentRoute(generation)) throw new DOMException('route changed', 'AbortError');
+  return data;
+}
 let timer = null;
-function schedule(fn, ms) { clearTimeout(timer); timer = setTimeout(fn, ms); }
+function schedule(fn, ms, generation=routeGeneration) { clearTimeout(timer); timer = setTimeout(() => { if (currentRoute(generation)) fn(); }, ms); }
 const eventRow = e => `<tr><td>${fmtTime(e.at)}</td><td>${esc(tEvent(e.type))}<div class="muted mono" style="font-size:10px">${esc(e.type)}</div></td><td class="sev-${esc(e.severity)}" title="${esc(e.severity)}">${esc(tStatus(e.severity))}</td><td class="mono">${esc(e.payload_json).slice(0,140)}</td></tr>`;
 const alertsHtml = evs => { const rows = evs.filter(e => e.severity === 'warn' || e.severity === 'error').slice(-5).reverse();
   return `<div class="alerts">${rows.length ? rows.map(e => `<div class="alert ${esc(e.severity)}"><span class="ts">${esc(jst(e.at))}</span><b>${esc(tEvent(e.type))}</b><span class="ty">${esc(e.type)}</span><span class="mono muted" style="font-size:11px;overflow-wrap:anywhere">${esc(e.payload_json).slice(0,160)}</span></div>`).join('') : `<div class="muted" style="font-size:12px">${t('d','noAlerts')}</div>`}</div>`; };
@@ -287,10 +317,15 @@ function renderChrome() {
 }
 function route() {
   clearTimeout(timer);
+  routeController.abort();
+  routeCleanup(); routeCleanup = () => {};
+  routeController = new AbortController();
+  const generation = ++routeGeneration;
   const parts = location.hash.replace(/^#\/?/, '').split('/');
   const name = routes[parts[0]] ? parts[0] : 'live';
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.r === name));
-  routes[name](decodeURIComponent(parts[1] || '')).catch(e => { $('#main').innerHTML = `<p id="err">${esc(e.message)}</p>`; });
+  $('#main').innerHTML = `<p class="muted">${t('n','loading')}</p>`;
+  routes[name](decodeURIComponent(parts[1] || ''), generation).catch(e => { if (currentRoute(generation) && e.name !== 'AbortError') $('#main').innerHTML = `<p id="err">${esc(e.message)}</p>`; });
 }
 window.addEventListener('hashchange', route);
 window.addEventListener('load', () => { renderChrome(); route(); });
@@ -596,16 +631,313 @@ function m1Panels(m) {
     </div>`;
 }
 
+// ---- Sampled neuron activity: windows received from the evaluator -----------
+const NEURAL_POLL_MS = 750, NEURAL_HISTORY_LIMIT = 48;
+const neuralInteger = value => Number.isSafeInteger(value) && value >= 0;
+const neuralId = value => typeof value === 'string' && value.length > 0 && value.length <= 256;
+function validNeuralFrame(f, envelope) {
+  if (!f || f.schema_version !== 1 || f.experiment_id !== envelope.experiment_id || f.genome_id !== envelope.genome_id ||
+      !neuralId(f.job_id) || !neuralId(f.worker_id) || !neuralInteger(f.attempt) || !neuralInteger(f.sequence) ||
+      !neuralInteger(f.evaluation_pass) || f.evaluation_pass > 64 || !['torch','mock'].includes(f.backend) || f.phase !== 'evaluation' ||
+      !neuralInteger(f.replicate_index) || !Number.isInteger(f.replicate_seed) || f.replicate_seed < 0 || !neuralInteger(f.n_neurons) || f.n_neurons < 1 ||
+      !neuralInteger(f.n_base) || f.n_base > f.n_neurons || !Number.isFinite(f.window_start_ms) || f.window_start_ms < 0 ||
+      !Number.isFinite(f.window_end_ms) || f.window_end_ms <= f.window_start_ms || !neuralInteger(f.received_at_unix_ms) || f.received_at_unix_ms < 1 ||
+      !Array.isArray(f.neuron_indices) || !Array.isArray(f.spike_counts) || f.neuron_indices.length < 1 || f.neuron_indices.length > 512 ||
+      f.neuron_indices.length !== f.spike_counts.length) return false;
+  return f.neuron_indices.every((index,i) => neuralInteger(index) && index < f.n_neurons && (i === 0 || index > f.neuron_indices[i-1])) &&
+    f.spike_counts.every(neuralInteger);
+}
+class NeuralActivityState {
+  constructor(genomeId, experimentId=null) {
+    this.genomeId = genomeId; this.experimentId = experimentId;
+    this.frame = null; this.history = []; this.sessionKey = null; this.sequence = -1;
+    this.sourceKind = 'UNAVAILABLE'; this.sourceStatus = 'waiting'; this.jobStatus = null;
+    this.ttlMs = 5000; this.ageBase = null; this.ageAt = 0; this.lastObserved = 0; this.failed = false;
+  }
+  age(now) { return this.ageBase == null ? null : this.ageBase + Math.max(0, now - this.ageAt); }
+  accept(p, now=performance.now(), transitMs=0) {
+    if (!p || p.schema_version !== 1 || p.genome_id !== this.genomeId || !neuralId(p.experiment_id) ||
+        (this.experimentId != null && p.experiment_id !== this.experimentId) || !['LIVE','RECORDED','UNAVAILABLE'].includes(p.kind) ||
+        !['running','stale','recorded','waiting','unavailable'].includes(p.status) || p.ttl_ms !== 5000 ||
+        !neuralInteger(p.observed_at_unix_ms) || p.observed_at_unix_ms < 1 ||
+        !(p.age_ms === null || neuralInteger(p.age_ms)) || !(p.frame === null || validNeuralFrame(p.frame, p))) {
+      throw new Error('invalid neural activity payload');
+    }
+    if (p.observed_at_unix_ms < this.lastObserved) return false;
+    this.experimentId = p.experiment_id; this.lastObserved = p.observed_at_unix_ms;
+    this.sourceKind = p.kind; this.sourceStatus = p.status; this.jobStatus = p.job_status; this.failed = false;
+    if (p.frame === null) {
+      this.sourceKind = 'UNAVAILABLE'; this.frame = null; this.history = [];
+      this.sessionKey = null; this.sequence = -1; this.ageBase = null; this.ageAt = now;
+      return false;
+    }
+    const f = p.frame;
+    const key = JSON.stringify([f.experiment_id, f.genome_id, f.job_id, f.worker_id, f.attempt, f.evaluation_pass, f.replicate_index]);
+    const incomingAge = p.age_ms == null ? null : p.age_ms + Math.max(0, transitMs);
+    if (key === this.sessionKey && f.sequence <= this.sequence) {
+      // Re-reading a cached frame must not extend its lifetime or append a
+      // second history point, even if an upstream age counter resets.
+      this.ageBase = incomingAge == null || this.age(now) == null ? null : Math.max(incomingAge, this.age(now));
+      this.ageAt = now;
+      return false;
+    }
+    if (this.frame && key !== this.sessionKey && f.received_at_unix_ms < this.frame.received_at_unix_ms) return false;
+    if (key === this.sessionKey && f.window_end_ms <= this.frame.window_end_ms) return false;
+    if (key !== this.sessionKey) { this.history = []; this.sessionKey = key; }
+    this.frame = {...f, neuron_indices:[...f.neuron_indices], spike_counts:[...f.spike_counts]};
+    this.sequence = f.sequence; this.ageBase = incomingAge; this.ageAt = now;
+    if (this.view(now).live) {
+      this.history.push({sequence:f.sequence, start:f.window_start_ms, end:f.window_end_ms,
+        active:f.spike_counts.filter(count => count > 0).length / f.spike_counts.length});
+      this.history = this.history.slice(-NEURAL_HISTORY_LIMIT);
+    }
+    return true;
+  }
+  fail() { this.failed = true; this.sourceKind = 'UNAVAILABLE'; this.sourceStatus = 'unavailable'; }
+  view(now=performance.now()) {
+    const age = this.age(now);
+    const live = !!this.frame && !this.failed && this.sourceKind === 'LIVE' && this.sourceStatus === 'running' &&
+      this.jobStatus === 'RUNNING' && age != null && age <= this.ttlMs;
+    const ended = ['SUCCEEDED','FAILED','CANCELLED'].includes(this.jobStatus);
+    const status = live ? 'running' : this.frame ? (!this.failed && ended ? 'recorded' : 'stale') :
+      (this.failed ? 'unavailable' : this.sourceStatus === 'running' ? 'waiting' : this.sourceStatus);
+    return {live, status, kind:live ? 'LIVE' : this.frame ? 'RECORDED' : 'UNAVAILABLE', age, frame:this.frame, history:this.history, failed:this.failed};
+  }
+}
+function neuralPanelHtml(id) {
+  return `<section class="panel neural-panel" id="neural-activity" data-genome-id="${esc(id)}">
+    <h2>${t('n','title')} <span id="neural-kind"></span></h2>
+    <div class="toolbar"><span class="neural-state"><i id="neural-dot" class="neural-dot"></i><span id="neural-status">${t('n','waiting')}</span></span><span id="neural-backend" class="pill"></span></div>
+    <div class="neural-layout"><div>
+      <canvas id="neural-grid" class="neural-grid" role="img" aria-label="${esc(t('n','canvas'))}"></canvas>
+      <div class="legend"><span><i style="background:#5aa9ff"></i>${t('n','base')}</span><span><i style="background:#ff9f43"></i>${t('n','artificial')}</span><span><i style="background:#343d4b"></i>${t('n','zero')}</span></div>
+      <div class="neural-note">${t('n','legend')} ${t('n','layout')}</div>
+      <h2 style="margin-top:14px">${t('n','brain')}</h2>
+      <canvas id="neural-brain" class="neural-brain" role="img" aria-label="${esc(t('n','brain'))}"></canvas>
+      <div class="neural-note">${t('n','brainNote')} ${t('n','brainLayout')}</div>
+      <h2 style="margin-top:14px">${t('n','history')}</h2><div id="neural-history" class="neural-history"></div><div class="neural-note">${t('n','historyNote')}</div>
+    </div><div><div id="neural-meta" class="kv neural-meta"></div><p id="neural-note" class="neural-note"></p></div></div>
+  </section>`;
+}
+function drawNeuralGrid(canvas, frame) {
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1, W = canvas.clientWidth || 600, H = canvas.clientHeight || 300;
+  canvas.width = W*dpr; canvas.height = H*dpr;
+  const ctx = canvas.getContext('2d'); ctx.scale(dpr,dpr); ctx.clearRect(0,0,W,H);
+  if (!frame) { ctx.fillStyle='#8a93a6'; ctx.font='12px sans-serif'; ctx.fillText(t('n','waiting'),12,H/2); canvas.neuralCells = []; return; }
+  const count = frame.neuron_indices.length, cols = Math.max(1, Math.ceil(Math.sqrt(count * W / H))), rows = Math.ceil(count/cols);
+  const cw = W/cols, ch = H/rows, maxCount = Math.max(1,...frame.spike_counts);
+  canvas.neuralCells = frame.neuron_indices.map((index,i) => ({index, count:frame.spike_counts[i], x:(i%cols)*cw, y:Math.floor(i/cols)*ch, w:cw, h:ch}));
+  canvas.neuralCells.forEach(cell => {
+    const artificial = cell.index >= frame.n_base;
+    const intensity = .3 + .7*Math.log1p(cell.count)/Math.log1p(maxCount);
+    ctx.fillStyle = cell.count === 0 ? '#343d4b' : `rgba(${artificial ? '255,159,67' : '90,169,255'},${intensity})`;
+    ctx.fillRect(cell.x+1,cell.y+1,Math.max(1,cell.w-2),Math.max(1,cell.h-2));
+    if (cell.w >= 22 && cell.h >= 16) { ctx.fillStyle=cell.count > 0 ? '#10151d' : '#b9c1cd'; ctx.font=`${Math.min(10,Math.max(7,cell.w/5))}px monospace`; ctx.fillText(String(cell.index),cell.x+3,cell.y+Math.min(cell.h-3,12)); }
+  });
+}
+// Schematic pseudo-region layout for synthetic-region-v0: equal contiguous
+// index slices named after fly-brain regions. Positions are anchors plus a
+// deterministic per-index offset, so points do not swim between frames.
+const BRAIN_REGIONS = [
+  // name, anchors [[cx,cy]...], rx, ry   (normalized; bilateral pairs get L/R)
+  ['medulla',        [[0.15,0.52],[0.85,0.52]], 0.085, 0.20],
+  ['lobula',         [[0.26,0.44],[0.74,0.44]], 0.075, 0.15],
+  ['lobula_plate',   [[0.26,0.64],[0.74,0.64]], 0.060, 0.11],
+  ['central_complex',[[0.50,0.50]],             0.085, 0.10],
+  ['mushroom_body',  [[0.37,0.22],[0.63,0.22]], 0.070, 0.11],
+  ['optic_lobe',     [[0.06,0.40],[0.94,0.40]], 0.045, 0.13],
+  ['antennal_lobe',  [[0.40,0.80],[0.60,0.80]], 0.055, 0.085],
+];
+const BRAIN_BUNDLES = [[0,1],[1,2],[1,3],[3,4],[3,6]];
+const ARTIFICIAL_ANCHOR = {c:[0.50,0.94], rx:0.20, ry:0.045};
+// Real connectivity overlay: a uniform sample of the substrate's actual edge
+// set, exported offline by scripts/extract_substrate_edges.py. Positions stay
+// schematic; only the wiring is real. Missing file -> edge layer is skipped.
+let _edgeData = null, _edgeFetch = null;
+function substrateEdges() {
+  if (!_edgeFetch) _edgeFetch = Promise.resolve()
+    .then(() => fetch('/static/substrate_edges.json'))
+    .then(r => r.ok ? r.json() : null).catch(() => null)
+    .then(d => { _edgeData = d; return d; });
+  return _edgeFetch;
+}
+// Set by organism() so the view can draw this individual's real attachments.
+let _brainGenome = null;
+function panel_genome_matches(g) {
+  const p = document.querySelector('#neural-activity');
+  return p && p.dataset.genomeId === g.genome_id;
+}
+function brainHash(i) { let h = (Math.imul(i,2654435761) >>> 0); h ^= h >>> 13; h = Math.imul(h,2246822519) >>> 0; return h >>> 0; }
+function brainPoint(index, nBase, W, H) {
+  const artificial = index >= nBase;
+  const h1 = brainHash(index), h2 = brainHash(index ^ 0x9e3779b9);
+  let c, rx, ry, region;
+  if (artificial) { c = ARTIFICIAL_ANCHOR.c; rx = ARTIFICIAL_ANCHOR.rx; ry = ARTIFICIAL_ANCHOR.ry; region = 'artificial_organs'; }
+  else {
+    const k = Math.min(BRAIN_REGIONS.length - 1, Math.floor(index / Math.max(1, nBase / BRAIN_REGIONS.length)));
+    const r = BRAIN_REGIONS[k]; const a = r[1][r[1].length === 1 ? 0 : (h1 & 1)];
+    c = a; rx = r[2]; ry = r[3]; region = r[0];
+  }
+  const u = ((h1 >>> 1) / 2147483648), v = ((h2 >>> 1) / 2147483648);
+  const rad = Math.sqrt(u), ang = 2 * Math.PI * v;
+  return {x: (c[0] + rad * rx * Math.cos(ang)) * W, y: (c[1] + rad * ry * Math.sin(ang)) * H,
+          region, artificial};
+}
+function drawNeuralBrain(canvas, frame) {
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1, W = canvas.clientWidth || 600, H = canvas.clientHeight || 340;
+  canvas.width = W*dpr; canvas.height = H*dpr;
+  const ctx = canvas.getContext('2d'); ctx.scale(dpr,dpr); ctx.clearRect(0,0,W,H);
+  ctx.font = '9px sans-serif';
+  // faint brain silhouette: region ellipses + schematic adjacency bundles
+  ctx.strokeStyle = 'rgba(90,169,255,0.10)'; ctx.lineWidth = 1;
+  BRAIN_BUNDLES.forEach(([a,b]) => {
+    BRAIN_REGIONS[a][1].forEach((aa,si) => {
+      const bb = BRAIN_REGIONS[b][1][Math.min(si, BRAIN_REGIONS[b][1].length - 1)];
+      ctx.beginPath(); ctx.moveTo(aa[0]*W, aa[1]*H);
+      ctx.quadraticCurveTo((aa[0]+bb[0])/2*W, Math.min(aa[1],bb[1])*H - 18, bb[0]*W, bb[1]*H); ctx.stroke();
+    });
+  });
+  BRAIN_REGIONS.forEach(r => r[1].forEach(c => {
+    ctx.strokeStyle = 'rgba(140,160,190,0.22)';
+    ctx.beginPath(); ctx.ellipse(c[0]*W, c[1]*H, r[2]*W, r[3]*H, 0, 0, 2*Math.PI); ctx.stroke();
+    ctx.fillStyle = 'rgba(140,160,190,0.5)'; ctx.fillText(r[0], c[0]*W - ctx.measureText(r[0]).width/2, c[1]*H - r[3]*H - 4);
+  }));
+  ctx.strokeStyle = 'rgba(255,159,67,0.25)';
+  ctx.beginPath(); ctx.ellipse(ARTIFICIAL_ANCHOR.c[0]*W, ARTIFICIAL_ANCHOR.c[1]*H, ARTIFICIAL_ANCHOR.rx*W, ARTIFICIAL_ANCHOR.ry*H, 0, 0, 2*Math.PI); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,159,67,0.6)'; ctx.fillText('artificial_organs', ARTIFICIAL_ANCHOR.c[0]*W - 32, ARTIFICIAL_ANCHOR.c[1]*H - ARTIFICIAL_ANCHOR.ry*H - 4);
+  // real substrate edges (uniform sample) between their schematic endpoints
+  const ed = _edgeData;
+  if (ed && frame && ed.substrate?.n_base === frame.n_base) {
+    ctx.strokeStyle = 'rgba(110,150,205,0.055)'; ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    for (const [pre, post] of ed.edge_sample.pairs) {
+      const a = brainPoint(pre, frame.n_base, W, H), b = brainPoint(post, frame.n_base, W, H);
+      ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+    }
+    ctx.stroke();
+  } else if (!ed && frame) substrateEdges();
+  // this individual's real attachments: organ anchors + source->target links
+  const genome = (_brainGenome && panel_genome_matches(_brainGenome)) ? _brainGenome : null;
+  if (genome) {
+    const organs = genome.organs || [], atts = genome.attachments || [];
+    const organAnchor = id => {
+      const i = organs.findIndex(o => o.organ_id === id); if (i < 0) return null;
+      const a = Math.PI * (0.15 + 0.7 * (i + 0.5) / Math.max(1, organs.length));
+      return [(ARTIFICIAL_ANCHOR.c[0] + ARTIFICIAL_ANCHOR.rx * Math.cos(a)) * W,
+              (ARTIFICIAL_ANCHOR.c[1] + ARTIFICIAL_ANCHOR.ry * Math.sin(a)) * H];
+    };
+    const regionAnchor = name => {
+      const r = BRAIN_REGIONS.find(r => r[0] === name); if (!r) return null;
+      const cs = r[1]; return [cs.reduce((s,c)=>s+c[0],0)/cs.length*W, cs.reduce((s,c)=>s+c[1],0)/cs.length*H];
+    };
+    const endpoint = ep => ep && ep.startsWith('fba0:') ? regionAnchor(ep.slice(5)) : organAnchor(ep);
+    organs.forEach(o => { const p = organAnchor(o.organ_id); if (p) { ctx.fillStyle = 'rgba(255,159,67,0.8)'; ctx.fillRect(p[0]-2, p[1]-2, 4, 4); } });
+    ctx.strokeStyle = 'rgba(255,159,67,0.35)'; ctx.lineWidth = 1;
+    atts.forEach(a => {
+      const s = endpoint(a.source), tg = endpoint(a.target);
+      if (!s || !tg) return;
+      ctx.beginPath(); ctx.moveTo(s[0], s[1]); ctx.lineTo(tg[0], tg[1]); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,159,67,0.9)';
+      ctx.beginPath(); ctx.arc(tg[0], tg[1], 2.2, 0, 2*Math.PI); ctx.fill();
+      if ((a.direction || '') === 'bidirectional') { ctx.beginPath(); ctx.arc(s[0], s[1], 2.2, 0, 2*Math.PI); ctx.fill(); }
+    });
+  }
+  if (!frame) { ctx.fillStyle='#8a93a6'; ctx.font='12px sans-serif'; ctx.fillText(t('n','waiting'),12,H/2); canvas.brainCells = []; return; }
+  const maxCount = Math.max(1,...frame.spike_counts);
+  canvas.brainCells = frame.neuron_indices.map((index,i) => ({index, count:frame.spike_counts[i], ...brainPoint(index, frame.n_base, W, H)}));
+  canvas.brainCells.forEach(cell => {
+    const on = cell.count > 0, intensity = .35 + .65*Math.log1p(cell.count)/Math.log1p(maxCount);
+    ctx.fillStyle = !on ? 'rgba(52,61,75,0.7)' : `rgba(${cell.artificial ? '255,159,67' : '90,169,255'},${intensity})`;
+    ctx.beginPath(); ctx.arc(cell.x, cell.y, on ? 2.6 : 1.3, 0, 2*Math.PI); ctx.fill();
+  });
+}
+function renderNeuralActivity(state, now=performance.now()) {
+  const panel = $('#neural-activity');
+  if (!panel || panel.dataset.genomeId !== state.genomeId) return;
+  const view = state.view(now), f = view.frame;
+  $('#neural-kind').innerHTML = kind(view.kind);
+  $('#neural-dot').className = `neural-dot${view.live ? ' is-live' : ''}`;
+  $('#neural-status').textContent = t('n',view.status);
+  $('#neural-backend').textContent = f ? (f.backend === 'mock' ? t('n','mock') : f.backend) : '';
+  $('#neural-note').textContent = view.failed ? t('n','failure') : f && !view.live ? t('n','frozen') : '';
+  const rows = [[t('d','id'),state.experimentId],[t('p','genome'),state.genomeId]];
+  if (f) rows.push(
+    [t('n','sample'),`${f.neuron_indices.length} / ${f.n_neurons}`],
+    [t('n','replicate'),f.replicate_index],
+    [t('n','realTime'),jst(f.received_at_unix_ms,true)],
+    [t('n','simTime'),`${num(f.window_end_ms,2)} ms`],
+    [t('n','window'),`${num(f.window_start_ms,2)}–${num(f.window_end_ms,2)} ms (${num(f.window_end_ms-f.window_start_ms,2)} ms)`],
+    [t('n','age'),view.age == null ? t('misc','none') : fmtMs(view.age)],
+    [t('n','pass'),`${f.evaluation_pass} / ${f.attempt}`], [t('n','sequence'),f.sequence],
+    [t('n','job'),`${f.job_id} / ${f.worker_id}`], [t('n','spikes'),f.spike_counts.reduce((a,b)=>a+b,0)],
+    [t('n','active'),fmtPct(100*f.spike_counts.filter(count=>count>0).length/f.spike_counts.length)]);
+  $('#neural-meta').innerHTML = rows.map(([label,value])=>`<div>${esc(label)}</div><div>${esc(value ?? t('misc','none'))}</div>`).join('');
+  const key = JSON.stringify([state.sessionKey,state.sequence,view.live,LANG]);
+  if (panel.dataset.frameKey !== key) {
+    panel.dataset.frameKey = key;
+    drawNeuralGrid($('#neural-grid'),f);
+    drawNeuralBrain($('#neural-brain'),f);
+    $('#neural-history').className = `neural-history${view.live ? '' : ' is-recorded'}`;
+    $('#neural-history').innerHTML = view.history.length ? view.history.map(h => `<i style="height:${Math.max(2,100*h.active)}%" title="${esc(`${h.start}–${h.end} ms · ${t('n','active')} ${fmtPct(h.active*100)} · #${h.sequence}`)}"></i>`).join('') : `<span class="muted">${t('n','historyEmpty')}</span>`;
+  }
+}
+function watchNeuralActivity(id, generation, experimentId=null) {
+  const state = new NeuralActivityState(id,experimentId);
+  let stopped = false, pollTimer = null, clockTimer = null, request = null;
+  const active = () => !stopped && currentRoute(generation) && $('#neural-activity')?.dataset.genomeId === id;
+  const render = () => { if (active()) renderNeuralActivity(state); };
+  const tick = () => { if (!active()) return; render(); clockTimer = setTimeout(tick,250); };
+  const poll = async () => {
+    if (!active()) return;
+    if (document.hidden) { pollTimer = setTimeout(poll,NEURAL_POLL_MS); return; }
+    const controller = new AbortController(); request = controller;
+    const signal = routeController.signal, cancel = () => controller.abort();
+    signal.addEventListener('abort',cancel,{once:true});
+    const timeout = setTimeout(cancel,3000), started = performance.now();
+    try {
+      const payload = await api(`/api/gui/individual/${encodeURIComponent(id)}/neural-activity`,generation,controller.signal);
+      if (!active()) return;
+      state.accept(payload,performance.now(),performance.now()-started); render();
+    } catch (error) {
+      if (active()) { state.fail(); render(); }
+    } finally {
+      clearTimeout(timeout); signal.removeEventListener('abort',cancel); request = null;
+      if (active()) pollTimer = setTimeout(poll,NEURAL_POLL_MS);
+    }
+  };
+  const canvas = $('#neural-grid');
+  canvas.addEventListener('pointermove',event => {
+    const rect = canvas.getBoundingClientRect(), x = event.clientX-rect.left, y = event.clientY-rect.top;
+    const cell = (canvas.neuralCells || []).find(cell=>x>=cell.x && x<cell.x+cell.w && y>=cell.y && y<cell.y+cell.h);
+    canvas.title = cell ? `${t('n','neuron')} ${cell.index} · ${t('n','count')} ${cell.count}` : '';
+  });
+  const brain = $('#neural-brain');
+  brain.addEventListener('pointermove',event => {
+    const rect = brain.getBoundingClientRect(), x = event.clientX-rect.left, y = event.clientY-rect.top;
+    const cell = (brain.brainCells || []).find(c => (x-c.x)**2 + (y-c.y)**2 < 36);
+    brain.title = cell ? `${t('n','neuron')} ${cell.index} · ${cell.region} · ${t('n','count')} ${cell.count}` : '';
+  });
+  const resize = () => { if (active()) { delete $('#neural-activity').dataset.frameKey; render(); } };
+  window.addEventListener('resize',resize);
+  tick(); poll();
+  return () => { stopped = true; clearTimeout(pollTimer); clearTimeout(clockTimer); request?.abort(); window.removeEventListener('resize',resize); };
+}
+
 // ---- Organism inspector -----------------------------------------------------
 const tDirection = d => ({forward: t('o','forward'), bidirectional: t('o','bidirectional')})[d] ?? (d || t('o','forward'));
-async function organism(id) {
+async function organism(id, generation=routeGeneration) {
   if (!id) {
-    const d = await api('/api/gui/genomes?limit=50');
+    const d = await api('/api/gui/genomes?limit=50',generation);
+    if (!currentRoute(generation)) return;
     $('#main').innerHTML = `<div class="panel"><h2>${t('o','select')}</h2>${d.genomes.map(g => `<div>${short(g.genome_id)} <span class="muted">g${g.generation} #${g.birth_index}</span></div>`).join('') || `<span class="muted">${t('o','none')}</span>`}</div>`;
     return;
   }
-  const d = await api(`/api/gui/genomes/${encodeURIComponent(id)}`);
+  const d = await api(`/api/gui/genomes/${encodeURIComponent(id)}`,generation);
+  if (!currentRoute(generation)) return;
   const g = d.genome, doc = d.genome_doc, ph = d.phenotype;
+  if (g.genome_id !== id) throw new Error(t('n','unavailable'));
   const organs = doc.artificial_organs || [], atts = doc.attachments || [];
   const nBase = (ph.base && ph.base.neurons) || null;
   $('#main').innerHTML = `
@@ -624,6 +956,7 @@ async function organism(id) {
         <div class="muted" style="margin-top:6px">${t('o','parents')}: ${d.parents.map(short).join(' ') || t('o','noParents')}</div>
         <div class="muted">${t('o','children')}: ${d.children.map(short).join(' ') || t('o','noChildren')}</div></div></div>
     </div>
+    ${neuralPanelHtml(id)}
     <div class="grid g2" style="margin-top:12px">
       <div class="panel"><h2>${t('o','organs')} (${organs.length}) ${kind(d.kind)}</h2>
         ${organs.length ? `<div class="xscroll"><table><thead><tr><th>${t('o','organ')}</th><th>${t('o','kind')}</th><th>${t('o','size')}</th><th>${t('o','origin')}</th><th>${t('o','parentGene')}</th><th>${t('o','birthMut')}</th></tr></thead><tbody>
@@ -640,10 +973,13 @@ async function organism(id) {
       <div class="scroll xscroll" style="max-height:300px"><table><thead><tr><th>${t('o','evaluation')}</th><th>${t('o','worker')}</th><th>${t('o','backend')}</th><th>${t('o','seed')}</th><th>${t('o','replicates')}</th><th>${t('o','batch')}</th><th>${t('o','fitness')}</th><th>${t('o','rate')}</th><th>${t('o','active')}</th><th>${t('o','sim')}</th><th>${t('o','wall')}</th><th>${t('o','finished')}</th><th>${t('o','trace')}</th></tr></thead><tbody>
       ${d.evaluations.map(e => { const s = pj(e.summary_json); return `<tr><td class="mono">${esc(e.evaluation_id.slice(0,14))}…</td><td class="mono">${esc(e.worker_id)}</td><td>${esc(e.backend)}</td><td>${e.seed}</td><td>${e.completed_replicates ?? t('misc','none')} / ${e.requested_replicates ?? t('misc','none')}</td><td>${e.execution_batch_size ?? e.batch_size ?? t('misc','none')}</td><td>${num(e.fitness,3)}</td><td>${num(s.mean_rate_hz,2)}</td><td>${fmtPct(100*(s.active_fraction||0))}</td><td>${fmtMs(s.t_ms)}</td><td>${e.started_at && e.finished_at ? fmtDur((Date.parse(e.finished_at)-Date.parse(e.started_at))/1000) : t('misc','none')}</td><td>${fmtDateTime(e.finished_at)}</td><td>${e.trace_path ? t('o','full') : t('o','summary')}</td></tr>`; }).join('')}
       </tbody></table></div></div>`;
+  _brainGenome = {genome_id: id, organs, attachments: atts};
+  routeCleanup = watchNeuralActivity(id,generation,g.experiment_id || null);
   // M1 panels come from the observatory endpoint: homeostasis timeline,
   // circuit activity, marginal resource cost and the canonical rate
   try {
-    const m = await api(`/api/gui/individual/${encodeURIComponent(id)}`);
+    const m = await api(`/api/gui/individual/${encodeURIComponent(id)}`,generation);
+    if (!currentRoute(generation) || m.individual?.genome_id !== id) return;
     $('#main').insertAdjacentHTML('beforeend', m1Panels(m));
   } catch (err) { /* older rows have no M1 metrics; the page still works */ }
 }

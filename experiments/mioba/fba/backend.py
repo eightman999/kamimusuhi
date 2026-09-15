@@ -15,6 +15,17 @@ StateSummary = dict     # t_ms, mean_rate_hz, active_fraction, per-batch counts,
 BackendCapabilities = dict  # supports_gpu, supports_batch, is_reference, max_batch_hint
 
 
+def validate_neuron_selection(neuron_indices, lane, n_neurons, batch_size):
+    """Bound observation work without sampling from a simulator RNG."""
+    if (type(lane) is not int or not 0 <= lane < batch_size
+            or not isinstance(neuron_indices, list)
+            or not 1 <= len(neuron_indices) <= 512
+            or any(type(i) is not int or not 0 <= i < n_neurons
+                   for i in neuron_indices)
+            or len(set(neuron_indices)) != len(neuron_indices)):
+        raise ValueError("invalid neuron activity selection")
+
+
 class BackendUnavailable(RuntimeError):
     """Raised when a backend's dependencies are not installed."""
 
@@ -55,6 +66,13 @@ class FbaBackend(ABC):
     @abstractmethod
     def get_population_activity(self, groups: list[str]) -> dict[str, list[float]]:
         ...
+
+    def get_neuron_activity(self, neuron_indices: list[int], lane: int = 0):
+        """Copy bounded cumulative counts from one lane, without advancing
+        or resetting the simulator. Unsupported backends return None.
+        This is window telemetry, not a full spike train or a metric input.
+        """
+        return None
 
     @abstractmethod
     def checkpoint(self) -> bytes:
