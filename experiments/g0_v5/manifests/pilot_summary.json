@@ -1,0 +1,12 @@
+{
+  "experiment_id": "G0-v5",
+  "phase": "pilot",
+  "eligible": [],
+  "proposed_top_methods": [],
+  "frozen_for_full": false,
+  "full_run_started": false,
+  "reason": "Current user scope ends at seed0 pilot; selection uses label-free validation, never OOD ranking",
+  "decision": "G0-V5_FAIL",
+  "decision_scope": "predeclared seed0 pilot admission; no universal impossibility claim",
+  "full_run_blocked_reason": "zero admitted methods"
+}

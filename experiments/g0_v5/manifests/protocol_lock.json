@@ -1,0 +1,54 @@
+{
+  "dataset_manifest_sha256": "6536bd70146113555b20fb8ef78eac224fe401ef451d73e495f018e73c83d69a",
+  "lock_hash": "2b286e3f0b2dce1a09f147731dd9f26cd33889b83166edfbbea482d4b1a8dac5",
+  "protocol": {
+    "dataset_seed": 20260913,
+    "eval_repeat_atol": 1e-07,
+    "eval_repeat_rtol": 1e-06,
+    "execution_scope": "seed0 pilot; no automatic full run in this turn",
+    "experiment_id": "G0-v5",
+    "full_seeds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "n_eval": 256,
+    "n_train": 1024,
+    "pca_dimensions": 16,
+    "pilot_seeds": [
+      0
+    ],
+    "revision": 1,
+    "s3_relative_temporal_mse_improvement": 0.01,
+    "selection": "sanity survivors ranked by label-free validation temporal-readout relative MSE improvement; top 3, require >=2; no OOD ranking",
+    "strong_pass": "same method improves over each raw/PCA/twin on >=3/4 OOD metrics in >=4/5 seeds, plus intervention selectivity improves over all controls in >=4/5 seeds; no collapse/shortcut/leak"
+  },
+  "source_files": {
+    "EXPERIMENT_INSTRUCTIONS.md": "2d263e9e99fb017cbe8996dfa92ccadd20801e2011a702236778f401776e109c",
+    "EXPERIMENT_LINEAGE.md": "afda89d8c32eef03f61830f3a0a07318cf772ccafda07007ebd390972f5536a5",
+    "README.md": "4aecd6932e66a94800db94c997f1c40c4878b8ad204cc64008c54927cef1b11a",
+    "__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "configs/cpc.yaml": "7028d152284f833b0c4e1ad8b7b77c99063f82cf651509388952382d1bbc1823",
+    "configs/gru.yaml": "66bb8d304bf3726cc19d6861026450342d116d75e8c5899f3ad625e3203dc7af",
+    "configs/jepa.yaml": "b770f40aed3e9f271d8be8074e4fa81824ae277c0ea235f9744e0c9cd6d25d99",
+    "configs/vicreg.yaml": "ac720cc478748e91279b5b26d5ee1f72598ab505c16eccef432f8ab3eb5cfb86",
+    "scripts/run_pilot.sh": "eb5c713bc4e1449a3a17d4e9028dd3b544dce99d333ce09a09c0e2995f56f4f5",
+    "scripts/summarize.sh": "84c13e0d36dc62d22d7479fd2739af7e61ab5f9eea8ab1bd63df5c76324f0a3e",
+    "src/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/controls.py": "317c056f610dfd532d9b78a06b90649177389171ccef3d3e275d85a5b36e98e5",
+    "src/dataset.py": "b1a97ba4ac1629ea6d3f7591600125cd630674f2738914341a18d825537829ee",
+    "src/evaluate.py": "13fd56f44694b2839ebe2ccb674c4d9f48da41d61492b423a308ece89cf151e1",
+    "src/losses/__init__.py": "f8a98ca8d1e7bd5f47ac60af000d62aa10ede0b96e686e418ccc73c7356c4fe5",
+    "src/models/__init__.py": "6b418dac6c42daf8ecc658fcc839fb73e2c57610c6cf1c5dcea609bb7947f19c",
+    "src/protocol.py": "5568324b0df1dbecc0299aadaaaad09105da8be7a00a854f4790251709f719b9",
+    "src/report.py": "40ec08b51005051d7be4ef679c7cfdb358ee3f5ab54e7e2e8b73b28edc40424b",
+    "src/run.py": "2bbf69b422d7079687c9a28007156ff9b887974cbb96bcbb5d7c27416a14f345",
+    "src/telemetry.py": "9fa8173deac06b4c14c98c0a416856cde9b5f520e201624993e7e74ad4f66a5e",
+    "src/train.py": "6531018bda592a92a66d0adf02cb1d6c64f50601d54413b283c74c262a5f91cd",
+    "tests/test_dataset_eval.py": "120c7f80e78f8b000e4ee8f904bd6431688a17f93f0f4cc6054306c27160c5e6",
+    "tests/test_protocol.py": "bde0c6bb0f015f026dab0f148888d270ff786be0fb2c249078e04ccc0c22b938",
+    "tests/test_training.py": "a61204dd7892e53f36dd33002a1968cb7023efa08f7ea37c67c74d27bf689378"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "experiment_id": "G0-v5",
+  "base_git_commit": "b198005ad82518fb5c676d2452b611b2714bc6b5",
+  "branch": "exp/u0-need-guided-memory",
+  "historical_worktree": "/Users/eightman/dev/sandbox/kamimusuhi-g0v4",
+  "historical_head": "c44ac2957d3cef4a2a51bc2b4032c6f0d054df36",
+  "historical_status": "",
+  "preflight_audit_sha256": "687899f7a0e8f291091bddacdb5ad10036e5e0feea75a819e1ca38f91c9bdf27",
+  "tests": "20 passed in 3.46s; compileall and bash -n passed",
+  "hardware_preflight": "Both RTX3060/P100 detected; each CUDA matmul finite; P100 prior PCIe loss recovered by user reboot, sustained stability not yet established",
+  "no_old_checkpoint_or_result_reuse": true
+}

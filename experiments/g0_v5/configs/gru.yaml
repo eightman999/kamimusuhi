@@ -1,0 +1,19 @@
+experiment_id: G0-v5
+revision: 1
+method: gru
+obs_dim: 24
+hidden_dim: 64
+latent_dim: 32
+horizons: [1, 4]
+epochs: 20
+batch_size: 64
+learning_rate: 0.001
+weight_decay: 0.0001
+grad_clip: 5.0
+temperature: 0.1
+invariance_weight: 25.0
+variance_weight: 25.0
+covariance_weight: 1.0
+ema_decay: 0.99
+collapse_std_threshold: 0.0001
+collapse_active_fraction: 0.2
