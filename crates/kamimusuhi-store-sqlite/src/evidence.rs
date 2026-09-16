@@ -327,6 +327,43 @@ impl EvidenceLookup for SqliteStore {
     }
 }
 
+impl SqliteStore {
+    /// Recent raw dialogue from one operator-selected channel, oldest first.
+    /// Generated-but-unemitted system events and other people's channels are
+    /// excluded. SQLite insertion order also works with fixed test clocks.
+    pub fn recent_conversation(
+        &self,
+        individual_id: IndividualId,
+        source_id: &str,
+        limit: usize,
+    ) -> Result<Vec<EvidenceRecord>, EvidenceError> {
+        if !(1..=128).contains(&limit) {
+            return Err(invalid("conversation limit must be between 1 and 128"));
+        }
+        let conn = self.conn().map_err(|e| EvidenceError::Backend {
+            message: e.to_string(),
+        })?;
+        let mut statement = conn
+            .prepare(&format!(
+                "SELECT {EVIDENCE_COLUMNS} FROM evidence_records
+             WHERE individual_id = ?1 AND source_id = ?2
+               AND kind IN ('user_utterance', 'agent_utterance')
+             ORDER BY rowid DESC LIMIT ?3"
+            ))
+            .map_err(map_sqlite)?;
+        let mut records = statement
+            .query_map(
+                params![individual_id.to_string(), source_id, limit as i64],
+                read_evidence_row,
+            )
+            .map_err(map_sqlite)?
+            .map(|row| build_evidence(row.map_err(map_sqlite)?))
+            .collect::<Result<Vec<_>, EvidenceError>>()?;
+        records.reverse();
+        Ok(records)
+    }
+}
+
 impl EvidenceStore for SqliteStore {
     fn open_session(&self, session: NewSession) -> Result<Session, EvidenceError> {
         if session.session_id.is_nil() || session.individual_id.is_nil() {

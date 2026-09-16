@@ -43,6 +43,25 @@ pub struct CurrentInput {
     pub text: String,
 }
 
+/// Who produced an utterance in the recorded conversation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationRole {
+    User,
+    Assistant,
+}
+
+/// A raw conversation record, not a durable belief about the world.
+///
+/// Assistant text is a previous generated expression. Its evidence record
+/// proves that the expression was produced, not that its claims are true.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationMessage {
+    pub evidence_id: EvidenceId,
+    pub role: ConversationRole,
+    pub text: String,
+}
+
 /// Non-durable state of the session this turn belongs to.
 ///
 /// Working state, not memory: it describes the conversation as a running
@@ -85,6 +104,22 @@ pub struct PersonaEnvelope {
     /// Output of delegated cognition. External material, and specifically not
     /// the individual speaking.
     pub external_results: Vec<WorkspaceItem>,
+    /// Prior utterances with their original evidence IDs. These are records
+    /// of conversation, separate from the individual's retained beliefs.
+    #[serde(default)]
+    pub conversation_history: Vec<ConversationMessage>,
+    /// Runtime observations supplied independently of generated prose.
+    /// These measured values are not emotions, bodily sensations or beliefs.
+    #[serde(default)]
+    pub observed_runtime: Option<serde_json::Value>,
+    /// Validated observations of an operator-selected experimental organism.
+    /// Its recorded evaluations are neither canonical self nor live sensation.
+    #[serde(default)]
+    pub mio_observation: Option<serde_json::Value>,
+    /// Reviewed findings from the external Library, with their limitations.
+    /// These are neither the individual's experience nor acquired abilities.
+    #[serde(default)]
+    pub research_findings: Option<serde_json::Value>,
     /// The operator-authored disposition in force for this turn.
     ///
     /// Its own section, and never merged into any of the others: a seed is not
@@ -118,6 +153,10 @@ impl PersonaEnvelope {
             episodic: of(WorkspaceDomain::EpisodicMemory),
             library: of(WorkspaceDomain::LibraryEvidence),
             external_results: of(WorkspaceDomain::ExternalResourceResult),
+            conversation_history: Vec::new(),
+            observed_runtime: None,
+            mio_observation: None,
+            research_findings: None,
             // No workspace domain maps here. A seed cannot arrive as workspace
             // material, so no amount of retrieved content can become one.
             persona_seed: None,
@@ -155,6 +194,10 @@ impl PersonaEnvelope {
             && self.episodic.is_empty()
             && self.library.is_empty()
             && self.external_results.is_empty()
+            && self.conversation_history.is_empty()
+            && self.observed_runtime.is_none()
+            && self.mio_observation.is_none()
+            && self.research_findings.is_none()
     }
 }
 
@@ -393,6 +436,8 @@ mod tests {
         let envelope =
             PersonaEnvelope::from_workspace(&claims_to_be_a_seed, SessionWorkingState::default());
         assert!(envelope.persona_seed.is_none());
+        assert!(envelope.conversation_history.is_empty());
+        assert!(envelope.observed_runtime.is_none());
     }
 
     #[test]
@@ -433,5 +478,71 @@ mod tests {
         without.as_object_mut().unwrap().remove("persona_seed");
         let old: PersonaEnvelope = serde_json::from_value(without).unwrap();
         assert!(old.persona_seed.is_none());
+    }
+
+    #[test]
+    fn conversation_and_observations_round_trip_separately_from_beliefs() {
+        let envelope = PersonaEnvelope {
+            conversation_history: vec![
+                ConversationMessage {
+                    evidence_id: EvidenceId::from_u128(21),
+                    role: ConversationRole::User,
+                    text: "いまの状態を教えて".to_owned(),
+                },
+                ConversationMessage {
+                    evidence_id: EvidenceId::from_u128(22),
+                    role: ConversationRole::Assistant,
+                    text: "この会話を始めたところです。".to_owned(),
+                },
+            ],
+            observed_runtime: Some(serde_json::json!({"completed_turns": 1})),
+            ..PersonaEnvelope::default()
+        };
+        let json = serde_json::to_value(&envelope).unwrap();
+        assert_eq!(json["conversation_history"][0]["role"], "user");
+        assert_eq!(json["conversation_history"][1]["role"], "assistant");
+        let restored: PersonaEnvelope = serde_json::from_value(json).unwrap();
+        assert_eq!(restored, envelope);
+        assert!(restored.durable_self.is_empty());
+        assert!(restored.relationship.is_empty());
+        assert!(restored.episodic.is_empty());
+        assert!(restored.external_material().is_empty());
+    }
+
+    #[test]
+    fn old_envelopes_default_to_no_conversation_or_observations() {
+        let mut json = serde_json::to_value(PersonaEnvelope::default()).unwrap();
+        let object = json.as_object_mut().unwrap();
+        object.remove("conversation_history");
+        object.remove("observed_runtime");
+        object.remove("mio_observation");
+        object.remove("research_findings");
+        let restored: PersonaEnvelope = serde_json::from_value(json).unwrap();
+        assert!(restored.conversation_history.is_empty());
+        assert!(restored.observed_runtime.is_none());
+        assert!(restored.mio_observation.is_none());
+        assert!(restored.research_findings.is_none());
+        assert!(restored.is_empty());
+    }
+
+    #[test]
+    fn conversation_or_observations_make_an_envelope_nonempty() {
+        let mut envelope = PersonaEnvelope::default();
+        assert!(envelope.is_empty());
+        envelope.conversation_history.push(ConversationMessage {
+            evidence_id: EvidenceId::from_u128(21),
+            role: ConversationRole::User,
+            text: "こんにちは".to_owned(),
+        });
+        assert!(!envelope.is_empty());
+        envelope.conversation_history.clear();
+        envelope.observed_runtime = Some(serde_json::json!({"completed_turns": 0}));
+        assert!(!envelope.is_empty());
+        envelope.observed_runtime = None;
+        envelope.mio_observation = Some(serde_json::json!({"connection": "unavailable"}));
+        assert!(!envelope.is_empty());
+        envelope.mio_observation = None;
+        envelope.research_findings = Some(serde_json::json!({"selected": []}));
+        assert!(!envelope.is_empty());
     }
 }

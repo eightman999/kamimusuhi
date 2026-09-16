@@ -34,6 +34,18 @@ def create_app(service) -> FastAPI:
     def status():
         return service.status()
 
+    @app.get("/api/dialogue/organisms/{genome_id}")
+    def dialogue_organism(genome_id: str):
+        from ..gui.dialogue import InvalidSnapshot, organism_snapshot
+        try:
+            snapshot = organism_snapshot(service.db, service.experiment_id,
+                                         genome_id)
+        except InvalidSnapshot:
+            raise HTTPException(503, "MIO snapshot unavailable") from None
+        if snapshot is None:
+            raise HTTPException(404, "no such genome in this experiment")
+        return snapshot
+
     @app.get("/api/workers")
     def workers():
         return {"kind": "LIVE",

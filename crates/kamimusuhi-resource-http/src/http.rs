@@ -223,6 +223,28 @@ pub fn post_json(
     timeout: Duration,
     anchors: &TrustAnchors,
 ) -> Result<HttpResponse, HttpError> {
+    request_json("POST", endpoint, body, headers, timeout, anchors)
+}
+
+/// Read JSON without sending a request body. Uses the same TLS, framing and
+/// deadline checks as POST; callers supply only this source's own headers.
+pub fn get_json(
+    endpoint: &Endpoint,
+    headers: &[Header],
+    timeout: Duration,
+    anchors: &TrustAnchors,
+) -> Result<HttpResponse, HttpError> {
+    request_json("GET", endpoint, "", headers, timeout, anchors)
+}
+
+fn request_json(
+    method: &str,
+    endpoint: &Endpoint,
+    body: &str,
+    headers: &[Header],
+    timeout: Duration,
+    anchors: &TrustAnchors,
+) -> Result<HttpResponse, HttpError> {
     endpoint.validate().map_err(HttpError::InvalidRequest)?;
     for header in headers {
         if !token_name(&header.name)
@@ -325,7 +347,7 @@ pub fn post_json(
     };
 
     let mut request = format!(
-        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\n\
+        "{method} {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\n\
          Content-Length: {}\r\nConnection: close\r\n",
         endpoint.path,
         endpoint.authority(),

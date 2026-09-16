@@ -20,8 +20,11 @@
 //! transcript, and rebuilds the individual from canonical state alone.
 
 pub mod config;
+pub mod dialogue;
 pub mod error;
 pub mod inspect;
+pub mod mio;
+pub mod research;
 pub mod runtime;
 pub mod scenario;
 pub mod trace;

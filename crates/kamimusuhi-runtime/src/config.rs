@@ -369,6 +369,9 @@ pub struct RuntimeConfig {
     /// candidate, never confused with a delegated resource.
     #[serde(default)]
     pub persona: PersonaSetting,
+    /// Operator-selected experimental organism, separate from canonical identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mio: Option<crate::mio::MioBinding>,
     /// slot → implementation, for delegation. The router chooses among these
     /// and only these.
     pub resources: BTreeMap<String, ResourceImplementation>,
@@ -388,6 +391,7 @@ impl RuntimeConfig {
             config_version: Self::VERSION,
             node_id,
             persona: PersonaSetting::default(),
+            mio: None,
             resources,
             providers: BTreeMap::new(),
         }

@@ -1,0 +1,392 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "findings": [
+    {
+      "artifact_id": "85f93c25-ff1b-4c46-81ff-22a25ff2bf20",
+      "id": "r0-bounded-recall",
+      "revision": 1,
+      "experiment": "R0",
+      "status": "supported",
+      "title": "有限容量の選択記憶と明示的な想起",
+      "claim": "合成記憶課題の3 seedで、GRU128の正答率は0.988±0.006、FIFOは0.533だった。記憶消去で0.134、内容シャッフルで0.117に低下した。課題に関連する内容の選択保存と、内容を取り出すRECALLが成績に寄与した。",
+      "limitations": "既知の内容照合特徴を使う課題で、最初の60更新にはoracle BCによる初期学習を含む。MLPも高性能であり、再帰状態の必要性は示していない。自然言語検索、自伝的記憶、MIOへの転移性能はこの結果から主張できない。",
+      "keywords": [
+        "R0",
+        "memory",
+        "recall",
+        "記憶",
+        "想起",
+        "検索",
+        "重要度",
+        "関連",
+        "容量",
+        "出典",
+        "経験",
+        "学習"
+      ],
+      "sources": [
+        {
+          "path": "experiments/r0/reports/R0_RESULTS.md",
+          "digest": "sha256:851da317ea827ffb14f6134d718a2793a1dec01b1e64a8ef152e50e40022d51f",
+          "start_line": 7,
+          "end_line": 24
+        },
+        {
+          "path": "experiments/r0/reports/R0_RESULTS.md",
+          "digest": "sha256:851da317ea827ffb14f6134d718a2793a1dec01b1e64a8ef152e50e40022d51f",
+          "start_line": 46,
+          "end_line": 59
+        },
+        {
+          "path": "experiments/r0/README.md",
+          "digest": "sha256:d3162789a999467b6027ed49f6bff99c97180a138ecca14dbc46047c099c6a49",
+          "start_line": 11,
+          "end_line": 23
+        }
+      ],
+      "applications": [
+        "質問や対象個体に関連する少数の知識を容量上限付きで取得し、出典とともに対話へ渡す設計の参考にする。自然言語検索での効果は別途検証する。",
+        "生成した発話を保存しただけで、外界の事実や検証済みの信念へ昇格させない。"
+      ]
+    },
+    {
+      "artifact_id": "69c1cc04-a4fa-432e-a577-46de78ae0d8e",
+      "id": "s0-action-observation",
+      "revision": 1,
+      "experiment": "S0",
+      "status": "supported",
+      "title": "行動と観測結果を区別する",
+      "claim": "既知の合成世界では、行動と状態を入力したモデルの自己成分予測MSEは0.004、状態のみでは0.026だった。行動シャッフルで誤差が9〜12倍になり、行動情報の因果的寄与を支持した。3 seedで再現している。",
+      "limitations": "世界変更後の適応は同じ予算のscratch学習と同等で、帰属マップも世界間で転移しなかった。行動の作用遅延で性能が低下する。一般的な自己認識、転移可能な行為主体性、未観測の実行結果は証明していない。",
+      "keywords": [
+        "S0",
+        "action",
+        "observation",
+        "行動",
+        "観測",
+        "実行",
+        "要求",
+        "結果",
+        "因果",
+        "自己",
+        "外界",
+        "操作",
+        "身体"
+      ],
+      "sources": [
+        {
+          "path": "experiments/s0/reports/S0_RESULTS.md",
+          "digest": "sha256:60b96f342bd1b4bdc12852269e00288201014650eeb72b04b4da664e9fb2b553",
+          "start_line": 15,
+          "end_line": 28
+        },
+        {
+          "path": "experiments/s0/reports/S0_RESULTS.md",
+          "digest": "sha256:60b96f342bd1b4bdc12852269e00288201014650eeb72b04b4da664e9fb2b553",
+          "start_line": 64,
+          "end_line": 70
+        },
+        {
+          "path": "experiments/s0/reports/S0_RESULTS.md",
+          "digest": "sha256:60b96f342bd1b4bdc12852269e00288201014650eeb72b04b4da664e9fb2b553",
+          "start_line": 108,
+          "end_line": 116
+        }
+      ],
+      "applications": [
+        "発話・要求、実行確認、観測された状態変化を別々に記録し、因果関係は確認できた範囲だけ表現する。",
+        "MIOへのaction-feedback閉ループが確認されていなければ、会話の発言から身体を動かしたと推定しない。"
+      ]
+    },
+    {
+      "artifact_id": "30478fd7-b57d-4d12-9fb3-54108c74d6c1",
+      "id": "t0-recorded-time",
+      "revision": 1,
+      "experiment": "T0",
+      "status": "limited",
+      "title": "実時間と学習されたstep数を分ける",
+      "claim": "有効なprotocol v2のT0-Aでは、記憶を使った時間課題の補間が成立し、主判定はPASSだった。一方、長時間への外挿と時間倍率変更は失敗した。学習された時計はworld-speedに適応しないstep counterと解釈されている。",
+      "limitations": "v1の数値はprotocol defectにより全て失効している。T0-B/C/Dは環境・oracle・smokeのみで、学習済み結果はない。一部はimitation段階のcheckpointを用いる。probeの可読性は因果利用の証明ではなく、実時間に適応する時計も未成立。",
+      "keywords": [
+        "T0",
+        "time",
+        "時間",
+        "時刻",
+        "鮮度",
+        "経過",
+        "いつ",
+        "最近",
+        "現在",
+        "最新",
+        "古い",
+        "履歴",
+        "遅延"
+      ],
+      "sources": [
+        {
+          "path": "experiments/t0/reports/T0_RESULTS.md",
+          "digest": "sha256:5bae0e41e0feb070b48fdc4d1826a4f013994289d4a4c84cbf3783ae648ea333",
+          "start_line": 5,
+          "end_line": 18
+        },
+        {
+          "path": "experiments/t0/reports/T0_RESULTS.md",
+          "digest": "sha256:5bae0e41e0feb070b48fdc4d1826a4f013994289d4a4c84cbf3783ae648ea333",
+          "start_line": 48,
+          "end_line": 75
+        }
+      ],
+      "applications": [
+        "snapshot取得時刻、評価完了時刻、simulation時間を別に扱い、鮮度は実際のtimestampから判断する。",
+        "会話のターン数を経過秒数へ換算しない。評価時刻が不明な記録へ現在時刻を補って新鮮に見せない。"
+      ]
+    },
+    {
+      "artifact_id": "c8c9b17c-7395-452b-bcb2-42558e609a20",
+      "id": "h0-homeostasis",
+      "revision": 1,
+      "experiment": "H0",
+      "status": "supported",
+      "title": "実測された恒常性指標を使う",
+      "claim": "人工的な恒常性課題は5つのPASS基準を満たした。GRU64の誤差は0.0333、randomは0.2418で、5 seedの入力シャッフルで平均誤差が0.1192増えた。energy・fatigue・noveltyには行動への因果的影響が確認された。",
+      "limitations": "通常条件では手製heuristicが優位で、resource OODでも学習モデルが敗れた。certainty・temperatureの因果利用と長期再帰記憶は未支持。bestからfinal checkpointへの悪化もある。人工変数を人間の感情・身体感覚と同一視せず、MIOへの転移性能も未検証として扱う。",
+      "keywords": [
+        "H0",
+        "homeostasis",
+        "恒常性",
+        "状態",
+        "回復",
+        "負債",
+        "debt",
+        "energy",
+        "fatigue",
+        "novelty",
+        "身体",
+        "感情",
+        "調子",
+        "疲労"
+      ],
+      "sources": [
+        {
+          "path": "experiments/h0/reports/H0_RESULTS.md",
+          "digest": "sha256:9bcd2b6ec7d39e50574279f41462f7e5af8518d887bdd168f8943246e2a8b4cd",
+          "start_line": 3,
+          "end_line": 13
+        },
+        {
+          "path": "experiments/h0/reports/H0_RESULTS.md",
+          "digest": "sha256:9bcd2b6ec7d39e50574279f41462f7e5af8518d887bdd168f8943246e2a8b4cd",
+          "start_line": 55,
+          "end_line": 62
+        }
+      ],
+      "applications": [
+        "MIOに記録されたhomeostasisやdebtを、その出典・評価時刻とともに説明する。数値がない感情や身体状態は補完しない。",
+        "実測された調整必要度を関連知識の選択に使う設計候補とし、自律的な制御効果は別途検証する。"
+      ]
+    },
+    {
+      "artifact_id": "427a1e81-b77d-461e-978b-aecd718a9f16",
+      "id": "o0-object-continuity",
+      "revision": 1,
+      "experiment": "O0",
+      "status": "limited",
+      "title": "観測できない対象を不明として保持する",
+      "claim": "O0 v3では、遮蔽中の位置追跡に再帰記憶が必要で、途中で状態を消去すると誤差が大きく増加した。GRU128の再同定正答率は0.995だった。最強の手製力学heuristicを上回る追跡性能と、生死・退出検出は成立していない。",
+      "limitations": "旧v1は置き換え済み。実際の学習中の遮蔽は名目の4〜16 stepを超える例があり、厳密な未見長への転移とは言えない。heuristicは真の世界パラメータを与えられ、reset介入もモデル間で完全に同等ではない。不可視から生死や現在位置を断定できない。",
+      "keywords": [
+        "O0",
+        "object",
+        "個体",
+        "対象",
+        "同一性",
+        "再同定",
+        "観測",
+        "不明",
+        "遮蔽",
+        "生存",
+        "死亡",
+        "消滅",
+        "切断",
+        "最後"
+      ],
+      "sources": [
+        {
+          "path": "experiments/o0/reports/O0_RESULTS.md",
+          "digest": "sha256:d2886812ccd7557dd6bd2ee3bc1653364d292db5f6cb1b5d56a643621822f5ef",
+          "start_line": 1,
+          "end_line": 25
+        },
+        {
+          "path": "experiments/o0/reports/O0_RESULTS.md",
+          "digest": "sha256:d2886812ccd7557dd6bd2ee3bc1653364d292db5f6cb1b5d56a643621822f5ef",
+          "start_line": 319,
+          "end_line": 348
+        }
+      ],
+      "applications": [
+        "個体IDと最終観測を保持し、取得できない場合は観測不能または鮮度不明と表現する。",
+        "通信断や記録欠損を個体の死・消滅に変換せず、記録時の状態と現在の推定を区別する。"
+      ]
+    },
+    {
+      "artifact_id": "0713f856-e8ab-4432-8c74-33a8b4e4bd1d",
+      "id": "u0-need-guided-memory",
+      "revision": 1,
+      "experiment": "U0",
+      "status": "failed",
+      "title": "必要性に応じた記憶学習は主要基準未達",
+      "claim": "protocol sanityはPASSした。一方、保存されたcompact集計の通常・scaffold条件を事前基準と照合すると、learned clean条件のneed_resolution最大値は約0.6055、store_precision最大値は約0.5301だった。U-H1の0.80、U-H2の0.75に達しておらず、必要性に応じた記憶の獲得成功とは扱えない。",
+      "limitations": "これはcompact集計と事前閾値からの判定であり、未作成の総括reportを代替して全gateの公式判定を主張するものではない。scaffold条件には行動選択や遅延の学習curriculumがある。protocol成立と学習の成功は別で、自伝的記憶、意味理解、欲求も未支持。",
+      "keywords": [
+        "U0",
+        "memory",
+        "need",
+        "記憶",
+        "必要性",
+        "重要度",
+        "欲求",
+        "恒常性",
+        "保存",
+        "失敗",
+        "基準",
+        "学習"
+      ],
+      "sources": [
+        {
+          "path": "experiments/u0/reports/U0_PROTOCOL_CHECK.md",
+          "digest": "sha256:db3f80fe1c22ee8947bcdb704184dd7cb003de13fc56a3353113a913d97541ee",
+          "start_line": 2,
+          "end_line": 28
+        },
+        {
+          "path": "experiments/u0/artifacts/results/summary.csv",
+          "digest": "sha256:20a5f7f4fd1e9a83fdab738aab1417dfa5b9203dfc661fa6e6b87f8de614fef8",
+          "start_line": 2,
+          "end_line": 217
+        },
+        {
+          "path": "experiments/u0/README.md",
+          "digest": "sha256:4587f083812b4d7659407d4139d29aa397275c97f072c8db633cabdd4e2f9e9e",
+          "start_line": 184,
+          "end_line": 197
+        },
+        {
+          "path": "experiments/u0/README.md",
+          "digest": "sha256:4587f083812b4d7659407d4139d29aa397275c97f072c8db633cabdd4e2f9e9e",
+          "start_line": 252,
+          "end_line": 281
+        }
+      ],
+      "applications": [
+        "MIOの内部状態と記憶選択を結びつける場合は新しい設計として扱い、学習済みのneed-guided memoryとして宣伝しない。",
+        "候補保存・想起の履歴を残し、後の応答や調整に役立ったかを検証できるようにする。"
+      ]
+    },
+    {
+      "artifact_id": "b4c8e921-d4cc-4ea9-9199-919210e7d480",
+      "id": "cx0-organ-integration",
+      "revision": 1,
+      "experiment": "CX0",
+      "status": "pending",
+      "title": "修正後kernelの器官統合評価を待つ",
+      "claim": "既存の統合報告は修正前kernelによる歴史的な結果である。報告後に、同一stepの知覚が消費先ごとに異なる不具合と、成功判定の行動時刻ずれが判明した。報告は数値の再生成を要求しており、現行kernelで器官統合の有効性が確立した根拠にはできない。",
+      "limitations": "旧報告でも構造化cortexの優位性は未達で、MIOBAへの統合はgate外だった。冗長RECALLへの一律cost追加も採用されなかったが、その評価数値も同じ修正前kernelの制約を受ける。旧数値を現行実装の性能や、一般的な器官統合能力として再利用しない。",
+      "keywords": [
+        "CX0",
+        "cortex",
+        "器官",
+        "統合",
+        "MIO",
+        "MIOBA",
+        "知覚",
+        "snapshot",
+        "観測",
+        "RECALL",
+        "再評価",
+        "未検証"
+      ],
+      "sources": [
+        {
+          "path": "experiments/cx0/reports/CX0_OVERNIGHT_REPORT.md",
+          "digest": "sha256:ce7f49df1b93329186e704f90f6fd29ef5763b5e95fbc627af4840c48319868e",
+          "start_line": 67,
+          "end_line": 80
+        },
+        {
+          "path": "experiments/cx0/reports/CX0_OVERNIGHT_REPORT.md",
+          "digest": "sha256:ce7f49df1b93329186e704f90f6fd29ef5763b5e95fbc627af4840c48319868e",
+          "start_line": 102,
+          "end_line": 126
+        },
+        {
+          "path": "experiments/cx0/reports/CX0_OVERNIGHT_REPORT.md",
+          "digest": "sha256:ce7f49df1b93329186e704f90f6fd29ef5763b5e95fbc627af4840c48319868e",
+          "start_line": 128,
+          "end_line": 143
+        }
+      ],
+      "applications": [
+        "同一stepの消費先で一度取得した観測snapshotを共有し、矛盾する知覚を作らない。",
+        "想起した情報が結果へ実際に寄与したかを検証する。構造化cortexや一律の想起罰則を実証済みとして採用しない。"
+      ]
+    },
+    {
+      "artifact_id": "af4fa3ef-a60c-43c7-8112-ef649fa00e17",
+      "id": "g0-grounding-lineage",
+      "revision": 1,
+      "experiment": "G0/G0-v5/G0-v6",
+      "status": "invalid",
+      "title": "接地研究の失敗と失効を区別する",
+      "claim": "G0では限定的な学習効果はあるが、文脈を越える因果カテゴリ、合成構造、介入整合表現は成立しなかった。G0-v5はseed 0 pilotの全方式がgate不通過で、5 seed本試験は未実施。G0-v6 revision 1は未見horizonの評価不備により失効し、成果として採用しない。",
+      "limitations": "各段階を同じ失敗と混同しない。v5 CPC自身のloss改善は共通readoutの改善を保証せず、K0統合も未採用。v6 r1には評価器修正だけでなく新しいprotocol lockで全5学習と対応評価の再実行が必要。ここに有効な再実行結果は収録しておらず、予測学習一般の不可能性も主張しない。",
+      "keywords": [
+        "G0",
+        "G0-v5",
+        "G0-v6",
+        "grounding",
+        "接地",
+        "概念",
+        "意味",
+        "因果",
+        "CPC",
+        "encoder",
+        "失効",
+        "invalid",
+        "pilot",
+        "学習"
+      ],
+      "sources": [
+        {
+          "path": "experiments/g0/reports/G0_RESULTS.md",
+          "digest": "sha256:b43b8f43e6f5d96c9f8b30aa3a13935a5d7bc00485d873194d1e885ad0684576",
+          "start_line": 151,
+          "end_line": 180
+        },
+        {
+          "path": "experiments/g0_v5/G0_V5_REPORT.md",
+          "digest": "sha256:57ea651d1de6d9072c9a0977e974584528efd8a987c26c25dc1a6c6c499e9d8a",
+          "start_line": 5,
+          "end_line": 12
+        },
+        {
+          "path": "experiments/g0_v5/G0_V5_REPORT.md",
+          "digest": "sha256:57ea651d1de6d9072c9a0977e974584528efd8a987c26c25dc1a6c6c499e9d8a",
+          "start_line": 93,
+          "end_line": 104
+        },
+        {
+          "path": "experiments/g0_v6/EXPERIMENT_LINEAGE.md",
+          "digest": "sha256:0db7c8a843c297fb4c34f890618d4d08eaedf60657a0da349a96fde917af34a8",
+          "start_line": 37,
+          "end_line": 44
+        }
+      ],
+      "applications": [
+        "実験・protocol・出典の版を分けて保存し、failed・invalid・未完了を成功結果と混ぜない。",
+        "既存encoderや安定したlatentを接地済み概念として採用せず、失効したv6 r1の見かけの成功を対話へ渡さない。"
+      ]
+    }
+  ]
+}

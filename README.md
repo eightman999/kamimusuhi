@@ -389,6 +389,21 @@ cargo run -p kamimusuhi-runtime -- inspect         --dir .local/demo
 
 `inspect` は read-only で、writer epoch を取得せず canonical row を一切変更しません。operational trace は `.local/demo/trace.jsonl` に JSONL で出力され、canonical audit（DB 内）とは別物です。
 
+### APIでテキスト会話する
+
+```bash
+export KAMIMUSUHI_API_BASE_URL='https://your-provider.example/v1'
+export KAMIMUSUHI_API_MODEL='your-model-name'
+# APIキーを KAMIMUSUHI_API_KEY 環境変数へ設定してから:
+./scripts/chat-api.sh
+```
+
+OpenAI互換APIへ接続して自由入力に返答し、同じ相手との最近の会話を再開後も参照します。稼働環境などの実測状態と会話原記録を別々に渡します。APIキーは環境変数から読み、設定に保存するのは変数名だけです。保存先は `.local/text-dialogue`、終了は `/quit` です。
+
+MIO coordinatorのURL・実験ID・genome IDを後から設定すると、その個体の完了済み評価記録を読み取り、出典・時刻と一緒に発話APIへ渡せます。モデルの言語能力によって応答の正確さは変わります。実行中の神経状態のストリーム、発話の自律開始、音声出力は今後の段階です。設定、上限、検証結果は [Text dialogue v0](./docs/implementation/text-dialogue-v0.md) を参照してください。
+
+実験成果は [研究catalog](./knowledge/experiment-findings.json) に結論・限界・出典の版を記録し、対話開始時にLibraryへ蓄積します。質問とMIOの状態に関連する最大4カードを想起し、失敗・失効・再評価待ちも保持します。最初の8カードと動作への反映、追加手順は [実験成果の反映 v0](./docs/implementation/research-integration-v0.md) を参照してください。
+
 ### 実モデルの Persona Core を試す
 
 上の demo は決定的な fixture で動きます。実際のモデルに喋らせる場合:
@@ -459,6 +474,7 @@ cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase res
 - W5: 実 HTTP の OpenAI-compatible adapter、timeout/retry/error 分類、secret 非保存
 - W6: 決定的な cognitive resource router（capability metadata / privacy 制約 / 理由付き決定）と、`rustls` による TLS
 - W7: Persona Core 境界の強化。OpenAI-compatible backend、typed input envelope、外部 material と最終応答の分離。2026-09-10 に privacy / transport / attribution 境界を追加修正
+- テキスト対話: APIの自由入力、相手ごとの原文履歴と再開、実測状態とMIO完了評価の入力、環境変数によるAPI認証。実APIの応答品質は接続先確定後に検証
 
 未実装のもの（Persona Core の学習、K-Nerve、常時背景認知、sleep/dream、voice、multi-device embodiment、self domain の mutation、retention/deletion、K-Edge/K-Core など）は依然として設計段階です。詳細な達成範囲と既知の制約は [`docs/implementation/phase-1-implementation-result.md`](./docs/implementation/phase-1-implementation-result.md)（v0.1）と [`docs/implementation/phase-2-implementation-plan.md`](./docs/implementation/phase-2-implementation-plan.md)（W6）、[W7 実装結果](./docs/implementation/w7-persona-core-plan.md)、[2026-09-10 監査結果](./docs/implementation/2026-09-10-spec-implementation-audit.md) を参照してください。
 

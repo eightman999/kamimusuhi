@@ -5,6 +5,8 @@
 //! kamimusuhi-runtime inspect         --dir <path> [--seed <n>]
 //! kamimusuhi-runtime demo-continuity --dir <path> --phase first|resume
 //!                                    [--resource <impl>] [--seed <n>]
+//! kamimusuhi-runtime chat           --dir <path> [--subject <id>]
+//! kamimusuhi-runtime talk           --dir <path> --message <text>
 //! ```
 //!
 //! Reports go to stdout as JSON so a harness can read them; a phase run by one
@@ -19,12 +21,15 @@
 //! Two processes sharing a runtime directory must use different ID seeds. The
 //! same seed replays the same IDs, which the runtime detects and refuses.
 
+use std::io::{BufRead, IsTerminal, Write};
 use std::process::ExitCode;
 
 use kamimusuhi_core::digest::content_digest;
 use kamimusuhi_core::ids::PersonaBackendId;
 use kamimusuhi_core::routing::{LocalityClass, PrivacyConstraint, Urgency};
 use kamimusuhi_runtime::config::GENERAL_SLOT;
+use kamimusuhi_runtime::dialogue::{DialogueSession, MAX_INPUT_BYTES};
+use kamimusuhi_runtime::mio::MioBinding;
 use kamimusuhi_runtime::runtime::ClockMode;
 use kamimusuhi_runtime::scenario::ScenarioOptions;
 use kamimusuhi_runtime::{
@@ -60,9 +65,21 @@ commands:
   inspect           read-only report of identity, lineage, memory, Library
                     and resource calls
   demo-continuity   run one phase of the deterministic restart scenario
+  talk              answer --message once; JSON on stdout
+  chat              interactive text conversation; /quit or EOF to stop
+  research-check    verify bundled research source files; no runtime writes
 
 options:
   --dir <path>      runtime directory (required)
+  --source-root <path>  repository root for research-check (default: .)
+  --message <text>  talk only: the current user input
+  --subject <id>    talk/chat interlocutor key (default: local-user)
+                    Selects a separate history; not authentication.
+  --mio-url <url>   MIO coordinator base URL (read-only observation bridge)
+  --mio-experiment <id>  expected MIO experiment; required with --mio-url
+  --mio-genome <id> pinned MIO genome; required with --mio-url
+  --mio-max-age-secs <n>  freshness threshold (1-86400, default 300)
+  --no-mio         disconnect the configured MIO observation bridge
   --phase <p>       demo-continuity only: first | resume
   --resource <i>    implementation filling the general slot: fake-a |
                     fake-b | fake-unavailable | openai-compatible
@@ -81,13 +98,16 @@ options:
   --persona-url <u> base URL of the persona endpoint, e.g.
                     http://127.0.0.1:11434/v1
   --persona-model <m>  model name to ask the persona endpoint for
+  --persona-auth-env <name>  environment variable holding the API key (never its value)
   --persona-locality <l>  local-host | local-network | external (default: external)
 ";
 
 fn main() -> ExitCode {
     match run() {
         Ok(output) => {
-            println!("{output}");
+            if !output.is_empty() {
+                println!("{output}");
+            }
             ExitCode::SUCCESS
         }
         Err(error) => {
@@ -108,8 +128,27 @@ fn run() -> Result<String, RuntimeError> {
         .next()
         .ok_or_else(|| RuntimeError::Usage(format!("no command given\n\n{USAGE}")))?;
     let options = Options::parse(args)?;
+    if options.source_root.is_some() && command != "research-check" {
+        return Err(RuntimeError::Usage(
+            "--source-root is only supported by research-check".to_owned(),
+        ));
+    }
+    if !matches!(command.as_str(), "talk" | "chat")
+        && (options.message.is_some() || options.subject.is_some() || options.mio_options_present())
+    {
+        return Err(RuntimeError::Usage(
+            "--message, --subject and MIO flags are dialogue options".to_owned(),
+        ));
+    }
 
     match command.as_str() {
+        "research-check" => {
+            let catalog = kamimusuhi_runtime::research::ResearchCatalog::bundled()?;
+            catalog.validate_sources(std::path::Path::new(
+                options.source_root.as_deref().unwrap_or("."),
+            ))?;
+            encode(&serde_json::json!({"status": "sources_verified"}))
+        }
         "init" => {
             let runtime = Runtime::init(
                 options.dir()?,
@@ -159,11 +198,146 @@ fn run() -> Result<String, RuntimeError> {
             runtime.stopping();
             encode(&report)
         }
+        "talk" | "chat" => run_dialogue(&command, &options),
         "--help" | "-h" | "help" => Ok(USAGE.to_owned()),
         other => Err(RuntimeError::Usage(format!(
             "unknown command {other:?}\n\n{USAGE}"
         ))),
     }
+}
+
+fn run_dialogue(command: &str, options: &Options) -> Result<String, RuntimeError> {
+    if command == "talk" && options.message.is_none() {
+        return Err(RuntimeError::Usage("talk requires --message".to_owned()));
+    }
+    if command == "chat" && options.message.is_some() {
+        return Err(RuntimeError::Usage(
+            "--message is only supported by talk".to_owned(),
+        ));
+    }
+    if let Some(message) = &options.message
+        && (message.trim().is_empty() || message.len() > MAX_INPUT_BYTES)
+    {
+        return Err(RuntimeError::Usage(format!(
+            "input must be nonempty and at most {MAX_INPUT_BYTES} UTF-8 bytes"
+        )));
+    }
+    if options.phase.is_some() || options.resource.is_some() || options.urgency.is_some() {
+        return Err(RuntimeError::Usage(
+            "talk/chat use the Persona Core; --phase, --resource and --urgency are not supported"
+                .to_owned(),
+        ));
+    }
+    if options.persona.is_none()
+        && (options.persona_url.is_some()
+            || options.persona_model.is_some()
+            || options.persona_auth_env.is_some()
+            || options.persona_locality.is_some())
+    {
+        return Err(RuntimeError::Usage(
+            "persona endpoint flags require --persona openai-compatible".to_owned(),
+        ));
+    }
+    let mut runtime = Runtime::open(options.dir()?, options.runtime_options())?;
+    let mut config = runtime.config().clone();
+    if let Some(backend) = options.persona {
+        config.persona = options.persona_setting(backend, &config)?;
+    }
+    if options.mio_options_present() {
+        config.mio = options.mio_setting(config.mio.as_ref())?;
+    }
+    if config.persona.backend == PersonaBackendKind::Fake
+        && options.persona != Some(PersonaBackendKind::Fake)
+    {
+        return Err(RuntimeError::Usage(
+            "configure a model with --persona openai-compatible --persona-url <url> --persona-model <model>; --persona fake explicitly selects a test fixture".to_owned()
+        ));
+    }
+    // Real conversations default to local-only. A wider destination requires
+    // an explicit per-invocation privacy choice, including on subsequent runs.
+    let privacy = options.privacy.unwrap_or(PrivacyConstraint::LocalOnly);
+    config.persona.check_privacy(privacy)?;
+    config.build_persona()?;
+    config.persona_seed()?;
+    if let Some(mio) = &config.mio {
+        mio.validate()?;
+    }
+    if options.persona.is_some() || options.mio_options_present() {
+        runtime.save_config(config)?;
+    }
+    let mut session = DialogueSession::start(
+        &mut runtime,
+        options.subject.as_deref().unwrap_or("local-user"),
+        privacy,
+    )?;
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+    let result = if let Some(message) = &options.message {
+        session
+            .turn(&mut runtime, message, |reply| {
+                serde_json::to_writer(&mut output, reply)?;
+                writeln!(output)?;
+                output.flush()
+            })
+            .map(|_| ())
+    } else {
+        let stdin = std::io::stdin();
+        let terminal = stdin.is_terminal();
+        if terminal {
+            eprintln!("かみむすび — テキスト対話。終了: /quit");
+        }
+        let mut input = stdin.lock();
+        (|| {
+            loop {
+                if terminal {
+                    eprint!("あなた > ");
+                    std::io::stderr().flush().map_err(io_error)?;
+                }
+                // Bound allocation even for a very large piped input line.
+                let mut bytes = Vec::new();
+                let read = std::io::Read::take(&mut input, (MAX_INPUT_BYTES + 2) as u64)
+                    .read_until(b'\n', &mut bytes)
+                    .map_err(io_error)?;
+                if read == 0 {
+                    break;
+                }
+                if read == MAX_INPUT_BYTES + 2 && !bytes.ends_with(b"\n") {
+                    return Err(RuntimeError::Usage(format!(
+                        "input exceeds {MAX_INPUT_BYTES} bytes"
+                    )));
+                }
+                let line = String::from_utf8(bytes)
+                    .map_err(|_| RuntimeError::Usage("input must be UTF-8".to_owned()))?;
+                let text = line.trim_end_matches(['\r', '\n']);
+                if text.len() > MAX_INPUT_BYTES {
+                    return Err(RuntimeError::Usage(format!(
+                        "input exceeds {MAX_INPUT_BYTES} bytes"
+                    )));
+                }
+                if text == "/quit" {
+                    break;
+                }
+                if text.trim().is_empty() {
+                    continue;
+                }
+                session.turn(&mut runtime, text, |reply| {
+                    if terminal {
+                        write!(output, "かみむすび > ")?;
+                    }
+                    writeln!(output, "{}", reply.response)?;
+                    output.flush()
+                })?;
+            }
+            Ok(())
+        })()
+    };
+    runtime.stopping();
+    result?;
+    Ok(String::new())
+}
+
+fn io_error(error: std::io::Error) -> RuntimeError {
+    RuntimeError::Usage(format!("text input/output failed: {error}"))
 }
 
 fn encode<T: serde::Serialize>(value: &T) -> Result<String, RuntimeError> {
@@ -174,6 +348,14 @@ fn encode<T: serde::Serialize>(value: &T) -> Result<String, RuntimeError> {
 #[derive(Debug, Default)]
 struct Options {
     dir: Option<String>,
+    source_root: Option<String>,
+    message: Option<String>,
+    subject: Option<String>,
+    mio_url: Option<String>,
+    mio_experiment: Option<String>,
+    mio_genome: Option<String>,
+    mio_max_age_secs: Option<u64>,
+    no_mio: bool,
     phase: Option<DemoPhase>,
     resource: Option<ResourceImplementation>,
     id_seed: Option<u64>,
@@ -183,6 +365,7 @@ struct Options {
     persona: Option<PersonaBackendKind>,
     persona_url: Option<String>,
     persona_model: Option<String>,
+    persona_auth_env: Option<String>,
     persona_locality: Option<LocalityClass>,
 }
 
@@ -198,6 +381,20 @@ impl Options {
             };
             match flag.as_str() {
                 "--dir" => options.dir = Some(value()?),
+                "--source-root" => options.source_root = Some(value()?),
+                "--message" => options.message = Some(value()?),
+                "--subject" => options.subject = Some(value()?),
+                "--mio-url" => options.mio_url = Some(value()?),
+                "--mio-experiment" => options.mio_experiment = Some(value()?),
+                "--mio-genome" => options.mio_genome = Some(value()?),
+                "--mio-max-age-secs" => {
+                    options.mio_max_age_secs = Some(value()?.parse().map_err(|_| {
+                        RuntimeError::Usage(
+                            "MIO max age must be seconds between 1 and 86400".to_owned(),
+                        )
+                    })?);
+                }
+                "--no-mio" => options.no_mio = true,
                 "--phase" => options.phase = Some(value()?.parse()?),
                 "--resource" => {
                     let raw = value()?;
@@ -231,6 +428,21 @@ impl Options {
                 }
                 "--persona-url" => options.persona_url = Some(value()?),
                 "--persona-model" => options.persona_model = Some(value()?),
+                "--persona-auth-env" => {
+                    let name = value()?;
+                    if name.is_empty()
+                        || !name.bytes().enumerate().all(|(index, byte)| {
+                            byte == b'_'
+                                || byte.is_ascii_alphabetic()
+                                || (index > 0 && byte.is_ascii_digit())
+                        })
+                    {
+                        return Err(RuntimeError::Usage(
+                            "--persona-auth-env requires an environment variable name, not an API key".to_owned()
+                        ));
+                    }
+                    options.persona_auth_env = Some(name);
+                }
                 "--persona-locality" => {
                     let raw = value()?;
                     options.persona_locality = Some(raw.replace('-', "_").parse().map_err(|_| {
@@ -269,6 +481,52 @@ impl Options {
         self.dir
             .as_deref()
             .ok_or_else(|| RuntimeError::Usage(format!("--dir is required\n\n{USAGE}")))
+    }
+
+    fn mio_options_present(&self) -> bool {
+        self.mio_url.is_some()
+            || self.mio_experiment.is_some()
+            || self.mio_genome.is_some()
+            || self.mio_max_age_secs.is_some()
+            || self.no_mio
+    }
+
+    fn mio_setting(
+        &self,
+        existing: Option<&MioBinding>,
+    ) -> Result<Option<MioBinding>, RuntimeError> {
+        if self.no_mio {
+            if self.mio_url.is_some()
+                || self.mio_experiment.is_some()
+                || self.mio_genome.is_some()
+                || self.mio_max_age_secs.is_some()
+            {
+                return Err(RuntimeError::Usage(
+                    "--no-mio cannot be combined with MIO settings".to_owned(),
+                ));
+            }
+            return Ok(None);
+        }
+        let mut binding = match (&self.mio_url, &self.mio_experiment, &self.mio_genome) {
+            (Some(url), Some(experiment), Some(genome)) => {
+                MioBinding::new(url.clone(), experiment.clone(), genome.clone())
+            }
+            (None, None, None) => existing
+                .cloned()
+                .ok_or_else(|| RuntimeError::Usage("no MIO binding to update".to_owned()))?,
+            _ => {
+                return Err(RuntimeError::Usage(
+                    "set --mio-url, --mio-experiment and --mio-genome together".to_owned(),
+                ));
+            }
+        };
+        if let Some(seconds) = self.mio_max_age_secs {
+            binding.max_age_ms = seconds
+                .checked_mul(1000)
+                .ok_or_else(|| RuntimeError::Usage("MIO max age is out of range".to_owned()))?;
+        }
+        binding.validate()?;
+        Ok(Some(binding))
     }
 
     /// Build the persona namespace from the flags, keeping whatever the file
@@ -330,7 +588,10 @@ impl Options {
                         model,
                         // Never forward an old endpoint's credential to a
                         // new destination just because --persona-url changed.
-                        auth_env: same_endpoint.and_then(|p| p.auth_env.clone()),
+                        auth_env: self
+                            .persona_auth_env
+                            .clone()
+                            .or_else(|| same_endpoint.and_then(|p| p.auth_env.clone())),
                         timeout_ms: existing.as_ref().map_or(60_000, |p| p.timeout_ms),
                         tls_root_ca_path: same_endpoint.and_then(|p| p.tls_root_ca_path.clone()),
                         system_instruction: existing
