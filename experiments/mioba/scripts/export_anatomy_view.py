@@ -23,8 +23,22 @@ import random
 from pathlib import Path
 
 from ..anatomy import schema as A
+from ..anatomy import morphology as M
 from ..graft.schema import GraftSpec
 from ..graft.build import compile_grafts
+
+#: fixed compartment palette order for the Observatory legend (§28)
+COMPARTMENTS = ["SOMA", "AXON", "DENDRITE", "PRIMARY_NEURITE", "UNKNOWN"]
+_SWC_COMP = {1: "SOMA", 7: "SOMA", 2: "AXON", 3: "DENDRITE",
+             4: "PRIMARY_NEURITE"}
+
+
+def _load_any(store):
+    """v2 stores get the richer loader; v1 keeps working unchanged."""
+    try:
+        return A.load_store_v2(store)
+    except Exception:
+        return A.load_store(store)
 
 
 def main() -> int:
@@ -35,9 +49,14 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=20260916)
     ap.add_argument("--host-sample", type=int, default=40000)
     ap.add_argument("--edge-cap", type=int, default=4000)
+    ap.add_argument("--skeleton-sample", type=int, default=120)
+    ap.add_argument("--swc-dir",
+                    default="data/cache/banc_888/split_swc")
     args = ap.parse_args()
 
-    manifest, neurons, _conn = A.load_store(args.store)
+    manifest, neurons, conn = _load_any(args.store)
+    idx_col = ("entity_idx" if "entity_idx" in neurons.columns
+               else "neuron_idx")
     spec = GraftSpec.g0_demo(seed=args.seed)
     phen = compile_grafts(spec, args.store)
 
@@ -71,7 +90,7 @@ def main() -> int:
     sub = neurons[has]
     if len(sub) > args.host_sample:
         sub = sub.sample(args.host_sample,
-                         random_state=args.seed).sort_values("neuron_idx")
+                         random_state=args.seed).sort_values(idx_col)
     xs = sub["soma_x"].astype(float).tolist()
     ys = sub["soma_y"].astype(float).tolist()
     xlo, xspan = min(xs), (max(xs) - min(xs)) or 1.0
@@ -113,11 +132,81 @@ def main() -> int:
                 out.append([a[0], a[1], b[0], b[1]])
         return out
 
+    # --- §28: skeletons for graft-linked entities + a small sample.
+    # Drawn at real EM coordinates (same nm space as the soma scatter —
+    # never schematic). Only entities with labelled split SWCs appear;
+    # absence is visible (no invented morphology).
+    def nxy(x, y):
+        return (round(0.02 + (float(x) - xlo) / xspan * 0.76, 4),
+                round(0.97 - (float(y) - ylo) / yspan * 0.94, 4))
+
+    graft_hosts = {i for att in phen["attachments"]
+                   for i in (att.get("source_idx")
+                             or att.get("target_idx") or [])}
+    rng = random.Random(args.seed)
+    sk_sample = set(graft_hosts)
+    pool = neurons[has][idx_col].tolist()
+    sk_sample |= set(rng.sample(pool, min(args.skeleton_sample,
+                                          len(pool))))
+    swc_dir = Path(args.swc_dir)
+    if "root_id" in neurons.columns:
+        e2r = {int(e): str(r) for e, r in
+               zip(neurons[idx_col], neurons["root_id"])}
+        M.fetch_split_swcs([e2r[e] for e in sk_sample if e in e2r],
+                           swc_dir)
+    else:
+        e2r = {}
+    comp_id = {c: i for i, c in enumerate(COMPARTMENTS)}
+    skeletons = []
+    max_segs = 400                 # per-entity cap (browser budget —
+                                   # thinning is declared, not hidden)
+    for ei in sorted(sk_sample):
+        rid = e2r.get(ei)
+        p = swc_dir / f"{rid}_split.swc" if rid else None
+        if not p or not p.is_file() or p.stat().st_size == 0:
+            continue
+        nd = M.parse_swc(p)
+        # keep every k-th node; connect consecutive kept nodes in file
+        # order (SWC files walk the tree, so this stays a real sub-path
+        # of the skeleton, not a schematic)
+        stride = max(1, len(nd) // max_segs)
+        keep = nd[::stride]
+        pos = {int(i): nxy(x, y)
+               for i, x, y in zip(keep[:, 0], keep[:, 2], keep[:, 3])}
+        segs, comps = [], []
+        prev = None
+        for i, t in zip(keep[:, 0], keep[:, 1]):
+            cur = pos[int(i)]
+            if prev is not None:
+                segs.append([*prev, *cur])
+                comps.append(comp_id[_SWC_COMP.get(int(t), "UNKNOWN")])
+            prev = cur
+        if segs:
+            skeletons.append({"e": int(ei), "s": segs, "c": comps,
+                              "stride": int(stride),
+                              "in_graft_link": ei in graft_hosts})
+
+    # --- native synapse layer (§28): aggregated pairs among the
+    # skeleton-displayed entities, capped — labelled "aggregated
+    # directed connection pairs", never "individual synapses".
+    sk_set = {s["e"] for s in skeletons}
+    nat = []
+    if {"pre_idx", "post_idx"} <= set(conn.columns):
+        nc = conn[conn["pre_idx"].isin(sk_set)
+                  & conn["post_idx"].isin(sk_set)]
+        if len(nc) > args.edge_cap:
+            nc = nc.sample(args.edge_cap, random_state=args.seed)
+        for _, r in nc.iterrows():
+            a, b2 = pt(int(r["pre_idx"])), pt(int(r["post_idx"]))
+            if a and b2:
+                nat.append([a[0], a[1], b2[0], b2[1]])
+
     doc = {
-        "kind": "anatomy_view_v0",
+        "kind": "anatomy_view_v1",
         "dataset": backend.dataset_identity(),
         "host": {"points": host_pts, "flow_classes": classes,
-                 "n_total": int(manifest["n_neurons"]),
+                 "n_total": int(manifest.get("n_neurons")
+                                or manifest.get("n_entities", 0)),
                  "n_with_coords": int(has.sum()),
                  "n_sampled": len(host_pts),
                  "coord_provenance": "EXACT_EM",
@@ -129,9 +218,21 @@ def main() -> int:
                    for o in phen["artificial_organs"]],
         "edges": {"host_to_graft": emit(edges_h2g),
                   "graft_to_host": emit(edges_g2h),
-                  "graft_internal": emit(edges_internal)},
+                  "graft_internal": emit(edges_internal),
+                  "native_pairs": nat},
+        "skeletons": {"entities": skeletons,
+                      "compartments": COMPARTMENTS,
+                      "coord_provenance": "RAW_EM_DERIVED",
+                      "thinning": "every k-th node kept (stride per "
+                                  "entity); a real sub-path of the "
+                                  "skeleton, not a schematic",
+                      "note": "labelled split SWCs only; entities "
+                              "without them show soma point only"},
         "links": phen.get("graft_resolution"),
-        "n_host_edges_total": int(manifest["n_connections"]),
+        "n_host_edges_total": int(
+            manifest.get("n_connections")
+            or (manifest.get("connectivity") or {}).get(
+                "aggregated_connection_pairs", 0)),
     }
     Path(args.out).write_text(json.dumps(doc, separators=(",", ":")))
     print(f"[anatomy-view] {len(host_pts)} host pts, "

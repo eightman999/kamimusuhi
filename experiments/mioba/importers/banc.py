@@ -183,13 +183,259 @@ def import_banc(cache_dir: str | Path | None = None,
     return out
 
 
+# ================================================================ A0.1 v2
+#: Entity classification (directive §2) — the union of meta + edgelist
+#: ids yields *anatomical entities*; which of them are biological
+#: neurons is a classification decision, not an assumption.
+_FRAGMENT_STATUS = ("UNROOTED", "TOO_SMALL", "TRACING_ISSUE")
+
+
+def _classify_entity(super_class, status, proofread, roughly_proofread,
+                     has_meta: bool) -> str:
+    if not has_meta:
+        return "UNKNOWN_SEGMENT"
+    sc = str(super_class or "")
+    st = str(status or "")
+    if sc == "trachea" or "TRACHEA" in st:
+        return "TRACHEA"
+    if sc == "glia" or "GLIA" in st:
+        return "GLIA"
+    if sc == "not_a_neuron" or "NOT_A_NEURON" in st:
+        return "OTHER_CELL"
+    if any(f in st for f in _FRAGMENT_STATUS):
+        return "ORPHAN_FRAGMENT"
+    if str(proofread).upper() == "TRUE":
+        return "BIOLOGICAL_NEURON"
+    if str(roughly_proofread).upper() == "TRUE" or sc:
+        return "ROUGH_NEURON"
+    return "UNKNOWN_SEGMENT"
+
+
+#: extra meta columns the v2 entity table carries (beyond _META_MAP)
+_META_MAP_V2_EXTRA = {
+    "cell_class": "cell_class",
+    "proofread": "proofread_flag",
+    "roughly_proofread": "roughly_proofread_flag",
+    "status": "status",
+}
+
+#: annotation columns compared when a root_id has several meta rows
+_AUDIT_COLS = ["neuropil", "flow_class", "super_class", "cell_type",
+               "cell_class", "side", "soma_x", "soma_y", "soma_z"]
+
+
+def _class_from_label(lbl: str) -> str:
+    return {"axon": "AXON", "dendrite": "DENDRITE",
+            "primary.dendrite": "DENDRITE",
+            "primary.neurite": "PRIMARY_NEURITE"}.get(str(lbl), "UNKNOWN")
+
+
+def _load_edgelist_split(cache: Path):
+    """v3 *split* edgelist: one row per (pre, post, compartment combo).
+    The aggregated runtime graph keeps the dominant compartment label
+    per side; the full rows land in the raw Layer-A table."""
+    import pyarrow.feather as feather
+    df = feather.read_table(
+        cache / "banc_888_edgelist_split_v3.feather").to_pandas()
+    return df[["pre", "post", "pre_label", "post_label", "count"]]
+
+
+def _audit_duplicates(meta: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
+    """A0.1 §4: duplicated root_ids are audited, not just first-won.
+    Every duplicate group's rows are written to duplicate_rows.jsonl and
+    the surviving canonical row is flagged annotation_conflict=True when
+    the duplicates disagree on any audited annotation."""
+    dup_ids = meta.loc[meta["root_id"].astype(str).duplicated(keep=False),
+                       "root_id"].astype(str).unique()
+    audit, conflict_of = [], {}
+    for rid in sorted(dup_ids):
+        rows = meta[meta["root_id"].astype(str) == rid]
+        diffs = {c: sorted({str(v) for v in rows[c]})
+                 for c in _AUDIT_COLS
+                 if rows[c].astype(str).nunique() > 1}
+        conflict_of[rid] = bool(diffs)
+        for _, r in rows.iterrows():
+            audit.append({"root_id": rid, "group_rows": len(rows),
+                          "conflicts": diffs,
+                          "row": {c: (None if pd.isna(r[c]) else
+                                      (float(r[c]) if c.startswith("soma_")
+                                       else str(r[c])))
+                                  for c in _AUDIT_COLS}})
+    with open(out_dir / "duplicate_rows.jsonl", "w") as fh:
+        for rec in audit:
+            fh.write(json.dumps(rec, default=str) + "\n")
+    return conflict_of
+
+
+def import_banc_v2(cache_dir: str | Path | None = None,
+                   out_dir: str | Path | None = None,
+                   weight_map: str = "count_scaled_v0") -> Path:
+    """A0.1 importer: entity taxonomy, split-edgelist compartments,
+    3-layer manifest, strict dataset identity (§5–§8)."""
+    t0 = time.time()
+    cache = Path(cache_dir or ds.default_cache_dir())
+    out = Path(out_dir or (Path(__file__).resolve().parents[1]
+                           / "datasets" / "banc_888" / "store_v2"))
+    out.mkdir(parents=True, exist_ok=True)
+
+    meta_raw = _load_meta(cache)
+    meta_extra_src = None
+    import pyarrow.feather as feather
+    raw_meta = feather.read_table(cache / "banc_888_meta.feather").to_pandas()
+    for src, dst in _META_MAP_V2_EXTRA.items():
+        meta_raw[dst] = (raw_meta[src] if src in raw_meta.columns
+                         else None)
+
+    # §4: audit duplicates before dedupe — keep-first for the canonical
+    # row, but flag conflicts and dump every duplicate row to jsonl
+    conflict_of = _audit_duplicates(meta_raw, out)
+    meta_raw["annotation_conflict"] = (
+        meta_raw["root_id"].astype(str).map(conflict_of).fillna(False))
+    n_dup_groups = len(conflict_of)
+    n_conflicts = sum(conflict_of.values())
+    if n_dup_groups:
+        meta_raw = (meta_raw.assign(_rid=meta_raw["root_id"].astype(str))
+                    .drop_duplicates("_rid", keep="first")
+                    .drop(columns="_rid"))
+
+    split = _load_edgelist_split(cache)
+    meta_ids = set(meta_raw["root_id"].astype(str))
+    edge_ids = set(split["pre"].astype(str)) | set(split["post"].astype(str))
+    ids = np.sort(np.array(list(meta_ids | edge_ids)))
+    idx_of = {rid: i for i, rid in enumerate(ids)}
+
+    ent = (meta_raw.set_index(meta_raw["root_id"].astype(str))
+           .reindex(ids).reset_index(drop=True))
+    ent["root_id"] = ids
+    ent["dataset_id"] = [host_id(ds.DATASET_PREFIX, r) for r in ids]
+    ent.insert(0, "entity_idx", np.arange(len(ent), dtype=np.int64))
+    has_meta = ent["root_id"].astype(str).isin(meta_ids)
+    # entity classification (§2) — no id is silently called a neuron
+    ent["entity_class"] = [
+        _classify_entity(sc, st, pf, rpf, hm)
+        for sc, st, pf, rpf, hm in zip(
+            ent["super_class"], ent["status"], ent["proofread_flag"],
+            ent["roughly_proofread_flag"], has_meta)]
+    # morphology slots (§12) — skeleton availability checked on disk;
+    # unlabeled pcg-skel skeletons still count as AVAILABLE geometry,
+    # compartment labels come from the split labels instead
+    skel_dir = cache / "skeletons" / "swcs-from-pcg-skel"
+    have_skel = (set(p.stem for p in skel_dir.glob("*.swc"))
+                 if skel_dir.is_dir() else set())
+    ent["morphology_status"] = np.where(
+        ent["root_id"].astype(str).isin(have_skel), "AVAILABLE", "UNKNOWN")
+    ent["morphology_ref"] = [
+        f"banc888://swcs-from-pcg-skel/{r}.swc" if r in have_skel else None
+        for r in ent["root_id"].astype(str)]
+    ent["morphology_version"] = np.where(
+        ent["morphology_status"] == "AVAILABLE",
+        "pcg-skel-2025-07", None)
+    ent["morphology_validation"] = None      # filled by ingest/validate step
+    ent["annotation_conflict"] = ent["annotation_conflict"].fillna(False)
+
+    # Layer C: aggregated runtime edges + dominant compartment per side
+    split["_pc"] = split["pre_label"].map(_class_from_label)
+    split["_qc"] = split["post_label"].map(_class_from_label)
+    grp = split.groupby(["pre", "post"], sort=False)
+    conn = grp["count"].sum().reset_index()
+    conn.columns = ["pre_root", "post_root", "n_syn"]
+    # dominant compartment = label of the pair's largest-count row
+    dom = (split.loc[grp["count"].idxmax(),
+                     ["pre", "post", "_pc", "_qc"]]
+           .rename(columns={"pre": "pre_root", "post": "post_root"}))
+    conn = conn.merge(dom, on=["pre_root", "post_root"], how="left")
+    conn["pre_idx"] = conn["pre_root"].map(idx_of).astype(np.int64)
+    conn["post_idx"] = conn["post_root"].map(idx_of).astype(np.int64)
+    conn = conn.rename(columns={"_pc": "pre_compartment",
+                                "_qc": "post_compartment"})
+    conn["anatomical_count"] = conn["n_syn"].astype(np.int64)
+    conn["weight"] = (conn["n_syn"].astype(np.float64) / 32.0
+                      ).astype(np.float32)
+    conn["weight_provenance"] = Provenance.MODEL_INFERENCE.value
+    conn = conn[["pre_idx", "post_idx", "anatomical_count", "weight",
+                 "weight_provenance", "pre_compartment",
+                 "post_compartment"]]
+
+    # Layer A: split detail (compartment-resolved connection records)
+    split_out = pd.DataFrame({
+        "pre_idx": split["pre"].map(idx_of).astype(np.int64),
+        "post_idx": split["post"].map(idx_of).astype(np.int64),
+        "pre_compartment": split["_pc"],
+        "post_compartment": split["_qc"],
+        "anatomical_count": split["count"].astype(np.int64),
+    })
+
+    src_hashes = {}
+    for name in list(ds.SOURCE_FILES) + [
+            "banc_888_edgelist_split_v3.feather", "neuron_skeletons.zip"]:
+        p = cache / name
+        if p.is_file():
+            src_hashes[name] = A.sha256_file(p)
+    manifest = A.manifest_template_v2()
+    manifest.update({
+        "dataset": {
+            "kind": ds.DATASET_KIND,
+            "materialization": ds.MATERIALIZATION,
+            "synapse_version": "edgelist_split_v3",
+            "morphology_version": "pcg-skel-2025-07",
+        },
+        "source": {"paper": ds.PAPER, "dataverse": ds.DATAVERSE_DOI,
+                   "base_url": ds.BASE_URL},
+        "source_files": src_hashes,
+        "entity_class_counts":
+            ent["entity_class"].value_counts().to_dict(),
+        "weight_mapping": {
+            "name": weight_map,
+            "rule": "weight = anatomical_count / 32.0",
+            "provenance": Provenance.MODEL_INFERENCE.value,
+            "note": "count→weight prior; NOT measured conductance",
+        },
+        "compartment_mapping": {
+            "rule": "dominant split-edgelist label per aggregated pair",
+            "provenance": Provenance.MODEL_INFERENCE.value,
+            "raw_labels": "CURATED_ANNOTATION (upstream axon/dendrite "
+                          "split)",
+        },
+        "importer": "experiments.mioba.importers.banc v2 (A0.1)",
+        "deduplicated_root_ids": {
+            "groups": n_dup_groups,
+            "conflicting_groups": int(n_conflicts),
+            "audit_file": "duplicate_rows.jsonl",
+            "rule": "keep-first for the canonical row; conflict flagged",
+        },
+        "notes": [
+            "entities = meta ∪ split-edgelist ids — an anatomical-entity "
+            "count, not a neuron count; entity_class decides",
+            "gap junctions: no whole-CNS dataset — status UNKNOWN",
+            "nt_top/nt_confidence come from BANC's NT classifier — "
+            "MODEL_INFERENCE, never a direct measurement",
+            "per-synapse positions not ingested (v3 enriched parquet "
+            "held upstream); compartment detail is at connection "
+            "granularity via the split edgelist",
+        ],
+    })
+    A.write_store_v2(out, ent, conn, manifest, split_df=split_out)
+    # v2 fidelity manifest (§31)
+    from ..anatomy import fidelity as _fid
+    _fid.write_fidelity_v2(out, ent, conn, split_out, manifest)
+    print(f"[banc-import-v2] {len(ent)} entities "
+          f"({manifest['entity_class_counts']}) / {len(conn)} runtime "
+          f"edges -> {out} ({time.time()-t0:.0f}s)")
+    return out
+
+
 def main() -> int:
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default=None)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--v2", action="store_true",
+                    help="emit the A0.1 canonical-anatomy-v2 store")
     args = ap.parse_args()
-    import_banc(args.cache, args.out)
+    if args.v2:
+        import_banc_v2(args.cache, args.out)
+    else:
+        import_banc(args.cache, args.out)
     return 0
 
 

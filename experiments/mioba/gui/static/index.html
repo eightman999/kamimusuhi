@@ -808,6 +808,10 @@ function ablationPanelHtml(genomeId) {
 // when scripts/export_anatomy_view.py has produced /static/anatomy.json.
 const ANATOMY_CLASS_COLOR = ['#5aa9ff','#8a94a6','#3fb96b','#c9d1d9',
                              '#b083f0','#ff9f43','#e6e6e6','#ff5c5c'];
+// §28 compartment palette — order matches the exporter's
+// COMPARTMENTS list (SOMA/AXON/DENDRITE/PRIMARY_NEURITE/UNKNOWN)
+const COMPARTMENT_COLOR = ['#e6e6e6','#e05c5c','#3fb96b','#5aa9ff',
+                           '#8a94a6'];
 async function anatomy() {
   let d = null;
   try {
@@ -821,28 +825,39 @@ async function anatomy() {
       canonical anatomy store to produce this view.</p></div>`;
     return;
   }
-  const h = d.host || {}, g = d.edges || {};
-  const nE = Object.values(g).reduce((s, l) => s + (l ? l.length : 0), 0);
+  const h = d.host || {}, g = d.edges || {}, sk = d.skeletons || {};
+  const nE = Object.entries(g).filter(([k]) => k !== 'native_pairs')
+    .reduce((s, [, l]) => s + (l ? l.length : 0), 0);
+  const nSk = (sk.entities || []).length;
   $('#main').innerHTML = `
     <div class="panel"><h2>${esc(d.dataset?.dataset_id || 'anatomy')}
         ${kind('RECORDED')}</h2>
       <div class="muted" style="font-size:11px">
-        host ${h.n_total} neurons (${h.n_sampled} shown,
+        host ${h.n_total} canonical entities (${h.n_sampled} shown,
         coords ${h.n_with_coords}, ${esc(h.coord_provenance || '?')},
-        ${esc(h.coord_units || '')}) · graft edges drawn: ${nE}
+        ${esc(h.coord_units || '')}) · skeletons ${nSk}
+        (${esc(sk.coord_provenance || 'n/a')}) · graft edges ${nE} ·
+        native pairs ${(g.native_pairs || []).length}
       </div>
       <canvas id="anat_canvas" style="width:100%;height:560px"></canvas>
       <div class="legend">
         ${(h.flow_classes || []).map((c, i) =>
           `<span><i style="background:${ANATOMY_CLASS_COLOR[i % ANATOMY_CLASS_COLOR.length]}"></i>${esc(c)}</span>`).join('')}
+        ${(sk.compartments || []).map((c, i) =>
+          `<span><i style="background:${COMPARTMENT_COLOR[i % COMPARTMENT_COLOR.length]}"></i>${esc(c)}</span>`).join('')}
         <span><i style="background:#ff9f43"></i>graft (MODEL_INFERENCE)</span>
         <span><i style="background:#3fb96b"></i>host→graft</span>
         <span><i style="background:#e05c5c"></i>graft→host</span>
+        <span><i style="background:#4a5568"></i>native pairs (aggregated)</span>
       </div>
       <div class="muted" style="font-size:11px;margin-top:6px">
-        Host points = real EM soma coordinates (x/y projection, nm).
-        Graft cells are artificial — own namespace, inset layout only;
-        wiring shown is the realised W_extra edge set.</div>
+        Host points &amp; skeletons = real EM coordinates (x/y
+        projection, nm). Skeletons shown only where labelled split SWCs
+        exist — absent morphology is visible as soma-only, never
+        invented. Graft cells are artificial (own namespace, inset
+        layout); graft wiring is the realised W_extra edge set
+        (ARTIFICIAL_GRAFT). Native pairs are aggregated directed
+        connection pairs, not individual synapses.</div>
     </div>`;
   const cv = document.getElementById('anat_canvas');
   const dpr = window.devicePixelRatio || 1;
@@ -850,6 +865,26 @@ async function anatomy() {
   cv.width = W * dpr; cv.height = H * dpr;
   const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
   ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, W, H);
+  // native aggregated-pair layer (drawn first, dimmest)
+  ctx.strokeStyle = '#4a5568'; ctx.globalAlpha = 0.25; ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  (g.native_pairs || []).forEach(([x1, y1, x2, y2]) => {
+    ctx.moveTo(x1 * W, y1 * H); ctx.lineTo(x2 * W, y2 * H);
+  });
+  ctx.stroke(); ctx.globalAlpha = 1;
+  // skeletons at real coordinates, segment colour = compartment (§28)
+  (sk.entities || []).forEach(ent => {
+    ctx.lineWidth = ent.in_graft_link ? 1.4 : 0.8;
+    (ent.s || []).forEach(([x1, y1, x2, y2], i) => {
+      ctx.strokeStyle = COMPARTMENT_COLOR[(ent.c[i] || 0) %
+        COMPARTMENT_COLOR.length];
+      ctx.globalAlpha = ent.in_graft_link ? 0.9 : 0.55;
+      ctx.beginPath();
+      ctx.moveTo(x1 * W, y1 * H); ctx.lineTo(x2 * W, y2 * H);
+      ctx.stroke();
+    });
+  });
+  ctx.globalAlpha = 1;
   // host scatter at real coordinates
   (h.points || []).forEach(([x, y, c]) => {
     ctx.fillStyle = ANATOMY_CLASS_COLOR[(c || 0) % ANATOMY_CLASS_COLOR.length];

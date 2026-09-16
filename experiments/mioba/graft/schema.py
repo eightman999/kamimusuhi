@@ -35,16 +35,20 @@ class GraftNeuronModel:
 
 @dataclass
 class HostSelector:
-    """An anatomically meaningful port (AFC §11).
+    """An anatomically meaningful port (AFC §11, G0.1 §21).
 
-    Exactly one selector field should be set. Resolution happens against
-    the canonical store — never against dataset-specific code.
+    Exactly one identity selector should be set; ``compartment_type``
+    may refine any of them (entities must provably carry that
+    compartment on the relevant side of their connections — resolved
+    from the split labels, never assumed).
     """
     neuropil: str | None = None        # e.g. "central_brain"
     cell_type: str | None = None       # e.g. "DNp32"
     flow_class: str | None = None      # afferent | intrinsic | efferent
     super_class: str | None = None     # e.g. "descending", "sensory"
     dataset_ids: list[str] | None = None  # explicit banc:<id> list
+    compartment_type: str | None = None   # SOMA|DENDRITE|AXON|PRIMARY_NEURITE
+    morphology_region: str | None = None  # reserved (§21)
     max_targets: int = 64              # cap on resolved host cells
     seed: int = 0                      # deterministic subsample seed
 
@@ -62,7 +66,9 @@ class GraftLink:
     graft_fraction: float = 1.0        # share of graft neurons reached
     p: float = 0.5                     # host↔graft edge probability
     weight: float = 1.0                # synaptic weight scale
-    provenance: str = Provenance.MODEL_INFERENCE.value
+    targeting_mode: str = "random_valid_compartment"  # §22
+    strict: bool = True                # §23 strict vs permissive
+    provenance: str = Provenance.ARTIFICIAL_GRAFT.value
 
 
 @dataclass
@@ -132,6 +138,32 @@ class GraftSpec:
                           graft_fraction=1.0, weight=weight_in),
                 GraftLink(link_id=f"{graft_id}:out0", direction="out",
                           host=HostSelector(super_class=out_super_class,
+                                            max_targets=64,
+                                            seed=seed + 1),
+                          graft_fraction=1.0, weight=weight_out),
+            ])])
+
+    @classmethod
+    def g01_demo(cls, graft_id: str = "g001", n_neurons: int = 10,
+                 weight_in: float = 15.0, weight_out: float = 20.0,
+                 seed: int = 0) -> "GraftSpec":
+        """G0.1 compartment-aware graft (§20–§22): same 10-neuron lobe
+        as G0 but each link names the host compartment it connects to —
+        afferent AXON terminals on the way in, host DENDRITE on the way
+        out. Entity selection and per-edge compartment records come from
+        the store's split labels, never assumptions."""
+        return cls(grafts=[Graft(
+            graft_id=graft_id, n_neurons=n_neurons,
+            internal_topology="recurrent", internal_p=0.15,
+            links=[
+                GraftLink(link_id=f"{graft_id}:in0", direction="in",
+                          host=HostSelector(flow_class="afferent",
+                                            compartment_type="AXON",
+                                            max_targets=64, seed=seed),
+                          graft_fraction=1.0, weight=weight_in),
+                GraftLink(link_id=f"{graft_id}:out0", direction="out",
+                          host=HostSelector(super_class="descending",
+                                            compartment_type="DENDRITE",
                                             max_targets=64,
                                             seed=seed + 1),
                           graft_fraction=1.0, weight=weight_out),

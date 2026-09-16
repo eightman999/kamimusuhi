@@ -284,13 +284,18 @@ class TorchBackend(FbaBackend):
                  topology_cache: bool = True,
                  propagation_backend: str = PROPAGATION_EVENT_CSC,
                  dense_above: float = 0.05,
-                 anatomy_dir: str | None = None):
+                 anatomy_dir: str | None = None,
+                 base_override: tuple | None = None,
+                 voltage_coupling: tuple | None = None):
         if torch is None:
             raise BackendUnavailable("torch not installed")
         # AFC A1: a canonical anatomy store takes precedence over both
         # the FlyWire-parquet path and the synthetic fallback. The
         # backend only understands the canonical format — dataset
         # specifics live entirely in the importer.
+        # A2: ``base_override`` injects a prebuilt (n, post, pre, w)
+        # graph — used by the compartment-reduction path where runtime
+        # nodes are (entity, compartment) pairs, not entities.
         self.anatomy_dir = (anatomy_dir
                             or os.environ.get("MIOBA_ANATOMY_DIR"))
         self.data_dir = data_dir or os.environ.get("MIOBA_FLY_BRAIN_DATA")
@@ -339,6 +344,13 @@ class TorchBackend(FbaBackend):
         self._manifest_hash: str | None = None
         self._anatomy_manifest: dict | None = None
         self._force: torch.Tensor | None = None
+        # (n, post, pre, w) — bypasses every loader when set (A2 reduced
+        # compartment graphs, tests). Values are final edge weights.
+        self.base_override = base_override
+        # (row, col, val) — passive voltage diffusion between
+        # compartment nodes of one entity (A2). Applied each step as
+        # dv_i += dt/tauCoup * Σ_j Vcoup[i,j] v_j. None → point mode.
+        self.voltage_coupling = voltage_coupling
 
     # ------------------------------------------------------------ identity
     def semantics(self) -> dict:
@@ -405,6 +417,9 @@ class TorchBackend(FbaBackend):
         with timer.phase("mutation_resolve"):
             self.params = dict(PARAMS)
             self.params.update(self.phenotype.get("params") or {})
+            # A2: compartment diffusion time constant (MODEL_INFERENCE;
+            # only used when a voltage_coupling matrix was supplied)
+            self.params.setdefault("tauCoup", 5.0)
 
         self._load_base(timer)
 
@@ -443,6 +458,15 @@ class TorchBackend(FbaBackend):
             # point, and Python's round() is banker's rounding)
             self.steps_delay = max(1, int(math.floor(
                 self.params["tDelay"] / self.params["dt"] + 0.5 + 1e-9)))
+            if self.voltage_coupling is not None:
+                r, c, val = self.voltage_coupling
+                self._vcoup = torch.sparse_coo_tensor(
+                    torch.stack([torch.as_tensor(r, dtype=torch.int64),
+                                 torch.as_tensor(c, dtype=torch.int64)]),
+                    torch.as_tensor(val, dtype=torch.float32),
+                    (self.n, self.n)).coalesce().to(self.device)
+            else:
+                self._vcoup = None
             self.reset()
 
     # ------------------------------------------------------------ base graph
@@ -454,6 +478,24 @@ class TorchBackend(FbaBackend):
         multiply, not a 14M-edge rebuild.
         """
         cache_dir = (self.runs_dir / "cache") if self.runs_dir else None
+        if self.base_override is not None:
+            # A2: caller-built graph (e.g. compartment-expanded circuit)
+            n_base, post, pre, w = self.base_override
+            W = EventGraph.from_coo(
+                torch.as_tensor(post, dtype=torch.int64),
+                torch.as_tensor(pre, dtype=torch.int64),
+                torch.as_tensor(w, dtype=torch.float32),
+                int(n_base), int(n_base))
+            self.W_base, self.n_base = W.to(self.device), int(n_base)
+            self.nnz_base = self.W_base.nnz
+            # override weights are final values — the caller has already
+            # folded any scaling into them (anatomy-style semantics)
+            self._base_scale_is_wscale = False
+            self._base_scale = 1.0
+            self._manifest_hash = None
+            self.base_topology_key = f"override:{W.nnz}:{n_base}"
+            self.region_mode = self._region_mode_arg
+            return
         if self.anatomy_dir:
             # canonical anatomy store: region_mode stays whatever the
             # config asked for — anatomical ports are resolved through
@@ -747,6 +789,11 @@ class TorchBackend(FbaBackend):
         active = (self.refrac >= p["tRefrac"]).float()
         self.g = self.g * (1 - dt / p["tauSyn"]) + delayed * active
         self.v = self.v + (dt / p["tauMem"]) * (self.g - (self.v - p["vRest"]))
+        if self._vcoup is not None:
+            # passive diffusion between an entity's compartment nodes
+            # (A2): dv_i = dt/tauCoup * Σ_j c_ij (v_j − v_i)
+            self.v = self.v + (dt / p["tauCoup"]) * torch.sparse.mm(
+                self._vcoup, self.v.T).T
         if self._drive_idx is not None:
             u = torch.stack([torch.rand((self._drive_idx.numel(),), device=d,
                                         generator=g) for g in self._gens])

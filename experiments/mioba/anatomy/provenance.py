@@ -18,11 +18,25 @@ from enum import Enum
 
 
 class Provenance(str, Enum):
-    """Where a value came from, ordered loosely by evidentiary strength."""
+    """Where a value came from, ordered loosely by evidentiary strength.
+
+    A0.1 (§9/§10) splits the original coarse tags: ``EXACT_EM`` remains
+    as the backward-compatible alias for RAW_EM_DERIVED so v1 stores and
+    manifests still parse, but new fields should use the finer tags.
+    """
 
     #: Counted/measured directly in the EM reconstruction (synapse
     #: counts, soma coordinates, skeleton geometry).
     EXACT_EM = "EXACT_EM"
+    #: Derived from raw EM data without human curation on this entity
+    #: (skeleton node coordinates, synapse positions).
+    RAW_EM_DERIVED = "RAW_EM_DERIVED"
+    #: Segmentation/proofreading system output — real but machine-
+    #: produced identity (root_id, segment assignment).
+    PROOFREAD_SEGMENTATION = "PROOFREAD_SEGMENTATION"
+    #: Human/curator annotation on top of segmentation (cell_type,
+    #: flow_class, neuropil membership).
+    CURATED_ANNOTATION = "CURATED_ANNOTATION"
     #: Physiology measured on this very cell or recording site.
     DIRECT_MEASUREMENT = "DIRECT_MEASUREMENT"
     #: Physiology measured on the cell's type/class in this dataset
@@ -33,8 +47,12 @@ class Provenance(str, Enum):
     #: Prior from published literature (not this dataset).
     LITERATURE_PRIOR = "LITERATURE_PRIOR"
     #: Produced by an explicit, versioned model/mapping (e.g.
-    #: synapse-count → conductance prior, NT classifiers).
+    #: synapse-count → conductance prior, NT classifiers,
+    #: axon/dendrite splits, synapse→compartment nearest-node maps).
     MODEL_INFERENCE = "MODEL_INFERENCE"
+    #: Artificial structure introduced by this project — graft cells,
+    #: host↔graft synthetic synapses. Never mixed with host data (§25).
+    ARTIFICIAL_GRAFT = "ARTIFICIAL_GRAFT"
     #: Filled by an imputation rule that is on record.
     IMPUTED = "IMPUTED"
     #: Genuinely absent — the dataset does not carry this value.
@@ -43,11 +61,15 @@ class Provenance(str, Enum):
 
 _ORDER = [
     Provenance.DIRECT_MEASUREMENT,
+    Provenance.RAW_EM_DERIVED,
     Provenance.EXACT_EM,
+    Provenance.PROOFREAD_SEGMENTATION,
+    Provenance.CURATED_ANNOTATION,
     Provenance.CELL_TYPE_MEASUREMENT,
     Provenance.TRANSCRIPTOMIC_INFERENCE,
     Provenance.LITERATURE_PRIOR,
     Provenance.MODEL_INFERENCE,
+    Provenance.ARTIFICIAL_GRAFT,
     Provenance.IMPUTED,
     Provenance.UNKNOWN,
 ]
