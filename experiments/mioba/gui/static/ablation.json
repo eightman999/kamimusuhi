@@ -1,0 +1,156 @@
+{
+ "kind": "M1.5 organ ablation (DERIVED)",
+ "source_experiment": "M1-20260915-152426-54b69e",
+ "source_generation": 20,
+ "replicates": 64,
+ "evaluation_seed": 20260916,
+ "target_rate_hz": 5.0,
+ "full_fitness_mean": -4.42190963961184,
+ "genomes": {
+  "b2b:81cb36f08405b7316af32f854d81fe067f316f41c90e054222b5e418e0b93420": {
+   "full_fitness_mean": -4.42190963961184,
+   "conditions": {
+    "disable_organ:org_449d1944": {
+     "delta": -0.00011202972382307053,
+     "median": -0.00011354684829711914,
+     "ci95": [
+      -0.00011291913688182831,
+      -0.00011102389544248581
+     ],
+     "consistency": 1.0,
+     "classification": "neutral",
+     "selection_score_delta": null,
+     "n_pairs": 64,
+     "activity_hz": 0.0
+    },
+    "disable_organ:org_4bbef877": {
+     "delta": -0.00027807988226413727,
+     "median": -0.00028184056282043457,
+     "ci95": [
+      -0.00028029177337884903,
+      -0.00027558300644159317
+     ],
+     "consistency": 1.0,
+     "classification": "neutral",
+     "selection_score_delta": null,
+     "n_pairs": 64,
+     "activity_hz": 0.0
+    },
+    "disable_organ:org_d69324b5": {
+     "delta": -0.00021580234169960022,
+     "median": -0.0002187192440032959,
+     "ci95": [
+      -0.00021751411259174347,
+      -0.00021386705338954926
+     ],
+     "consistency": 1.0,
+     "classification": "neutral",
+     "selection_score_delta": null,
+     "n_pairs": 64,
+     "activity_hz": 0.0
+    },
+    "disable_organ:org_7ca6cafa": {
+     "delta": -0.0002240985631942749,
+     "median": -0.00022715330123901367,
+     "ci95": [
+      -0.00022587645798921585,
+      -0.00022208690643310547
+     ],
+     "consistency": 1.0,
+     "classification": "neutral",
+     "selection_score_delta": null,
+     "n_pairs": 64,
+     "activity_hz": 0.0
+    },
+    "disable_organ:org_ec516c2c": {
+     "delta": -0.00013278331607580185,
+     "median": -0.00013458728790283203,
+     "ci95": [
+      -0.0001338394358754158,
+      -0.00013159122318029404
+     ],
+     "consistency": 1.0,
+     "classification": "neutral",
+     "selection_score_delta": null,
+     "n_pairs": 64,
+     "activity_hz": 0.0
+    },
+    "disable_organ:org_2c315a4b": {
+     "delta": -0.00024070963263511658,
+     "median": -0.00024396181106567383,
+     "ci95": [
+      -0.00024262815713882446,
+      -0.00023854803293943405
+     ],
+     "consistency": 1.0,
+     "classification": "neutral",
+     "selection_score_delta": null,
+     "n_pairs": 64,
+     "activity_hz": 0.0
+    },
+    "disable_organ:org_06ca9544": {
+     "delta": -0.00016183499246835709,
+     "median": -0.000164031982421875,
+     "ci95": [
+      -0.00016312021762132645,
+      -0.00016038119792938232
+     ],
+     "consistency": 1.0,
+     "classification": "neutral",
+     "selection_score_delta": null,
+     "n_pairs": 64,
+     "activity_hz": 0.0
+    },
+    "disable_organ:org_84781a00": {
+     "delta": -9.5427967607975e-05,
+     "median": -9.673833847045898e-05,
+     "ci95": [
+      -9.618420153856277e-05,
+      -9.457115083932877e-05
+     ],
+     "consistency": 1.0,
+     "classification": "neutral",
+     "selection_score_delta": null,
+     "n_pairs": 64,
+     "activity_hz": 0.0
+    },
+    "all_organs_disabled": {
+     "delta": -0.001463940367102623,
+     "median": -0.0014838576316833496,
+     "ci95": [
+      -0.0014755846932530403,
+      -0.001450798474252224
+     ],
+     "consistency": 1.0,
+     "classification": "neutral",
+     "selection_score_delta": null,
+     "n_pairs": 64
+    },
+    "attachments_disabled": {
+     "delta": 0.0,
+     "median": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ],
+     "consistency": 0.0,
+     "classification": "neutral",
+     "selection_score_delta": null,
+     "n_pairs": 64
+    },
+    "all_artificial_disabled": {
+     "delta": -0.001463940367102623,
+     "median": -0.0014838576316833496,
+     "ci95": [
+      -0.0014755846932530403,
+      -0.001450798474252224
+     ],
+     "consistency": 1.0,
+     "classification": "neutral",
+     "selection_score_delta": null,
+     "n_pairs": 64
+    }
+   }
+  }
+ }
+}

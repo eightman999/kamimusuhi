@@ -279,6 +279,12 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
     env_enabled = environment_enabled(config)
     target_rate = float((config.get("evaluation") or {})
                         .get("target_rate_hz", 5.0))
+    # M1.5 §8 deterministic runaway guard: limits live on the backend's
+    # job-spanning activity counters, so a trip fires at the same step no
+    # matter which machine or chunk width ran the evaluation
+    guard_cfg = ((config.get("evaluation") or {}).get("guard") or {})
+    if guard_cfg and hasattr(backend, "set_run_limits"):
+        backend.set_run_limits(guard_cfg)
     episodes: list[dict] = []
     lane_reports: dict[int, dict] = {}
     for lanes in chunks:
@@ -392,6 +398,9 @@ def evaluate_replicates(backend, phenotype: dict, job: dict, device: str,
         # population firing rate the region views read.
         "propagation_activity": state.get("activity"),
         "resource": state.get("resource"),
+        # M1.5 §8: deterministic runaway termination (None when untripped
+        # or unconfigured) — recorded, never a silent truncation
+        "guard": state.get("guard"),
         "semantics": (state.get("semantics")
                       or (backend.semantics()
                           if hasattr(backend, "semantics")

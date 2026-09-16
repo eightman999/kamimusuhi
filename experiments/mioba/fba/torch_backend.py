@@ -236,6 +236,12 @@ class TorchBackend(FbaBackend):
         self._act_steps = self._act_lane_steps = 0
         self._act_events = self._act_edges = self._act_edges_extra = 0
         self._act_wall = 0.0
+        # M1.5 §8 runaway guard: deterministic limits checked against the
+        # job-spanning counters above. A tripped guard stops stepping for
+        # the rest of the evaluation and is reported, never silent.
+        self._run_limits: dict = {}
+        self._guard: dict | None = None
+        self._guard_wall_start: float | None = None
         # explicit edge count (FlyWire-scale smoke: 139k neurons / ~14M
         # edges) wins over the pair probability
         self.synthetic_edges = int(synthetic_edges) if synthetic_edges else None
@@ -637,16 +643,77 @@ class TorchBackend(FbaBackend):
     def step(self, n_steps: int = 1) -> None:
         with torch.no_grad():
             for _ in range(int(n_steps)):
+                if self._guard is not None:
+                    break
                 self._one_step()
+                if self._run_limits:
+                    self._check_run_limits()
+
+    # ------------------------------------------------------------ run guard
+    def set_run_limits(self, limits: dict | None) -> None:
+        """Deterministic runaway guard (M1.5 §8).
+
+        ``max_propagated_edge_events`` (the preferred limit), and
+        ``max_spike_events`` are pure functions of the simulation — the
+        same genome under the same seeds trips at the same step on any
+        machine. ``max_wall_seconds`` is an operational backstop only:
+        wall time depends on the host, so it is reported as
+        ``deterministic: false`` and must never be the sole scientific
+        criterion. All limits default to unset — an empty config behaves
+        exactly like M1.
+        """
+        self._run_limits = dict(limits or {})
+        self._guard = None
+        self._guard_wall_start = None
+
+    def _check_run_limits(self) -> None:
+        lim = self._run_limits
+        reason = None
+        edge_lim = int(lim.get("max_propagated_edge_events") or 0)
+        if edge_lim and self._act_edges >= edge_lim:
+            reason = "max_propagated_edge_events"
+        spike_lim = int(lim.get("max_spike_events") or 0)
+        if reason is None and spike_lim and self._act_events >= spike_lim:
+            reason = "max_spike_events"
+        rate_lim = float(lim.get("max_mean_rate_hz") or 0.0)
+        if reason is None and rate_lim and self.t_ms > 0:
+            rate = float(self.spike_counts.float().mean().item()) \
+                / (self.t_ms / 1000.0)
+            if rate >= rate_lim:
+                reason = "max_mean_rate_hz"
+        wall_lim = float(lim.get("max_wall_seconds") or 0.0)
+        if reason is None and wall_lim \
+                and self._guard_wall_start is not None \
+                and time.perf_counter() - self._guard_wall_start >= wall_lim:
+            reason = "max_wall_seconds"
+        if reason is not None:
+            self._guard = {
+                "tripped": True,
+                "reason": reason,
+                "at_t_ms": self.t_ms,
+                "propagated_edge_events": int(self._act_edges),
+                "spike_events": int(self._act_events),
+                # deterministic = the trip depends only on the simulated
+                # event stream, not on the host that happened to run it
+                "deterministic": reason != "max_wall_seconds",
+            }
 
     def run(self, duration_ms: float) -> dict:
         n = max(1, int(round(duration_ms / self.params["dt"])))
         t0 = time.perf_counter()
-        self.step(n)
+        t_ms_before = self.t_ms
+        if self._guard is None:
+            if self._guard_wall_start is None \
+                    and (self._run_limits or {}).get("max_wall_seconds"):
+                self._guard_wall_start = t0
+            self.step(n)
         wall = time.perf_counter() - t0
-        return {"simulated_ms": float(n * self.params["dt"]),
-                "wall_s": wall,
-                "spikes_total": int(self.spike_counts.sum().item())}
+        out = {"simulated_ms": float(self.t_ms - t_ms_before),
+               "wall_s": wall,
+               "spikes_total": int(self.spike_counts.sum().item())}
+        if self._guard is not None:
+            out["guard"] = dict(self._guard)
+        return out
 
     # ------------------------------------------------------------ report
     def _rates_hz(self):
@@ -704,6 +771,7 @@ class TorchBackend(FbaBackend):
             "semantics": self.semantics(),
             "activity": self.activity_stats(),
             "resource": self.marginal_resource_cost(),
+            "guard": self._guard,
         }
 
     # ------------------------------------------------------------ activity

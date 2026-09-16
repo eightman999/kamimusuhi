@@ -141,7 +141,8 @@ const I18N = {
          attachments:'接続', attachment:'接続ID', source:'接続元', target:'接続先', direction:'方向', forward:'順方向', bidirectional:'双方向', weight:'重み倍率', noAtt:'なし',
          mutations:'パラメータ変異', mutation:'変異ID', path:'パス', op:'操作', value:'値', scope:'範囲', noMut:'パラメータ変異なし', devRules:'発達ルール', plastRules:'可塑性ルール',
          evals:'評価履歴', evaluation:'評価ID', worker:'ワーカー', backend:'バックエンド', replicates:'反復数 (完了/要求)', batch:'実行バッチ', fitness:'適応度（暫定）', rate:'平均発火率 Hz',
-         active:'活動率', sim:'シミュレーション時間', wall:'実時間', finished:'完了時刻', trace:'記録', full:'完全', summary:'要約' },
+         active:'活動率', sim:'シミュレーション時間', wall:'実時間', finished:'完了時刻', trace:'記録', full:'完全', summary:'要約',
+         ablation:'器官アブレーション (M1.5)', deltaFitness:'Δ適応度', ci95:'95% CI', classification:'分類', activityHz:'活動 Hz', consistency:'一貫性', ablSystem:'系統全体', ablationNote:'paired反復・同一seed。Δ>0 = 除去で適応度低下 = 機能あり。出典: ablation.json (DERIVED)' },
     t: { window:'表示範囲', src:'telemetry_samples + worker_heartbeats；破線 = イベント', experiment:'実験', temp:'GPU温度 ℃（ワーカーハートビート）', util:'GPU使用率 %', vram:'VRAM使用量 MB',
          stream:'信号・イベントストリーム', time:'時刻', kind:'種別', signal:'種別 / 信号', source:'発生源', value:'値', event:'イベント', sensor:'センサー', nodata:'データなし', min:'分' },
     sig: { cpu_percent:'CPU使用率 %', ram_percent:'RAM使用率 %', latency_ms:'ネットワーク遅延 ms', temperature_c:'GPU温度 ℃', utilization_pct:'GPU使用率 %', vram_used_fraction:'VRAM使用率', collector_error:'収集エラー' },
@@ -195,7 +196,8 @@ const I18N = {
          attachments:'Attachments', attachment:'Attachment', source:'Source', target:'Target', direction:'Direction', forward:'Forward', bidirectional:'Bidirectional', weight:'Weight Scale', noAtt:'none',
          mutations:'Parameter Mutations', mutation:'Mutation', path:'Path', op:'Op', value:'Value', scope:'Scope', noMut:'no parameter mutations', devRules:'Development rules', plastRules:'Plasticity rules',
          evals:'Evaluation history', evaluation:'Evaluation', worker:'Worker', backend:'Backend', replicates:'Replicates (done/requested)', batch:'Execution batch', fitness:'Fitness (placeholder)', rate:'Mean rate Hz',
-         active:'Active', sim:'Sim time', wall:'Wall time', finished:'Finished', trace:'Trace', full:'full', summary:'summary' },
+         active:'Active', sim:'Sim time', wall:'Wall time', finished:'Finished', trace:'Trace', full:'full', summary:'summary',
+         ablation:'Organ ablation (M1.5)', deltaFitness:'Δfitness', ci95:'95% CI', classification:'Class', activityHz:'Activity Hz', consistency:'Consistency', ablSystem:'whole system', ablationNote:'paired replicates, same seeds. Δ>0 = removal hurt = functional. Source: ablation.json (DERIVED)' },
     t: { window:'Window', src:'telemetry_samples + worker_heartbeats; dashed marks = events', experiment:'Experiment', temp:'GPU Temperature °C (worker heartbeats)', util:'GPU Utilization %', vram:'VRAM Used MB',
          stream:'Sensory / event stream', time:'Timestamp', kind:'Kind', signal:'Type / Signal', source:'Source', value:'Value', event:'event', sensor:'sensor', nodata:'No data', min:'min' },
     e: { type:'Type', all:'all', count:'events', n:'#', time:'Time', message:'Message', severity:'Severity', source:'Source', payload:'Payload' },
@@ -768,6 +770,39 @@ function panel_genome_matches(g) {
   const p = document.querySelector('#neural-activity');
   return p && p.dataset.genomeId === g.genome_id;
 }
+// M1.5 §16: optional organ-ablation table, populated only when a derived
+// ablation export exists at /static/ablation.json. Absence is normal —
+// ablation is an offline analysis, not part of the live experiment.
+let _ablation = null, _ablationTried = false;
+async function loadAblation() {
+  if (_ablationTried) return _ablation;
+  _ablationTried = true;
+  try {
+    const r = await fetch('/static/ablation.json', {cache:'no-store'});
+    _ablation = r.ok ? await r.json() : null;
+  } catch (e) { _ablation = null; }
+  return _ablation;
+}
+const ABL_CLASS_COLOR = { functional:'#3fb96b', weak_or_ambiguous:'#ff9f43',
+                          neutral:'#8a94a6', harmful:'#ff5c5c' };
+function ablationPanelHtml(genomeId) {
+  const g = _ablation && _ablation.genomes && _ablation.genomes[genomeId];
+  if (!g) return '';
+  const conds = g.conditions || {};
+  const organs = Object.keys(conds).filter(k => k.startsWith('disable_organ:'));
+  const system = Object.keys(conds).filter(k => !k.startsWith('disable_organ:'));
+  const row = (label, c) => `<tr><td class="mono">${esc(label)}</td>` +
+    `<td>${c.activity_hz == null ? '—' : num(c.activity_hz,2)}</td>` +
+    `<td class="mono">${c.delta == null ? '—' : (c.delta>=0?'+':'')+num(c.delta,4)}</td>` +
+    `<td class="mono">${c.ci95 ? `[${num(c.ci95[0],4)}, ${num(c.ci95[1],4)}]` : '—'}</td>` +
+    `<td>${c.consistency == null ? '—' : fmtPct(100*c.consistency)}</td>` +
+    `<td><span class="hl" style="background:${ABL_CLASS_COLOR[c.classification]||'#8a94a6'}">${esc(c.classification||'?')}</span></td></tr>`;
+  return `<div class="panel" style="margin-top:12px"><h2>${t('o','ablation')} ${kind('DERIVED')}</h2>` +
+    `<div class="xscroll"><table><thead><tr><th>${t('o','organ')}</th><th>${t('o','activityHz')}</th><th>${t('o','deltaFitness')}</th><th>${t('o','ci95')}</th><th>${t('o','consistency')}</th><th>${t('o','classification')}</th></tr></thead><tbody>` +
+    organs.map(k => row(k.slice(14), conds[k])).join('') +
+    system.map(k => row(t('o','ablSystem')+':'+k, conds[k])).join('') +
+    `</tbody></table></div><div class="muted" style="margin-top:6px">${t('o','ablationNote')} (N=${_ablation.replicates||'?'})</div></div>`;
+}
 function brainHash(i) { let h = (Math.imul(i,2654435761) >>> 0); h ^= h >>> 13; h = Math.imul(h,2246822519) >>> 0; return h >>> 0; }
 function brainPoint(index, nBase, W, H) {
   const artificial = index >= nBase;
@@ -982,6 +1017,12 @@ async function organism(id, generation=routeGeneration) {
     if (!currentRoute(generation) || m.individual?.genome_id !== id) return;
     $('#main').insertAdjacentHTML('beforeend', m1Panels(m));
   } catch (err) { /* older rows have no M1 metrics; the page still works */ }
+  try {
+    await loadAblation();
+    const abl = ablationPanelHtml(id);
+    if (abl && currentRoute(generation))
+      $('#main').insertAdjacentHTML('beforeend', abl);
+  } catch (err) { /* the ablation export is optional; page works without it */ }
 }
 
 // ---- MIE / Telemetry --------------------------------------------------------

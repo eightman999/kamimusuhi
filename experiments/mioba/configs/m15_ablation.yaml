@@ -1,0 +1,87 @@
+# M1.5 functional-validation ablation — evaluates fixed genome *variants*
+# of one M1 individual, not an evolving population. Evaluation conditions
+# are byte-identical to mac_m1.yaml's scientific fields (same substrate,
+# environment, disturbance model, duration); only the evaluation pipeline
+# runs — no births, no selection.
+#
+# Run: scripts/m15_ablation.py --config this file --m1-db <m1 lineage>
+experiment: {id_prefix: "M1.5", runs_dir: "experiments/mioba/.runs"}
+
+population: {target_size: 1}   # unused — ablation runs fixed variants
+
+evolution:
+  max_generations: 0           # never evolve: this is a measurement run
+  elite_k: 8
+  mutation_seed: 20260911
+
+evaluation:
+  tier: m1
+  replicates: 4                # M1 value; the ablation driver overrides with ablation.replicates
+  duration_ms: 500
+  backend: torch
+  environment_id: synthetic-quiet-v0
+  target_rate_hz: 5.0
+  activity_warn_edge_ratio: 0.05
+
+fba:
+  data_dir: null
+  synthetic: true
+  synthetic_neurons: 139000
+  synthetic_edges: 14000000
+  base_seed: 20260911
+  propagation_backend: event_csc
+  dense_above: 0.05
+
+env: {stim_fraction: 0.01, stim_rate_hz: 50}
+
+environment:
+  enabled: true
+  virtual:
+    slices: 25
+    sensor_neurons_per_channel: 64
+    sensor_rate_hz: 80.0
+    debt_decay: 0.9
+    debt_gain: 1.0
+    debt_terminate: 6.0
+    use_physical_sensors: false
+  disturbance:
+    enabled: true
+    count_weights: {"0": 0.25, "1": 0.5, "2": 0.2, "3": 0.05}
+    kind_weights: {thermal: 1.0, memory_squeeze: 1.0, sensor_dropout: 1.0,
+                   sensor_noise: 1.0, latency_spike: 1.0}
+    severity_weights: {mild: 0.5, medium: 0.35, severe: 0.15}
+    onset_window: [0.2, 0.8]
+    duration_frac: [0.1, 0.35]
+    compound_probability: 0.25
+
+fitness:
+  weights:
+    task_score: 1.0
+    homeostasis_score: 0.5
+    disturbance_recovery_score: 0.8
+    resource_efficiency_score: 0.4
+    structural_functionality: 0.2
+    novelty: 0.2
+  minimum_viable_task_score: 0.35
+  memory_cost_reference_bytes: 524288
+  compute_cost_reference_edges: 5000.0
+  novelty_neighbours: 5
+  novelty_archive: 512
+
+# ---- M1.5 ablation driver ------------------------------------------------
+ablation:
+  # one shared evaluation seed for every condition: replicate_seeds(seed, i)
+  # and disturbance_seed(seed, i) are pure functions of it, so replicate i
+  # meets byte-identical input and crisis draws in every variant — a fully
+  # paired comparison (instruction §3).
+  seed: 20260916
+  replicates: 64               # spec: >=32, preferably 64
+  execution_batch: 4           # lanes per sim chunk (matches M1 workers)
+  device: cpu
+  procs: 6                     # process-parallel conditions (memory-bound)
+  thresholds:                  # §5 — config, not code
+    functional_delta: 0.05     # |mean Δfitness| >= this AND consistent
+    weak_delta: 0.01           # below this |Δ| -> Neutral
+    consistency_fraction: 0.6  # share of replicates agreeing in direction
+    bootstrap_iters: 2000
+    bootstrap_seed: 20260916

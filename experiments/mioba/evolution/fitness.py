@@ -40,7 +40,8 @@ import math
 
 COMPONENTS = ("task_score", "homeostasis_score", "disturbance_recovery_score",
               "resource_efficiency_score", "structural_functionality",
-              "novelty", "departure_resistance")
+              "novelty", "departure_resistance", "structural_maintenance",
+              "runaway_guard")
 
 DEFAULTS = {
     "weights": {
@@ -53,6 +54,15 @@ DEFAULTS = {
         # M2 §18: selection may reward surviving a substrate lesion.
         # Default 0 — the M1 selection mix is unchanged.
         "departure_resistance": 0.0,
+        # M1.5 §9: a structure that is never used should not be free to
+        # keep. The component value is the negated maintenance cost
+        # (fitness -= cost); weight 0 keeps M1 identical.
+        "structural_maintenance": 0.0,
+        # M1.5 §8: 1.0 normally, 0.0 when the deterministic simulation
+        # guard terminated the evaluation. Weight 0 keeps M1 identical;
+        # a positive weight converts a runaway trip into a reproducible
+        # selection penalty.
+        "runaway_guard": 0.0,
     },
     # normalised task quality below which no efficiency bonus is given
     "minimum_viable_task_score": 0.35,
@@ -61,6 +71,15 @@ DEFAULTS = {
     "memory_cost_reference_bytes": 512 * 1024,
     "compute_cost_reference_edges": 5000.0,
     "novelty_neighbours": 5,
+    # M1.5 §9 structural maintenance: per-unit costs in selection-score
+    # units, all 0 by default so unconfigured runs are byte-identical to
+    # M1. Charged on the developed body — enabled organs, artificial
+    # neurons, enabled attachments.
+    "maintenance": {
+        "per_organ": 0.0,
+        "per_artificial_neuron": 0.0,
+        "per_attachment": 0.0,
+    },
 }
 
 
@@ -252,6 +271,19 @@ def compute_metrics(summary: dict, structure: dict | None, config: dict | None,
     desc = descriptor(summary, structure)
     nov = novelty(desc, archive or [], int(cfg["novelty_neighbours"]))
 
+    # M1.5 §9: structural maintenance charged on the developed body.
+    # None of the costs are set by default -> no component, M1 unchanged.
+    maint_cfg = cfg.get("maintenance") or {}
+    s = structure or {}
+    maintenance = (float(maint_cfg.get("per_organ", 0.0))
+                   * (s.get("n_enabled_organs") or 0)
+                   + float(maint_cfg.get("per_artificial_neuron", 0.0))
+                   * (s.get("n_artificial_neurons") or 0)
+                   + float(maint_cfg.get("per_attachment", 0.0))
+                   * (s.get("n_enabled_attachments") or 0))
+    guard = (summary or {}).get("guard") or {}
+    runaway = bool(guard.get("tripped"))
+
     raw = {
         "task_score": ep["task_score"],
         "task_score_all": ep.get("task_score_all"),
@@ -276,6 +308,10 @@ def compute_metrics(summary: dict, structure: dict | None, config: dict | None,
         # evaluation did not run the battery.
         "departure": (summary or {}).get("departure"),
         "departure_resistance": _departure_resistance(summary),
+        # M1.5: measured, explicit, reproducible
+        "structural_maintenance_cost": round(maintenance, 6),
+        "guard": (summary or {}).get("guard"),
+        "runaway_terminated": runaway,
         "raw_firing_metrics": {
             "mean_rate_hz": (summary or {}).get("mean_rate_hz"),
             "rate_std_hz": (summary or {}).get("rate_std_hz"),
@@ -294,6 +330,10 @@ def normalised_components(raw: dict, cfg: dict, target_rate: float) -> dict:
     rather than counted as zero — a control episode with no disturbance
     must not be scored as having failed to recover from one."""
     nov = raw.get("novelty")
+    maint_cfg = cfg.get("maintenance") or {}
+    maintenance_configured = any(
+        float(maint_cfg.get(k, 0.0)) != 0.0
+        for k in ("per_organ", "per_artificial_neuron", "per_attachment"))
     return {
         "task_score": raw.get("task_quality"),
         "homeostasis_score": raw.get("homeostasis_score"),
@@ -305,6 +345,14 @@ def normalised_components(raw: dict, cfg: dict, target_rate: float) -> dict:
         "novelty": (None if nov is None else nov / (1.0 + nov)),
         # already normalised by the departure evaluator
         "departure_resistance": raw.get("departure_resistance"),
+        # M1.5 §9: the cost itself is the component value (negative);
+        # absent entirely when no maintenance is configured so M1
+        # re-scores bit-for-bit
+        "structural_maintenance": (
+            -(raw.get("structural_maintenance_cost") or 0.0)
+            if maintenance_configured else None),
+        # M1.5 §8: 1.0 normally, 0.0 on a deterministic runaway trip
+        "runaway_guard": 0.0 if raw.get("runaway_terminated") else 1.0,
     }
 
 

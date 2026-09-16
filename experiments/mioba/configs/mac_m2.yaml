@@ -1,0 +1,137 @@
+# M2-functional-selection — follows M1.5 diagnostics. Same substrate,
+# population, mutation operators and environment as mac_m1.yaml so the
+# two runs are directly comparable; the ONLY intentional differences
+# are the selection-landscape changes below.
+#
+# config diff vs experiments/mioba/configs/mac_m1.yaml:
+#   experiment.id_prefix:            "M1"  -> "M2"
+#   evaluation.target_rate_hz:       5.0   -> 1.0
+#   evaluation.guard:                absent -> {max_propagated_edge_events,
+#                                             max_wall_seconds}
+#   fitness.weights.runaway_guard:   0.0 (default) -> 0.5
+#   fitness.weights.structural_maintenance: 0.0 (default) -> 1.0
+#   fitness.maintenance:             all 0 (default) -> low nonzero values
+#
+# Rationale (see docs/experiments/m15-report.md):
+#   * target 5Hz was unreachable — M1 population sits at p50=0.59Hz,
+#     p90=0.61Hz; quality at target 5 has std 0.028 (selection sees almost
+#     no gradient). Target 1.0 keeps the "more activity is better"
+#     direction (population mean is still below it) while making the
+#     mutation-visible spread ~5x larger (std 0.142, range 0..0.64), and
+#     ~400Hz runaway phenotypes get quality 0 automatically.
+#   * guard cap 100M propagated edge events ≈ 2x the largest normal M1
+#     evaluation (max 48.8M; p99 17.0M) and ~1/100 of observed runaways
+#     (10-14B) — a false trip is effectively impossible. The wall
+#     backstop (900s ≈ 4x normal max 228s) is marked deterministic:false
+#     in the summary and is operational insurance only.
+#   * maintenance "low" tier: a saturated genome (8 organs / 24
+#     attachments / 512 neurons) pays ≈0.09 score units ≈ 20% of the M1
+#     selection-score spread (0.23..0.55); a lean genome pays ≈0.02.
+#     Unused structure is no longer free, but structure that earns even
+#     a small task-score return is net-positive. Medium tier = 4x these
+#     values for the ablation-informed sweep (§9: 0 / low / medium).
+
+experiment: {id_prefix: "M2", runs_dir: "experiments/mioba/.runs"}
+
+population: {target_size: 48}
+
+evolution:
+  max_generations: 40
+  elite_k: 8
+  mutation_seed: 20260911
+
+  mutation:
+    count: {base: 1, poisson_lambda: 1.5, cap: 4}
+    weights: {parameter: 0.35, structural: 0.55, prune: 0.10}
+    limits: {artificial_neurons: 512, artificial_organs: 8, attachments: 24}
+    new_organ_size: [8, 64]
+    grow_organ_delta: [4, 32]
+    parameter_scale: [0.9, 1.1]
+    parameter_scale_by_path: {}
+    parameter_weights: {}
+
+evaluation:
+  tier: m1
+  replicates: 4
+  duration_ms: 500
+  backend: torch
+  environment_id: synthetic-quiet-v0
+  target_rate_hz: 1.0
+  activity_warn_edge_ratio: 0.05
+  guard:
+    max_propagated_edge_events: 100000000
+    max_wall_seconds: 900          # ops backstop; recorded deterministic:false
+
+fba:
+  data_dir: null
+  synthetic: true
+  synthetic_neurons: 139000
+  synthetic_edges: 14000000
+  base_seed: 20260911
+  propagation_backend: event_csc     # event_csc | sparse_csr | auto
+  dense_above: 0.05                  # only consulted when "auto"
+
+env: {stim_fraction: 0.01, stim_rate_hz: 50}
+
+environment:
+  enabled: true
+  virtual:
+    slices: 25
+    sensor_neurons_per_channel: 64
+    sensor_rate_hz: 80.0
+    debt_decay: 0.9
+    debt_gain: 1.0
+    debt_terminate: 6.0
+    use_physical_sensors: false
+  disturbance:
+    enabled: true
+    count_weights: {"0": 0.25, "1": 0.5, "2": 0.2, "3": 0.05}
+    kind_weights: {thermal: 1.0, memory_squeeze: 1.0, sensor_dropout: 1.0,
+                   sensor_noise: 1.0, latency_spike: 1.0}
+    severity_weights: {mild: 0.5, medium: 0.35, severe: 0.15}
+    onset_window: [0.2, 0.8]
+    duration_frac: [0.1, 0.35]
+    compound_probability: 0.25
+
+fitness:
+  weights:
+    task_score: 1.0
+    homeostasis_score: 0.5
+    disturbance_recovery_score: 0.8
+    resource_efficiency_score: 0.4
+    structural_functionality: 0.2
+    novelty: 0.2
+    # M1.5 §8: a guard trip converts to a reproducible selection penalty
+    # (component 0.0 when tripped, 1.0 otherwise)
+    runaway_guard: 0.5
+    # M1.5 §9: unused structure must not be free (component is the
+    # negated cost, already in score units, so weight 1.0 applies it
+    # as-is)
+    structural_maintenance: 1.0
+  minimum_viable_task_score: 0.35
+  memory_cost_reference_bytes: 524288
+  compute_cost_reference_edges: 5000.0
+  novelty_neighbours: 5
+  novelty_archive: 512
+  # "low" tier — scale x4 for "medium", all-zero reproduces M1 exactly
+  maintenance:
+    per_organ: 0.005
+    per_artificial_neuron: 0.00005
+    per_attachment: 0.001
+
+worker: {execution_batch: 4, slots: 3, candidates: [1,2,4,8,16,32],
+         vram_headroom: 0.85, bench_duration_ms: 200,
+         bench_organ_overhead_neurons: 512,
+         heartbeat_s: 5, lost_after_s: 90, grace_s: 30}
+
+jobs: {requeue_unknown: true, max_attempts: 3}
+
+checkpoint: {interval_s: 180}
+
+stop: {timeout_s: 120}
+
+mie: {interval_s: 5, collectors: [gpu, cpu, ram], anomaly: {gpu_temp_c: 85}}
+
+traces: {store_full_for: [elite, novel, debug, explicit], dir: traces}
+
+gui: {enabled: true, refresh_s: 2}
