@@ -714,6 +714,64 @@ class TorchBackend(FbaBackend):
         self.spike_counts = torch.zeros((B, n), dtype=torch.long, device=d)
         for g, s in zip(self._gens, self.replicate_seeds):
             g.manual_seed(s)
+        self._tel_reset()
+
+    # ------------------------------------------------- telemetry (§19)
+    def set_telemetry(self, node_indices):
+        """Enable per-node telemetry on a small set of runtime nodes
+        (G0.1 §19): counts artificial-synapse *events* arriving at each
+        node (from W_extra), accumulates synaptic input, and tracks
+        membrane voltage mean/peak per step. Events are counted at
+        emission — deterministic, arrival is D steps later. Only
+        W_extra edges are measured: base-edge contributions are
+        identical across paired conditions and cancel in deltas."""
+        self._tel_nodes = [int(i) for i in node_indices]
+        self._tel_reset()
+        if self.W_extra is None or not self._tel_nodes:
+            return
+        W = self.W_extra.as_csr().to_sparse_coo().coalesce()
+        post, pre = W.indices()
+        lut = {nd: k for k, nd in enumerate(self._tel_nodes)}
+        mask = torch.tensor([int(p) in lut for p in post.tolist()])
+        tel_w = torch.zeros((len(self._tel_nodes), self.n),
+                            device=self.device)
+        if mask.any():
+            rows = torch.tensor([lut[int(p)] for p in post[mask]],
+                                dtype=torch.long)
+            tel_w[rows, pre[mask]] += W.values()[mask]
+        self._tel_W = tel_w
+        self._tel_adj = (tel_w != 0).to(self.v.dtype)
+
+    def _tel_reset(self):
+        B = getattr(self, "batch_size", 1)
+        n_tel = len(getattr(self, "_tel_nodes", []) or [])
+        self._tel_W = None
+        self._tel_adj = None
+        d = self.device
+        self._tel_events = torch.zeros((B, n_tel), device=d)
+        self._tel_syn = torch.zeros((B, n_tel), device=d)
+        self._tel_vsum = torch.zeros((B, n_tel), device=d)
+        self._tel_vpeak = torch.full((B, n_tel), -1e9, device=d)
+        self._tel_steps = 0
+
+    def get_telemetry(self) -> dict | None:
+        if not getattr(self, "_tel_nodes", None):
+            return None
+        steps = max(1, self._tel_steps)
+        out = []
+        for k, nd in enumerate(self._tel_nodes):
+            out.append({
+                "runtime_idx": nd,
+                "input_event_count":
+                    self._tel_events[:, k].tolist(),
+                "synaptic_input_sum":
+                    self._tel_syn[:, k].tolist(),
+                "membrane_voltage_mean":
+                    (self._tel_vsum[:, k] / steps).tolist(),
+                "membrane_voltage_peak":
+                    self._tel_vpeak[:, k].tolist(),
+            })
+        return {"nodes": out, "scope": "W_extra artificial edges only"}
 
     def set_inputs(self, drive: dict) -> None:
         """Install a drive. Only the driven neurons are kept as an index
@@ -771,6 +829,11 @@ class TorchBackend(FbaBackend):
                                             dense_above=self._dense_above)
             events, edges = max(events, e2), edges + d2
             self._act_edges_extra += d2
+            if self._tel_adj is not None:
+                # telemetry (§19): count artificial-edge events and
+                # synaptic input arriving at the watched nodes
+                self._tel_events += self._tel_adj.mm(spikes.T).T
+                self._tel_syn += self._tel_W.mm(spikes.T).T
         self._act_steps += 1
         self._act_lane_steps += int(spikes.shape[0])
         self._act_events += events
@@ -794,6 +857,13 @@ class TorchBackend(FbaBackend):
             # (A2): dv_i = dt/tauCoup * Σ_j c_ij (v_j − v_i)
             self.v = self.v + (dt / p["tauCoup"]) * torch.sparse.mm(
                 self._vcoup, self.v.T).T
+        if getattr(self, "_tel_nodes", None):
+            # compartment voltage telemetry, sampled post-coupling /
+            # pre-reset so dendritic peaks aren't clipped away (§19)
+            vt = self.v[:, self._tel_nodes]
+            self._tel_vsum += vt
+            self._tel_vpeak = torch.maximum(self._tel_vpeak, vt)
+            self._tel_steps += 1
         if self._drive_idx is not None:
             u = torch.stack([torch.rand((self._drive_idx.numel(),), device=d,
                                         generator=g) for g in self._gens])

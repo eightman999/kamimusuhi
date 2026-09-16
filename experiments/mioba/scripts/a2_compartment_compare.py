@@ -105,6 +105,11 @@ def main() -> int:
     sub = conn[conn["pre_idx"].isin(circuit)
                & conn["post_idx"].isin(circuit)].copy()
     print(f"[a2] intra-circuit edges: {len(sub)}")
+    split = A.load_layer(args.store, "connections_split")
+    cset = set(circuit)
+    split_sub = split[split["pre_idx"].isin(cset)
+                      & split["post_idx"].isin(cset)].copy()
+    print(f"[a2] intra-circuit split edges: {len(split_sub)}")
 
     from ..fba.torch_backend import TorchBackend
     results = {}
@@ -133,6 +138,25 @@ def main() -> int:
                               args.replicates)
     results["reduced"]["n_runtime_nodes"] = n_nodes
 
+    # --- A2.1: reduce-v1-split-synapse — per-compartment edges from
+    # connections_split, never collapsed onto a dominant label
+    (n1, p1, q1, w1, coup1, rows1, man1, audit1) = \
+        C.compile_reduced_graph_v2(split_sub, reductions)
+    soma1 = {r["entity_idx"]: r["runtime_idx"] for r in rows1
+             if r["compartment"] == "SOMA"}
+    dr1 = [soma1[d] for d in drivers if d in soma1]
+    b_v1 = TorchBackend(synthetic=False,
+                        base_override=(n1, p1, q1, w1),
+                        voltage_coupling=coup1)
+    results["reduced_v1"] = _run(b_v1, dr1, args.drive_hz,
+                                 args.duration_ms, args.seed,
+                                 args.replicates)
+    results["reduced_v1"]["n_runtime_nodes"] = n1
+    results["reduced_v1"]["n_runtime_edges"] = int(len(w1))
+    by_post = audit1.groupby("post_compartment").size().to_dict()
+    results["reduced_v1"]["edges_by_post_compartment"] = \
+        {str(k): int(v) for k, v in by_post.items()}
+
     # determinism: rerun reduced
     b_rd2 = TorchBackend(synthetic=False,
                          base_override=(n_nodes, rpost, rpre, rw),
@@ -140,6 +164,13 @@ def main() -> int:
     again = _run(b_rd2, dr_rd, args.drive_hz, args.duration_ms,
                  args.seed, args.replicates)
     deterministic = again["spikes"] == results["reduced"]["spikes"]
+    b_v12 = TorchBackend(synthetic=False,
+                         base_override=(n1, p1, q1, w1),
+                         voltage_coupling=coup1)
+    again_v1 = _run(b_v12, dr1, args.drive_hz, args.duration_ms,
+                    args.seed, args.replicates)
+    deterministic_v1 = \
+        again_v1["spikes"] == results["reduced_v1"]["spikes"]
 
     report = {
         "kind": "A2 point-vs-reduced comparison",
@@ -151,8 +182,11 @@ def main() -> int:
                     "n_runtime_nodes_reduced": n_nodes,
                     "drivers": drivers, "targets": targets},
         "reduction_manifest": red_manifest,
+        "reduction_manifest_v1": man1,
         "point": results["point"], "reduced": results["reduced"],
+        "reduced_v1": results["reduced_v1"],
         "deterministic_reduced": deterministic,
+        "deterministic_reduced_v1": deterministic_v1,
         "notes": [
             "compartment labels: upstream split SWC "
             "(RAW_EM_DERIVED); reduction is reduce-v0",
@@ -171,7 +205,14 @@ def main() -> int:
           f"edges={results['reduced']['edge_events']} "
           f"wall={results['reduced']['wall_s']:.1f}s "
           f"nodes={n_nodes}")
-    print(f"[a2] determinism: {'PASS' if deterministic else 'FAIL'}")
+    v1 = results["reduced_v1"]
+    print(f"[a2] reduced-v1: spikes={v1['spikes']} "
+          f"edges={v1['edge_events']} runtime_edges={v1['n_runtime_edges']} "
+          f"wall={v1['wall_s']:.1f}s nodes={n1} "
+          f"fallback={man1['split_edges_fallback_to_soma']}/"
+          f"{man1['split_edges_total']}")
+    print(f"[a2] determinism: v0={'PASS' if deterministic else 'FAIL'} "
+          f"v1={'PASS' if deterministic_v1 else 'FAIL'}")
     print(f"[a2] report -> {out}")
     return 0
 

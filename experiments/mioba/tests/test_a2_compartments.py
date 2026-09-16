@@ -170,3 +170,145 @@ def test_permissive_mode_warns_but_resolves():
             _neurons(), "banc", direction="in", split_df=_split(),
             strict=False)
     assert idx == [1]            # entity 1 has dendritic source edges
+
+
+# --------------------------------------------------------- A2.1 ------
+def _soma_not_root_skeleton():
+    """§29 fixture: soma is NOT the root — a branch above the soma and
+    dendrites below it must ALL receive path distances."""
+    return _swc([
+        [1, 3, 0, -30, 0, 1, -1],   # root: dendrite ABOVE soma (dist 30)
+        [2, 3, 0, -60, 0, 1, 1],    # far parent-side dendrite (dist 60)
+        [3, 4, 0, -10, 0, 1, 1],    # primary neurite above soma
+        [4, 7, 0, 0, 0, 2, 1],      # soma (child of node 1!)
+        [5, 3, 0, 5, 0, 1, 4],      # dendrite below soma
+        [6, 3, 0, 45, 0, 1, 5],     # distal dendrite below
+        [7, 2, 5, 0, 0, 1, 4],      # axon
+    ])
+
+
+def test_soma_not_root_gets_distances_everywhere():
+    """§27–28: undirected distance_from_soma — nodes on the parent side
+    of a non-root soma must not be dropped into dist=0."""
+    red = C.reduce_entity(3, _soma_not_root_skeleton())
+    assert set(red.node_map) == {1, 2, 3, 4, 5, 6, 7}
+    # node 2 is 60 nm above the soma through node 1 — it is a DISTAL
+    # dendrite, not proximal. The buggy children-only walk left it at
+    # dist 0 (PROX); the undirected walk must classify it DIST.
+    assert red.node_map[2] == "DENDRITE_DIST"
+    assert red.node_map[6] == "DENDRITE_DIST"
+    assert red.node_map[5] == "DENDRITE_PROX"
+    assert red.node_map[4] == "SOMA" and red.node_map[7] == "AXON"
+
+
+def test_unknown_nodes_fallback_is_counted():
+    """§30–31: UNKNOWN-labelled SWC nodes fall back to DENDRITE_PROX
+    and that fallback is counted, never claimed as real."""
+    nodes = _labeled_skeleton().tolist()
+    nodes.append([7, 0, 0, 9, 9, 1, 5])      # UNKNOWN-labelled node
+    red = C.reduce_entity(5, _swc(nodes))
+    assert red.unknown_swc_nodes == 1
+    assert red.unknown_nodes_fallback_mapped == 1
+    assert red.node_map[7] == "DENDRITE_PROX"
+
+
+def _split_df():
+    """One entity pair with THREE compartment placements (§2 fixture):
+    they must stay separate runtime edges."""
+    return pd.DataFrame({
+        "pre_idx": [0, 0, 0],
+        "post_idx": [1, 1, 1],
+        "pre_compartment": ["AXON", "AXON", "AXON"],
+        "post_compartment": ["DENDRITE", "SOMA", "AXON"],
+        "anatomical_count": [7, 2, 1]})
+
+
+def test_v2_keeps_compartment_edges_separate():
+    reds = {0: C.reduce_entity(0, _labeled_skeleton()),
+            1: C.reduce_entity(1, _labeled_skeleton())}
+    (n, post, pre, w, coup, rows, man, audit) = \
+        C.compile_reduced_graph_v2(_split_df(), reds)
+    assert len(w) == 3                     # no dominant collapse (§2)
+    # weight = count/32 per split edge (§6)
+    assert sorted(w.tolist()) == sorted([7 / 32, 2 / 32, 1 / 32])
+    # anatomical record fields present (§5)
+    for col in ("pre_entity", "post_entity", "pre_compartment",
+                "post_compartment", "anatomical_count",
+                "runtime_weight", "weight_provenance",
+                "fallback_used"):
+        assert col in audit.columns
+    assert man["algorithm"] == "reduce-v1-split-synapse"
+    assert man["split_edges_total"] == 3
+    assert man["split_edges_exact_compartment"] == 3
+    # §1: PRIMARY_NEURITE folding is declared in the manifest
+    assert "PRIMARY_NEURITE" in man["compartment_reduction"]
+
+
+def test_v2_unknown_fallback_audited():
+    df = _split_df()
+    df.loc[2, "post_compartment"] = "UNKNOWN"
+    reds = {0: C.reduce_entity(0, _labeled_skeleton()),
+            1: C.reduce_entity(1, _labeled_skeleton())}
+    _, _, _, w, _, _, man, audit = \
+        C.compile_reduced_graph_v2(df, reds, mapping_mode="permissive")
+    assert len(w) == 3                     # permissive keeps the edge
+    assert man["split_edges_unknown_compartment"] == 1
+    assert man["split_edges_fallback_to_soma"] == 1
+    fb = audit[audit["fallback_used"]]
+    assert fb["fallback_reason"].iloc[0] == "UNKNOWN_POST_COMPARTMENT"
+    assert fb["mapping_provenance"].iloc[0] == "MODEL_INFERENCE"
+
+
+def test_v2_strict_skips_unknown():
+    df = _split_df()
+    df.loc[2, "post_compartment"] = "UNKNOWN"
+    reds = {0: C.reduce_entity(0, _labeled_skeleton()),
+            1: C.reduce_entity(1, _labeled_skeleton())}
+    _, _, _, w, _, _, man, _ = \
+        C.compile_reduced_graph_v2(df, reds, mapping_mode="strict")
+    assert len(w) == 2                     # strict drops it (§11)
+    assert man["split_edges_skipped_strict"] == 1
+
+
+def test_telemetry_counts_artificial_events():
+    """§19: per-node event count / synaptic input / voltage telemetry."""
+    b = TorchBackend(synthetic=False,
+                     base_override=(5, np.array([1]), np.array([2]),
+                                    np.array([1.0])))
+    phen = {"artificial_organs": [
+                {"organ_id": "graft:g001", "size": 2, "kind": "graft",
+                 "internal_p": 0.0, "neuron_model": "lif"}],
+            "attachments": [
+                {"attachment_id": "g:out", "direction": "forward",
+                 "weight_scale": 50.0, "p": 1.0, "source": "graft:g001",
+                 "target": "host:g:out", "target_idx": [0],
+                 "connection_provenance": "ARTIFICIAL_GRAFT"}],
+            "n_extra_neurons": 2, "params": {}}
+    b.initialize(phen, batch_size=1, seed=1, device="cpu",
+                 replicate_seeds=[1])
+    b.set_telemetry([0])
+    b.force_spikes([5, 6])
+    b.run(30.0)
+    tel = b.get_telemetry()
+    assert tel and tel["nodes"][0]["input_event_count"][0] > 0
+    assert tel["nodes"][0]["synaptic_input_sum"][0] > 0
+    assert tel["nodes"][0]["membrane_voltage_peak"][0] > -52.0
+
+
+def test_matched_targets_require_both_compartments():
+    """§13: matched set = entities provably having SOMA *and*
+    DENDRITE_DIST — the only legal B-vs-C comparison set."""
+    from experiments.mioba.scripts.g01_compartment_graft import (
+        matched_targets)
+    rows = [
+        {"runtime_idx": 0, "entity_idx": 10, "compartment": "SOMA"},
+        {"runtime_idx": 1, "entity_idx": 10,
+         "compartment": "DENDRITE_DIST"},
+        {"runtime_idx": 2, "entity_idx": 11, "compartment": "SOMA"},
+        {"runtime_idx": 3, "entity_idx": 11,
+         "compartment": "DENDRITE_PROX"},
+        {"runtime_idx": 4, "entity_idx": 12, "compartment": "SOMA"},
+    ]
+    matched, comp_of = matched_targets(rows, [10, 11, 12])
+    assert matched == [10]                 # 11 lacks DIST, 12 lacks both
+    assert comp_of[10]["DENDRITE_DIST"] == 1

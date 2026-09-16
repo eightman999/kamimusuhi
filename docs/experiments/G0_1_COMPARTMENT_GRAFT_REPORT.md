@@ -1,71 +1,84 @@
-# G0.1 — Compartment-Aware Graft on a Real Anatomical Circuit
+# G0.1 — Compartment-Aware Graft, Causal Validation (A2.1 hardened)
 
-Date: 2026-09-16 · Store: `store_v2` (schema v2)
-Runner: `experiments/mioba/scripts/g01_compartment_graft.py`
-Raw report: `/tmp/g01.json` (regenerate via the runner)
+Date: 2026-09-16 · Store: `store_v2` · Graph: `reduce-v1-split-synapse`
+(permissive) · Runner:
+`experiments/mioba/scripts/g01_compartment_graft.py`
+Raw report: `/tmp/g01.json`
 
-## 1. Setup (§26)
+## 1. Setup
 
 Host circuit: **240 canonical anatomical entities** (32 afferent
-drivers + 32 descending + 176 strongest 1-hop partners), 546 intra-
-circuit edges, expanded to **858 runtime compartment nodes**
-(237 entities multi-compartment). Same seed (20260916), same drive
-(afferent SOMA nodes @ 30 Hz), 300 ms, 4 paired replicates.
+drivers + 32 descending + 176 strongest 1-hop partners), expanded to
+**858 runtime compartment nodes**, 629 split edges (0 UNKNOWN fallback
+inside this circuit). 300 ms, **8 paired replicates**, seed 20260916.
 
-Graft: `graft:g001` — 10 artificial neurons, recurrent p=0.15, LIF.
-All host↔graft synapses are recorded `ARTIFICIAL_GRAFT` provenance;
-host anatomy is read-only (§24/§25). Weights are MODEL_INFERENCE demo
-values (in-link 30, out-link 80, p=0.5) — chosen so events clear the
-7 mV threshold gap after synaptic filtering; not physiological claims.
+Graft `graft:g001`: 10 artificial LIF neurons, recurrent p=0.15,
+`connection_provenance: ARTIFICIAL_GRAFT` on every host↔graft edge;
+host anatomy read-only (§24/§25). Weights (in 30 / out 80, p=0.5) are
+MODEL_INFERENCE demo values — they are tuned so single events clear
+the ~7 mV threshold gap after synaptic filtering; no physiological
+claim.
 
-## 2. Conditions A / B / C (§26)
+## 2. Matched target set (§13–§15)
 
-| Cond | Wiring | Spikes per lane | Graft spikes |
+`matched_target_entities`: **30 descending entities** that provably
+carry BOTH SOMA and DENDRITE_DIST compartments — identical entity IDs
+in B and C, asserted at run time (mismatch ⇒ FAIL). UNKNOWN or
+point-fallback entities are never targets (§12). Afferent sources are
+the same SOMA nodes in B and C; the only difference between the two
+conditions is the efferent landing compartment.
+
+| Cond | Efferent landing | Host spikes (8 lanes) | Graft spikes |
 |---|---|---|---|
-| A — host only | — | 303, 273, 289, 305 | 0 |
-| B — neuron graft | graft→host onto entity **SOMA** nodes (31 targets) | 376, 333, 359, 379 | 66, 58, 68, 68 |
-| C — compartment graft | graft→host onto **DENDRITE_DIST** compartments (30 targets) | 396, 357, 378, 392 | 66, 58, 68, 68 |
+| A — host only | — | 303 273 289 305 293 282 300 292 | 0 |
+| B — graft→SOMA | SOMA | 315 278 299 311 299 285 308 298 | 66 58 68 68 64 61 65 61 |
+| C — graft→DENDRITE_DIST | DENDRITE_DIST | 330 299 310 324 321 300 322 313 | 66 58 68 68 64 61 65 61 |
 
-- host→graft propagation: graft fires ~19–22 Hz/cell (identical in B
-  and C — same in-link, as expected).
-- graft→host propagation: B adds ~+7 host spikes/lane; C adds ~+27 —
-  the compartment landing site measurably changes the causal effect
-  (dendritic delivery spreads charge through the compartment chain).
-- **Determinism: PASS** (identical per-lane counts on re-run).
+host→graft transmission: graft fires ~19–22 Hz/cell in both B and C
+(identical in-links, identical activity — as required by §15).
 
-## 3. Causal ablation of condition C (§27)
+## 3. Compartment-level causal effect (§18–§20)
 
-Δ spikes vs full, per lane:
+Per-target-compartment telemetry (input_event_count,
+synaptic_input_sum, membrane_voltage_mean/peak) on all 30
+DENDRITE_DIST targets + their 30 somas, paired full vs
+efferent_disabled:
 
-| Ablation | Δ (full − ablated) | Interpretation |
-|---|---|---|
-| graft disabled | 93, 84, 89, 87 | removes graft spikes (66) + graft→host effect (~27) |
-| afferent disabled | 93, 84, 89, 87 | host→graft cut → graft silent → whole contribution gone |
-| efferent disabled | 27, 26, 21, 19 | graft still fires (66) but graft→host effect isolated |
+- **30/30 target compartments** show non-zero paired deltas:
+  Δevents ≈ +5–9 per lane, Δsynaptic_input ≈ +71–128,
+  ΔV_mean ≈ +0.45–0.83 mV, ΔV_peak ≈ +1.5–1.8 mV.
+- Host spike effect: +19–27 spikes/lane over the host-only baseline —
+  recorded, and happens to be positive here, but per §21 it is not a
+  pass criterion.
 
-The three ablations separate host→graft, graft-internal and
-graft→host contributions cleanly — the acceptance goal of §27.
+## 4. Ablation on C (§23–§24)
 
-## 4. Schema / targeting (§21–§23)
+| Condition | Host spikes | Graft spikes | Interpretation |
+|---|---|---|---|
+| full | 330 299 310 324 321 300 322 313 | 66…61 | — |
+| graft_disabled | = A baseline | 0 | whole artificial-organ contribution |
+| afferent_disabled | = A baseline | 0 | host→graft input is necessary for graft activity |
+| efferent_disabled | = A baseline | 66…61 (unchanged) | graft→host effect isolated at target compartments |
+| internal_recurrence_disabled | = full | = full | internal recurrence not required for this feedforward demo |
 
-- `HostSelector.compartment_type` narrows candidates to entities that
-  *provably* carry that compartment on the link-relevant side of the
-  split edgelist — data-grounded, never assumed.
-- Strict mode (default) rejects anatomically invalid requests —
-  e.g. an `in`-link (host as source) targeting DENDRITE /
-  PRIMARY_NEURITE raises; permissive mode warns and records.
-- Each attachment records `connection_provenance: ARTIFICIAL_GRAFT`
-  plus the resolved selector/compartment in `resolution`.
+## 5. Causal verdict (§35/§36)
 
-## 5. Terminology & limits (§30)
+| Link | Result |
+|---|---|
+| host → graft transmission | **PASS** |
+| graft → target compartment | **PASS** (paired non-zero Δevents/Δinput/ΔV) |
+| graft → soma | PASS (not required) |
+| graft → host spike output | PASS (not required) |
 
-- Graft edges are *artificial graft synapses attached to real
-  anatomical host entities/compartments* — not "real graft edges".
-- Compartment labels derive from upstream split SWCs
-  (RAW_EM_DERIVED); the reduction and all coupling/weight parameters
-  are MODEL_INFERENCE.
-- Entities without labeled skeletons expose only SOMA and are
-  unreachable for compartment selectors — counted, not silently
-  remapped.
-- No claim of physiological efficacy: the demo weights are tuned
-  model parameters.
+Determinism: **PASS** — identical per-lane host spikes, graft spikes
+and full telemetry on re-run (bit-exact, §26).
+
+## 6. Integrity & limits
+
+- Native host graph read-only; no native synapse rewiring; no host
+  morphology mutation (§36).
+- All graft synapses ARTIFICIAL_GRAFT; all weights MODEL_INFERENCE.
+- Graft internal activity is reported separately from host spikes —
+  no all-mean-rate mixing (§22).
+- Not required and not claimed: behaviour, learning, active
+  dendritic/axonal dynamics, measured conductances (§37).
