@@ -1,0 +1,82 @@
+{
+  "schema_version": "0.1",
+  "generated_at": "2026-09-16",
+  "status": "PARTIAL — reconstructed from Git-visible artifacts only",
+  "evidence_boundary": {
+    "accessible": [
+      "github.com/eightman999/novllm main @ 2026-09-13 (43 commits, 84 files; no text, DB, manifests, configs, runs, checkpoints)",
+      "github.com/eightman999/kamimusuhi master @ 2026-09-16 (docs quoting J72 / Phase55 / Phase57 numbers)"
+    ],
+    "not_accessible": [
+      "/Users/eightman/dev/apps/novllm (local Mac checkout; absent on this VM)",
+      "llm_master:/mnt/llm-hdd (novel_status.db, dataset_v2*/manifests/*, runs/*, config/phase*.json, checkpoints)",
+      "J-series tokenizer manifests and Phase57 held-out corpus lists"
+    ],
+    "rule": "A work being present in novel_status.db or dataset_v2 is recorded as lm_train_candidate, never as lm_train. Gradient-update membership for any J-run is UNVERIFIED unless a manifest is later attached."
+  },
+  "corpus_sources": {
+    "novel_status.db": {
+      "tables": ["novels_descs", "episodes", "url_entity", "episode_mapping"],
+      "site_families": {
+        "syosetu": {"signal": "site_type == 1; ncode nXXXXxx; api.syosetu.com/novelapi", "evidence": "novllm/build_dataset.py:540,578; pipeline/api_refresh.py:19"},
+        "syosetu_r18": {"signal": "sub_site == 2 (novel18api); rating == 1; url_entity.is_r18", "evidence": "pipeline/normalize_meta.py:220-237; pipeline/db_audit.py:212", "share_of_corpus": "17.2% (control_format.py:19-21)"},
+        "kakuyomu": {"signal": "site_type != 1; episode_mapping.kakuyomu_episode_id; K… ids", "evidence": "pipeline/db_audit.py:24; PLAN_20260727.md:76"}
+      },
+      "not_present": {"aozora_bunko": "zero hits for 青空|aozora|近代|漱石|鴎外 across novllm .py/.md/.sh", "wikisource": "no hits", "other": "no hameln/pixiv handling code"},
+      "aozora_caveat": "kamimusuhi docs/experiments/multi-resource-j72-grokbot.md:323 reports J72 once generated 'Aozora-like' prose. This is model behavior, not corpus evidence. Whether Aozora text entered any J-series tokenizer/LM run is UNVERIFIED."
+    }
+  },
+  "corpus_statistics_measured": {
+    "source": "novllm PLAN_20260726.md / PLAN_20260727.md / PLAN_20260730.md / PLAN_20260801.md (values recorded by the author on llm_master)",
+    "works": 1520,
+    "chunks": 810533,
+    "shards": "163 train + 4 val",
+    "approx_size": "~5.5 GB",
+    "work_length_chars": {"n": 1520, "p10": 25949, "p25": 140016, "p50": 147711, "p75": 150000, "p90": 150000, "right_censored_at": 150000, "works_at_cap": 488, "works_lt_100k": 279, "works_le_20k": 134, "works_le_30k": 163, "works_le_40k": 186},
+    "viewpoint_rule_based": {"first_person": 1111, "third_person": 324, "unknown": 85, "method": "tools/detect_viewpoint_rule.py: narration-only first-person pronoun rate per 1000 chars (<0.5 third, >=1.0 first)"},
+    "viewpoint_chunk_level_after_enrichment": {"first_person": 0.734, "third_person": 0.225, "unknown": 0.040},
+    "protagonist_gender_llm": {"male": 0.70, "female": 0.26, "unclear": 0.03, "multiple": 0.003},
+    "world_transfer_llm": {"none": 0.53, "reincarnation": 0.32, "transfer": 0.14, "returned": 0.004},
+    "isekai_chunk_share": 0.249,
+    "r18_share": 0.172,
+    "genre_flag_counts_chunks": {"harem": 136436, "contemporary": 84608},
+    "control_flags_vocabulary": ["R15", "残酷な描写あり", "ボーイズラブ", "ガールズラブ", "異世界転生", "異世界転移", "男主人公", "女主人公", "群像劇", "オリジナル戦記", "架空戦記", "IF戦記", "ミリタリー", "戦争", "TS", "ハーレム", "恋愛", "学園", "現代", "歴史", "SF", "ホラー", "ミステリー"],
+    "author_keyword_tags_total": 3515,
+    "tokenization_qwen3": {"tokens_per_char": 0.70, "chars_per_token_ctx_view": 1.37, "byte_fallback_share": 0.0643},
+    "known_contamination": {"afterword_or_activity_report_in_completions": 0.1265, "context_completion_verbatim_overlap": 0.5269, "note": "4,000-sample audit (PLAN_20260801.md:47-87). Author notes, ブクマ solicitations, 活動報告 leak into training text."}
+  },
+  "pipeline_roles": {
+    "tokenizer_training": {"documented_in_git": false, "note": "No tokenizer training script or manifest in novllm. J-series vocab growth (J64→J72 = +8000 pieces, 84 pure Latin) is documented only as a Phase57 result in kamimusuhi/docs/semantic-token-language-cortex.md. Training corpus for each J* tokenizer: UNVERIFIED."},
+    "lm_pretraining_from_scratch": {"documented_in_git": false, "note": "J-series (hidden 768 / 12 layers / 12 heads / ctx 4096 / ~150M params for 'J72-30M') exists only via config/phase55_probe.json quoted in kamimusuhi. No run logs or dataset snapshot ids are visible."},
+    "continued_pretraining": {"documented_in_git": false},
+    "lora_finetuning": {"documented_in_git": true, "base": "Qwen/Qwen3-8B-Base", "runs": ["2026-07-29 non-ctx seq2048 → step 600", "2026-07-30 probe-B ctx4096", "2026-07-31 ctx4096 phase1 QLoRA r=16 → step 418/1000, stopped; checkpoint-400 marked for discard"], "data": "dataset_v2 ctx view (393,740 samples) / balanced subset 16,000", "val_split": "per-work 2% seed 42; zero-ncode-overlap verified at train time"},
+    "evaluation": {"documented_in_git": true, "tools": ["tools/eval_conditioning.py", "tools/eval_plot_following.py", "tools/eval_terms_ctx.py", "tools/eval_quality.py", "tools/eval_tagger.py", "tools/eval_work_tagger.py"], "held_out": "val shards (4) by work; Phase57 held-out corpora ('Japanese hardened', 'English general/technical', 'Python') are named in kamimusuhi docs but their file lists are UNVERIFIED"},
+    "cultural_evaluation": {"documented_in_git": false, "note": "Value-geometry probe on J72 is planned in kamimusuhi/docs/research/value-geometry-and-motivational-structure-2026-09-12.md:249-265, not run."}
+  },
+  "j_series": {
+    "note": "Every entry below is what Git-visible documents say. 'UNVERIFIED' fields require local artifacts from the user's machines.",
+    "runs": [
+      {"run_id": "J32", "model": "UNVERIFIED", "dataset_snapshot": "UNVERIFIED", "dataset_hash": "UNVERIFIED", "work_set": "UNVERIFIED", "source": "UNVERIFIED", "char_count": null, "token_count": null, "roles": [], "duplication": "UNVERIFIED", "mentions": []},
+      {"run_id": "J48", "model": "UNVERIFIED", "dataset_snapshot": "UNVERIFIED", "dataset_hash": "UNVERIFIED", "work_set": "UNVERIFIED", "source": "UNVERIFIED", "char_count": null, "token_count": null, "roles": [], "duplication": "UNVERIFIED", "mentions": []},
+      {"run_id": "J64", "model": "UNVERIFIED (vocab ~64k inferred from J64→J72 +8000 pieces)", "dataset_snapshot": "UNVERIFIED", "dataset_hash": "UNVERIFIED", "work_set": "UNVERIFIED", "source": "UNVERIFIED", "char_count": null, "token_count": null, "roles": ["tokenizer (inferred)"], "duplication": "UNVERIFIED", "mentions": ["kamimusuhi/docs/semantic-token-language-cortex.md (J64→J72 vocab delta)"]},
+      {"run_id": "J72 / J72-30M / j72-30m ProbeLM", "model": "custom PyTorch LM; /health total_params 150,001,152 (embedding 55,296,000 = 72,000 × 768; non_embedding 94,705,152); hidden 768 / 12 layers / 12 heads / ctx 4096; config novllm config/phase55_probe.json 'primary' (file absent from GitHub)", "dataset_snapshot": "UNVERIFIED", "dataset_hash": "UNVERIFIED", "work_set": "UNVERIFIED — inferred to be the syosetu+kakuyomu dataset_v2 corpus because novllm owns no other corpus and J72 emits novelistic Japanese; treat as hypothesis", "source": "UNVERIFIED", "char_count": null, "token_count": null, "roles": ["tokenizer (Phase57 audit)", "lm_pretraining_from_scratch (inferred)", "evaluation (Phase57 BPB)"], "duplication": "UNVERIFIED", "mentions": ["kamimusuhi/docs/experiments/multi-resource-j72-grokbot.md", "kamimusuhi/docs/semantic-token-language-cortex.md", "kamimusuhi/scripts/multi-resource-smoke.sh", "kamimusuhi/crates/kamimusuhi-runtime/tests/multi_resource_routing.rs"], "measurements": {"chars_per_token": {"ja_general": 2.4005, "en_general": 1.9312, "en_technical": 1.8549, "python": 1.8925, "ja_en_mixed": 2.1425}, "qwen3_reference": {"ja_general": 1.3356, "en_general": 4.8838, "en_technical": 4.9237, "python": 4.6373, "ja_en_mixed": 2.1174}, "bpb": {"ja_hardened": 4.2442, "en_general": 7.8308, "en_technical": 7.7947, "python": 7.7693}, "j64_to_j72_added_pieces_pure_latin": "84/8000"}, "behavior_notes": "not instruction-tuned; temp=0 degenerate repetition; 0/36 task success in multi-resource smoke; once produced Aozora-like prose (anecdotal)"},
+      {"run_id": "J96", "model": "UNVERIFIED", "dataset_snapshot": "UNVERIFIED", "dataset_hash": "UNVERIFIED", "work_set": "UNVERIFIED", "source": "UNVERIFIED", "char_count": null, "token_count": null, "roles": [], "duplication": "UNVERIFIED", "mentions": []},
+      {"run_id": "J128", "model": "UNVERIFIED", "dataset_snapshot": "UNVERIFIED", "dataset_hash": "UNVERIFIED", "work_set": "UNVERIFIED", "source": "UNVERIFIED", "char_count": null, "token_count": null, "roles": [], "duplication": "UNVERIFIED", "mentions": []},
+      {"run_id": "N/W-series", "model": "UNVERIFIED", "note": "No N- or W-prefixed experiment identifiers found in either repository."}
+    ],
+    "kamimusuhi_inheritance": {
+      "current_role_of_j72": "external cognitive resource (0x0472, locality external, last_resort) — explicitly NOT Persona Core (multi-resource-j72-grokbot.md)",
+      "planned_role": "K0 language substrate of a future novllm-derived Persona Core model (docs/persona-core-training-taxonomy.md:37,203; docs/model-ecology-and-lineage.md)",
+      "persona_relevance": "Whatever literary ancestry Kamimusuhi inherits from the J-series is, on current evidence, the syosetu/kakuyomu web-novel register: long-form serial, ~73% first-person, ~70% male protagonist, isekai ~25%, R18 ~17%, with author-note contamination. Aozora/modern-literature ancestry is NOT evidenced."
+    }
+  },
+  "open_questions_for_local_artifacts": [
+    "config/phase*.json — full J-series dims / vocab sizes / steps",
+    "tokenizer training corpus per J* (and whether Aozora was mixed in)",
+    "novel_status.db row counts; dataset_v2*/manifests/dataset_stats.json, works.jsonl, VERSION.json",
+    "runs/work_clf_auto/results.jsonl (150/201-tag list), phase_a2_features.jsonl, work_classification.jsonl",
+    "which dataset snapshot each J-run consumed; whether J72 is pretraining-only",
+    "Phase57 eval harness + held-out corpus file lists",
+    "J-series checkpoint locations"
+  ]
+}
