@@ -114,7 +114,7 @@ from .fba0 import DATA_FILES
 from .params import DEFAULT_PARAMS, UnsupportedAttachmentRegion
 from .replicates import replicate_seeds as _default_replicate_seeds
 #: runtime modes carrying an explicit membrane equation (A3/A3.1)
-ACTIVE_MODES = ("active_hh_v0", "active_fly_v1")
+ACTIVE_MODES = ("active_hh_v0", "active_fly_v1", "active_fly_v1_1")
 
 from .semantics import (PROPAGATION_AUTO, PROPAGATION_EVENT_CSC,
                         PROPAGATION_SPARSE_CSR, semantics)
@@ -972,6 +972,7 @@ class TorchBackend(FbaBackend):
         list: the per-step Poisson draw costs one uniform per *driven*
         neuron, not one per neuron (M1 §2)."""
         rates = torch.zeros(self.n, device=self.device)
+        listed = []
         for key, hz in (drive.get("rates_hz") or {}).items():
             if isinstance(key, str) and key == "all":
                 rates[:] = hz
@@ -980,8 +981,17 @@ class TorchBackend(FbaBackend):
                 rates[int(lo):int(hi)] = hz
             else:
                 rates[int(key)] = hz
+                listed.append(int(key))
         self._input_rates = rates
-        idx = torch.nonzero(rates, as_tuple=False).flatten()
+        # explicitly listed nodes stay in the draw set even at 0 Hz so
+        # ablations that zero a rate keep an identical RNG stream —
+        # without this, a zeroed drive silently changes downstream
+        # noise and fakes a "causal" effect (Body0 §45)
+        nz = set(torch.nonzero(rates, as_tuple=False).flatten()
+                 .tolist()) | set(listed)
+        idx = torch.tensor(sorted(nz), device=self.device,
+                           dtype=torch.long) if nz else \
+            torch.zeros(0, device=self.device, dtype=torch.long)
         if idx.numel():
             self._drive_idx = idx
             self._drive_p = rates[idx] * self.params["dt"] / 1000.0

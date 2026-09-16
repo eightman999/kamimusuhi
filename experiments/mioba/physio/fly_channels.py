@@ -189,8 +189,85 @@ class ShalK(_AtypeK):
     H_TMIN, H_TMAX = 4.0, 12.0
 
 
+class KcaK(_FlyChannel):
+    """KCa-lite / adaptation current — A3.2 §7-§8.
+
+    NOT a molecular KCa reconstruction: a single slow gate ``s``
+    that opens only while V crosses spike range (V > −20 mV — a
+    cheap Ca-influx proxy) and decays slowly (~80 ms). Accumulates
+    over spikes → adaptation + deeper late AHP, and throttles the
+    steep A3.1 F-I slope.
+
+    Gate dynamics: s_inf = gate(V, -20, 3); tau = 2 ms while
+    activating, ~80 ms while decaying. All MODEL_INFERENCE (§8/§9).
+    """
+    name = "kca_K"
+    family = "KCa-like"
+    e_rev_default = -77.0
+    kinetics_provenance = "MODEL_INFERENCE"   # §8: no fly fit yet
+    A_VH, A_S = -20.0, 3.0
+    TAU_ACT_MS = 2.0
+    TAU_DECAY_MS = 80.0
+
+    def __init__(self, e_rev: float | None = None, **kw):
+        super().__init__(self.e_rev_default if e_rev is None else e_rev,
+                         **kw)
+
+    def initial_state(self, V):
+        return _gate(V, self.A_VH, self.A_S).unsqueeze(-1)
+
+    def advance(self, dt, V, state):
+        s = state[..., 0]
+        s_inf = _gate(V, self.A_VH, self.A_S)
+        tau = torch.where(s_inf > s,
+                          torch.full_like(s, self.TAU_ACT_MS),
+                          torch.full_like(s, self.TAU_DECAY_MS))
+        tau = torch.clamp(tau / self._qt, min=1e-6)
+        return self._cnexp(s, s_inf, tau, dt).unsqueeze(-1)
+
+    def current(self, V, state):
+        return state[..., 0] * (V - self.e_rev)
+
+    def conductance(self, V, state):
+        return state[..., 0]
+
+
+class ParaNaV11(ParaNa):
+    """v1_1 Para — slower m/h kinetics for a wider spike
+    (A3.1 width ~0.5 ms → target ~1.0 ms). flychan-v1 classes are
+    frozen; this is the versioned A3.2 variant."""
+    name = "para_Na_v11"
+    M_TMIN, M_TMAX = 0.15, 0.35
+    H_TMIN, H_TMAX = 1.2, 3.5
+
+
+class ShabKV11(ShabK):
+    name = "shab_K_v11"
+
+
+class ShakerKV11(ShakerK):
+    name = "shaker_K_v11"
+
+
+class ShalKV11(ShalK):
+    name = "shal_K_v11"
+
+
+class KcaKV11(KcaK):
+    """v1_1 name for the adaptation current (added in A3.2)."""
+    name = "kca_K_v11"
+    TAU_ACT_MS = 15.0        # accumulate over several spikes
+
+
 FLY_CHANNELS = {"para_Na": ParaNa, "shab_K": ShabK,
-                "shaker_K": ShakerK, "shal_K": ShalK}
+                "shaker_K": ShakerK, "shal_K": ShalK,
+                "kca_K": KcaK,
+                # ---- A3.2 v1_1 set (v1 names stay frozen) ----
+                "para_Na_v11": ParaNaV11, "shab_K_v11": ShabKV11,
+                "shaker_K_v11": ShakerKV11, "shal_K_v11": ShalKV11,
+                "kca_K_v11": KcaKV11}
+
+FLY_CHANNEL_MODEL_VERSION_V11 = "flychan-v1_1"
 
 #: honest model-status note used in manifests
 FLY_MODEL_NOTE = (

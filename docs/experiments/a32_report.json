@@ -1,0 +1,846 @@
+{
+ "kind": "A3.2 physiology hardening + causal chain on G0.1",
+ "run_manifest": {
+  "anatomy_manifest_hash": null,
+  "physiology_overlay": {
+   "overlay_version": "physio-overlay-fly-v1_1",
+   "channel_model_version": "flychan-v1_1",
+   "anatomy_manifest_hash": null,
+   "files": {
+    "channels_fly_v1.parquet": "4e94aa8914ff12f13811ff6fc5c759a9025d8a0570e03abd3ac356b1814b4189",
+    "entity_profiles_fly_v1.parquet": "4a90d2e0001571f80bb8542235673efec5e62ff59d593b17b68da253f66278b4",
+    "profiles_fly_v1.parquet": "b8ca8864640a8085bdeac167f2dffbd07e01a889c7a6433a46144fa747719dc5"
+   },
+   "profile_classes": [
+    "central_complex",
+    "descending",
+    "generic_fly",
+    "kenyon_cell",
+    "modulatory",
+    "motor",
+    "projection_neuron",
+    "sensory"
+   ],
+   "note": "fly channel families; densities are priors pending calibration; no squid-HH fallback (\u00a738); v1_1 adds KCa-lite adaptation (MODEL_INFERENCE)"
+  },
+  "reduction_algorithm": "reduce-v3-ais-fly",
+  "runtime_mode": "active_fly_v1_1",
+  "channel_model_versions": "flychan-v1_1",
+  "unknown_sign_mode": "neutral",
+  "temperature_C": 25.0,
+  "causal_noise_floor": 1.0
+ },
+ "comparison_v1_vs_v11": {
+  "kenyon_cell": {
+   "v1_1": {
+    "rest_V": -67.5,
+    "rest_spikes": 0,
+    "rin_density": 1.05,
+    "tau_ms": 3.5,
+    "rheobase": 6.25,
+    "fi_rmse": 14.3,
+    "fi_hz": [
+     0.0,
+     0.0,
+     0.0,
+     6.666666666666667,
+     13.333333333333334,
+     26.666666666666668
+    ],
+    "fi_amps": [
+     2.0,
+     4.0,
+     7.0,
+     12.0,
+     20.0,
+     35.0
+    ],
+    "max_hz": 26.666666666666668,
+    "spike_width_ms": 1.3000000000000012,
+    "ahp_mv": -16.775550842285156,
+    "numerical_failure": false
+   },
+   "v1": {
+    "rest_V": -67.5,
+    "rest_spikes": 0,
+    "rin_density": 2.27,
+    "tau_ms": 3.8,
+    "rheobase": 4.6875,
+    "fi_rmse": 119.0,
+    "fi_hz": [
+     0.0,
+     13.333333333333334,
+     133.33333333333334,
+     186.66666666666669,
+     226.66666666666669,
+     0.0
+    ],
+    "fi_amps": [
+     2.0,
+     4.0,
+     7.0,
+     12.0,
+     20.0,
+     35.0
+    ],
+    "max_hz": 226.66666666666669,
+    "spike_width_ms": 7.999999999999972,
+    "ahp_mv": -16.5948855082194,
+    "numerical_failure": false
+   }
+  },
+  "projection_neuron": {
+   "v1_1": {
+    "rest_V": -71.3,
+    "rest_spikes": 0,
+    "rin_density": 1.38,
+    "tau_ms": 1.1,
+    "rheobase": 14.0625,
+    "fi_rmse": 36.0,
+    "fi_hz": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     6.666666666666667,
+     20.0
+    ],
+    "fi_amps": [
+     2.0,
+     4.0,
+     7.0,
+     12.0,
+     20.0,
+     35.0
+    ],
+    "max_hz": 20.0,
+    "spike_width_ms": 0.6000000000000003,
+    "ahp_mv": -20.681998166170985,
+    "numerical_failure": false
+   },
+   "v1": {
+    "rest_V": -61.6,
+    "rest_spikes": 0,
+    "rin_density": 2.86,
+    "tau_ms": 5.9,
+    "rheobase": 0.78125,
+    "fi_rmse": 145.3,
+    "fi_hz": [
+     100.0,
+     133.33333333333334,
+     166.66666666666669,
+     206.66666666666669,
+     253.33333333333334,
+     0.0
+    ],
+    "fi_amps": [
+     2.0,
+     4.0,
+     7.0,
+     12.0,
+     20.0,
+     35.0
+    ],
+    "max_hz": 253.33333333333334,
+    "spike_width_ms": 0.5999999999999979,
+    "ahp_mv": -14.2148525761623,
+    "numerical_failure": false
+   }
+  },
+  "descending": {
+   "v1_1": {
+    "rest_V": -69.4,
+    "rest_spikes": 0,
+    "rin_density": 1.04,
+    "tau_ms": 8.0,
+    "rheobase": 14.84375,
+    "fi_rmse": 27.3,
+    "fi_hz": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     6.666666666666667,
+     20.0
+    ],
+    "fi_amps": [
+     2.0,
+     4.0,
+     7.0,
+     12.0,
+     20.0,
+     35.0
+    ],
+    "max_hz": 20.0,
+    "spike_width_ms": 0.7000000000000004,
+    "ahp_mv": -20.575672496448867,
+    "numerical_failure": false
+   },
+   "v1": {
+    "rest_V": -64.0,
+    "rest_spikes": 0,
+    "rin_density": 1.78,
+    "tau_ms": 10.4,
+    "rheobase": 2.34375,
+    "fi_rmse": 171.7,
+    "fi_hz": [
+     33.333333333333336,
+     126.66666666666667,
+     166.66666666666669,
+     206.66666666666669,
+     246.66666666666669,
+     320.0
+    ],
+    "fi_amps": [
+     2.0,
+     4.0,
+     7.0,
+     12.0,
+     20.0,
+     35.0
+    ],
+    "max_hz": 320.0,
+    "spike_width_ms": 0.6000000000000005,
+    "ahp_mv": -16.788722719464985,
+    "numerical_failure": false
+   }
+  },
+  "motor": {
+   "v1_1": {
+    "rest_V": -69.4,
+    "rest_spikes": 0,
+    "rin_density": 1.04,
+    "tau_ms": 7.4,
+    "rheobase": 14.84375,
+    "fi_rmse": 44.7,
+    "fi_hz": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     6.666666666666667,
+     20.0
+    ],
+    "fi_amps": [
+     2.0,
+     4.0,
+     7.0,
+     12.0,
+     20.0,
+     35.0
+    ],
+    "max_hz": 20.0,
+    "spike_width_ms": 0.7000000000000004,
+    "ahp_mv": -21.63828235202365,
+    "numerical_failure": false
+   },
+   "v1": {
+    "rest_V": -63.0,
+    "rest_spikes": 0,
+    "rin_density": 1.48,
+    "tau_ms": 11.0,
+    "rheobase": 0.78125,
+    "fi_rmse": 152.6,
+    "fi_hz": [
+     53.333333333333336,
+     133.33333333333334,
+     173.33333333333334,
+     206.66666666666669,
+     240.0,
+     300.0
+    ],
+    "fi_amps": [
+     2.0,
+     4.0,
+     7.0,
+     12.0,
+     20.0,
+     35.0
+    ],
+    "max_hz": 300.0,
+    "spike_width_ms": 0.5000000000000004,
+    "ahp_mv": -19.27707429365678,
+    "numerical_failure": false
+   }
+  }
+ },
+ "channel_ablation_v11": {
+  "i_ext": 25.0,
+  "full": {
+   "spikes": 13,
+   "hz_after_100ms": 30.0,
+   "min_after_peak": -66.78097534179688,
+   "fail": null
+  },
+  "para_Na_v11_off": {
+   "spikes": 0,
+   "hz_after_100ms": 0.0,
+   "min_after_peak": -31.138885498046875,
+   "fail": null
+  },
+  "shab_K_v11_off": {
+   "spikes": 10,
+   "hz_after_100ms": 23.333333333333336,
+   "min_after_peak": -65.96802520751953,
+   "fail": null
+  },
+  "kca_K_v11_off": {
+   "spikes": 5,
+   "hz_after_100ms": 0.0,
+   "min_after_peak": -54.4431037902832,
+   "fail": null
+  },
+  "para_abolished": true,
+  "kca_rate_changed": false
+ },
+ "graft_conditions": {
+  "full": {
+   "host_spikes": [
+    2278,
+    2213,
+    2240,
+    2263,
+    2266,
+    2202,
+    2249,
+    2184
+   ],
+   "graft_spikes": [
+    140,
+    131,
+    134,
+    140,
+    133,
+    129,
+    134,
+    127
+   ],
+   "ais_spikes": [
+    4,
+    5,
+    4,
+    4,
+    5,
+    5,
+    4,
+    5
+   ],
+   "numerical_failure": null
+  },
+  "efferent_disabled": {
+   "host_spikes": [
+    2058,
+    2015,
+    2029,
+    2053,
+    2038,
+    2009,
+    2032,
+    1994
+   ],
+   "graft_spikes": [
+    140,
+    131,
+    134,
+    140,
+    133,
+    129,
+    134,
+    127
+   ],
+   "ais_spikes": [
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3
+   ],
+   "numerical_failure": null
+  },
+  "afferent_disabled": {
+   "host_spikes": [
+    2058,
+    2015,
+    2029,
+    2053,
+    2038,
+    2009,
+    2032,
+    1994
+   ],
+   "graft_spikes": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "ais_spikes": [
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3
+   ],
+   "numerical_failure": null
+  },
+  "graft_disabled": {
+   "host_spikes": [
+    2058,
+    2015,
+    2029,
+    2053,
+    2038,
+    2009,
+    2032,
+    1994
+   ],
+   "graft_spikes": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "ais_spikes": [
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3
+   ],
+   "numerical_failure": null
+  }
+ },
+ "causal": {
+  "ais_spike_deltas": [
+   1,
+   2,
+   1,
+   1,
+   2,
+   2,
+   1,
+   2
+  ],
+  "host_output_deltas": [
+   220,
+   198,
+   211,
+   210,
+   228,
+   193,
+   217,
+   190
+  ],
+  "ais_consistent": false,
+  "output_consistent": true,
+  "accepted": true
+ },
+ "probe_latency": {
+  "dend": {
+   "first_over_-20": 7.39999999999999,
+   "t_peak": 76.39999999999993,
+   "v_peak": -14.579489707946777,
+   "v_end": -28.72344398498535
+  },
+  "soma": {
+   "first_over_-20": null,
+   "t_peak": 0.0,
+   "v_peak": -60.366729736328125,
+   "v_end": -65.47138214111328
+  },
+  "ais": {
+   "first_over_-20": null,
+   "t_peak": 0.0,
+   "v_peak": -58.48949432373047,
+   "v_end": -66.74254760742187
+  }
+ },
+ "deterministic": true,
+ "calibration_v11": [
+  {
+   "profile_id": "kenyon_cell",
+   "status": "fitted",
+   "optimizer": {
+    "method": "seeded_random_search",
+    "n_iter": 8,
+    "bounds": {
+     "g_para": [
+      10.0,
+      140.0
+     ],
+     "g_shab": [
+      2.0,
+      60.0
+     ],
+     "g_shal": [
+      0.0,
+      60.0
+     ],
+     "g_shaker": [
+      0.0,
+      60.0
+     ],
+     "g_kca": [
+      0.0,
+      30.0
+     ],
+     "g_leak": [
+      0.05,
+      1.0
+     ],
+     "E_leak": [
+      -75.0,
+      -45.0
+     ],
+     "Cm": [
+      0.5,
+      2.0
+     ]
+    },
+    "weights": {
+     "rest_V": 1.0,
+     "rin": 0.5,
+     "tau": 0.5,
+     "rheobase": 1.0,
+     "fi_rmse": 1.0,
+     "spike_width": 0.5,
+     "ahp": 0.5
+    },
+    "seed": 20260916,
+    "variant": "v1_1"
+   },
+   "fitted_params": {
+    "g_para": 104.58626093026793,
+    "g_shab": 9.546978665181678,
+    "g_shal": 33.46923249536838,
+    "g_shaker": 58.70445558763383,
+    "g_kca": 9.950208312201369,
+    "g_leak": 0.7105804979392909,
+    "E_leak": -65.18560313092142,
+    "Cm": 0.5363285795854933
+   },
+   "final_loss": 1.3963132021178197,
+   "fit_metrics": {
+    "rest_V": 0.039098483941493956,
+    "rin": 0.7382771492004387,
+    "tau": 0.7083333333332806,
+    "rheobase": 0.12109375,
+    "fi_rmse": 0.5128157269094661
+   },
+   "validation_metrics": {
+    "spike_width_err": 7.401486830834377e-16,
+    "ahp_err": 1.0738756473247824
+   },
+   "provenance": "MODEL_INFERENCE",
+   "fit_target_set": [
+    "rest_V",
+    "rin",
+    "tau",
+    "rheobase",
+    "fi_rmse"
+   ],
+   "validation_set": [
+    "spike_width",
+    "ahp"
+   ],
+   "source_measurements": "adult KC physiology summaries (e.g. Gouwens & Wilson 2009-class data)",
+   "cross_stage_prior": false
+  },
+  {
+   "profile_id": "projection_neuron",
+   "status": "fitted",
+   "optimizer": {
+    "method": "seeded_random_search",
+    "n_iter": 8,
+    "bounds": {
+     "g_para": [
+      10.0,
+      140.0
+     ],
+     "g_shab": [
+      2.0,
+      60.0
+     ],
+     "g_shal": [
+      0.0,
+      60.0
+     ],
+     "g_shaker": [
+      0.0,
+      60.0
+     ],
+     "g_kca": [
+      0.0,
+      30.0
+     ],
+     "g_leak": [
+      0.05,
+      1.0
+     ],
+     "E_leak": [
+      -75.0,
+      -45.0
+     ],
+     "Cm": [
+      0.5,
+      2.0
+     ]
+    },
+    "weights": {
+     "rest_V": 1.0,
+     "rin": 0.5,
+     "tau": 0.5,
+     "rheobase": 1.0,
+     "fi_rmse": 1.0,
+     "spike_width": 0.5,
+     "ahp": 0.5
+    },
+    "seed": 20260916,
+    "variant": "v1_1"
+   },
+   "fitted_params": {
+    "g_para": 39.187781381597546,
+    "g_shab": 40.14081581605172,
+    "g_shal": 42.17613094860709,
+    "g_shaker": 10.205538738132521,
+    "g_kca": 20.6094111803877,
+    "g_leak": 0.4880315178665284,
+    "E_leak": -69.07522615462317,
+    "Cm": 0.5810106163187896
+   },
+   "final_loss": 2.247997581332393,
+   "fit_metrics": {
+    "rest_V": 0.22934603570521556,
+    "rin": 0.4464904022216786,
+    "tau": 0.8899999999999402,
+    "rheobase": 0.171875,
+    "fi_rmse": 1.178531344516368
+   },
+   "validation_metrics": {
+    "spike_width_err": 0.3999999999999997,
+    "ahp_err": 1.0681998166170985
+   },
+   "provenance": "MODEL_INFERENCE",
+   "fit_target_set": [
+    "rest_V",
+    "rin",
+    "tau",
+    "rheobase",
+    "fi_rmse"
+   ],
+   "validation_set": [
+    "spike_width",
+    "ahp"
+   ],
+   "source_measurements": "adult antennal-lobe PN physiology summaries",
+   "cross_stage_prior": false
+  },
+  {
+   "profile_id": "descending",
+   "status": "fitted",
+   "optimizer": {
+    "method": "seeded_random_search",
+    "n_iter": 8,
+    "bounds": {
+     "g_para": [
+      10.0,
+      140.0
+     ],
+     "g_shab": [
+      2.0,
+      60.0
+     ],
+     "g_shal": [
+      0.0,
+      60.0
+     ],
+     "g_shaker": [
+      0.0,
+      60.0
+     ],
+     "g_kca": [
+      0.0,
+      30.0
+     ],
+     "g_leak": [
+      0.05,
+      1.0
+     ],
+     "E_leak": [
+      -75.0,
+      -45.0
+     ],
+     "Cm": [
+      0.5,
+      2.0
+     ]
+    },
+    "weights": {
+     "rest_V": 1.0,
+     "rin": 0.5,
+     "tau": 0.5,
+     "rheobase": 1.0,
+     "fi_rmse": 1.0,
+     "spike_width": 0.5,
+     "ahp": 0.5
+    },
+    "seed": 20260916,
+    "variant": "v1_1"
+   },
+   "fitted_params": {
+    "g_para": 47.65509869202683,
+    "g_shab": 29.49841798629892,
+    "g_shal": 38.95911315210609,
+    "g_shaker": 30.65538652732999,
+    "g_kca": 20.91829961687308,
+    "g_leak": 0.5668944365178822,
+    "E_leak": -65.67301091574191,
+    "Cm": 0.6719380197115394
+   },
+   "final_loss": 1.5454061612699275,
+   "fit_metrics": {
+    "rest_V": 0.19680877860935247,
+    "rin": 0.4783158302307129,
+    "tau": 5.1514348342607263e-14,
+    "rheobase": 0.09375,
+    "fi_rmse": 1.0156894675451928
+   },
+   "validation_metrics": {
+    "spike_width_err": 0.2999999999999996,
+    "ahp_err": 1.2884536554783952
+   },
+   "provenance": "MODEL_INFERENCE",
+   "fit_target_set": [
+    "rest_V",
+    "rin",
+    "tau",
+    "rheobase",
+    "fi_rmse"
+   ],
+   "validation_set": [
+    "spike_width",
+    "ahp"
+   ],
+   "source_measurements": "adult DN physiology summaries",
+   "cross_stage_prior": false
+  },
+  {
+   "profile_id": "motor",
+   "status": "fitted",
+   "optimizer": {
+    "method": "seeded_random_search",
+    "n_iter": 8,
+    "bounds": {
+     "g_para": [
+      10.0,
+      140.0
+     ],
+     "g_shab": [
+      2.0,
+      60.0
+     ],
+     "g_shal": [
+      0.0,
+      60.0
+     ],
+     "g_shaker": [
+      0.0,
+      60.0
+     ],
+     "g_kca": [
+      0.0,
+      30.0
+     ],
+     "g_leak": [
+      0.05,
+      1.0
+     ],
+     "E_leak": [
+      -75.0,
+      -45.0
+     ],
+     "Cm": [
+      0.5,
+      2.0
+     ]
+    },
+    "weights": {
+     "rest_V": 1.0,
+     "rin": 0.5,
+     "tau": 0.5,
+     "rheobase": 1.0,
+     "fi_rmse": 1.0,
+     "spike_width": 0.5,
+     "ahp": 0.5
+    },
+    "seed": 20260916,
+    "variant": "v1_1"
+   },
+   "fitted_params": {
+    "g_para": 47.65509869202683,
+    "g_shab": 29.49841798629892,
+    "g_shal": 38.95911315210609,
+    "g_shaker": 30.65538652732999,
+    "g_kca": 20.91829961687308,
+    "g_leak": 0.5668944365178822,
+    "E_leak": -65.67301091574191,
+    "Cm": 0.6719380197115394
+   },
+   "final_loss": 2.3801951452929697,
+   "fit_metrics": {
+    "rest_V": 0.26209138558127654,
+    "rin": 0.4782012799793698,
+    "tau": 0.07499999999994422,
+    "rheobase": 0.09375,
+    "fi_rmse": 1.7477531197220362
+   },
+   "validation_metrics": {
+    "spike_width_err": 0.22222222222222154,
+    "ahp_err": 1.5605909824371338
+   },
+   "provenance": "MODEL_INFERENCE",
+   "fit_target_set": [
+    "rest_V",
+    "rin",
+    "tau",
+    "rheobase",
+    "fi_rmse"
+   ],
+   "validation_set": [
+    "spike_width",
+    "ahp"
+   ],
+   "source_measurements": "MN physiology summaries \u2014 adult preferred; some ranges cross-referenced from larval studies",
+   "cross_stage_prior": true
+  }
+ ],
+ "receptor_audit": {
+  "receptor_model": "receptor-v0",
+  "unknown_sign_mode": "neutral",
+  "synapses_total": 629,
+  "synapses_emitted": 629,
+  "synapses_receptor_resolved": 551,
+  "synapses_unknown_sign": 78,
+  "synapses_using_prior": 0,
+  "synapses_dropped_strict": 0
+ },
+ "numerical_failure_count": 0,
+ "wall_s_total": 377.0991590023041
+}

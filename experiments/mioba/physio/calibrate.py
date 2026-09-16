@@ -16,7 +16,7 @@ import json
 
 import numpy as np
 
-from .fly_overlay import FLY_PROFILES
+from .fly_overlay import FLY_PROFILES, FLY_PROFILES_V11
 from .benchmark import (eval_profile, measure_rest, measure_rin_tau,
                         measure_rheobase, measure_fi, spike_shape)
 
@@ -100,6 +100,7 @@ BOUNDS = {
     "g_shab": (2.0, 60.0),
     "g_shal": (0.0, 60.0),
     "g_shaker": (0.0, 60.0),
+    "g_kca": (0.0, 30.0),          # A3.2 adaptation current
     "g_leak": (0.05, 1.0),
     "E_leak": (-75.0, -45.0),
     "Cm": (0.5, 2.0),
@@ -115,23 +116,27 @@ VAL_METRICS = ("spike_width", "ahp")
 
 
 def single_node_phys(profile_id: str, fitted: dict | None = None,
-                     temperature_C: float = 25.0) -> dict:
-    """One-node physiology block for a profile (soma only)."""
-    prof = FLY_PROFILES[profile_id]
+                     temperature_C: float = 25.0,
+                     variant: str = "v1") -> dict:
+    """One-node physiology block for a profile (soma only).
+    ``variant`` "v1" | "v1_1" selects the channel-model set."""
+    table = FLY_PROFILES if variant == "v1" else FLY_PROFILES_V11
+    prof = table[profile_id]
     mem = dict(prof["membrane"])
     chans = {k: dict(v) for k, v in prof["channels"].items()}
+
+    def _by_canon(canon):     # "para_Na" -> "para_Na[_v11]"
+        return next((n for n in chans
+                     if n == canon or n == canon + "_v11"), None)
     if fitted:
+        gmap = {"g_para": "para_Na", "g_shab": "shab_K",
+                "g_shal": "shal_K", "g_shaker": "shaker_K",
+                "g_kca": "kca_K"}
         for k, v in fitted.items():
             if k in mem:
                 mem[k] = float(v)
-            elif k == "g_para" and "para_Na" in chans:
-                chans["para_Na"]["g"] = float(v)
-            elif k == "g_shab" and "shab_K" in chans:
-                chans["shab_K"]["g"] = float(v)
-            elif k == "g_shal" and "shal_K" in chans:
-                chans["shal_K"]["g"] = float(v)
-            elif k == "g_shaker" and "shaker_K" in chans:
-                chans["shaker_K"]["g"] = float(v)
+            elif k in gmap and _by_canon(gmap[k]) is not None:
+                chans[_by_canon(gmap[k])]["g"] = float(v)
     channels = {}
     for name, c in chans.items():
         # single-node sim: inject the density wherever it would sit
@@ -139,7 +144,8 @@ def single_node_phys(profile_id: str, fitted: dict | None = None,
                           "g_bar": [c["g"]],
                           "temperature_C": temperature_C}
     return {
-        "runtime_mode": "active_fly_v1",
+        "runtime_mode": ("active_fly_v1" if variant == "v1"
+                         else "active_fly_v1_1"),
         "active_idx": [0],
         "membrane": {"Cm": [mem["Cm"]], "g_leak": [mem["g_leak"]],
                      "E_leak": [mem["E_leak"]],
@@ -168,7 +174,8 @@ def _fi_rmse(fi, tgt):
 
 def calibrate_profile(profile_id: str, n_iter: int = 16, seed: int = 0,
                       temperature_C: float = 25.0,
-                      weights: dict | None = None) -> dict:
+                      weights: dict | None = None,
+                      variant: str = "v1") -> dict:
     """Seeded bounded random search → fitted params + fit/val split
     metrics (§20-§24)."""
     tgt = TARGETS.get(profile_id)
@@ -177,11 +184,13 @@ def calibrate_profile(profile_id: str, n_iter: int = 16, seed: int = 0,
     w = {**LOSS_W, **(weights or {})}
     rng = np.random.default_rng(seed)
     base = single_node_phys(profile_id,
-                            temperature_C=temperature_C)
+                            temperature_C=temperature_C,
+                            variant=variant)
 
     def loss_of(params):
         phys = single_node_phys(profile_id, fitted=params,
-                                temperature_C=temperature_C)
+                                temperature_C=temperature_C,
+                                variant=variant)
         r = measure_rest(phys, duration=120.0, seed=seed)
         if r["numerical_failure"]:
             return 1e6, {"fail": True}
@@ -216,7 +225,8 @@ def calibrate_profile(profile_id: str, n_iter: int = 16, seed: int = 0,
     loss, params, det = best
     # held-out validation metrics (§24): measured, not fitted
     phys = single_node_phys(profile_id, fitted=params,
-                            temperature_C=temperature_C)
+                            temperature_C=temperature_C,
+                            variant=variant)
     sh = spike_shape(phys, i_ext=max((det.get("rheobase") or 20.0)
                                      * 1.5, 5.0), seed=seed)
     val = {
@@ -233,7 +243,8 @@ def calibrate_profile(profile_id: str, n_iter: int = 16, seed: int = 0,
         "profile_id": profile_id, "status": "fitted",
         "optimizer": {"method": "seeded_random_search",
                       "n_iter": n_iter, "bounds": BOUNDS,
-                      "weights": w, "seed": seed},
+                      "weights": w, "seed": seed,
+                      "variant": variant},
         "fitted_params": fitted_out,
         "final_loss": float(loss),
         "fit_metrics": det.get("metrics"),

@@ -1,0 +1,12 @@
+{
+ "body_model": "MODEL_INFERENCE",
+ "actuator_decode": "MODEL_INFERENCE",
+ "sensory_transduction": "MODEL_INFERENCE",
+ "host_sensory_identity": "CURATED_ANNOTATION",
+ "host_motor_identity": "CURATED_ANNOTATION",
+ "biomechanics": "simplified MODEL_INFERENCE",
+ "environment": "MODEL_INFERENCE",
+ "host_anatomy": "DIRECT_MEASUREMENT (BANC, immutable)",
+ "host_physiology": "flychan-v1_1 (kinetics LITERATURE_PRIOR; densities MODEL_INFERENCE fit)",
+ "graft": "ARTIFICIAL_GRAFT"
+}

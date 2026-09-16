@@ -1,0 +1,21 @@
+{
+  "overlay_version": "physio-overlay-fly-v1_1",
+  "channel_model_version": "flychan-v1_1",
+  "anatomy_manifest_hash": null,
+  "files": {
+    "channels_fly_v1.parquet": "473acef85fbe4390aae4e62facaa4b5a49c0c97abb4efca8da4473e5ef6ef6ac",
+    "entity_profiles_fly_v1.parquet": "ad6c5794b55d8c1e4fb31712e8dd8e8b210f27d3c0815a2713febe030d10a811",
+    "profiles_fly_v1.parquet": "7fa7838912b2796537a1194b05b30ba9d609b234696a76adbb68e7847f010adf"
+  },
+  "profile_classes": [
+    "central_complex",
+    "descending",
+    "generic_fly",
+    "kenyon_cell",
+    "modulatory",
+    "motor",
+    "projection_neuron",
+    "sensory"
+  ],
+  "note": "fly channel families; densities are priors pending calibration; no squid-HH fallback (\u00a738); v1_1 adds KCa-lite adaptation (MODEL_INFERENCE)"
+}

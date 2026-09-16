@@ -60,9 +60,11 @@ def test_generic_channels_still_registered():
     """§1: A3 freeze — generic models untouched and constructible."""
     assert isinstance(build_channel(
         {"channel_model": "generic_Na", "e_rev": 50.0}), GenericNa)
-    assert set(FLY_CHANNELS) == {"para_Na", "shab_K",
-                                 "shaker_K", "shal_K"}
-    for name in FLY_CHANNELS:
+    # the frozen A3.1 set must all still be present (the registry is
+    # allowed to grow with later versioned sets — A3.2 *_v11/KCa)
+    assert {"para_Na", "shab_K", "shaker_K", "shal_K"} \
+        <= set(FLY_CHANNELS)
+    for name in ("para_Na", "shab_K", "shaker_K", "shal_K"):
         assert FLY_CHANNELS[name].kinetics_provenance == \
             "LITERATURE_PRIOR"
 

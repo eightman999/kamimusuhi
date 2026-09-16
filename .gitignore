@@ -44,3 +44,4 @@ __pycache__/
 /experiments/mioba/datasets/*/store*/
 # Physiology overlays (regenerable by physio/overlay.py)
 /experiments/mioba/datasets/*/physiology/
+/logs/

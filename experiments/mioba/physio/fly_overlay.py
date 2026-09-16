@@ -148,6 +148,31 @@ FLY_PROFILES: dict[str, dict] = {
     },
 }
 
+def _v11_profiles() -> dict:
+    """A3.2 v1_1 profile table: same densities as v1 but channel
+    models renamed to the *_v11 classes (slower Para kinetics), plus
+    the KCa-lite adaptation current on SOMA|AIS (MODEL_INFERENCE
+    density prior; calibrate.py may refit it)."""
+    import copy
+    out = {}
+    for pid, p in FLY_PROFILES.items():
+        p2 = copy.deepcopy(p)
+        p2["channels"] = {}
+        for cname, c in p["channels"].items():
+            c2 = dict(c)
+            p2["channels"][cname + "_v11"] = c2
+        p2["channels"]["kca_K_v11"] = {
+            "g": 9.0, "e": -77.0, "comps": ["SOMA", AIS]}
+        out[pid] = p2
+    return out
+
+
+#: A3.2 hardened profiles — v1 table above stays untouched
+FLY_PROFILES_V11 = _v11_profiles()
+OVERLAY_VERSION_FLY_V11 = "physio-overlay-fly-v1_1"
+KCA_NOTE = ("KCa-lite spike-triggered adaptation current — "
+            "MODEL_INFERENCE, not a molecular KCa fit (A3.2 §7-8)")
+
 #: entity → profile assignment, coarse dataset-class driven (§37
 #: fallback chain: cell_type keyword → super_class → nt class →
 #: generic_fly)
@@ -181,12 +206,20 @@ def fly_profile_for(nt_top, super_class, cell_type=None) -> tuple[
     return "generic_fly", Provenance.GENERIC_FALLBACK
 
 
-def _membrane_rows() -> list[dict]:
+def _profiles_for(variant: str) -> dict:
+    if variant == "v1":
+        return FLY_PROFILES
+    if variant == "v1_1":
+        return FLY_PROFILES_V11
+    raise ValueError(f"overlay variant {variant!r}")
+
+
+def _membrane_rows(profiles=None) -> list[dict]:
     units = {"Cm": "uF/cm2", "g_leak": "mS/cm2", "Ra": "ohm*cm",
              "E_leak": "mV", "V_rest": "mV", "V_threshold": "mV",
              "V_reset": "mV"}
     rows = []
-    for pid, prof in FLY_PROFILES.items():
+    for pid, prof in (profiles or FLY_PROFILES).items():
         for pname, val in prof["membrane"].items():
             prov = (Provenance.LITERATURE_PRIOR
                     if pname in ("Cm", "g_leak", "Ra")
@@ -198,9 +231,9 @@ def _membrane_rows() -> list[dict]:
     return rows
 
 
-def _channel_rows() -> list[dict]:
+def _channel_rows(profiles=None) -> list[dict]:
     rows = []
-    for pid, prof in FLY_PROFILES.items():
+    for pid, prof in (profiles or FLY_PROFILES).items():
         for cname, c in prof["channels"].items():
             rows.append({"profile_id": pid, "channel": cname,
                          "g_density": c["g"], "E_rev_mV": c["e"],
@@ -212,23 +245,28 @@ def _channel_rows() -> list[dict]:
 
 
 def build_fly_overlay(entities: pd.DataFrame, anatomy_manifest: dict,
-                      out_dir, fitted: dict | None = None) -> dict:
+                      out_dir, fitted: dict | None = None,
+                      variant: str = "v1") -> dict:
     """``fitted``: optional {profile_id: {param: record}} from
-    calibrate.py — written with MODEL_INFERENCE/fit metadata (§23)."""
+    calibrate.py — written with MODEL_INFERENCE/fit metadata (§23).
+    ``variant`` "v1" | "v1_1" selects the channel-model set."""
+    profiles = _profiles_for(variant)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    mem_rows = _membrane_rows()
-    ch_rows = _channel_rows()
+    mem_rows = _membrane_rows(profiles)
+    ch_rows = _channel_rows(profiles)
     # fitted channel-density knob → channel row name (§23: fitted
     # stays MODEL_INFERENCE with fit metadata, never upgraded)
     g2ch = {"g_para": "para_Na", "g_shab": "shab_K",
-            "g_shal": "shal_K", "g_shaker": "shaker_K"}
+            "g_shal": "shal_K", "g_shaker": "shaker_K",
+            "g_kca": "kca_K"}
+    suffix = "_v11" if variant == "v1_1" else ""
     if fitted:
         for pid, params in fitted.items():
             for pname, rec in params.items():
                 if pname in g2ch:
-                    cname = g2ch[pname]
-                    cspec = FLY_PROFILES[pid]["channels"].get(cname)
+                    cname = g2ch[pname] + suffix
+                    cspec = profiles[pid]["channels"].get(cname)
                     ch_rows = [r for r in ch_rows if not (
                         r["profile_id"] == pid
                         and r["channel"] == cname)]
@@ -260,7 +298,7 @@ def build_fly_overlay(entities: pd.DataFrame, anatomy_manifest: dict,
                                      index=False)
     ep = [{"entity_idx": int(r.entity_idx), "profile_id": pid,
            "assignment_provenance": prov,
-           "receptor_profile": FLY_PROFILES[pid]["receptors"]}
+           "receptor_profile": profiles[pid]["receptors"]}
           for r in entities.itertuples(index=False)
           for pid, prov in [fly_profile_for(
               getattr(r, "nt_top", None),
@@ -275,13 +313,18 @@ def build_fly_overlay(entities: pd.DataFrame, anatomy_manifest: dict,
         return h.hexdigest()
 
     manifest = {
-        "overlay_version": OVERLAY_VERSION_FLY,
-        "channel_model_version": FLY_CHANNEL_MODEL_VERSION,
+        "overlay_version": (OVERLAY_VERSION_FLY if variant == "v1"
+                            else OVERLAY_VERSION_FLY_V11),
+        "channel_model_version": (FLY_CHANNEL_MODEL_VERSION
+                                  if variant == "v1"
+                                  else "flychan-v1_1"),
         "anatomy_manifest_hash": anatomy_manifest.get("manifest_hash"),
         "files": {p.name: sha(p) for p in sorted(out.glob("*.parquet"))},
-        "profile_classes": sorted(FLY_PROFILES),
+        "profile_classes": sorted(profiles),
         "note": "fly channel families; densities are priors pending "
-                "calibration; no squid-HH fallback (§38)",
+                "calibration; no squid-HH fallback (§38)"
+                + ("; v1_1 adds KCa-lite adaptation (MODEL_INFERENCE)"
+                   if variant == "v1_1" else ""),
     }
     (out / "overlay_manifest.json").write_text(json.dumps(manifest,
                                                         indent=2))

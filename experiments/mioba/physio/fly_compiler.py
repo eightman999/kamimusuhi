@@ -282,7 +282,8 @@ def _fly_physiology_block(node_map_rows, entity_params,
             g = 0.0
             if ch is not None and comp in ch["compartments"]:
                 g = ch["g_density"]
-            if comp == AIS and name == "para_Na" and ch is not None:
+            if comp == AIS and name.startswith("para_Na") \
+                    and ch is not None:
                 g = ch["g_density"] * ais_boost
             ch_gbar[name].append(g)
     channels = {n: {**ch_meta[n], "g_bar": ch_gbar[n]}
@@ -303,5 +304,8 @@ def _fly_physiology_block(node_map_rows, entity_params,
                         "dt": dt},
         "simulation_temperature_C": temperature_C,
         "temperature_provenance": Provenance.MODEL_INFERENCE,
-        "runtime_mode": "active_fly_v1",
+        # v1_1 overlays carry *_v11 channel models → matching runtime
+        "runtime_mode": ("active_fly_v1_1" if any(
+            n.endswith("_v11") for n in ch_meta) else
+            "active_fly_v1"),
     }, active_idx

@@ -45,6 +45,7 @@ CALIBRATE_PROFILES = ("kenyon_cell", "projection_neuron",
                       "descending", "motor")
 FIT_UNITS = {"g_para": "mS/cm2", "g_shab": "mS/cm2",
              "g_shal": "mS/cm2", "g_shaker": "mS/cm2",
+             "g_kca": "mS/cm2",
              "g_leak": "mS/cm2", "E_leak": "mV", "Cm": "uF/cm2"}
 
 
