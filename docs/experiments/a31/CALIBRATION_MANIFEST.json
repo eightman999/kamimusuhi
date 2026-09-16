@@ -1,0 +1,588 @@
+{
+ "calibration_version": "calib-v1",
+ "source_papers": {
+  "kenyon_cell": "adult KC physiology summaries (e.g. Gouwens & Wilson 2009-class data)",
+  "projection_neuron": "adult antennal-lobe PN physiology summaries",
+  "descending": "adult DN physiology summaries",
+  "motor": "MN physiology summaries \u2014 adult preferred; some ranges cross-referenced from larval studies"
+ },
+ "profile_targets": {
+  "kenyon_cell": {
+   "stage": "adult",
+   "sex": "mixed",
+   "temperature_C": 22,
+   "method": "whole-cell patch",
+   "location": "soma",
+   "source": "adult KC physiology summaries (e.g. Gouwens & Wilson 2009-class data)",
+   "metrics": {
+    "rest_V": {
+     "mean": -65.0,
+     "std": 6.0
+    },
+    "rin_density": {
+     "mean": 4.0,
+     "std": 2.0
+    },
+    "tau_ms": {
+     "mean": 12.0,
+     "std": 6.0
+    },
+    "rheobase": {
+     "mean": 8.0,
+     "std": 6.0
+    },
+    "fi_slope_hz_per_uAcm2": {
+     "mean": 1.5,
+     "std": 1.0
+    },
+    "max_hz": {
+     "mean": 60.0,
+     "std": 30.0
+    },
+    "spike_width_ms": {
+     "mean": 1.2,
+     "std": 0.6
+    },
+    "ahp_mv": {
+     "mean": -8.0,
+     "std": 4.0
+    }
+   }
+  },
+  "projection_neuron": {
+   "stage": "adult",
+   "sex": "mixed",
+   "temperature_C": 22,
+   "method": "whole-cell patch",
+   "location": "soma",
+   "source": "adult antennal-lobe PN physiology summaries",
+   "metrics": {
+    "rest_V": {
+     "mean": -58.0,
+     "std": 6.0
+    },
+    "rin_density": {
+     "mean": 2.5,
+     "std": 1.2
+    },
+    "tau_ms": {
+     "mean": 10.0,
+     "std": 5.0
+    },
+    "rheobase": {
+     "mean": 12.0,
+     "std": 8.0
+    },
+    "fi_slope_hz_per_uAcm2": {
+     "mean": 2.5,
+     "std": 1.5
+    },
+    "max_hz": {
+     "mean": 120.0,
+     "std": 50.0
+    },
+    "spike_width_ms": {
+     "mean": 1.0,
+     "std": 0.5
+    },
+    "ahp_mv": {
+     "mean": -10.0,
+     "std": 5.0
+    }
+   }
+  },
+  "descending": {
+   "stage": "adult",
+   "sex": "mixed",
+   "temperature_C": 22,
+   "method": "whole-cell patch",
+   "location": "soma",
+   "source": "adult DN physiology summaries",
+   "metrics": {
+    "rest_V": {
+     "mean": -58.0,
+     "std": 6.0
+    },
+    "rin_density": {
+     "mean": 2.0,
+     "std": 1.0
+    },
+    "tau_ms": {
+     "mean": 8.0,
+     "std": 4.0
+    },
+    "rheobase": {
+     "mean": 15.0,
+     "std": 10.0
+    },
+    "fi_slope_hz_per_uAcm2": {
+     "mean": 2.0,
+     "std": 1.5
+    },
+    "max_hz": {
+     "mean": 150.0,
+     "std": 60.0
+    },
+    "spike_width_ms": {
+     "mean": 1.0,
+     "std": 0.5
+    },
+    "ahp_mv": {
+     "mean": -9.0,
+     "std": 5.0
+    }
+   }
+  },
+  "motor": {
+   "stage": "adult",
+   "sex": "mixed",
+   "temperature_C": 22,
+   "method": "patch (mixed adult/larval literature)",
+   "location": "soma",
+   "source": "MN physiology summaries \u2014 adult preferred; some ranges cross-referenced from larval studies",
+   "cross_stage_prior": true,
+   "metrics": {
+    "rest_V": {
+     "mean": -55.0,
+     "std": 6.0
+    },
+    "rin_density": {
+     "mean": 2.0,
+     "std": 1.0
+    },
+    "tau_ms": {
+     "mean": 8.0,
+     "std": 4.0
+    },
+    "rheobase": {
+     "mean": 15.0,
+     "std": 10.0
+    },
+    "fi_slope_hz_per_uAcm2": {
+     "mean": 3.0,
+     "std": 2.0
+    },
+    "max_hz": {
+     "mean": 180.0,
+     "std": 80.0
+    },
+    "spike_width_ms": {
+     "mean": 0.9,
+     "std": 0.4
+    },
+    "ahp_mv": {
+     "mean": -8.0,
+     "std": 4.0
+    }
+   }
+  }
+ },
+ "optimizer": {
+  "method": "seeded_random_search",
+  "n_iter": 10,
+  "bounds": {
+   "g_para": [
+    10.0,
+    140.0
+   ],
+   "g_shab": [
+    2.0,
+    60.0
+   ],
+   "g_shal": [
+    0.0,
+    60.0
+   ],
+   "g_shaker": [
+    0.0,
+    60.0
+   ],
+   "g_leak": [
+    0.05,
+    1.0
+   ],
+   "E_leak": [
+    -75.0,
+    -45.0
+   ],
+   "Cm": [
+    0.5,
+    2.0
+   ]
+  },
+  "weights": {
+   "rest_V": 1.0,
+   "rin": 0.5,
+   "tau": 0.5,
+   "rheobase": 1.0,
+   "fi_rmse": 1.0,
+   "spike_width": 0.5,
+   "ahp": 0.5
+  },
+  "seed": 20260916
+ },
+ "parameter_bounds": {
+  "g_para": [
+   10.0,
+   140.0
+  ],
+  "g_shab": [
+   2.0,
+   60.0
+  ],
+  "g_shal": [
+   0.0,
+   60.0
+  ],
+  "g_shaker": [
+   0.0,
+   60.0
+  ],
+  "g_leak": [
+   0.05,
+   1.0
+  ],
+  "E_leak": [
+   -75.0,
+   -45.0
+  ],
+  "Cm": [
+   0.5,
+   2.0
+  ]
+ },
+ "results": [
+  {
+   "profile_id": "kenyon_cell",
+   "status": "fitted",
+   "optimizer": {
+    "method": "seeded_random_search",
+    "n_iter": 10,
+    "bounds": {
+     "g_para": [
+      10.0,
+      140.0
+     ],
+     "g_shab": [
+      2.0,
+      60.0
+     ],
+     "g_shal": [
+      0.0,
+      60.0
+     ],
+     "g_shaker": [
+      0.0,
+      60.0
+     ],
+     "g_leak": [
+      0.05,
+      1.0
+     ],
+     "E_leak": [
+      -75.0,
+      -45.0
+     ],
+     "Cm": [
+      0.5,
+      2.0
+     ]
+    },
+    "weights": {
+     "rest_V": 1.0,
+     "rin": 0.5,
+     "tau": 0.5,
+     "rheobase": 1.0,
+     "fi_rmse": 1.0,
+     "spike_width": 0.5,
+     "ahp": 0.5
+    },
+    "seed": 20260916
+   },
+   "fitted_params": {
+    "g_para": 53.1175693528726,
+    "g_shab": 42.33017776892513,
+    "g_shal": 19.628793738157164,
+    "g_shaker": 1.453143183419734,
+    "g_leak": 0.25227968974653325,
+    "E_leak": -65.97430931015712,
+    "Cm": 1.724539020030414
+   },
+   "final_loss": 3.1124630981675745,
+   "fit_metrics": {
+    "rest_V": 0.06237825540395888,
+    "rin": 0.3169980049133301,
+    "tau": 0.49166666666662334,
+    "rheobase": 0.4140625,
+    "fi_rmse": 2.231690006973639
+   },
+   "validation_metrics": {
+    "spike_width_err": 0.5000000000000018,
+    "ahp_err": 0.7396443823109502
+   },
+   "provenance": "MODEL_INFERENCE",
+   "fit_target_set": [
+    "rest_V",
+    "rin",
+    "tau",
+    "rheobase",
+    "fi_rmse"
+   ],
+   "validation_set": [
+    "spike_width",
+    "ahp"
+   ],
+   "source_measurements": "adult KC physiology summaries (e.g. Gouwens & Wilson 2009-class data)",
+   "cross_stage_prior": false
+  },
+  {
+   "profile_id": "projection_neuron",
+   "status": "fitted",
+   "optimizer": {
+    "method": "seeded_random_search",
+    "n_iter": 10,
+    "bounds": {
+     "g_para": [
+      10.0,
+      140.0
+     ],
+     "g_shab": [
+      2.0,
+      60.0
+     ],
+     "g_shal": [
+      0.0,
+      60.0
+     ],
+     "g_shaker": [
+      0.0,
+      60.0
+     ],
+     "g_leak": [
+      0.05,
+      1.0
+     ],
+     "E_leak": [
+      -75.0,
+      -45.0
+     ],
+     "Cm": [
+      0.5,
+      2.0
+     ]
+    },
+    "weights": {
+     "rest_V": 1.0,
+     "rin": 0.5,
+     "tau": 0.5,
+     "rheobase": 1.0,
+     "fi_rmse": 1.0,
+     "spike_width": 0.5,
+     "ahp": 0.5
+    },
+    "seed": 20260916
+   },
+   "fitted_params": {
+    "g_para": 81.25942522336284,
+    "g_shab": 37.59754056303849,
+    "g_shal": 33.11421721679164,
+    "g_shaker": 19.66866813244208,
+    "g_leak": 0.1646549084582592,
+    "E_leak": -45.022212174985555,
+    "Cm": 1.9636715401795357
+   },
+   "final_loss": 3.074016809322662,
+   "fit_metrics": {
+    "rest_V": 0.08105637999786722,
+    "rin": 0.019370346069335652,
+    "tau": 0.30999999999995254,
+    "rheobase": 0.8046875,
+    "fi_rmse": 2.023587756290151
+   },
+   "validation_metrics": {
+    "spike_width_err": 0.5,
+    "ahp_err": 0.7119376397901966
+   },
+   "provenance": "MODEL_INFERENCE",
+   "fit_target_set": [
+    "rest_V",
+    "rin",
+    "tau",
+    "rheobase",
+    "fi_rmse"
+   ],
+   "validation_set": [
+    "spike_width",
+    "ahp"
+   ],
+   "source_measurements": "adult antennal-lobe PN physiology summaries",
+   "cross_stage_prior": false
+  },
+  {
+   "profile_id": "descending",
+   "status": "fitted",
+   "optimizer": {
+    "method": "seeded_random_search",
+    "n_iter": 10,
+    "bounds": {
+     "g_para": [
+      10.0,
+      140.0
+     ],
+     "g_shab": [
+      2.0,
+      60.0
+     ],
+     "g_shal": [
+      0.0,
+      60.0
+     ],
+     "g_shaker": [
+      0.0,
+      60.0
+     ],
+     "g_leak": [
+      0.05,
+      1.0
+     ],
+     "E_leak": [
+      -75.0,
+      -45.0
+     ],
+     "Cm": [
+      0.5,
+      2.0
+     ]
+    },
+    "weights": {
+     "rest_V": 1.0,
+     "rin": 0.5,
+     "tau": 0.5,
+     "rheobase": 1.0,
+     "fi_rmse": 1.0,
+     "spike_width": 0.5,
+     "ahp": 0.5
+    },
+    "seed": 20260916
+   },
+   "fitted_params": {
+    "g_para": 69.94115507647231,
+    "g_shab": 13.454562767728534,
+    "g_shal": 3.2404246527515856,
+    "g_shaker": 43.65519735243135,
+    "g_leak": 0.17361430572280334,
+    "E_leak": -58.265383752315806,
+    "Cm": 1.9676113896908456
+   },
+   "final_loss": 2.005696847178826,
+   "fit_metrics": {
+    "rest_V": 0.22158502140264405,
+    "rin": 0.17346229553222514,
+    "tau": 0.05000000000004867,
+    "rheobase": 0.0625,
+    "fi_rmse": 1.6098806780100452
+   },
+   "validation_metrics": {
+    "spike_width_err": 5.599999999999983,
+    "ahp_err": 1.0316089650310536
+   },
+   "provenance": "MODEL_INFERENCE",
+   "fit_target_set": [
+    "rest_V",
+    "rin",
+    "tau",
+    "rheobase",
+    "fi_rmse"
+   ],
+   "validation_set": [
+    "spike_width",
+    "ahp"
+   ],
+   "source_measurements": "adult DN physiology summaries",
+   "cross_stage_prior": false
+  },
+  {
+   "profile_id": "motor",
+   "status": "fitted",
+   "optimizer": {
+    "method": "seeded_random_search",
+    "n_iter": 10,
+    "bounds": {
+     "g_para": [
+      10.0,
+      140.0
+     ],
+     "g_shab": [
+      2.0,
+      60.0
+     ],
+     "g_shal": [
+      0.0,
+      60.0
+     ],
+     "g_shaker": [
+      0.0,
+      60.0
+     ],
+     "g_leak": [
+      0.05,
+      1.0
+     ],
+     "E_leak": [
+      -75.0,
+      -45.0
+     ],
+     "Cm": [
+      0.5,
+      2.0
+     ]
+    },
+    "weights": {
+     "rest_V": 1.0,
+     "rin": 0.5,
+     "tau": 0.5,
+     "rheobase": 1.0,
+     "fi_rmse": 1.0,
+     "spike_width": 0.5,
+     "ahp": 0.5
+    },
+    "seed": 20260916
+   },
+   "fitted_params": {
+    "g_para": 69.94115507647231,
+    "g_shab": 13.454562767728534,
+    "g_shal": 3.2404246527515856,
+    "g_shaker": 43.65519735243135,
+    "g_leak": 0.17361430572280334,
+    "E_leak": -58.265383752315806,
+    "Cm": 1.9676113896908456
+   },
+   "final_loss": 2.806224989184903,
+   "fit_metrics": {
+    "rest_V": 0.28821199058763897,
+    "rin": 0.17299985885620117,
+    "tau": 0.012500000000050804,
+    "rheobase": 0.21875,
+    "fi_rmse": 2.206513069169138
+   },
+   "validation_metrics": {
+    "spike_width_err": 6.888888888888868,
+    "ahp_err": 1.388260531425476
+   },
+   "provenance": "MODEL_INFERENCE",
+   "fit_target_set": [
+    "rest_V",
+    "rin",
+    "tau",
+    "rheobase",
+    "fi_rmse"
+   ],
+   "validation_set": [
+    "spike_width",
+    "ahp"
+   ],
+   "source_measurements": "MN physiology summaries \u2014 adult preferred; some ranges cross-referenced from larval studies",
+   "cross_stage_prior": true
+  }
+ ]
+}

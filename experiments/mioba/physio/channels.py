@@ -156,14 +156,35 @@ class GenericKdr(_GateMixin, ChannelModel):
         return state[..., 0] ** 4
 
 
-CHANNELS = {"leak": LeakChannel, "generic_Na": GenericNa,
-            "generic_Kdr": GenericKdr}
+_CHANNELS = None
+
+
+def _channel_classes() -> dict:
+    global _CHANNELS
+    if _CHANNELS is None:
+        d = {"leak": LeakChannel, "generic_Na": GenericNa,
+             "generic_Kdr": GenericKdr}
+        # lazy import: fly_channels builds on _GateMixin defined here
+        from .fly_channels import FLY_CHANNELS
+        d.update(FLY_CHANNELS)
+        _CHANNELS = d
+    return _CHANNELS
+
+
+def __getattr__(name):
+    # lazy registry — fly_channels.py imports this module, so the
+    # table can only materialise after both are loaded
+    if name == "CHANNELS":
+        return _channel_classes()
+    raise AttributeError(name)
 
 
 def build_channel(record: dict) -> ChannelModel:
     """Overlay channel record → model instance."""
-    cls = CHANNELS[record["channel_model"]]
+    cls = _channel_classes()[record["channel_model"]]
     kw = {}
     if "e_rev" in record and record["e_rev"] is not None:
         kw["e_rev"] = float(record["e_rev"])
+    if record.get("temperature_C") is not None:
+        kw["temperature_C"] = float(record["temperature_C"])
     return cls(**kw)

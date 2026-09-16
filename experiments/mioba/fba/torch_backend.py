@@ -113,6 +113,9 @@ from .eventgraph import EventGraph
 from .fba0 import DATA_FILES
 from .params import DEFAULT_PARAMS, UnsupportedAttachmentRegion
 from .replicates import replicate_seeds as _default_replicate_seeds
+#: runtime modes carrying an explicit membrane equation (A3/A3.1)
+ACTIVE_MODES = ("active_hh_v0", "active_fly_v1")
+
 from .semantics import (PROPAGATION_AUTO, PROPAGATION_EVENT_CSC,
                         PROPAGATION_SPARSE_CSR, semantics)
 from .topology import (BASE_CACHE, ORGAN_CACHE, base_topology_key,
@@ -355,10 +358,14 @@ class TorchBackend(FbaBackend):
         # A3: "passive_lif" (frozen A2.1 semantics) | "active_hh_v0"
         # (explicit membrane equation + pluggable channels on the
         # nodes named by phenotype["physiology"]["active_idx"] —
-        # mixed-fidelity, §25).
+        # mixed-fidelity, §25). A3.1 adds "active_fly_v1" — same
+        # machinery, fly channel set + AIS emitters via the compiler.
         self.runtime_mode = str(runtime_mode)
         self._active_idx = None
         self._num_failure: dict | None = None
+        self._i_ext: "torch.Tensor | None" = None
+        self._trace_nodes = None
+        self._trace: dict = {}
         self._base_esyn = None
         self._base_raw = None
         self._W_exc = None
@@ -480,7 +487,7 @@ class TorchBackend(FbaBackend):
             else:
                 self._vcoup = None
             self.reset()
-            if self.runtime_mode == "active_hh_v0":
+            if self.runtime_mode in ACTIVE_MODES:
                 self._init_active()
 
     # ------------------------------------------------------------ base graph
@@ -670,8 +677,12 @@ class TorchBackend(FbaBackend):
                                               self.params["tauSyn"])),
                      "weight_to_g": float(syn.get("weight_to_g", 0.02)),
                      "model": syn.get("model", "conductance_v0"),
-                     "unknown_nt_mode": syn.get("unknown_nt_mode",
-                                              "neutral")}
+                     # A3.1 §31: the receptor model emits
+                     # unknown_sign_mode; keep the A3 unknown_nt_mode
+                     # key as an alias for older overlays
+                     "unknown_nt_mode": syn.get(
+                         "unknown_sign_mode",
+                         syn.get("unknown_nt_mode", "neutral"))}
         self._v_spike = float(ph.get("v_spike", -20.0))
         stab = ph.get("stability") or {}
         self._v_min = float(stab.get("v_min", -110.0))
@@ -722,12 +733,52 @@ class TorchBackend(FbaBackend):
         self.g_exc = torch.zeros((B, self.n), device=d)
         self.g_inh = torch.zeros((B, self.n), device=d)
         self.delay_buf_inh = torch.zeros_like(self.delay_buf)
+        self._i_ext = torch.zeros((B, self.n), device=d)
         vrest = self._ph["V_rest"]
         self.v[:, self._active_idx] = vrest[None, :]
         V0 = vrest.expand(B, na)
         self._ch_state = [m.initial_state(V0) for m in self._ch_models]
         self._v_prev = self.v.clone()
         self._num_failure = None
+        self._run_ct = torch.zeros((B, na), dtype=torch.long, device=d)
+
+    def set_current_injection(self, currents: dict) -> None:
+        """Constant current-density injection per runtime node
+        (µA/cm²), active nodes only — used by the A3.1 calibration /
+        single-cell benchmark suite (§11 I_external)."""
+        if self._active_idx is None:
+            raise RuntimeError("set_current_injection requires an "
+                             "active runtime mode")
+        for idx, cur in currents.items():
+            self._i_ext[:, int(idx)] = float(cur)
+
+    # ------------------------------------------------- trace (§41)
+    def enable_trace(self, node_indices, dt_sample: float = 0.1):
+        """Record V + channel state for a few nodes each step (single-
+        cell benchmark artifact; keep the node list tiny)."""
+        self._trace_nodes = [int(i) for i in node_indices]
+        self._trace = {i: {"t": [], "v": [], "g_exc": [], "g_inh": [],
+                           "ch": {}} for i in self._trace_nodes}
+        self._trace_dt = float(dt_sample)
+
+    def _trace_step(self):
+        if not getattr(self, "_trace_nodes", None):
+            return
+        pos = {int(j): k for k, j in enumerate(self._active_idx.tolist())}
+        for i in self._trace_nodes:
+            a = pos.get(i)
+            tr = self._trace[i]
+            tr["t"].append(float(self.t_ms))
+            tr["v"].append(float(self.v[0, i].item()))
+            tr["g_exc"].append(float(self.g_exc[0, i].item()))
+            tr["g_inh"].append(float(self.g_inh[0, i].item()))
+            if a is not None:
+                for name, st in zip(self._ch_models, self._ch_state):
+                    tr["ch"].setdefault(name.name, []).append(
+                        [float(x) for x in st[0, a].tolist()])
+
+    def get_trace(self) -> dict:
+        return self._trace
 
     # ------------------------------------------------------------ regions
     def region_range(self, region: str) -> tuple[int, int]:
@@ -854,6 +905,10 @@ class TorchBackend(FbaBackend):
         if self._active_idx is not None:
             self._reset_active()
         self._tel_reset()
+        if self._trace_nodes:
+            self._trace = {i: {"t": [], "v": [], "g_exc": [],
+                               "g_inh": [], "ch": {}}
+                           for i in self._trace_nodes}
 
     # ------------------------------------------------- telemetry (§19)
     def set_telemetry(self, node_indices):
@@ -1050,10 +1105,22 @@ class TorchBackend(FbaBackend):
                      * self._ph["E_leak"][None, :]
                      + g_exc_a * self._syn["E_exc"]
                      + g_inh_a * self._syn["E_inh"] + ax_off)
+            if self._i_ext is not None:
+                # A3.1 §11: +I_external (current-density injection,
+                # used by the calibration/benchmark suite)
+                a_cur = a_cur + self._i_ext[:, aidx]
+            bad_ch = False
             for i, (ch, gbar) in enumerate(
                     zip(self._ch_models, self._ch_gbar)):
                 st = self._ch_state[i]
                 ge = gbar[None, :] * ch.conductance(Va, st)
+                i_ch = ge * (Va - ch.e_rev)
+                # §55: unphysical channel current — non-finite or an
+                # absurd magnitude (|I| > 1e6 µA/cm²) is a failure,
+                # never silently clipped
+                if bool((~torch.isfinite(i_ch)).any()) or bool(
+                        (i_ch.abs() > 1e6).any()):
+                    bad_ch = True
                 b_cond = b_cond + ge
                 a_cur = a_cur + ge * ch.e_rev
                 self._ch_state[i] = ch.advance(dt, Va, st)
@@ -1064,13 +1131,36 @@ class TorchBackend(FbaBackend):
             # §23-24: numerical guards — never silently clip
             bad = ~torch.isfinite(Va_new) | (Va_new < self._v_min) \
                 | (Va_new > self._v_max)
-            bad_g = any(~torch.isfinite(s).all()
+            # §55: gates are probabilities — flag non-finite AND
+            # out-of-[0,1] state (small tolerance for float noise)
+            bad_g = any((~torch.isfinite(s).all())
+                        or bool(((s < -1e-4) | (s > 1.0 + 1e-4)).any())
                         for s in self._ch_state)
-            if bad.any() or bad_g:
+            # §55 AIS/active runaway: an active node spiking every step
+            # for >3 ms straight is a ≥10 kHz non-physical rate
+            if not hasattr(self, "_run_ct") or self._run_ct is None \
+                    or self._run_ct.shape[0] != self.batch_size:
+                self._run_ct = torch.zeros(
+                    (self.batch_size, aidx.numel()),
+                    dtype=torch.long, device=d)
+            just = (self._v_prev[:, aidx] < self._v_spike) \
+                & (self.v[:, aidx] >= self._v_spike)
+            self._run_ct = torch.where(just, self._run_ct + 1,
+                                       torch.zeros_like(self._run_ct))
+            runaway = int((self._run_ct * dt > 3.0).sum())
+            if bad.any() or bad_g or bad_ch or runaway:
+                reasons = []
+                if bad.any():
+                    reasons.append("voltage out of range or non-finite")
+                if bad_g:
+                    reasons.append("gate state non-finite/outside [0,1]")
+                if bad_ch:
+                    reasons.append("unphysical channel current")
+                if runaway:
+                    reasons.append(f"active/AIS runaway x{runaway}")
                 self._num_failure = {
                     "status": "NUMERICAL_FAILURE",
-                    "reason": "voltage out of range or non-finite "
-                              "state",
+                    "reason": "; ".join(reasons),
                     "at_t_ms": round(float(self.t_ms), 4),
                     "n_bad": int(bad.sum())}
             else:
@@ -1142,6 +1232,7 @@ class TorchBackend(FbaBackend):
                                   self.refrac + dt)
         self.spikes = spikes
         self.spike_counts += spikes.long()
+        self._trace_step()
         # schedule this step's spikes to arrive in D steps: slot (ptr-1)
         # mod L was last read one step ago, so nothing unread is lost
         prop = self.propagate(spikes)
