@@ -109,7 +109,7 @@
 // ---- i18n (presentation layer only; API keys, enums, event types stay English) ----
 const I18N = {
   ja: {
-    nav: { live:'ライブ観測', population:'個体群・系譜', organism:'個体インスペクター', dashboard:'インフラ / ダッシュボード', telemetry:'MIE / テレメトリ', events:'イベント' },
+    nav: { live:'ライブ観測', population:'個体群・系譜', organism:'個体インスペクター', dashboard:'インフラ / ダッシュボード', telemetry:'MIE / テレメトリ', events:'イベント', anatomy:'解剖' },
     readonly: '監視専用（操作不可）',
     kind: { LIVE:'ライブ', RECORDED:'記録済み', DERIVED:'算出値', UNAVAILABLE:'取得できません' },
     kindTip: { LIVE:'現在の実行状態', RECORDED:'データベースに保存された実測・履歴データ', DERIVED:'保存データから計算された値' },
@@ -172,7 +172,7 @@ const I18N = {
   },
   /* i18n-en-start */
   en: {
-    nav: { live:'Live Observatory', population:'Population / Lineage', organism:'Organism Inspector', dashboard:'Infrastructure / Dashboard', telemetry:'MIE / Telemetry', events:'Events' },
+    nav: { live:'Live Observatory', population:'Population / Lineage', organism:'Organism Inspector', dashboard:'Infrastructure / Dashboard', telemetry:'MIE / Telemetry', events:'Events', anatomy:'Anatomy' },
     readonly: 'read-only observatory',
     kind: { LIVE:'LIVE', RECORDED:'RECORDED', DERIVED:'DERIVED', UNAVAILABLE:'Unavailable' },
     kindTip: { LIVE:'current runtime state', RECORDED:'rows persisted in the database', DERIVED:'computed from recorded rows' },
@@ -309,7 +309,7 @@ const legend = series => `<div class="legend">${series.map((s,i)=>`<span><i styl
 const pts = (rows, key) => rows.filter(r => r[key] !== null && r[key] !== undefined).map(r => ({t: Date.parse(r.at), v: Number(r[key])}));
 
 // ---- routes -----------------------------------------------------------------
-const routes = { live, population, organism, dashboard, telemetry, events };
+const routes = { live, population, organism, dashboard, telemetry, events, anatomy };
 function renderChrome() {
   document.documentElement.lang = LANG;
   $('#nav').innerHTML = Object.keys(routes).map(r => `<a href="#/${r}" data-r="${r}">${esc(t('nav', r))}</a>`).join('');
@@ -802,6 +802,82 @@ function ablationPanelHtml(genomeId) {
     organs.map(k => row(k.slice(14), conds[k])).join('') +
     system.map(k => row(t('o','ablSystem')+':'+k, conds[k])).join('') +
     `</tbody></table></div><div class="muted" style="margin-top:6px">${t('o','ablationNote')} (N=${_ablation.replicates||'?'})</div></div>`;
+}
+// AFC §18/§24 — anatomical mode: real EM soma coordinates, graft in its
+// own namespace, and the actually-wired host<->graft edges. Rendered only
+// when scripts/export_anatomy_view.py has produced /static/anatomy.json.
+const ANATOMY_CLASS_COLOR = ['#5aa9ff','#8a94a6','#3fb96b','#c9d1d9',
+                             '#b083f0','#ff9f43','#e6e6e6','#ff5c5c'];
+async function anatomy() {
+  let d = null;
+  try {
+    const r = await fetch('/static/anatomy.json', {cache:'no-store'});
+    d = r.ok ? await r.json() : null;
+  } catch (e) { d = null; }
+  if (!d) {
+    $('#main').innerHTML = `<div class="panel"><h2>Anatomy ${kind('RECORDED')}</h2>
+      <p class="muted">No <span class="mono">anatomy.json</span> — run
+      <span class="mono">scripts/export_anatomy_view.py</span> against a
+      canonical anatomy store to produce this view.</p></div>`;
+    return;
+  }
+  const h = d.host || {}, g = d.edges || {};
+  const nE = Object.values(g).reduce((s, l) => s + (l ? l.length : 0), 0);
+  $('#main').innerHTML = `
+    <div class="panel"><h2>${esc(d.dataset?.dataset_id || 'anatomy')}
+        ${kind('RECORDED')}</h2>
+      <div class="muted" style="font-size:11px">
+        host ${h.n_total} neurons (${h.n_sampled} shown,
+        coords ${h.n_with_coords}, ${esc(h.coord_provenance || '?')},
+        ${esc(h.coord_units || '')}) · graft edges drawn: ${nE}
+      </div>
+      <canvas id="anat_canvas" style="width:100%;height:560px"></canvas>
+      <div class="legend">
+        ${(h.flow_classes || []).map((c, i) =>
+          `<span><i style="background:${ANATOMY_CLASS_COLOR[i % ANATOMY_CLASS_COLOR.length]}"></i>${esc(c)}</span>`).join('')}
+        <span><i style="background:#ff9f43"></i>graft (MODEL_INFERENCE)</span>
+        <span><i style="background:#3fb96b"></i>host→graft</span>
+        <span><i style="background:#e05c5c"></i>graft→host</span>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:6px">
+        Host points = real EM soma coordinates (x/y projection, nm).
+        Graft cells are artificial — own namespace, inset layout only;
+        wiring shown is the realised W_extra edge set.</div>
+    </div>`;
+  const cv = document.getElementById('anat_canvas');
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth || 900, H = cv.clientHeight || 560;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
+  ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, W, H);
+  // host scatter at real coordinates
+  (h.points || []).forEach(([x, y, c]) => {
+    ctx.fillStyle = ANATOMY_CLASS_COLOR[(c || 0) % ANATOMY_CLASS_COLOR.length];
+    ctx.globalAlpha = 0.55;
+    ctx.fillRect(x * W, y * H, 1.4, 1.4);
+  });
+  ctx.globalAlpha = 1;
+  // graft inset boundary — hard visual separation (§19)
+  ctx.strokeStyle = 'rgba(255,159,67,0.5)'; ctx.setLineDash([4, 4]);
+  ctx.strokeRect(0.79 * W, 0.05 * H, 0.19 * W, 0.90 * H);
+  ctx.setLineDash([]);
+  ctx.fillStyle = 'rgba(255,159,67,0.8)'; ctx.font = '10px sans-serif';
+  ctx.fillText('graft:* (artificial)', 0.80 * W, 0.10 * H);
+  const seg = (l, color, alpha) => {
+    ctx.strokeStyle = color; ctx.globalAlpha = alpha; ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    (l || []).forEach(([x1, y1, x2, y2]) => {
+      ctx.moveTo(x1 * W, y1 * H); ctx.lineTo(x2 * W, y2 * H);
+    });
+    ctx.stroke(); ctx.globalAlpha = 1;
+  };
+  seg(g.host_to_graft, '#3fb96b', 0.45);
+  seg(g.graft_to_host, '#e05c5c', 0.45);
+  seg(g.graft_internal, '#ff9f43', 0.8);
+  (d.grafts || []).forEach(gr => (gr.points || []).forEach(([x, y]) => {
+    ctx.fillStyle = '#ff9f43';
+    ctx.beginPath(); ctx.arc(x * W, y * H, 2.6, 0, 2 * Math.PI); ctx.fill();
+  }));
 }
 function brainHash(i) { let h = (Math.imul(i,2654435761) >>> 0); h ^= h >>> 13; h = Math.imul(h,2246822519) >>> 0; return h >>> 0; }
 function brainPoint(index, nBase, W, H) {

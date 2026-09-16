@@ -73,8 +73,15 @@ def organ_topology_hash(phenotype: dict, seed: int) -> str:
               for o in (phenotype.get("artificial_organs") or [])]
     atts = [{"attachment_id": a.get("attachment_id"), "source": a.get("source"),
              "target": a.get("target"),
-             "direction": a.get("direction", "forward")}
-            for a in (phenotype.get("attachments") or [])]
+             "direction": a.get("direction", "forward"),
+             # explicit index-list endpoints (anatomical graft wiring,
+             # AFC) change the graph just as much as named ranges do —
+             # they must participate in the cache key or two different
+             # resolutions would collide
+             "source_idx": a.get("source_idx"),
+             "target_idx": a.get("target_idx"),
+             "p": a.get("p")}
+            for a in (phenotype.get("attachments", []) or [])]
     return _h({"organs": organs, "attachments": atts, "seed": int(seed)})
 
 

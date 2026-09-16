@@ -38,3 +38,7 @@ __pycache__/
 /experiments/u0/logs/
 /experiments/u0/reports/figs/
 /graphify-out
+
+# Anatomical dataset stores (derived from upstream releases; regenerable
+# by experiments/mioba/importers/*) — code and manifests stay in git
+/experiments/mioba/datasets/*/store/

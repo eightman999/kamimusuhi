@@ -180,6 +180,10 @@ def backend_kwargs(config: dict, run_dir: str | None,
         kw["synthetic_edges"] = int(fba["synthetic_edges"])
     if fba.get("connectivity") is not None:
         kw["connectivity"] = float(fba["connectivity"])
+    if fba.get("anatomy_dir"):
+        # AFC A1: canonical anatomy store path — real connectome, not
+        # the FlyWire parquet path or the synthetic fallback
+        kw["anatomy_dir"] = str(fba["anatomy_dir"])
     return kw
 
 

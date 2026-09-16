@@ -98,6 +98,7 @@ atomics; see README "Determinism".
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import os
 import pickle
@@ -180,6 +181,56 @@ def _load_connectome(data_dir: Path, cache_dir: Path | None):
     return n, post, pre, w, manifest
 
 
+def _load_anatomy(anatomy_dir: Path, cache_dir: Path | None):
+    """Load a canonical anatomy store (``anatomy/schema.py``).
+
+    Returns (n_neurons, post_idx, pre_idx, w, manifest) where manifest is
+    the sha256 of ``manifest.json`` — a compact, content-based identity
+    for the whole store. Dataset-agnostic by construction: BANC, FAFB or
+    any future importer all produce the same canonical files."""
+    try:
+        import pandas as pd  # noqa: F401
+        import pyarrow  # noqa: F401
+    except ImportError as exc:
+        raise BackendUnavailable(
+            "pandas+pyarrow required to load an anatomy store") from exc
+
+    con_path = anatomy_dir / "connectivity.parquet"
+    man_path = anatomy_dir / "manifest.json"
+    if not con_path.is_file() or not man_path.is_file():
+        raise BackendUnavailable(
+            f"anatomy store {anatomy_dir} lacks connectivity.parquet "
+            f"or manifest.json — run an importer first")
+
+    manifest = json.loads(man_path.read_text())
+    manifest_hash = hashlib.sha256(
+        man_path.read_bytes()).hexdigest()
+
+    stat = con_path.stat()
+    key = hashlib.sha256(
+        f"{manifest_hash}:{stat.st_size}:{stat.st_mtime_ns}".encode()
+    ).hexdigest()[:16]
+    cache_file = (cache_dir / f"anatomy_weights_{key}.pt") \
+        if cache_dir else None
+    if cache_file and cache_file.is_file():
+        blob = torch.load(cache_file, weights_only=False)
+        return blob["n"], blob["post"], blob["pre"], blob["w"], \
+            manifest_hash, manifest
+
+    df = pd.read_parquet(con_path)
+    pre = torch.from_numpy(df["pre_idx"].to_numpy().astype(np.int64))
+    post = torch.from_numpy(df["post_idx"].to_numpy().astype(np.int64))
+    w = torch.from_numpy(df["weight"].to_numpy().astype(np.float32))
+    n = int(manifest.get("n_neurons") or 0)
+    n = max(n, int(max(int(pre.max()) if len(pre) else -1,
+                       int(post.max()) if len(post) else -1) + 1))
+    if cache_file:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        torch.save({"n": n, "post": post, "pre": pre, "w": w},
+                   cache_file)
+    return n, post, pre, w, manifest_hash, manifest
+
+
 def _sample_edges(n_post_lo, n_post_hi, n_pre_lo, n_pre_hi, p, gen,
                   no_self=True, n_edges: int | None = None):
     """Sample ~p*|post|*|pre| (or exactly ``n_edges``) directed edges
@@ -199,6 +250,30 @@ def _sample_edges(n_post_lo, n_post_hi, n_pre_lo, n_pre_hi, p, gen,
     return post, pre
 
 
+def _sample_mixed(post_sel, pre_sel, p, gen, no_self=True):
+    """Like ``_sample_edges`` but each side may be an (lo, hi) range or
+    an explicit int64 tensor of indices (anatomical graft endpoints).
+    Returns absolute (post, pre) indices, ~p*|post|*|pre| pairs."""
+    n_post = (post_sel[1] - post_sel[0] if isinstance(post_sel, tuple)
+              else int(post_sel.numel()))
+    n_pre = (pre_sel[1] - pre_sel[0] if isinstance(pre_sel, tuple)
+             else int(pre_sel.numel()))
+    m = int(round(p * n_post * n_pre))
+    if n_post <= 0 or n_pre <= 0 or m <= 0:
+        e = torch.empty(0, dtype=torch.int64)
+        return e, e.clone()
+    pi = torch.randint(0, n_post, (m,), generator=gen)
+    ri = torch.randint(0, n_pre, (m,), generator=gen)
+    post = (pi + post_sel[0] if isinstance(post_sel, tuple)
+            else post_sel[pi])
+    pre = (ri + pre_sel[0] if isinstance(pre_sel, tuple)
+           else pre_sel[ri])
+    if no_self:
+        keep = post != pre
+        post, pre = post[keep], pre[keep]
+    return post, pre
+
+
 class TorchBackend(FbaBackend):
     name = "torch"
 
@@ -208,9 +283,16 @@ class TorchBackend(FbaBackend):
                  synthetic_edges: int | None = None, base_seed: int = 0,
                  topology_cache: bool = True,
                  propagation_backend: str = PROPAGATION_EVENT_CSC,
-                 dense_above: float = 0.05):
+                 dense_above: float = 0.05,
+                 anatomy_dir: str | None = None):
         if torch is None:
             raise BackendUnavailable("torch not installed")
+        # AFC A1: a canonical anatomy store takes precedence over both
+        # the FlyWire-parquet path and the synthetic fallback. The
+        # backend only understands the canonical format — dataset
+        # specifics live entirely in the importer.
+        self.anatomy_dir = (anatomy_dir
+                            or os.environ.get("MIOBA_ANATOMY_DIR"))
         self.data_dir = data_dir or os.environ.get("MIOBA_FLY_BRAIN_DATA")
         self.synthetic = synthetic
         self.synthetic_neurons = int(synthetic_neurons)
@@ -251,8 +333,11 @@ class TorchBackend(FbaBackend):
         # partition, real data to None (=> no fba0:<region> attachments)
         self._region_mode_arg = region_mode
         self.region_mode = region_mode or (SYNTHETIC_REGION_MODE
-                                           if not self.data_dir else None)
+                                           if not self.data_dir
+                                           and not self.anatomy_dir
+                                           else None)
         self._manifest_hash: str | None = None
+        self._anatomy_manifest: dict | None = None
         self._force: torch.Tensor | None = None
 
     # ------------------------------------------------------------ identity
@@ -262,6 +347,24 @@ class TorchBackend(FbaBackend):
     def dataset_identity(self) -> dict:
         """Logical dataset identity for the research record (never a raw
         path): id, version, manifest hash, region mode."""
+        if self.anatomy_dir:
+            m = self._anatomy_manifest
+            if m is None:
+                # cheap pre-load: manifest.json is small, and reading it
+                # here keeps the topology-cache key stable across
+                # processes instead of missing once per process
+                mp = Path(self.anatomy_dir) / "manifest.json"
+                if mp.is_file():
+                    m = self._anatomy_manifest = json.loads(
+                        mp.read_text())
+                    self._manifest_hash = hashlib.sha256(
+                        mp.read_bytes()).hexdigest()
+                else:
+                    m = {}
+            return {"dataset_id": m.get("dataset_kind") or "anatomical",
+                    "version": m.get("store_version"),
+                    "manifest_hash": self._manifest_hash,
+                    "region_mode": self.region_mode}
         if self.data_dir:
             return {"dataset_id": "flywire-v783-shiu-lif",
                     "version": "2025_783",
@@ -309,10 +412,16 @@ class TorchBackend(FbaBackend):
         self.n = self.n_base + n_extra
         self.n_extra = n_extra
         self._organ_ranges: list[tuple[str, int, int]] = []
+        self._organ_internal_p: dict[str, float] = {}
         off = self.n_base
         for organ in self.phenotype.get("artificial_organs", []):
             self._organ_ranges.append((organ["organ_id"], off,
                                        off + int(organ["size"])))
+            # AFC grafts may carry their own internal density; M-series
+            # organs without the field keep the historical constant
+            if organ.get("internal_p") is not None:
+                self._organ_internal_p[organ["organ_id"]] = \
+                    float(organ["internal_p"])
             off += int(organ["size"])
         if off != self.n:
             raise ValueError("n_extra_neurons != sum(organ sizes)")
@@ -345,13 +454,19 @@ class TorchBackend(FbaBackend):
         multiply, not a 14M-edge rebuild.
         """
         cache_dir = (self.runs_dir / "cache") if self.runs_dir else None
-        if self.data_dir:
+        if self.anatomy_dir:
+            # canonical anatomy store: region_mode stays whatever the
+            # config asked for — anatomical ports are resolved through
+            # the store, not through the synthetic pseudo-regions
+            self.region_mode = self._region_mode_arg
+        elif self.data_dir:
             self.region_mode = self._region_mode_arg
         elif self.synthetic:
             self.region_mode = self._region_mode_arg or SYNTHETIC_REGION_MODE
         else:
             raise BackendUnavailable(
-                "no fba.data_dir configured and synthetic=False")
+                "no fba.anatomy_dir / fba.data_dir configured and "
+                "synthetic=False")
 
         # dataset_identity() needs the manifest hash, which only exists
         # after the parquet has been read once; the first real-data build
@@ -371,7 +486,13 @@ class TorchBackend(FbaBackend):
             return
 
         with timer.phase("topology_construction"):
-            if self.data_dir:
+            if self.anatomy_dir:
+                (n_base, post, pre, w, manifest,
+                 self._anatomy_manifest) = _load_anatomy(
+                    Path(self.anatomy_dir), cache_dir)
+                self._manifest_hash = manifest
+                scale_is_wscale = False
+            elif self.data_dir:
                 n_base, post, pre, w, manifest = _load_connectome(
                     Path(self.data_dir), cache_dir)
                 self._manifest_hash = manifest
@@ -457,6 +578,14 @@ class TorchBackend(FbaBackend):
             raise ValueError(f"attachment endpoint {name!r}: unknown organ")
         return rng[1], rng[2]
 
+    def _endpoint_sel(self, att: dict, which: str):
+        """Resolve one attachment side to either an (lo, hi) contiguous
+        range or an explicit int64 index tensor (AFC graft wiring)."""
+        idx = att.get(f"{which}_idx")
+        if idx is not None:
+            return torch.as_tensor(idx, dtype=torch.int64)
+        return self._endpoint_range(att[which])
+
     def _sample_extra(self):
         """Sample the artificial index set: organ-internal edges
         (p=ORGAN_INTERNAL_P inside each organ block) and attachment edges
@@ -479,16 +608,22 @@ class TorchBackend(FbaBackend):
             groups.append(torch.full((p_.numel(),), group, dtype=torch.int64))
 
         for _oid, lo, hi in self._organ_ranges:
-            add(*_sample_edges(lo, hi, lo, hi, ORGAN_INTERNAL_P, gen), 0)
+            add(*_sample_edges(lo, hi, lo, hi,
+                               self._organ_internal_p.get(
+                                   _oid, ORGAN_INTERNAL_P), gen), 0)
         for i, att in enumerate(self.phenotype.get("attachments", [])):
-            s_lo, s_hi = self._endpoint_range(att["source"])
-            t_lo, t_hi = self._endpoint_range(att["target"])
-            legs = [((t_lo, t_hi), (s_lo, s_hi))]
+            # AFC: an endpoint is either a named contiguous range
+            # (historical) or an explicit ``*_idx`` index list carrying
+            # wiring resolved against an anatomical store by the graft
+            # compiler — the backend itself stays dataset-agnostic.
+            s = self._endpoint_sel(att, "source")
+            t = self._endpoint_sel(att, "target")
+            p = float(att.get("p", ATTACHMENT_P))
+            legs = [(t, s)]
             if att.get("direction", "forward") == "bidirectional":
-                legs.append(((s_lo, s_hi), (t_lo, t_hi)))
-            for (plo, phi), (rlo, rhi) in legs:
-                add(*_sample_edges(plo, phi, rlo, rhi, ATTACHMENT_P, gen),
-                    i + 1)
+                legs.append((s, t))
+            for post_sel, pre_sel in legs:
+                add(*_sample_mixed(post_sel, pre_sel, p, gen), i + 1)
         if not posts:
             e = torch.empty(0, dtype=torch.int64)
             return e, e.clone(), torch.empty(0), e.clone()
