@@ -52,6 +52,8 @@ def main() -> int:
     ap.add_argument("--skeleton-sample", type=int, default=120)
     ap.add_argument("--swc-dir",
                     default="data/cache/banc_888/split_swc")
+    ap.add_argument("--physiology", default=None,
+                    help="physiology overlay dir (A3 §44 layer)")
     args = ap.parse_args()
 
     manifest, neurons, conn = _load_any(args.store)
@@ -201,10 +203,49 @@ def main() -> int:
             if a and b2:
                 nat.append([a[0], a[1], b2[0], b2[1]])
 
+    # A3 §44: optional physiology overlay layer — per-entity profile,
+    # channel set, and per-parameter provenance so the GUI can colour
+    # measured/inferred/fallback/unknown distinctly. Live voltage is
+    # not in this static export; the layer carries *mode + provenance*.
+    phys_block = None
+    if args.physiology:
+        from ..physio.overlay import (load_overlay,
+                                      resolve_entity_params)
+        ov = load_overlay(args.physiology)
+        ep_all = resolve_entity_params(ov)
+        # only plotted entities need physiology in the static export —
+        # all 204k rows would dwarf the anatomy payload
+        keep = {int(i) for i in sub[idx_col]} | {
+            int(s["e"]) for s in skeletons}
+        ep = {k: v for k, v in ep_all.items() if k in keep}
+        phys_block = {
+            "overlay_version": ov["manifest"]["overlay_version"],
+            "overlay_dir": str(args.physiology),
+            "provenance_classes": [
+                "DIRECT_MEASUREMENT", "CELL_TYPE_MEASUREMENT",
+                "TRANSCRIPTOMIC_INFERENCE", "LITERATURE_PRIOR",
+                "MODEL_INFERENCE", "GENERIC_FALLBACK", "UNKNOWN"],
+            "per_entity": {str(k): {
+                "profile": v["profile_id"],
+                "assignment_provenance":
+                    str(v["assignment_provenance"]),
+                "runtime_mode": ("active" if any(
+                    c["channel"] != "leak" for c in v["channels"])
+                    else "passive"),
+                "channels": [c["channel"] for c in v["channels"]],
+                "membrane_provenance": {
+                    p: str(r["provenance"])
+                    for p, r in v["membrane"].items()}}
+                for k, v in ep.items()},
+        }
+
     doc = {
         "kind": "anatomy_view_v1",
         "dataset": backend.dataset_identity(),
         "host": {"points": host_pts, "flow_classes": classes,
+                 # parallel to points — entity_idx per plotted soma so
+                 # the physiology layer can join on real entity ids
+                 "entity_idx": [int(i) for i in sub[idx_col]],
                  "n_total": int(manifest.get("n_neurons")
                                 or manifest.get("n_entities", 0)),
                  "n_with_coords": int(has.sum()),
@@ -228,6 +269,7 @@ def main() -> int:
                                   "skeleton, not a schematic",
                       "note": "labelled split SWCs only; entities "
                               "without them show soma point only"},
+        "physiology": phys_block,
         "links": phen.get("graft_resolution"),
         "n_host_edges_total": int(
             manifest.get("n_connections")

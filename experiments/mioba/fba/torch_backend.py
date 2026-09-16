@@ -286,7 +286,8 @@ class TorchBackend(FbaBackend):
                  dense_above: float = 0.05,
                  anatomy_dir: str | None = None,
                  base_override: tuple | None = None,
-                 voltage_coupling: tuple | None = None):
+                 voltage_coupling: tuple | None = None,
+                 runtime_mode: str = "passive_lif"):
         if torch is None:
             raise BackendUnavailable("torch not installed")
         # AFC A1: a canonical anatomy store takes precedence over both
@@ -351,6 +352,17 @@ class TorchBackend(FbaBackend):
         # compartment nodes of one entity (A2). Applied each step as
         # dv_i += dt/tauCoup * Σ_j Vcoup[i,j] v_j. None → point mode.
         self.voltage_coupling = voltage_coupling
+        # A3: "passive_lif" (frozen A2.1 semantics) | "active_hh_v0"
+        # (explicit membrane equation + pluggable channels on the
+        # nodes named by phenotype["physiology"]["active_idx"] —
+        # mixed-fidelity, §25).
+        self.runtime_mode = str(runtime_mode)
+        self._active_idx = None
+        self._num_failure: dict | None = None
+        self._base_esyn = None
+        self._base_raw = None
+        self._W_exc = None
+        self._W_inh = None
 
     # ------------------------------------------------------------ identity
     def semantics(self) -> dict:
@@ -468,6 +480,8 @@ class TorchBackend(FbaBackend):
             else:
                 self._vcoup = None
             self.reset()
+            if self.runtime_mode == "active_hh_v0":
+                self._init_active()
 
     # ------------------------------------------------------------ base graph
     def _load_base(self, timer: PhaseTimer) -> None:
@@ -479,8 +493,20 @@ class TorchBackend(FbaBackend):
         """
         cache_dir = (self.runs_dir / "cache") if self.runs_dir else None
         if self.base_override is not None:
-            # A2: caller-built graph (e.g. compartment-expanded circuit)
-            n_base, post, pre, w = self.base_override
+            # A2: caller-built graph (e.g. compartment-expanded circuit).
+            # A3: optional 5th element = per-edge reversal class
+            # (+1 excitatory / -1 inhibitory) for conductance mode.
+            ov = self.base_override
+            n_base, post, pre, w = ov[:4]
+            self._base_esyn = (torch.as_tensor(ov[4], dtype=torch.float32)
+                               if len(ov) > 4 else None)
+            # raw (uncoalesced) edge arrays — split edges can share a
+            # runtime (post,pre) node pair; esyn classes must be split
+            # BEFORE coalescing, so keep the raw arrays (§19)
+            self._base_raw = (torch.as_tensor(post, dtype=torch.int64),
+                              torch.as_tensor(pre, dtype=torch.int64),
+                              torch.as_tensor(w, dtype=torch.float32)) \
+                if self._base_esyn is not None else None
             W = EventGraph.from_coo(
                 torch.as_tensor(post, dtype=torch.int64),
                 torch.as_tensor(pre, dtype=torch.int64),
@@ -591,6 +617,117 @@ class TorchBackend(FbaBackend):
         """Install an explicit matrix (tests / fixed micro-networks);
         ``propagate`` then uses it instead of the base+extra split."""
         self._W_override = value
+
+    # ------------------------------------------------- A3 active mode
+    def _init_active(self):
+        """Active membrane state for ``physiology.active_idx`` nodes
+        (mixed fidelity §25: others keep the LIF path untouched).
+
+        phenotype["physiology"] keys:
+          active_idx        runtime node indices that run HH dynamics
+          membrane          {Cm, g_leak, E_leak, V_rest} per active node
+          channels          {name: {e_rev, g_bar: [per-node]}}
+          synapse           {E_exc, E_inh, tau_syn, weight_to_g,
+                             model, unknown_nt_mode}
+          integration       {method, dt}
+          v_spike           rising-edge spike detect (mV)
+          stability         {v_min, v_max}
+        """
+        from ..physio.channels import build_channel
+        ph = self.phenotype.get("physiology") or {}
+        idx = ph.get("active_idx")
+        if not idx:
+            raise ValueError("active_hh_v0 requires "
+                             "physiology.active_idx")
+        d, B = self.device, self.batch_size
+        self._active_idx = torch.as_tensor(idx, dtype=torch.long,
+                                           device=d)
+        na = len(idx)
+
+        def nodepar(name, default):
+            vals = (ph.get("membrane") or {}).get(name)
+            if vals is None:
+                return torch.full((na,), float(default), device=d)
+            t = torch.as_tensor(vals, dtype=torch.float32, device=d)
+            return t.expand(na).clone() if t.numel() == 1 else t
+
+        self._ph = {k: nodepar(k, dv) for k, dv in
+                    (("Cm", 1.0), ("g_leak", 0.3), ("E_leak", -54.4),
+                     ("V_rest", -60.0))}
+        # channels: pluggable models, per-node density
+        self._ch_models, self._ch_gbar, self._ch_state = [], [], []
+        for name, spec in (ph.get("channels") or {}).items():
+            model = build_channel(spec)
+            gbar = torch.as_tensor(spec.get("g_bar", 1.0),
+                                   dtype=torch.float32, device=d)
+            gbar = gbar.expand(na).clone() if gbar.numel() == 1 else gbar
+            self._ch_models.append(model)
+            self._ch_gbar.append(gbar)
+        syn = ph.get("synapse") or {}
+        self._syn = {"E_exc": float(syn.get("E_exc", 0.0)),
+                     "E_inh": float(syn.get("E_inh", -80.0)),
+                     "tau_syn": float(syn.get("tau_syn",
+                                              self.params["tauSyn"])),
+                     "weight_to_g": float(syn.get("weight_to_g", 0.02)),
+                     "model": syn.get("model", "conductance_v0"),
+                     "unknown_nt_mode": syn.get("unknown_nt_mode",
+                                              "neutral")}
+        self._v_spike = float(ph.get("v_spike", -20.0))
+        stab = ph.get("stability") or {}
+        self._v_min = float(stab.get("v_min", -110.0))
+        self._v_max = float(stab.get("v_max", 90.0))
+        self._drive_g = float((ph.get("drive") or {})
+                              .get("g_exc", 5.0))
+        # split base graph by edge reversal class (§19-21). Uses the
+        # raw pre-coalescing arrays: multiple split edges may share a
+        # runtime (post,pre) pair; each class graph coalesces itself.
+        self._W_exc = None
+        self._W_inh = None
+        if self._base_esyn is not None:
+            ip, ir, iv = self._base_raw
+            inh = (self._base_esyn < -30.0).to(ip.device)
+            ip, ir, iv = ip.to(d), ir.to(d), iv.to(d)
+            if inh.any():
+                self._W_inh = EventGraph.from_coo(
+                    ip[inh], ir[inh], iv[inh], self.n_base,
+                    self.n_base).to(d)
+            m = ~inh
+            self._W_exc = EventGraph.from_coo(
+                ip[m], ir[m], iv[m], self.n_base,
+                self.n_base).to(d)
+        else:
+            self._W_exc = self.W_base
+        # per-active-node axial self-conductance g_ax,i = -c_ii (the
+        # coupling matrix's diagonal) for the semi-implicit V update
+        if self._vcoup is not None:
+            coo = self._vcoup.coalesce()
+            ii, jj, vv = coo.indices()[0], coo.indices()[1], coo.values()
+            dm = ii == jj
+            diag = torch.zeros(self.n, device=d)
+            diag[ii[dm]] = vv[dm]
+            self._ax_diag = (-diag[self._active_idx]).clamp(min=0.0)
+        else:
+            self._ax_diag = torch.zeros(na, device=d)
+        self._amask = torch.zeros(self.n, dtype=torch.bool, device=d)
+        self._amask[self._active_idx] = True
+        # conductance state, channel gates, resting voltage (also the
+        # reset() re-entry path)
+        self._reset_active()
+
+    def _reset_active(self) -> None:
+        """Re-initialise conductance/channel state (reset() re-entry:
+        v/g/delay_buf are rebuilt by reset() itself)."""
+        B, d = self.batch_size, self.device
+        na = int(self._active_idx.numel())
+        self.g_exc = torch.zeros((B, self.n), device=d)
+        self.g_inh = torch.zeros((B, self.n), device=d)
+        self.delay_buf_inh = torch.zeros_like(self.delay_buf)
+        vrest = self._ph["V_rest"]
+        self.v[:, self._active_idx] = vrest[None, :]
+        V0 = vrest.expand(B, na)
+        self._ch_state = [m.initial_state(V0) for m in self._ch_models]
+        self._v_prev = self.v.clone()
+        self._num_failure = None
 
     # ------------------------------------------------------------ regions
     def region_range(self, region: str) -> tuple[int, int]:
@@ -714,6 +851,8 @@ class TorchBackend(FbaBackend):
         self.spike_counts = torch.zeros((B, n), dtype=torch.long, device=d)
         for g, s in zip(self._gens, self.replicate_seeds):
             g.manual_seed(s)
+        if self._active_idx is not None:
+            self._reset_active()
         self._tel_reset()
 
     # ------------------------------------------------- telemetry (§19)
@@ -821,9 +960,25 @@ class TorchBackend(FbaBackend):
         t0 = time.perf_counter()
         out = torch.zeros((spikes.shape[0], self.n), device=spikes.device,
                           dtype=spikes.dtype)
-        events, edges = self.W_base.propagate(
-            spikes, out, scale=self._base_scale, col_limit=self.n_base,
-            dense_above=self._dense_above)
+        out_inh = None
+        if self._W_exc is not None or self._W_inh is not None:
+            # active mode: the base graph is split by reversal class —
+            # excitatory and inhibitory arrive in separate buckets (§19)
+            events, edges = 0, 0
+            if self._W_exc is not None:
+                events, edges = self._W_exc.propagate(
+                    spikes, out, scale=self._base_scale,
+                    col_limit=self.n_base, dense_above=self._dense_above)
+            if self._W_inh is not None:
+                out_inh = torch.zeros_like(out)
+                e2, d2 = self._W_inh.propagate(
+                    spikes, out_inh, scale=self._base_scale,
+                    col_limit=self.n_base, dense_above=self._dense_above)
+                events, edges = max(events, e2), edges + d2
+        else:
+            events, edges = self.W_base.propagate(
+                spikes, out, scale=self._base_scale,
+                col_limit=self.n_base, dense_above=self._dense_above)
         if self.W_extra is not None:
             e2, d2 = self.W_extra.propagate(spikes, out,
                                             dense_above=self._dense_above)
@@ -839,7 +994,8 @@ class TorchBackend(FbaBackend):
         self._act_events += events
         self._act_edges += edges
         self._act_wall += time.perf_counter() - t0
-        return out
+        return (out, out_inh) if out_inh is not None \
+            or self._W_exc is not None else out
 
     # ------------------------------------------------------------ step
     def _one_step(self) -> None:
@@ -849,14 +1005,86 @@ class TorchBackend(FbaBackend):
         ptr = self._delay_ptr
         # arrivals scheduled D steps ago
         delayed = self.delay_buf[:, ptr, :]
-        active = (self.refrac >= p["tRefrac"]).float()
-        self.g = self.g * (1 - dt / p["tauSyn"]) + delayed * active
-        self.v = self.v + (dt / p["tauMem"]) * (self.g - (self.v - p["vRest"]))
-        if self._vcoup is not None:
-            # passive diffusion between an entity's compartment nodes
-            # (A2): dv_i = dt/tauCoup * Σ_j c_ij (v_j − v_i)
-            self.v = self.v + (dt / p["tauCoup"]) * torch.sparse.mm(
-                self._vcoup, self.v.T).T
+        act = (self.refrac >= p["tRefrac"]).float()
+        if self._active_idx is not None:
+            # ---- A3 active path: conductance arrivals split exc/inh,
+            # explicit membrane equation on active nodes, LIF elsewhere
+            aidx = self._active_idx
+            amask = self._amask
+            delayed_inh = self.delay_buf_inh[:, ptr, :]
+            # arrivals stay in weight units; weight_to_g converts them
+            # to conductance density for the membrane equation (§19).
+            # The passive g bucket keeps raw weight semantics.
+            w2g = self._syn["weight_to_g"]
+            self.g_exc = self.g_exc * (1 - dt / self._syn["tau_syn"]) \
+                + delayed * act * w2g
+            self.g_inh = self.g_inh * (1 - dt / self._syn["tau_syn"]) \
+                + delayed_inh * act * w2g
+            # passive arrivals bucket for LIF nodes keeps old semantics
+            self.g = self.g * (1 - dt / p["tauSyn"]) \
+                + (delayed + delayed_inh) * act
+            v_next = self.v + (dt / p["tauMem"]) \
+                * (self.g - (self.v - p["vRest"]))
+            if self._vcoup is not None:
+                axial = torch.sparse.mm(self._vcoup, self.v.T).T
+                v_next = v_next + (dt / p["tauCoup"]) * axial * (
+                    ~amask)[None, :]
+            else:
+                axial = None
+            self._v_prev = self.v
+            # membrane equation on active nodes (§11):
+            # Cm dV/dt = -I_leak - I_channels - I_syn + I_axial + I_ext
+            # integrated semi-implicitly (exponential Euler in V with
+            # gates frozen at V(t); gates themselves cnexp, §22):
+            #   V(t+dt) = V_inf + (V - V_inf) * exp(-b dt / Cm)
+            # with b = total conductance density, a = drive sum.
+            Va = self.v[:, aidx]
+            g_exc_a = self.g_exc[:, aidx]
+            g_inh_a = self.g_inh[:, aidx]
+            ax = (axial[:, aidx] if axial is not None
+                  else torch.zeros_like(Va))
+            ax_off = ax + self._ax_diag[None, :] * Va
+            b_cond = (self._ph["g_leak"][None, :] + g_exc_a + g_inh_a
+                      + self._ax_diag[None, :])
+            a_cur = (self._ph["g_leak"][None, :]
+                     * self._ph["E_leak"][None, :]
+                     + g_exc_a * self._syn["E_exc"]
+                     + g_inh_a * self._syn["E_inh"] + ax_off)
+            for i, (ch, gbar) in enumerate(
+                    zip(self._ch_models, self._ch_gbar)):
+                st = self._ch_state[i]
+                ge = gbar[None, :] * ch.conductance(Va, st)
+                b_cond = b_cond + ge
+                a_cur = a_cur + ge * ch.e_rev
+                self._ch_state[i] = ch.advance(dt, Va, st)
+            b_cond = b_cond.clamp(min=1e-9)
+            v_inf = a_cur / b_cond
+            Va_new = v_inf + (Va - v_inf) * torch.exp(
+                -b_cond * dt / self._ph["Cm"][None, :])
+            # §23-24: numerical guards — never silently clip
+            bad = ~torch.isfinite(Va_new) | (Va_new < self._v_min) \
+                | (Va_new > self._v_max)
+            bad_g = any(~torch.isfinite(s).all()
+                        for s in self._ch_state)
+            if bad.any() or bad_g:
+                self._num_failure = {
+                    "status": "NUMERICAL_FAILURE",
+                    "reason": "voltage out of range or non-finite "
+                              "state",
+                    "at_t_ms": round(float(self.t_ms), 4),
+                    "n_bad": int(bad.sum())}
+            else:
+                v_next[:, aidx] = Va_new
+            self.v = v_next
+        else:
+            self.g = self.g * (1 - dt / p["tauSyn"]) + delayed * act
+            self.v = self.v + (dt / p["tauMem"]) \
+                * (self.g - (self.v - p["vRest"]))
+            if self._vcoup is not None:
+                # passive diffusion between an entity's compartment
+                # nodes (A2): dv_i = dt/tauCoup * Σ_j c_ij (v_j − v_i)
+                self.v = self.v + (dt / p["tauCoup"]) \
+                    * torch.sparse.mm(self._vcoup, self.v.T).T
         if getattr(self, "_tel_nodes", None):
             # compartment voltage telemetry, sampled post-coupling /
             # pre-reset so dendritic peaks aren't clipped away (§19)
@@ -873,29 +1101,63 @@ class TorchBackend(FbaBackend):
             # kick — a porting slip, fixed under semantics version 3.
             stim = (u < self._drive_p[None, :]).to(self.v.dtype) \
                 * (p["wScale"] * p["scalePoisson"])
-            self.v[:, self._drive_idx] += stim
-        spikes = ((self.v >= p["vThr"]) & (self.refrac >= p["tRefrac"])).float()
+            if self._active_idx is not None:
+                # driven ACTIVE nodes get a conductance pulse into
+                # g_exc (synaptic bombardment), passive nodes keep the
+                # legacy voltage kick
+                stim_a = (u < self._drive_p[None, :]).to(self.v.dtype) \
+                    * self._drive_g
+                am = self._amask[self._drive_idx][None, :]
+                self.g_exc[:, self._drive_idx] += stim_a * am
+                self.v[:, self._drive_idx] += stim * (~am)
+            else:
+                self.v[:, self._drive_idx] += stim
+        if self._active_idx is not None:
+            spikes = (
+                ((self.v >= p["vThr"]) & (self.refrac >= p["tRefrac"])
+                 & (~self._amask)[None, :])
+                | ((self.v >= self._v_spike)
+                   & (self._v_prev < self._v_spike)
+                   & (self.refrac >= p["tRefrac"])
+                   & self._amask[None, :])).float()
+        else:
+            spikes = ((self.v >= p["vThr"])
+                      & (self.refrac >= p["tRefrac"])).float()
         if self._force is not None:
             spikes[:, self._force] = 1.0
         if self._silence_idx is not None:
             spikes[:, self._silence_idx] = 0.0
-        self.v = torch.where(spikes > 0, torch.full_like(self.v, p["vReset"]),
-                             self.v)
-        self.g = self.g * (1 - spikes)  # reset conductance of spiking cells
+        if self._active_idx is not None:
+            # LIF instant reset only on passive nodes; active nodes
+            # repolarize through their channels (§12)
+            rst = (spikes > 0) & (~self._amask)[None, :]
+            self.v = torch.where(
+                rst, torch.full_like(self.v, p["vReset"]), self.v)
+            self.g = self.g * (1 - spikes * (~self._amask)[None, :])
+        else:
+            self.v = torch.where(
+                spikes > 0, torch.full_like(self.v, p["vReset"]), self.v)
+            self.g = self.g * (1 - spikes)
         self.refrac = torch.where(spikes > 0, torch.zeros_like(self.refrac),
                                   self.refrac + dt)
         self.spikes = spikes
         self.spike_counts += spikes.long()
         # schedule this step's spikes to arrive in D steps: slot (ptr-1)
         # mod L was last read one step ago, so nothing unread is lost
-        self.delay_buf[:, (ptr - 1) % L, :] = self.propagate(spikes)
+        prop = self.propagate(spikes)
+        if isinstance(prop, tuple):
+            self.delay_buf[:, (ptr - 1) % L, :] = prop[0]
+            self.delay_buf_inh[:, (ptr - 1) % L, :] = prop[1] \
+                if prop[1] is not None else 0.0
+        else:
+            self.delay_buf[:, (ptr - 1) % L, :] = prop
         self._delay_ptr = (ptr + 1) % L
         self.t_ms += dt
 
     def step(self, n_steps: int = 1) -> None:
         with torch.no_grad():
             for _ in range(int(n_steps)):
-                if self._guard is not None:
+                if self._guard is not None or self._num_failure is not None:
                     break
                 self._one_step()
                 if self._run_limits:
@@ -954,7 +1216,7 @@ class TorchBackend(FbaBackend):
         n = max(1, int(round(duration_ms / self.params["dt"])))
         t0 = time.perf_counter()
         t_ms_before = self.t_ms
-        if self._guard is None:
+        if self._guard is None and self._num_failure is None:
             if self._guard_wall_start is None \
                     and (self._run_limits or {}).get("max_wall_seconds"):
                 self._guard_wall_start = t0
@@ -965,6 +1227,8 @@ class TorchBackend(FbaBackend):
                "spikes_total": int(self.spike_counts.sum().item())}
         if self._guard is not None:
             out["guard"] = dict(self._guard)
+        if self._num_failure is not None:
+            out["numerical_failure"] = dict(self._num_failure)
         return out
 
     # ------------------------------------------------------------ report

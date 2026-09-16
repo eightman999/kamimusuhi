@@ -55,6 +55,11 @@ class Provenance(str, Enum):
     ARTIFICIAL_GRAFT = "ARTIFICIAL_GRAFT"
     #: Filled by an imputation rule that is on record.
     IMPUTED = "IMPUTED"
+    #: A3 (§4/§7): generic default constant from a named fallback table —
+    #: weaker than MODEL_INFERENCE (no entity-specific reasoning) but a
+    #: real numeric value. Must never be presented as cell-specific
+    #: physiology.
+    GENERIC_FALLBACK = "GENERIC_FALLBACK"
     #: Genuinely absent — the dataset does not carry this value.
     UNKNOWN = "UNKNOWN"
 
@@ -71,6 +76,7 @@ _ORDER = [
     Provenance.MODEL_INFERENCE,
     Provenance.ARTIFICIAL_GRAFT,
     Provenance.IMPUTED,
+    Provenance.GENERIC_FALLBACK,
     Provenance.UNKNOWN,
 ]
 

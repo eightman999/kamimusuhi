@@ -840,7 +840,13 @@ async function anatomy() {
         native pairs ${(g.native_pairs || []).length}
       </div>
       <canvas id="anat_canvas" style="width:100%;height:560px"></canvas>
-      <div class="legend">
+      ${d.physiology ? `<div style="margin:6px 0;font-size:11px">
+        <label><input type="checkbox" id="phys_prov"> physiology layer
+          (colour = parameter provenance)</label>
+        <span class="muted"> overlay ${esc(d.physiology.overlay_version)} —
+          membrane/channel profile per entity; live voltage is not in
+          this static export</span></div>` : ''}
+      <div class="legend" id="anat_legend">
         ${(h.flow_classes || []).map((c, i) =>
           `<span><i style="background:${ANATOMY_CLASS_COLOR[i % ANATOMY_CLASS_COLOR.length]}"></i>${esc(c)}</span>`).join('')}
         ${(sk.compartments || []).map((c, i) =>
@@ -864,6 +870,15 @@ async function anatomy() {
   const W = cv.clientWidth || 900, H = cv.clientHeight || 560;
   cv.width = W * dpr; cv.height = H * dpr;
   const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
+  // A3 §44-45: physiology layer — colour host somata by parameter
+  // provenance class; measured/inferred/fallback/unknown stay visibly
+  // distinct. Live membrane voltage isn't in this static export.
+  const phys = d.physiology || null;
+  const PROV_COLOR = ['#2ecc71', '#27ae60', '#2980b9', '#9b59b6',
+                      '#f39c12', '#e67e22', '#e74c3c'];
+  const provClasses = phys ? (phys.provenance_classes || []) : [];
+  const provOf = phys ? (phys.per_entity || {}) : {};
+  const drawAnat = (provMode) => {
   ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, W, H);
   // native aggregated-pair layer (drawn first, dimmest)
   ctx.strokeStyle = '#4a5568'; ctx.globalAlpha = 0.25; ctx.lineWidth = 0.5;
@@ -886,8 +901,16 @@ async function anatomy() {
   });
   ctx.globalAlpha = 1;
   // host scatter at real coordinates
-  (h.points || []).forEach(([x, y, c]) => {
-    ctx.fillStyle = ANATOMY_CLASS_COLOR[(c || 0) % ANATOMY_CLASS_COLOR.length];
+  const hostEidx = h.entity_idx || [];
+  (h.points || []).forEach(([x, y, c], i) => {
+    if (provMode && phys) {
+      const p = provOf[String(hostEidx[i])];
+      const k = p ? provClasses.indexOf(p.assignment_provenance) : -1;
+      ctx.fillStyle = PROV_COLOR[k >= 0 ? k : PROV_COLOR.length - 1];
+    } else {
+      ctx.fillStyle =
+        ANATOMY_CLASS_COLOR[(c || 0) % ANATOMY_CLASS_COLOR.length];
+    }
     ctx.globalAlpha = 0.55;
     ctx.fillRect(x * W, y * H, 1.4, 1.4);
   });
@@ -913,6 +936,26 @@ async function anatomy() {
     ctx.fillStyle = '#ff9f43';
     ctx.beginPath(); ctx.arc(x * W, y * H, 2.6, 0, 2 * Math.PI); ctx.fill();
   }));
+  };
+  drawAnat(false);
+  const provBox = document.getElementById('phys_prov');
+  if (provBox) {
+    provBox.onchange = () => {
+      drawAnat(provBox.checked);
+      const leg = document.getElementById('anat_legend');
+      if (leg) {
+        leg.querySelectorAll('.phys').forEach(e => e.remove());
+        if (provBox.checked) {
+          provClasses.forEach((c, i) => {
+            const s = document.createElement('span');
+            s.className = 'phys';
+            s.innerHTML = `<i style="background:${PROV_COLOR[i]}"></i>${esc(c)}`;
+            leg.appendChild(s);
+          });
+        }
+      }
+    };
+  }
 }
 function brainHash(i) { let h = (Math.imul(i,2654435761) >>> 0); h ^= h >>> 13; h = Math.imul(h,2246822519) >>> 0; return h >>> 0; }
 function brainPoint(index, nBase, W, H) {

@@ -42,3 +42,5 @@ __pycache__/
 # Anatomical dataset stores (derived from upstream releases; regenerable
 # by experiments/mioba/importers/*) — code and manifests stay in git
 /experiments/mioba/datasets/*/store*/
+# Physiology overlays (regenerable by physio/overlay.py)
+/experiments/mioba/datasets/*/physiology/
