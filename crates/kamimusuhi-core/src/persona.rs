@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{EvidenceId, IndividualId, MemoryId, PersonaBackendId, SessionId, TurnId};
 use crate::mutation::{MutationDomain, MutationOperation, OriginClass};
+use crate::organs::OrganSignal;
 use crate::persona_seed::PersonaSeed;
 use crate::workspace::{Workspace, WorkspaceDomain, WorkspaceItem};
 
@@ -104,6 +105,13 @@ pub struct PersonaEnvelope {
     /// Output of delegated cognition. External material, and specifically not
     /// the individual speaking.
     pub external_results: Vec<WorkspaceItem>,
+    /// Active, transient signals produced by promoted cognitive organs.
+    ///
+    /// These are derived internal control/cognition state, not canonical
+    /// evidence, memory, durable self-state, or mutation authority. Shadow
+    /// outputs are intentionally excluded before this boundary.
+    #[serde(default)]
+    pub organ_signals: Vec<OrganSignal>,
     /// Prior utterances with their original evidence IDs. These are records
     /// of conversation, separate from the individual's retained beliefs.
     #[serde(default)]
@@ -153,6 +161,7 @@ impl PersonaEnvelope {
             episodic: of(WorkspaceDomain::EpisodicMemory),
             library: of(WorkspaceDomain::LibraryEvidence),
             external_results: of(WorkspaceDomain::ExternalResourceResult),
+            organ_signals: Vec::new(),
             conversation_history: Vec::new(),
             observed_runtime: None,
             mio_observation: None,
@@ -176,6 +185,20 @@ impl PersonaEnvelope {
         self
     }
 
+    /// Attach only signals admitted to the live cognitive path.
+    ///
+    /// The filter is a second structural guard in addition to `OrganSupervisor`:
+    /// a shadow-mode result can be recorded and compared, but cannot become
+    /// Persona context by being passed to this helper.
+    #[must_use]
+    pub fn with_active_organ_signals(mut self, signals: Vec<OrganSignal>) -> Self {
+        self.organ_signals = signals
+            .into_iter()
+            .filter(OrganSignal::influences_cognition)
+            .collect();
+        self
+    }
+
     /// Items that came from outside the individual, in a stable order.
     ///
     /// A backend that wants to mark borrowed material asks for this rather
@@ -194,6 +217,7 @@ impl PersonaEnvelope {
             && self.episodic.is_empty()
             && self.library.is_empty()
             && self.external_results.is_empty()
+            && self.organ_signals.is_empty()
             && self.conversation_history.is_empty()
             && self.observed_runtime.is_none()
             && self.mio_observation.is_none()
