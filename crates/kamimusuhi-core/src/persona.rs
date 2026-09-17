@@ -92,13 +92,23 @@ pub struct SessionWorkingState {
 pub struct PersonaEnvelope {
     /// Lineage position, as orientation.
     pub continuity: Vec<WorkspaceItem>,
-    /// The individual's own model of itself. Empty in phase 1: the self domain
-    /// is reserved and nothing can write it. The section exists so a backend
-    /// never has to infer self-state from relationship state.
+    /// The individual's own model of itself, from the C0 derived lane:
+    /// accepted self claims with their provenance. Distinct from the persona
+    /// seed (which is configured disposition, not concluded state) and from
+    /// relationship memory (which is about others, not the individual).
     pub durable_self: Vec<WorkspaceItem>,
     /// What the individual holds about other people.
     pub relationship: Vec<WorkspaceItem>,
     pub episodic: Vec<WorkspaceItem>,
+    /// Raw canonical utterance records surfaced by recall — records of what
+    /// was said, presented as evidence with their IDs, not as beliefs.
+    #[serde(default)]
+    pub recalled_evidence: Vec<WorkspaceItem>,
+    /// The operative policy in force (retrieval knobs, conversation policy).
+    /// An advisory overlay from the derived lane: it modulates behaviour and
+    /// is not a belief about anything.
+    #[serde(default)]
+    pub active_policy: Vec<WorkspaceItem>,
     /// Imported documents. External material: not the individual's belief.
     pub library: Vec<WorkspaceItem>,
     /// Output of delegated cognition. External material, and specifically not
@@ -120,6 +130,13 @@ pub struct PersonaEnvelope {
     /// These are neither the individual's experience nor acquired abilities.
     #[serde(default)]
     pub research_findings: Option<serde_json::Value>,
+    /// Reserved slot for body/interoceptive state injected by a future body
+    /// layer (G1 onward). `None` in C0 — the slot exists so the envelope
+    /// schema does not have to change when a body is wired in, and so a
+    /// backend can be told explicitly that the slot is empty rather than
+    /// left to imagine one.
+    #[serde(default)]
+    pub body_state: Option<serde_json::Value>,
     /// The operator-authored disposition in force for this turn.
     ///
     /// Its own section, and never merged into any of the others: a seed is not
@@ -148,15 +165,18 @@ impl PersonaEnvelope {
         };
         Self {
             continuity: of(WorkspaceDomain::CurrentContinuityState),
-            durable_self: Vec::new(),
+            durable_self: of(WorkspaceDomain::SelfMemory),
             relationship: of(WorkspaceDomain::RelationshipMemory),
             episodic: of(WorkspaceDomain::EpisodicMemory),
+            recalled_evidence: of(WorkspaceDomain::RecalledEvidence),
+            active_policy: of(WorkspaceDomain::ActivePolicy),
             library: of(WorkspaceDomain::LibraryEvidence),
             external_results: of(WorkspaceDomain::ExternalResourceResult),
             conversation_history: Vec::new(),
             observed_runtime: None,
             mio_observation: None,
             research_findings: None,
+            body_state: None,
             // No workspace domain maps here. A seed cannot arrive as workspace
             // material, so no amount of retrieved content can become one.
             persona_seed: None,
@@ -192,12 +212,15 @@ impl PersonaEnvelope {
             && self.durable_self.is_empty()
             && self.relationship.is_empty()
             && self.episodic.is_empty()
+            && self.recalled_evidence.is_empty()
+            && self.active_policy.is_empty()
             && self.library.is_empty()
             && self.external_results.is_empty()
             && self.conversation_history.is_empty()
             && self.observed_runtime.is_none()
             && self.mio_observation.is_none()
             && self.research_findings.is_none()
+            && self.body_state.is_none()
     }
 }
 

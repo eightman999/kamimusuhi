@@ -2,15 +2,16 @@
 //! Raw conversation is recallable, but never activated as a belief. Generated
 //! text and a successful write to the output surface have separate records.
 
+use std::collections::BTreeSet;
 use std::time::Instant;
 
+use kamimusuhi_core::continuity::WriterIdentity;
 use kamimusuhi_core::digest::{content_digest, json_digest};
 use kamimusuhi_core::evidence::{
     EvidenceKind, EvidenceSource, EvidenceStore, NewEvidence, NewSession, NewTurn, RetentionClass,
 };
 use kamimusuhi_core::ids::{EvidenceId, IndividualId, SessionId, TurnId};
-use kamimusuhi_core::memory::{MemoryQuery, MemoryRepository};
-use kamimusuhi_core::mutation::{MutationDomain, OriginClass};
+use kamimusuhi_core::mutation::OriginClass;
 use kamimusuhi_core::persona::{
     ConversationMessage, ConversationRole, CurrentInput, PersonaBackendDescriptor,
     PersonaTurnInput, SessionWorkingState, TurnContext,
@@ -20,12 +21,26 @@ use kamimusuhi_core::trace::{TraceCorrelation, TraceEventKind};
 use kamimusuhi_core::workspace::WorkspaceBuilder;
 use serde::Serialize;
 
+use crate::c0::{self, eval};
 use crate::research::ResearchCatalog;
 use crate::{Runtime, RuntimeError};
 
 pub const MAX_INPUT_BYTES: usize = 8_192;
-const HISTORY_MESSAGES: usize = 12;
 const HISTORY_BYTES: usize = 16_384;
+
+/// Per-turn C0 bookkeeping, surfaced for inspection.
+#[derive(Debug, Clone, Serialize)]
+pub struct TurnC0 {
+    /// Derived-lane head this turn ran under.
+    pub activation_seq: u64,
+    /// Memory items surfaced into the workspace.
+    pub memories_surfaced: usize,
+    /// Canonical drafts submitted and how many were activated.
+    pub drafts_submitted: usize,
+    pub drafts_activated: usize,
+    /// Turn metrics recorded by the deterministic evaluator.
+    pub metrics: kamimusuhi_core::c0::TurnMetrics,
+}
 
 #[derive(Debug, Serialize)]
 pub struct DialogueReply {
@@ -41,6 +56,12 @@ pub struct DialogueReply {
     pub research_findings: serde_json::Value,
     pub persona_backend: PersonaBackendDescriptor,
     pub response: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub c0: Option<TurnC0>,
+    /// The assembled context exactly as the backend received it. Only
+    /// populated when debug-context output was requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub debug_context: Option<serde_json::Value>,
 }
 
 pub struct DialogueSession {
@@ -52,6 +73,13 @@ pub struct DialogueSession {
     privacy: PrivacyConstraint,
     started: Instant,
     research: ResearchCatalog,
+    /// Writer epoch, claimed lazily on the first canonical draft submission.
+    /// A conversation that only reads never takes the epoch.
+    writer: Option<WriterIdentity>,
+    /// Emit the assembled context on each turn (`--debug-context`).
+    debug_context: bool,
+    /// The last assembled workspace, for `/context` inspection.
+    last_context: Option<serde_json::Value>,
 }
 
 impl DialogueSession {
@@ -108,7 +136,37 @@ impl DialogueSession {
             privacy,
             started: Instant::now(),
             research,
+            writer: None,
+            debug_context: false,
+            last_context: None,
         })
+    }
+
+    /// Surface the assembled workspace on each turn (`--debug-context`).
+    pub fn set_debug_context(&mut self, enabled: bool) {
+        self.debug_context = enabled;
+    }
+
+    /// The workspace assembled for the most recent turn, as inspectable JSON.
+    pub fn last_context(&self) -> Option<&serde_json::Value> {
+        self.last_context.as_ref()
+    }
+
+    pub fn session_id(&self) -> SessionId {
+        self.session_id
+    }
+
+    pub fn subject(&self) -> &str {
+        &self.subject
+    }
+
+    pub fn turn_count(&self) -> u64 {
+        self.sequence
+    }
+
+    /// The writer cache, for reflection cycles run inside this session.
+    pub fn writer_cache(&mut self) -> &mut Option<WriterIdentity> {
+        &mut self.writer
     }
 
     /// `emit` must return only after the output surface has accepted/flushed
@@ -132,7 +190,10 @@ impl DialogueSession {
         runtime.config().persona.check_privacy(self.privacy)?;
         let persona = runtime.config().build_persona()?;
         let backend = persona.descriptor();
-        let history = self.history(runtime)?;
+        // The operative view in force this turn: retrieval knobs, conversation
+        // policy and the self model all come from the derived lane's head.
+        let operative = c0::operative(runtime)?;
+        let history = self.history(runtime, operative.view.params.retrieval.history_messages)?;
         let turn_id = TurnId::generate(runtime.ids().as_ref());
         runtime.store().record_turn(NewTurn {
             turn_id,
@@ -162,23 +223,34 @@ impl DialogueSession {
             evidence_id: input_evidence_id,
             text: text.to_owned(),
         };
-        // Restrict both domains to this interlocutor. Unscoped episodes can
-        // contain another person's material and are not admitted here.
-        let mut memories = Vec::new();
-        for domain in [MutationDomain::Relationship, MutationDomain::Episodic] {
-            memories.extend(MemoryRepository::retrieve(
-                runtime.store(),
-                &MemoryQuery::current(self.individual_id)
-                    .in_domain(domain)
-                    .about(&self.subject)
-                    .limited(8),
-            )?);
-        }
+        // Retrieval is subject-bound everywhere: relationship and episodic
+        // records are scoped to this interlocutor, and recalled evidence is
+        // filtered to this channel's source id.
+        let memories = c0::retrieve_memories(
+            runtime.store(),
+            self.individual_id,
+            &self.subject,
+            text,
+            &operative.view.params,
+        )?;
+        let mut exclude: BTreeSet<EvidenceId> = history.iter().map(|m| m.evidence_id).collect();
+        exclude.insert(input_evidence_id);
+        let recalled_evidence = c0::recall_evidence(
+            runtime.store(),
+            self.individual_id,
+            &self.source_id,
+            text,
+            &operative.view.params,
+            &exclude,
+        )?;
         let head = runtime.head()?;
         let workspace = WorkspaceBuilder::new(self.individual_id, runtime.now())
             .with_continuity(&head)
             .with_current_input(&current_input)
             .with_memories(&memories)
+            .with_self_state(&operative.view.self_model)
+            .with_active_policy(&operative.view.params, operative.activation_seq)
+            .with_recalled_evidence(&recalled_evidence)
             .build();
         let mio = runtime
             .config()
@@ -257,23 +329,52 @@ impl DialogueSession {
         if let Some(seed) = runtime.config().persona_seed()? {
             input.envelope = input.envelope.with_seed(seed);
         }
-        input.envelope.conversation_history = history;
+        input.envelope.conversation_history = history.clone();
         input.envelope.observed_runtime = Some(observed.clone());
         input.envelope.mio_observation = mio_context.clone();
         input.envelope.research_findings = Some(research_context.clone());
         let context_digest = json_digest(&serde_json::json!(input));
         let history_messages = input.envelope.conversation_history.len();
+        // The inspectable context: what the model was actually shown, in the
+        // shape the C0 spec asks `--debug-context` to expose.
+        let workspace_context = serde_json::json!({
+            "activation_seq": operative.activation_seq,
+            "recent_context": input.envelope.conversation_history,
+            "relationship_memories": input.envelope.relationship,
+            "episodic_memories": input.envelope.episodic,
+            "recalled_evidence": input.envelope.recalled_evidence,
+            "self_state": input.envelope.durable_self,
+            "active_policy": input.envelope.active_policy,
+            "open_threads": self.open_threads(runtime, &operative.view)?,
+            "body_state": input.envelope.body_state,
+            "workspace_digest": workspace.digest(),
+        });
+        self.last_context = Some(workspace_context.clone());
         runtime.trace().record_with(TraceEventKind::PersonaInvoked, TraceCorrelation {
             persona_backend_id: Some(backend.backend_id), ..TraceCorrelation::default()
         }, serde_json::json!({"input_digest": context_digest, "history_messages": history_messages}));
         let result = persona.turn(input)?;
+        // Persona drafts are proposals, not state: submit each through the
+        // canonical kernel so the mutation policy decides. The writer epoch
+        // is claimed lazily here — a turn with no drafts never takes it.
+        let draft_outcomes = c0::submit_drafts(
+            runtime,
+            Some(self.session_id),
+            Some(turn_id),
+            &mut self.writer,
+            result.proposals.clone(),
+        )?;
+        let drafts_activated = draft_outcomes.iter().filter(|o| o.activated).count();
         runtime.trace().record_with(
             TraceEventKind::PersonaCompleted,
             TraceCorrelation {
                 persona_backend_id: Some(result.backend.backend_id),
                 ..TraceCorrelation::default()
             },
-            serde_json::json!({"draft_count": result.proposals.len(), "drafts_activated": 0}),
+            serde_json::json!({
+                "draft_count": draft_outcomes.len(),
+                "drafts_activated": drafts_activated,
+            }),
         );
         let generated_evidence_id = self.append(
             runtime,
@@ -301,10 +402,12 @@ impl DialogueSession {
             research_findings: research_context,
             persona_backend: result.backend,
             response: result.response_intent,
+            c0: None,
+            debug_context: None,
         };
         emit(&reply)
             .map_err(|error| RuntimeError::Usage(format!("response output failed: {error}")))?;
-        self.append(
+        let emitted_evidence_id = self.append(
             runtime,
             turn_id,
             EvidenceKind::AgentUtterance,
@@ -326,14 +429,80 @@ impl DialogueSession {
         runtime
             .trace()
             .record(TraceEventKind::ResponseEmitted, TraceCorrelation::default());
-        Ok(reply)
+        // Deterministic per-turn metrics, recorded in the lane — the
+        // reflection cycle reads them, and they are the before/after record.
+        let metrics = eval::measure_turn(
+            text,
+            &reply.response,
+            &history,
+            &workspace,
+            operative.view.params.conversation.max_response_chars,
+        );
+        runtime
+            .store()
+            .c0_record_evaluation(&kamimusuhi_store_sqlite::c0::C0Evaluation {
+                evaluation_id: kamimusuhi_core::ids::C0EvaluationId::generate(
+                    runtime.ids().as_ref(),
+                ),
+                individual_id: self.individual_id,
+                scope: "turn".to_owned(),
+                subject_key: Some(self.subject.clone()),
+                turn_id: Some(turn_id),
+                proposal_id: None,
+                metrics: serde_json::to_value(&metrics).unwrap_or(serde_json::Value::Null),
+                evaluator: kamimusuhi_core::c0::EVALUATOR_KIND.to_owned(),
+                created_at: runtime.now(),
+            })?;
+        let _ = emitted_evidence_id;
+        Ok(DialogueReply {
+            c0: Some(TurnC0 {
+                activation_seq: operative.activation_seq,
+                memories_surfaced: metrics.memories_surfaced,
+                drafts_submitted: draft_outcomes.len(),
+                drafts_activated,
+                metrics,
+            }),
+            debug_context: self.debug_context.then_some(workspace_context),
+            ..reply
+        })
     }
 
-    fn history(&self, runtime: &Runtime) -> Result<Vec<ConversationMessage>, RuntimeError> {
+    /// Open threads for the inspectable context: pending derived-lane
+    /// proposals plus the self model's open questions. Deterministic — read
+    /// from state, not inferred from prose.
+    fn open_threads(
+        &self,
+        runtime: &Runtime,
+        view: &kamimusuhi_core::c0::OperativeView,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        let pending = runtime.store().c0_proposals(
+            self.individual_id,
+            Some(kamimusuhi_core::c0::ProposalStatus::Pending),
+        )?;
+        let open_questions: Vec<serde_json::Value> = view
+            .self_model
+            .field(kamimusuhi_core::c0::SelfField::OpenQuestions)
+            .iter()
+            .map(|e| e.value.clone())
+            .collect();
+        Ok(serde_json::json!({
+            "pending_proposals": pending
+                .iter()
+                .map(|p| serde_json::json!({"proposal_id": p.proposal_id, "target": p.target}))
+                .collect::<Vec<_>>(),
+            "open_questions": open_questions,
+        }))
+    }
+
+    fn history(
+        &self,
+        runtime: &Runtime,
+        limit: usize,
+    ) -> Result<Vec<ConversationMessage>, RuntimeError> {
         let records = runtime.store().recent_conversation(
             self.individual_id,
             &self.source_id,
-            HISTORY_MESSAGES,
+            limit.clamp(1, 128),
         )?;
         let mut bytes = 0;
         let mut messages = Vec::new();

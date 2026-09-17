@@ -86,7 +86,7 @@ fn individual_exists(
     .map_err(map_sqlite)
 }
 
-const EVIDENCE_COLUMNS: &str = "evidence_id, individual_id, session_id, turn_id, kind, origin_class, \
+pub(crate) const EVIDENCE_COLUMNS: &str = "evidence_id, individual_id, session_id, turn_id, kind, origin_class, \
      payload_json, source_id, source_sequence, content_digest, retention_class, created_at";
 
 type EvidenceRow = (
@@ -104,7 +104,7 @@ type EvidenceRow = (
     i64,
 );
 
-fn read_evidence_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EvidenceRow> {
+pub(crate) fn read_evidence_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EvidenceRow> {
     Ok((
         row.get(0)?,
         row.get(1)?,
@@ -121,7 +121,7 @@ fn read_evidence_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EvidenceRow> {
     ))
 }
 
-fn build_evidence(row: EvidenceRow) -> Result<EvidenceRecord, EvidenceError> {
+pub(crate) fn build_evidence(row: EvidenceRow) -> Result<EvidenceRecord, EvidenceError> {
     let (
         evidence_id,
         individual_id,

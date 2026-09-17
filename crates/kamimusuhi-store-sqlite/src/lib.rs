@@ -9,6 +9,7 @@
 //! power-loss durability; the tests here cover transaction atomicity, crash
 //! windows, retry idempotency and restart recovery.
 
+pub mod c0;
 mod continuity;
 mod error;
 mod evidence;
