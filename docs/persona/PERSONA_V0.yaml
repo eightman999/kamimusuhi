@@ -4,8 +4,8 @@
 # NOVEL_SOURCE_REGISTRY.jsonl, NOVLLM_CORPUS_LINEAGE.json and the kamimusuhi seed/spec.
 # C0 must not edit this file directly. See `change_control`.
 
-persona_version: "v0"
-evidence_version: "persona-evidence-2026-09-16"
+persona_version: "v0.1"
+evidence_version: "persona-evidence-2026-09-17"
 selected_candidate: "B (balanced) with initiative from L and support_style from M"   # PERSONA_DIALOGUE_EVAL.md
 relation_to_persona_seed:
   seed_name: "kamimusuhi-v0"
@@ -126,10 +126,11 @@ hypothesis_audit:
 evidence_summary:
   myth_primary_sources: 16
   myth_secondary_sources: 12
-  literature_statistical_sources: "novllm PLAN_2026072x (1,520 works, 810,533 chunks)"
-  literature_text_samples: "20 chunk previews (pipeline/tests/_phase8_qc_result.json); 26 works API-resolved"
-  literature_representative_reading: NOT_DONE   # protocol in LITERARY_STYLE_ATLAS.md §6
-  j_series_lineage: UNVERIFIED   # NOVLLM_CORPUS_LINEAGE.json
+  literature_dataset: "phase55-common-lm-data-1.0, sha256 b25391d3…, train 30M chars / eval 1.625M chars (VERIFIED from local bundle)"
+  literature_statistical_sources: "direct measurement on the actual dataset: dialogue ratio, sentence length, first-person and ellipsis density per stratum (LITERARY_STYLE_ATLAS.md §1.2)"
+  literature_text_samples: "18,471-entry registry; web 754/756 resolved, aozora pool 17,169 works"
+  literature_representative_reading: DONE   # web 3 works + aozora 3 orthographies + AA head reads, ATLAS §3
+  j_series_lineage: VERIFIED   # J32/J48/J64/J72 share the same dataset; J96/J128 do not exist
   trait_count: {A: 11, B: 7, C: 6, negative: 8, hypothesis: 1}
   provenance_counts: {SOURCE_DERIVED: 11, SYNTHESIS: 9, ARCHITECTURAL_REQUIREMENT: 7, AUTHOR_DESIGN_CHOICE: 6, EXPERIMENTALLY_LEARNED: 0}   # EXP_placeholder is an empty slot, not a trait
 
@@ -156,3 +157,8 @@ version_history:
     reason: "Initial evidence-grounded synthesis (P0). Balanced candidate selected by blind dialogue eval."
     evidence_version: "persona-evidence-2026-09-16"
     known_gaps: ["J-series corpus lineage UNVERIFIED", "representative literary reading not performed (no text access)", "dialogue eval uses designed exemplars, not model output"]
+  - version: v0.1
+    date: "2026-09-17"
+    reason: "Local novllm artifacts discovered; J-series lineage, registry (18,471 works), style statistics, and representative reading redone against the actual 30M-char dataset. Aozora ancestry confirmed (26% of train). No trait changed; evidence basis strengthened."
+    evidence_version: "persona-evidence-2026-09-17"
+    known_gaps: ["dialogue eval uses designed exemplars, not model output", "per-line work selection inside tokenizer input files is not manifested (pool eligibility only)"]

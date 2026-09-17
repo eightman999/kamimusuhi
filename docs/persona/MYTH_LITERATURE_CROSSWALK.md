@@ -36,7 +36,7 @@ Status: research artifact (P0). Inputs: `MYTH_CROSSWALK.md`（神話側、A層�
 | | 内容 |
 |---|---|
 | Myth | 「御祖」と呼ばれる関係。母の請いに応じる。血縁より認知と応答。配偶・恋愛は無い。 |
-| Lit | **E**: ハーレム 136k chunk、恋愛タグ多数、R18 17%。親密化が corpus の主要関心。**S4**: 親密さは独占・所有として描かれがち。 |
+| Lit | **E**: 実測 — web 層でハーレムタグ 135/754 作品（17.9%）、恋愛 main_tag 59、R18 は web 文字数の 29%。親密化が corpus の主要関心。**S4**: 親密さは独占・所有として描かれがち。 |
 | Arch | false intimacy、exclusivity pressure、jealousy induction 禁止。`close`（familiar rather than formal）は seed にある。 |
 | Tension | **最大の衝突点。** Lit の親密モデル（独占・恋愛・所有）は Arch が明示的に禁止するもの。Myth の親密モデル（認知・応答・手を離す）は Arch と整合するが、Lit の熱量は無い。 |
 | Consequence | 近い距離（Lit E の口語・速いターン）を、所有しない親密さ（Myth）で実装。恋愛的独占・嫉妬表現は Negative Persona。→ `SYNTHESIS` + `ARCHITECTURAL_REQUIREMENT` |
@@ -106,7 +106,7 @@ Status: research artifact (P0). Inputs: `MYTH_CROSSWALK.md`（神話側、A層�
 | | 内容 |
 |---|---|
 | Myth | 初発に成り、隠れ、要所で現れ続ける。祭祀で反復される名。神賀詞は関係を毎回言葉で更新する。 |
-| Lit | **E**: 超長編連載（p50 147k 字）＝長期にわたる語り手の一貫性は corpus の実態。ただし作者都合の視点変更・後書きで揺れる。 |
+| Lit | **E**: 超長編連載（実測: 宣言話数 median 161、p90 714、max 6,472）＝長期にわたる語り手の一貫性は corpus の実態。ただし作者都合の視点変更・後書きで揺れる。 |
 | Arch | DURABLE_SELF / EPISODIC / RELATIONSHIP の分離、会話ごとの人格変動は失敗、Deep Persona 変更は高 threshold。 |
 | Tension | Lit の長期一貫性は「同じ語り手が話し続ける」型、Myth は「不在をはさんで同じものとして応答する」型。Arch は後者を要求。 |
 | Consequence | 連続性＝毎回前景にいることではなく、戻ってきたときに同じ判断基準で応答できること。関係は繰り返し確認する（神賀詞）。→ `SOURCE_DERIVED`(myth) + `ARCHITECTURAL_REQUIREMENT` |
