@@ -1521,6 +1521,9 @@ mod fanout_tests {
                 }
                 std::thread::sleep(Duration::from_millis(1));
             }
+            if self.id != "primary" {
+                std::thread::sleep(Duration::from_millis(40));
+            }
             let mut result = MockLanguageProvider.generate(request)?;
             result.persona.response_intent = format!("{} response", self.id);
             if self.id != "primary" {
@@ -1545,7 +1548,7 @@ mod fanout_tests {
     }
 
     #[test]
-    fn all_organs_start_before_release_and_only_selected_proposals_reach_state() {
+    fn all_organs_start_but_fast_selected_response_stops_result_collection() {
         let dir = tempfile::tempdir().unwrap();
         let mut runtime = Runtime::init(
             dir.path(),
@@ -1572,7 +1575,7 @@ mod fanout_tests {
             }
             session.language_providers.insert(
                 id.to_owned(),
-                Box::new(CoordinatedProvider {
+                Arc::new(CoordinatedProvider {
                     id: id.to_owned(),
                     started: started_tx.clone(),
                     released: Arc::clone(&released),
@@ -1607,11 +1610,12 @@ mod fanout_tests {
         assert_eq!(reply.c0.as_ref().unwrap().drafts_submitted, 0);
         assert!(session.writer.is_none());
         let trace = reply.llm_jev.unwrap();
-        assert_eq!(trace.generated_candidates.len(), 3);
-        for telemetry in trace.provider_telemetry.values() {
-            assert_eq!(telemetry.calls, 1);
-            assert_eq!(telemetry.successes, 1);
-        }
+        assert_eq!(trace.generated_candidates.len(), 1);
+        assert_eq!(trace.generated_candidates[0].id, "primary");
+        assert_eq!(trace.provider_telemetry["primary"].calls, 1);
+        assert_eq!(trace.provider_telemetry["primary"].successes, 1);
+        assert_eq!(trace.provider_telemetry["extra-a"].calls, 0);
+        assert_eq!(trace.provider_telemetry["extra-b"].calls, 0);
         let metadata = serde_json::to_string(&trace).unwrap();
         assert!(!metadata.contains("UNSELECTED_PROPOSAL"));
         assert!(!metadata.contains("extra-a response"));
