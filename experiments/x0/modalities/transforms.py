@@ -19,7 +19,7 @@ is added by the environment, not here.  ``make_transforms`` accepts an
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Dict, Sequence
+from typing import Dict, Sequence
 
 import numpy as np
 
