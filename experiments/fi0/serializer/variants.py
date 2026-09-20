@@ -26,7 +26,7 @@ import json
 import yaml
 
 from .canonical import canonical_text
-from .schema import ORDERABLE_BLOCKS, PromptContext
+from .schema import PromptContext
 
 ORDERS: Dict[str, Tuple[str, ...]] = {
     # spec-mandated permutations (relative order of SYSTEM/MEMORY/USER)
