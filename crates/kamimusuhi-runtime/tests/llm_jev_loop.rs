@@ -1101,7 +1101,7 @@ fn jev_provider_choice_uses_a_typed_choice_and_declared_candidates() {
 }
 
 #[test]
-fn jev_selects_a_generated_response_after_all_language_organs_complete() {
+fn jev_selects_anonymous_generated_response_from_ready_race_batch() {
     let backup = FixtureServer::always(FixtureResponse::ok("backup response")).unwrap();
     let server = FixtureServer::start(vec![
         jev_preparation("SPEAK"),
@@ -1181,14 +1181,9 @@ fn jev_selects_a_generated_response_after_all_language_organs_complete() {
         state["selection"]["candidates"].as_array().unwrap().len(),
         2
     );
-    for (index, candidate) in state["selection"]["candidates"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .enumerate()
-    {
+    for candidate in state["selection"]["candidates"].as_array().unwrap() {
         let candidate_id = candidate["id"].as_str().unwrap();
-        assert_eq!(candidate_id, ["backup", "primary"][index]);
+        assert!(matches!(candidate_id, "candidate-0" | "candidate-1"));
         for dimension in [
             "grounding",
             "attribution",
@@ -1196,16 +1191,26 @@ fn jev_selects_a_generated_response_after_all_language_organs_complete() {
             "response_gate",
             "repair_reason",
         ] {
-            let question = format!("{dimension}_{index}");
+            let question = format!("{dimension}_{candidate_id}");
             let instructions = choice["questions"][&question]["instructions"]
                 .as_str()
                 .unwrap();
             assert!(instructions.contains(&format!("candidate ID {candidate_id:?}")));
-            assert!(instructions.contains(&format!("selection.candidates[{index}]")));
+            assert!(!instructions.contains("selection.candidates["));
         }
-        assert_eq!(candidate["response"], format!("{candidate_id} response"));
+        let expected = match candidate_id {
+            "candidate-0" => "primary response",
+            "candidate-1" => "backup response",
+            _ => unreachable!(),
+        };
+        assert_eq!(candidate["response"], expected);
+        assert!(candidate.get("provider").is_none());
+        assert!(candidate.get("model").is_none());
         assert_eq!(candidate["telemetry"]["calls"], 1);
     }
+    let wire = choice.to_string();
+    assert!(!wire.contains("backup-language"));
+    assert!(!wire.contains("fixture-language"));
 }
 
 #[test]
