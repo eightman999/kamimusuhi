@@ -80,9 +80,9 @@ fn remove_unchanged_language_presets(
     presets: &BTreeMap<String, PersonaProviderConfig>,
 ) -> bool {
     let before = config.language_providers.len();
-    config.language_providers.retain(|id, configured| {
-        presets.get(id).is_none_or(|preset| configured != preset)
-    });
+    config
+        .language_providers
+        .retain(|id, configured| presets.get(id).is_none_or(|preset| configured != preset));
     config.language_providers.len() != before
 }
 
@@ -317,9 +317,6 @@ mod tests {
                 .as_deref(),
             Some("OPENAI_API_KEY")
         );
-        assert_eq!(
-            provider_auth_env("openai-compatible", None).unwrap(),
-            None
-        );
+        assert_eq!(provider_auth_env("openai-compatible", None).unwrap(), None);
     }
 }
