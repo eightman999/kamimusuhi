@@ -34,6 +34,10 @@ pub const DEFAULT_TYPESAFE_MODEL: &str = "jev-latest";
 pub const LLM_PROVIDER_ENV: &str = "KAMIMUSUHI_LLM_PROVIDER";
 pub const LLM_BASE_URL_ENV: &str = "KAMIMUSUHI_LLM_BASE_URL";
 pub const LLM_MODEL_ENV: &str = "KAMIMUSUHI_LLM_MODEL";
+/// Name of the environment variable that contains the bearer token for a
+/// generic OpenAI-compatible primary. The credential value itself is never
+/// copied into configuration.
+pub const LLM_AUTH_ENV_ENV: &str = "KAMIMUSUHI_LLM_AUTH_ENV";
 pub const GROKBOT_API_KEY_ENV: &str = "GBVM_API_KEY";
 pub const HAI_API_KEY_ENV: &str = "HAI_API_KEY";
 pub const DEFAULT_HAI_BASE_URL: &str = "https://hai-api.hcloud.ltd/v1";
@@ -265,8 +269,13 @@ pub struct GeneratedLanguageCandidate {
 /// canonical conversation state before the selected candidate is accepted.
 #[derive(Debug, Clone, Serialize)]
 pub struct LanguageResponseCandidate {
+    /// Turn-local anonymous ID. Never encode provider/model identity here.
     pub id: String,
+    /// Host-side attribution only. These fields are intentionally absent from
+    /// the Jev wire state so model/vendor identity cannot bias comparison.
+    #[serde(skip_serializing)]
     pub provider: String,
+    #[serde(skip_serializing)]
     pub model: String,
     pub latency_ms: u64,
     pub response_bytes: usize,
@@ -1010,9 +1019,8 @@ impl JevDecisionProvider {
                 (
                     candidate.id.clone(),
                     format!(
-                        "Evaluate the generated material from {} model {}. latency_ms={}, response_bytes={}, response_digest={}, calls={}, successes={}, failures={}, success_rate={}, ewma_latency_ms={}",
-                        candidate.provider,
-                        candidate.model,
+                        "Evaluate anonymous candidate ID {:?}. latency_ms={}, response_bytes={}, response_digest={}, calls={}, successes={}, failures={}, success_rate={}, ewma_latency_ms={}",
+                        candidate.id,
                         candidate.latency_ms,
                         candidate.response_bytes,
                         candidate.response_digest,
