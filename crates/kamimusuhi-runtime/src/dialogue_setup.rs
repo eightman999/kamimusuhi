@@ -13,8 +13,8 @@ use kamimusuhi_core::routing::LocalityClass;
 
 use crate::llm_jev::{
     DEFAULT_HAI_BASE_URL, GROKBOT_API_KEY_ENV, HAI_API_KEY_ENV, HAI_LLM_JP_MODEL,
-    HAI_LLM_JP_PROVIDER_ID, HAI_QWEN_MODEL, HAI_QWEN_PROVIDER_ID, LLM_BASE_URL_ENV, LLM_MODEL_ENV,
-    LLM_PROVIDER_ENV,
+    HAI_LLM_JP_PROVIDER_ID, HAI_QWEN_MODEL, HAI_QWEN_PROVIDER_ID, LLM_AUTH_ENV_ENV,
+    LLM_BASE_URL_ENV, LLM_MODEL_ENV, LLM_PROVIDER_ENV, TypesafeConfig,
 };
 use crate::{
     PersonaBackendKind, PersonaProviderConfig, PersonaSetting, RuntimeConfig, RuntimeError,
@@ -68,7 +68,22 @@ pub fn configured_hai_language_providers() -> BTreeMap<String, PersonaProviderCo
 /// Only unchanged auto-registered duplicates are removed; operator overrides
 /// under a preset ID are retained.
 pub fn register_hai_language_providers(config: &mut RuntimeConfig) -> Result<bool, RuntimeError> {
-    apply_language_presets(config, configured_hai_language_providers())
+    let presets = hai_language_providers();
+    if TypesafeConfig::from_env().is_none() || !environment_value_available(HAI_API_KEY_ENV) {
+        return Ok(remove_unchanged_language_presets(config, &presets));
+    }
+    apply_language_presets(config, presets)
+}
+
+fn remove_unchanged_language_presets(
+    config: &mut RuntimeConfig,
+    presets: &BTreeMap<String, PersonaProviderConfig>,
+) -> bool {
+    let before = config.language_providers.len();
+    config.language_providers.retain(|id, configured| {
+        presets.get(id).is_none_or(|preset| configured != preset)
+    });
+    config.language_providers.len() != before
 }
 
 fn apply_language_presets(
@@ -174,7 +189,10 @@ pub fn persona_setting_from_environment(
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| RuntimeError::Usage(format!("{LLM_MODEL_ENV} is required")))?;
     let existing = config.persona.provider.as_ref();
-    let auth_env = provider_auth_env(&provider, existing);
+    let explicit_auth_env = std::env::var(LLM_AUTH_ENV_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let auth_env = provider_auth_env(&provider, explicit_auth_env.as_deref())?;
     Ok(Some(PersonaSetting {
         backend: PersonaBackendKind::OpenaiCompatible,
         provider: Some(PersonaProviderConfig {
@@ -191,12 +209,27 @@ pub fn persona_setting_from_environment(
     }))
 }
 
-fn provider_auth_env(provider: &str, existing: Option<&PersonaProviderConfig>) -> Option<String> {
-    match provider {
+fn provider_auth_env(
+    provider: &str,
+    explicit_auth_env: Option<&str>,
+) -> Result<Option<String>, RuntimeError> {
+    let value = match provider {
         "grokbot" => Some(GROKBOT_API_KEY_ENV.to_owned()),
         "hai" => Some(HAI_API_KEY_ENV.to_owned()),
-        _ => existing.and_then(|provider| provider.auth_env.clone()),
+        _ => explicit_auth_env.map(str::trim).map(str::to_owned),
+    };
+    if let Some(name) = &value
+        && (name.is_empty()
+            || name.len() > 128
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'))
+    {
+        return Err(RuntimeError::Usage(format!(
+            "{LLM_AUTH_ENV_ENV} must name an environment variable using ASCII letters, digits or '_'"
+        )));
     }
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -271,12 +304,22 @@ mod tests {
             .unwrap();
         previous.auth_env = Some(GROKBOT_API_KEY_ENV.to_owned());
         assert_eq!(
-            provider_auth_env("hai", Some(&previous)).as_deref(),
+            provider_auth_env("hai", Some("SHOULD_NOT_BE_USED"))
+                .unwrap()
+                .as_deref(),
             Some(HAI_API_KEY_ENV)
         );
         assert_eq!(
-            provider_auth_env("grokbot", Some(&previous)).as_deref(),
+            provider_auth_env("grokbot", Some("SHOULD_NOT_BE_USED"))
+                .unwrap()
+                .as_deref(),
             Some(GROKBOT_API_KEY_ENV)
+        );
+        assert_eq!(
+            provider_auth_env("openai-compatible", Some("OPENAI_API_KEY"))
+                .unwrap()
+                .as_deref(),
+            Some("OPENAI_API_KEY")
         );
     }
 }
