@@ -1053,7 +1053,7 @@ impl DialogueSession {
             // grace window. This is one deadline for the whole ready batch,
             // never one delay per configured provider.
             let grace_deadline = Instant::now() + Duration::from_millis(10);
-            while received < provider_count {
+            while received < provider_count && ready.len() < 2 {
                 let remaining = grace_deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
                     break;
@@ -1082,40 +1082,40 @@ impl DialogueSession {
                 }
             }
 
-            // Judge each completion independently. Jev therefore sees a
-            // constant-size anonymous candidate set regardless of how many
-            // providers the operator registered.
-            for result in ready_results {
-                let single = vec![result];
-                let (candidate_assessment, _) = self.assess_language_responses(
-                    &language_request,
-                    &single,
-                    &assessment_evidence,
-                )?;
-                let gate = candidate_assessment.gate.decision;
-                race_assessments.push(candidate_assessment.clone());
-                match gate {
-                    Decision::Accept => {
-                        accepted = Some((single.into_iter().next().unwrap(), candidate_assessment));
-                        break 'race;
+            if ready_results.is_empty() {
+                continue;
+            }
+
+            // Compare at most two simultaneously-ready responses. The overall
+            // provider count is unbounded, but every Jev assessment remains
+            // bounded to this tiny anonymous active pool.
+            let (candidate_assessment, selected_ready) = self.assess_language_responses(
+                &language_request,
+                &ready_results,
+                &assessment_evidence,
+            )?;
+            let selected_result = ready_results.swap_remove(selected_ready);
+            let gate = candidate_assessment.gate.decision;
+            race_assessments.push(candidate_assessment.clone());
+            match gate {
+                Decision::Accept => {
+                    accepted = Some((selected_result, candidate_assessment));
+                    break 'race;
+                }
+                Decision::Retry => {
+                    if retry_fallback.is_none() {
+                        retry_fallback = Some((selected_result, candidate_assessment));
                     }
-                    Decision::Retry => {
-                        if retry_fallback.is_none() {
-                            retry_fallback =
-                                Some((single.into_iter().next().unwrap(), candidate_assessment));
-                        }
-                    }
-                    Decision::Reject => {
-                        rejected_fallback =
-                            Some((single.into_iter().next().unwrap(), candidate_assessment));
-                    }
-                    Decision::Speak | Decision::Wait | Decision::ObserveMore => {
-                        return Err(RuntimeError::Conversation(
-                            ConversationError::InvalidDecision(
-                                "response assessment returned an invocation choice".to_owned(),
-                            ),
-                        ));
-                    }
+                }
+                Decision::Reject => {
+                    rejected_fallback = Some((selected_result, candidate_assessment));
+                }
+                Decision::Speak | Decision::Wait | Decision::ObserveMore => {
+                    return Err(RuntimeError::Conversation(
+                        ConversationError::InvalidDecision(
+                            "response assessment returned an invocation choice".to_owned(),
+                        ),
+                    ));
                 }
             }
         }
@@ -1141,7 +1141,7 @@ impl DialogueSession {
         for attempt in 0..=1 {
             if attempt > 0 {
                 // Replace only the retried organ's candidate, then let Jev compare
-                // the updated pool. The old candidate can no longer be accepted.
+                // the repaired candidate. The old candidate can no longer be accepted.
                 let mut repair_request = language_request.clone();
                 let repair = assessment.repair_reason.as_instruction().unwrap_or(
                     "先の候補を見直し、相手の質問と提示された根拠に合う短い日本語の回答を作り直してください。",
