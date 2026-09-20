@@ -417,7 +417,7 @@ fn invalid_batch_answers_are_repaired_once_before_any_response_is_delivered() {
     missing["answers"]
         .as_object_mut()
         .unwrap()
-        .remove("grounding_0");
+        .remove("grounding_candidate-1");
     cases.push(("missing unselected candidate assessment", missing));
 
     let mut out_of_range = valid.clone();
@@ -430,22 +430,22 @@ fn invalid_batch_answers_are_repaired_once_before_any_response_is_delivered() {
     cases.push(("unknown question", unknown));
 
     let mut confidence = valid.clone();
-    confidence["answers"]["grounding_0"]["confidence"] = serde_json::json!(1.1);
+    confidence["answers"]["grounding_candidate-1"]["confidence"] = serde_json::json!(1.1);
     cases.push(("out-of-range confidence", confidence));
 
     let mut missing_probability = valid.clone();
-    missing_probability["answers"]["attribution_1"]["probabilities"]
+    missing_probability["answers"]["attribution_candidate-1"]["probabilities"]
         .as_object_mut()
         .unwrap()
         .remove("UNCLEAR");
     cases.push(("incomplete probabilities", missing_probability));
 
     let mut extra_probability = valid.clone();
-    extra_probability["answers"]["task_fit_0"]["probabilities"]["UNKNOWN"] = serde_json::json!(0.0);
+    extra_probability["answers"]["task_fit_candidate-0"]["probabilities"]["UNKNOWN"] = serde_json::json!(0.0);
     cases.push(("unknown probability key", extra_probability));
 
     let mut probability_sum = valid.clone();
-    probability_sum["answers"]["task_fit_0"]["probabilities"]["MET"] = serde_json::json!(0.5);
+    probability_sum["answers"]["task_fit_candidate-0"]["probabilities"]["MET"] = serde_json::json!(0.5);
     cases.push(("invalid probability sum", probability_sum));
 
     for (case, invalid) in cases {
@@ -505,7 +505,7 @@ fn invalid_batch_answers_are_repaired_once_before_any_response_is_delivered() {
 fn accept_never_bypasses_an_unsuitable_selected_candidate() {
     for (question, choice, choices) in [
         (
-            "grounding_0",
+            "grounding_candidate-1",
             "CONTRADICTED",
             &[
                 "SUPPORTED",
@@ -515,11 +515,11 @@ fn accept_never_bypasses_an_unsuitable_selected_candidate() {
             ][..],
         ),
         (
-            "attribution_0",
+            "attribution_candidate-1",
             "CONFLICT",
             &["CONSISTENT", "CONFLICT", "UNCLEAR", "NOT_APPLICABLE"][..],
         ),
-        ("task_fit_0", "UNMET", &["MET", "UNMET", "UNCLEAR"][..]),
+        ("task_fit_candidate-1", "UNMET", &["MET", "UNMET", "UNCLEAR"][..]),
     ] {
         let mut answer =
             assessment_answers("backup", &[("primary", "ACCEPT"), ("backup", "ACCEPT")]);
@@ -728,12 +728,12 @@ fn retry_replaces_one_candidate_and_reselects_without_a_third_generation() {
             .as_array()
             .unwrap()
             .iter()
-            .find(|candidate| candidate["id"] == "primary")
+            .find(|candidate| candidate["id"] == "candidate-0")
             .unwrap();
         assert_eq!(replacement["response"], "replacement response");
         assert_eq!(replacement["telemetry"]["calls"], 2);
-        assert_eq!(state["attempts"]["primary"], 1);
-        assert_eq!(state["attempts"]["backup"], 0);
+        assert_eq!(state["attempts"]["candidate-0"], 1);
+        assert_eq!(state["attempts"]["candidate-1"], 0);
         let first_assessment: serde_json::Value =
             serde_json::from_str(request_body(&judge, 1)["state"].as_str().unwrap()).unwrap();
         assert_eq!(state["evidence"], first_assessment["evidence"]);
@@ -995,7 +995,7 @@ fn typed_jev_and_language_provider_form_a_two_turn_closed_loop() {
                 .as_str()
                 .is_some()
         );
-        assert_eq!(state["attempts"]["primary"], 0);
+        assert_eq!(state["attempts"]["candidate-0"], 0);
         let language = request_body(&server, index - 1);
         let prompt = language["messages"][1]["content"].as_str().unwrap();
         assert!(prompt.contains("[CONVERSATION_CORE_STATE]"));
@@ -1147,7 +1147,7 @@ fn jev_selects_a_generated_response_after_all_language_organs_complete() {
         .unwrap();
     let trace = reply.llm_jev.unwrap();
     assert_eq!(trace.language_provider_id, "backup");
-    assert_eq!(trace.provider_selection.unwrap().provider_id, "backup");
+    assert_eq!(trace.provider_selection.unwrap().provider_id, "candidate-1");
     assert_eq!(trace.provider_candidates[1].telemetry.calls, 0);
     assert_eq!(trace.generated_candidates.len(), 2);
     assert!(
