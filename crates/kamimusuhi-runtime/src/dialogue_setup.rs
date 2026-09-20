@@ -317,5 +317,9 @@ mod tests {
                 .as_deref(),
             Some("OPENAI_API_KEY")
         );
+        assert_eq!(
+            provider_auth_env("openai-compatible", None).unwrap(),
+            None
+        );
     }
 }
