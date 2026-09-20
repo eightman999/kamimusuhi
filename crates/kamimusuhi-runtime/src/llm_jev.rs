@@ -1684,8 +1684,8 @@ mod tests {
         assert_eq!(state["candidates"][0]["response"], response);
         assert!(state["candidates"][0].get("provider").is_none());
         assert!(state["candidates"][0].get("model").is_none());
-        assert!(!body.to_string().contains(""fixture""));
-        assert!(!body.to_string().contains(""mock""));
+        assert!(!body.to_string().contains("\"fixture\""));
+        assert!(!body.to_string().contains("\"mock\""));
         let valid = serde_json::json!({"answers": {"response_candidate": {
             "type": "choice", "choice": "primary", "confidence": 0.81,
             "probabilities": {"primary": 1.0},

@@ -281,7 +281,7 @@ impl DialogueSession {
             std::env::var(crate::llm_jev::LLM_PROVIDER_ENV)
                 .unwrap_or_else(|_| "in-process".to_owned())
         };
-        let mut language_providers = BTreeMap::new();
+        let mut language_providers: BTreeMap<String, Arc<dyn LanguageProvider>> = BTreeMap::new();
         language_providers.insert(
             PRIMARY_LANGUAGE_PROVIDER_ID.to_owned(),
             Arc::from(language_provider),
@@ -318,7 +318,7 @@ impl DialogueSession {
                     provider_kind,
                     model.clone(),
                 );
-                language_providers.insert(id.clone(), Box::new(provider));
+                language_providers.insert(id.clone(), Arc::new(provider));
                 language_candidates.push(LanguageProviderCandidate {
                     id: id.clone(),
                     provider: provider_kind.to_owned(),
@@ -1035,9 +1035,13 @@ impl DialogueSession {
         let generation_started = Instant::now();
         let (attempt_rx, provider_count) = self.start_language_race(&language_request);
         let mut first_error = None;
-        let mut accepted = None;
-        let mut retry_fallback = None;
-        let mut rejected_fallback = None;
+        // Every valid generated candidate stays in the pool so a repair
+        // re-assessment can reselect among all of them, not only the one the
+        // race happened to pick first.
+        let mut language_results: Vec<LanguageResult> = Vec::new();
+        let mut accepted: Option<(usize, ResponseAssessment)> = None;
+        let mut retry_fallback: Option<(usize, ResponseAssessment)> = None;
+        let mut rejected_fallback: Option<(usize, ResponseAssessment)> = None;
         let mut race_assessments = Vec::new();
         let mut received = 0_usize;
 
@@ -1094,21 +1098,23 @@ impl DialogueSession {
                 &ready_results,
                 &assessment_evidence,
             )?;
-            let selected_result = ready_results.swap_remove(selected_ready);
+            let base_index = language_results.len();
+            language_results.extend(ready_results);
+            let selected_index = base_index + selected_ready;
             let gate = candidate_assessment.gate.decision;
             race_assessments.push(candidate_assessment.clone());
             match gate {
                 Decision::Accept => {
-                    accepted = Some((selected_result, candidate_assessment));
+                    accepted = Some((selected_index, candidate_assessment));
                     break 'race;
                 }
                 Decision::Retry => {
                     if retry_fallback.is_none() {
-                        retry_fallback = Some((selected_result, candidate_assessment));
+                        retry_fallback = Some((selected_index, candidate_assessment));
                     }
                 }
                 Decision::Reject => {
-                    rejected_fallback = Some((selected_result, candidate_assessment));
+                    rejected_fallback = Some((selected_index, candidate_assessment));
                 }
                 Decision::Speak | Decision::Wait | Decision::ObserveMore => {
                     return Err(RuntimeError::Conversation(
@@ -1124,19 +1130,14 @@ impl DialogueSession {
         drop(attempt_rx);
         self.last_generation_latency_ms =
             u64::try_from(generation_started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let (final_result, mut assessment) = if let Some(accepted) = accepted {
-            accepted
-        } else if let Some(retry) = retry_fallback {
-            retry
-        } else if let Some(rejected) = rejected_fallback {
-            rejected
-        } else {
-            return Err(RuntimeError::Conversation(first_error.unwrap_or(
-                ConversationError::InvalidDecision("NO_VALID_CANDIDATES".to_owned()),
-            )));
-        };
-        let mut language_results = vec![final_result];
-        let mut selected_index = 0_usize;
+        let (mut selected_index, mut assessment) = accepted
+            .or(retry_fallback)
+            .or(rejected_fallback)
+            .ok_or_else(|| {
+                RuntimeError::Conversation(first_error.unwrap_or(
+                    ConversationError::InvalidDecision("NO_VALID_CANDIDATES".to_owned()),
+                ))
+            })?;
         let mut assessments = race_assessments;
         let mut repaired_context = None;
         let mut response_gate = None;
