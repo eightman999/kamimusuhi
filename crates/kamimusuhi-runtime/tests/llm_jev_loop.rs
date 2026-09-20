@@ -373,10 +373,7 @@ fn low_quality_fast_candidate_is_rejudged_when_slower_candidate_arrives() {
     let judge = FixtureServer::start(vec![
         jev_preparation("SPEAK"),
         jev_assessment("primary", &[("primary", "RETRY")]),
-        jev_assessment(
-            "backup",
-            &[("primary", "RETRY"), ("backup", "ACCEPT")],
-        ),
+        jev_assessment("backup", &[("backup", "ACCEPT")]),
     ])
     .unwrap();
     let (_dir, mut runtime, mut session) = fanout_session(&primary, &backup, &judge);
