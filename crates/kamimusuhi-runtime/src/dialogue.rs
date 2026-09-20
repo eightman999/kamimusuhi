@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, mpsc};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use kamimusuhi_core::continuity::WriterIdentity;
 use kamimusuhi_core::digest::{content_digest, json_digest};
@@ -1038,25 +1038,54 @@ impl DialogueSession {
         let mut first_error = None;
         let mut assessment = None;
         let mut selected_index = 0_usize;
-        for _ in 0..provider_count {
-            let attempt = match attempt_rx.recv() {
+        let mut received = 0_usize;
+        while received < provider_count {
+            let first = match attempt_rx.recv() {
                 Ok(attempt) => attempt,
                 Err(_) => break,
             };
-            self.record_language_attempt(&attempt, 0);
-            match attempt.result {
-                Ok(result) => language_results.push(result),
-                Err(error) => {
-                    if first_error.is_none() {
-                        first_error = Some(error);
-                    }
-                    continue;
+            received += 1;
+            let mut ready = vec![first];
+
+            // Give simultaneously-finishing local/fast organs a tiny shared
+            // grace window. This is one deadline for the whole batch, not per
+            // provider, so an unbounded provider list cannot multiply it.
+            let grace_deadline = Instant::now() + Duration::from_millis(2);
+            while received < provider_count {
+                let remaining = grace_deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
                 }
+                match attempt_rx.recv_timeout(remaining) {
+                    Ok(attempt) => {
+                        received += 1;
+                        ready.push(attempt);
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => {
+                        break;
+                    }
+                }
+            }
+
+            let before = language_results.len();
+            for attempt in ready {
+                self.record_language_attempt(&attempt, 0);
+                match attempt.result {
+                    Ok(result) => language_results.push(result),
+                    Err(error) => {
+                        if first_error.is_none() {
+                            first_error = Some(error);
+                        }
+                    }
+                }
+            }
+            if language_results.len() == before {
+                continue;
             }
 
             // Fastest valid response gets the first quality check. If Jev does
             // not accept it, keep racing and re-assess the enlarged anonymous
-            // candidate pool when the next organ finishes.
+            // candidate pool when another organ finishes.
             let (candidate_assessment, candidate_index) = self.assess_language_responses(
                 &language_request,
                 &language_results,
