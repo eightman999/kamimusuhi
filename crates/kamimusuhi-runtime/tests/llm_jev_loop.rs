@@ -63,26 +63,56 @@ fn jev_preparation_with_observation(choice: &str, observation: &str) -> FixtureR
     }}))
 }
 
+fn anonymous_candidate_id(id: &str) -> String {
+    match id {
+        "primary" => "candidate-0".to_owned(),
+        "backup" => "candidate-1".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
+fn typed_choice_strings(choice: &str, choices: &[String]) -> serde_json::Value {
+    let probabilities = choices
+        .iter()
+        .map(|candidate| {
+            (
+                candidate.clone(),
+                if candidate == choice { 1.0 } else { 0.0 },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    serde_json::json!({
+        "type": "choice",
+        "choice": choice,
+        "probabilities": probabilities,
+        "confidence": 1.0,
+    })
+}
+
 fn assessment_answers(selected: &str, candidates: &[(&str, &str)]) -> serde_json::Value {
-    // DialogueSession presents successful results in BTreeMap provider-ID
-    // order, independently of the order supplied to the fixture helper.
-    let mut candidates = candidates.to_vec();
-    candidates.sort_unstable_by_key(|(id, _)| *id);
-    let ids = candidates.iter().map(|(id, _)| *id).collect::<Vec<_>>();
-    let mut answers = serde_json::Map::new();
-    let mut selected_answer = typed_choice(
+    let candidates = candidates
+        .iter()
+        .map(|(id, gate)| (anonymous_candidate_id(id), *gate))
+        .collect::<Vec<_>>();
+    let ids = candidates
+        .iter()
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
+    let selected = anonymous_candidate_id(selected);
+    let mut selected_answer = typed_choice_strings(
         if ids.contains(&selected) {
-            selected
+            &selected
         } else {
-            ids[0]
+            &ids[0]
         },
         &ids,
     );
     selected_answer["choice"] = serde_json::json!(selected);
+    let mut answers = serde_json::Map::new();
     answers.insert("response_candidate".to_owned(), selected_answer);
-    for (index, (_, gate)) in candidates.iter().enumerate() {
+    for (id, gate) in &candidates {
         answers.insert(
-            format!("grounding_{index}"),
+            format!("grounding_{id}"),
             typed_choice(
                 if *gate == "ACCEPT" {
                     "SUPPORTED"
@@ -98,22 +128,22 @@ fn assessment_answers(selected: &str, candidates: &[(&str, &str)]) -> serde_json
             ),
         );
         answers.insert(
-            format!("attribution_{index}"),
+            format!("attribution_{id}"),
             typed_choice(
                 "CONSISTENT",
                 &["CONSISTENT", "CONFLICT", "UNCLEAR", "NOT_APPLICABLE"],
             ),
         );
         answers.insert(
-            format!("task_fit_{index}"),
+            format!("task_fit_{id}"),
             typed_choice("MET", &["MET", "UNMET", "UNCLEAR"]),
         );
         answers.insert(
-            format!("response_gate_{index}"),
+            format!("response_gate_{id}"),
             typed_choice(gate, &["ACCEPT", "RETRY", "REJECT"]),
         );
         answers.insert(
-            format!("repair_reason_{index}"),
+            format!("repair_reason_{id}"),
             typed_choice(
                 if *gate == "ACCEPT" {
                     "NONE"
