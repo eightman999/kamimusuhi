@@ -47,10 +47,15 @@ fn parse() -> Result<Option<Options>, KCoreError> {
             options.stdin = true;
             continue;
         }
-        if !matches!(flag.as_str(), "--dir" | "--config" | "--ticks" | "--interval-ms") {
+        if !matches!(
+            flag.as_str(),
+            "--dir" | "--config" | "--ticks" | "--interval-ms"
+        ) {
             return Err(usage(format!("unknown option {flag}")));
         }
-        let value = args.next().ok_or_else(|| usage(format!("missing value for {flag}")))?;
+        let value = args
+            .next()
+            .ok_or_else(|| usage(format!("missing value for {flag}")))?;
         match flag.as_str() {
             "--dir" => options.dir = Some(value.into()),
             "--config" => options.config = Some(value.into()),
@@ -140,9 +145,12 @@ fn run() -> Result<(), KCoreError> {
     };
     let stdout = std::io::stdout();
     let mut output = stdout.lock();
-    emit(&mut output, &serde_json::json!({
-        "event": "kcore_boot", "canonical": core.inspect()?, "organs": core.descriptors(),
-    }))?;
+    emit(
+        &mut output,
+        &serde_json::json!({
+            "event": "kcore_boot", "canonical": core.inspect()?, "organs": core.descriptors(),
+        }),
+    )?;
     let mut completed = 0_u64;
     let mut eof = false;
     loop {
@@ -154,13 +162,16 @@ fn run() -> Result<(), KCoreError> {
                     Ok(Ok((mut frame, received_at))) => {
                         // Include time spent blocked in the reader/channel, not
                         // just time spent in the K-CORE queue.
-                        let transit = u64::try_from(received_at.elapsed().as_millis())
-                            .unwrap_or(u64::MAX);
+                        let transit =
+                            u64::try_from(received_at.elapsed().as_millis()).unwrap_or(u64::MAX);
                         frame.age_ms = frame.age_ms.saturating_add(transit);
                         if let Err(reason) = core.ingest(frame) {
-                            emit(&mut output, &serde_json::json!({
-                                "event": "ingress_rejected", "reason": reason,
-                            }))?;
+                            emit(
+                                &mut output,
+                                &serde_json::json!({
+                                    "event": "ingress_rejected", "reason": reason,
+                                }),
+                            )?;
                         }
                     }
                     Ok(Err(error)) => return Err(usage(error)),
@@ -177,16 +188,22 @@ fn run() -> Result<(), KCoreError> {
         }
         let report = core.tick()?;
         completed = report.tick;
-        emit(&mut output, &serde_json::json!({"event": "tick", "report": report}))?;
+        emit(
+            &mut output,
+            &serde_json::json!({"event": "tick", "report": report}),
+        )?;
         if options.ticks != 0 && completed >= options.ticks {
             break;
         }
         // No catch-up burst after a slow organ or blocked output sink.
         thread::sleep(core.interval().saturating_sub(started.elapsed()));
     }
-    emit(&mut output, &serde_json::json!({
-        "event": "kcore_stopped", "ticks": completed, "canonical": core.inspect()?,
-    }))?;
+    emit(
+        &mut output,
+        &serde_json::json!({
+            "event": "kcore_stopped", "ticks": completed, "canonical": core.inspect()?,
+        }),
+    )?;
     Ok(())
 }
 

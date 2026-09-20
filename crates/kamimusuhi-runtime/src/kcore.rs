@@ -321,7 +321,8 @@ impl KCore {
             .checked_add(Duration::from_millis(self.config.max_age_ms - frame.age_ms))
             .ok_or(IngressError::Invalid)?;
         // Rejection never consumes a sequence number; backpressure is retryable.
-        self.last_sequence.insert(frame.source.clone(), frame.sequence);
+        self.last_sequence
+            .insert(frame.source.clone(), frame.sequence);
         self.queue.push_back(PendingFrame { frame, deadline });
         Ok(())
     }
@@ -331,7 +332,10 @@ impl KCore {
     pub fn tick(&mut self) -> Result<TickReport, KCoreError> {
         // Fail closed if the canonical individual can no longer be restored.
         self.runtime.head()?;
-        self.ticks = self.ticks.checked_add(1).ok_or(KCoreError::CounterExhausted)?;
+        self.ticks = self
+            .ticks
+            .checked_add(1)
+            .ok_or(KCoreError::CounterExhausted)?;
         let mut report = TickReport {
             individual_id: self.runtime.individual_id(),
             boot_id: self.runtime.boot_id(),
@@ -363,12 +367,17 @@ impl KCore {
                 report.cycle.active.clear();
                 report.discarded_stale += 1;
             } else {
-                let active_keys: std::collections::BTreeSet<_> = self.supervisor.descriptors()
+                let active_keys: std::collections::BTreeSet<_> = self
+                    .supervisor
+                    .descriptors()
                     .into_iter()
                     .filter(|descriptor| descriptor.promotion == PromotionMode::Active)
                     .map(|descriptor| descriptor.key)
                     .collect();
-                let active_failed = report.cycle.failures.iter()
+                let active_failed = report
+                    .cycle
+                    .failures
+                    .iter()
                     .any(|failure| active_keys.contains(&failure.key));
                 if !report.cycle.active.is_empty() && !active_failed {
                     report.intent = CoreIntent::Observe;
@@ -445,12 +454,21 @@ mod tests {
     fn duplicate_loops_are_fenced_and_lock_releases_on_drop() {
         let (dir, core) = fixture(KCoreConfig::default());
         assert!(matches!(
-            KCore::open(dir.path(), RuntimeOptions::default(), KCoreConfig::default()),
+            KCore::open(
+                dir.path(),
+                RuntimeOptions::default(),
+                KCoreConfig::default()
+            ),
             Err(KCoreError::Lock(_))
         ));
         drop(core);
         assert!(
-            KCore::open(dir.path(), RuntimeOptions::default(), KCoreConfig::default()).is_ok()
+            KCore::open(
+                dir.path(),
+                RuntimeOptions::default(),
+                KCoreConfig::default()
+            )
+            .is_ok()
         );
     }
 
@@ -458,29 +476,52 @@ mod tests {
     fn missing_runtime_never_initializes_an_individual() {
         let dir = tempfile::tempdir().unwrap();
         assert!(
-            KCore::open(dir.path(), RuntimeOptions::default(), KCoreConfig::default()).is_err()
+            KCore::open(
+                dir.path(),
+                RuntimeOptions::default(),
+                KCoreConfig::default()
+            )
+            .is_err()
         );
         assert!(!dir.path().join("kamimusuhi.sqlite").exists());
     }
 
     #[test]
     fn bounded_queue_does_not_consume_rejected_sequence() {
-        let config = KCoreConfig { queue_capacity: 1, ..KCoreConfig::default() };
+        let config = KCoreConfig {
+            queue_capacity: 1,
+            ..KCoreConfig::default()
+        };
         let (_dir, mut core) = fixture(config);
         core.ingest(frame("sensor", 1)).unwrap();
-        assert_eq!(core.ingest(frame("sensor", 2)), Err(IngressError::QueueFull));
+        assert_eq!(
+            core.ingest(frame("sensor", 2)),
+            Err(IngressError::QueueFull)
+        );
         core.tick().unwrap();
         core.ingest(frame("sensor", 2)).unwrap();
-        assert_eq!(core.ingest(frame("sensor", 2)), Err(IngressError::OutOfOrder));
-        assert_eq!(core.ingest(frame("sensor", 1)), Err(IngressError::OutOfOrder));
+        assert_eq!(
+            core.ingest(frame("sensor", 2)),
+            Err(IngressError::OutOfOrder)
+        );
+        assert_eq!(
+            core.ingest(frame("sensor", 1)),
+            Err(IngressError::OutOfOrder)
+        );
     }
 
     #[test]
     fn source_registry_is_bounded() {
-        let config = KCoreConfig { max_sources: 1, ..KCoreConfig::default() };
+        let config = KCoreConfig {
+            max_sources: 1,
+            ..KCoreConfig::default()
+        };
         let (_dir, mut core) = fixture(config);
         core.ingest(frame("a", 1)).unwrap();
-        assert_eq!(core.ingest(frame("b", 1)), Err(IngressError::TooManySources));
+        assert_eq!(
+            core.ingest(frame("b", 1)),
+            Err(IngressError::TooManySources)
+        );
     }
 
     #[test]
@@ -504,7 +545,8 @@ mod tests {
         let mut old = frame("sensor", 1);
         old.age_ms = 5_000;
         assert_eq!(core.ingest(old), Err(IngressError::Stale));
-        core.ingest_at(frame("sensor", 1), Instant::now() - Duration::from_secs(6)).unwrap();
+        core.ingest_at(frame("sensor", 1), Instant::now() - Duration::from_secs(6))
+            .unwrap();
         let report = core.tick().unwrap();
         assert_eq!(report.discarded_stale, 1);
         assert_eq!(report.intent, CoreIntent::Wait);
@@ -530,9 +572,8 @@ mod tests {
 
     #[test]
     fn process_binding_defaults_to_shadow() {
-        let binding: ProcessBinding = serde_json::from_str(
-            r#"{"key":"h0-regulation","program":"python3"}"#,
-        ).unwrap();
+        let binding: ProcessBinding =
+            serde_json::from_str(r#"{"key":"h0-regulation","program":"python3"}"#).unwrap();
         assert_eq!(binding.promotion, PromotionMode::Shadow);
         assert!(binding.descriptor().is_ok());
     }
