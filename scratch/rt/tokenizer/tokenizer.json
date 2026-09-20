@@ -1,0 +1,13 @@
+{
+  "merges": [
+    "h e",
+    "he l"
+  ],
+  "tokenizer": "kami-tok-v1",
+  "vocab": {
+    "</s>": 1,
+    "<s>": 0,
+    "hello": 2,
+    "world": 3
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schema": "kami-tools/2.1.0",
+  "tools": [
+    {
+      "args": {
+        "q": "str"
+      },
+      "name": "search"
+    },
+    {
+      "args": {
+        "path": "str"
+      },
+      "name": "read_file"
+    }
+  ]
+}
