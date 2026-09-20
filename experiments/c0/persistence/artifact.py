@@ -25,7 +25,6 @@ import hashlib
 import json
 from pathlib import Path
 
-import numpy as np
 
 ARTIFACT_FORMAT = "c0-state-v1"
 ARTIFACT_KEYS = {"format", "agent", "condition", "budget_bytes",

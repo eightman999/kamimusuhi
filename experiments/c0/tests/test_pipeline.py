@@ -1,7 +1,6 @@
 import json
 import subprocess
 import sys
-from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -12,7 +11,7 @@ from ..agents.heuristics import HeuristicRunner
 from ..agents.policies import build_policy
 from ..agents.runner import Runner
 from ..config_util import load_env_cfg
-from ..env.c0_env import C0Config, C0Env
+from ..env.c0_env import C0Env
 from ..persistence.codec import state_spec_from
 from ..persistence.interrupt import run_interrupted
 
