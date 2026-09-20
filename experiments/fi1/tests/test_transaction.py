@@ -1,6 +1,5 @@
 """State machine + side-effect gate: illegal transitions and pre-READY
 side effects are refused at runtime, not just by convention."""
-import json
 
 import pytest
 
