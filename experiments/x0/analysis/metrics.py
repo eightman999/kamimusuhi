@@ -13,7 +13,7 @@ Token-level primitives used by evaluate.py:
 from __future__ import annotations
 
 import itertools
-from typing import Dict, Optional
+from typing import Dict
 
 import numpy as np
 
