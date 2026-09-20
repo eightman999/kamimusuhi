@@ -1,0 +1,38 @@
+{
+  "method": "cpc",
+  "run": "cpc@horizon-4",
+  "seed": 1,
+  "env_seed": 1,
+  "git": "078e305",
+  "device": "cuda:0",
+  "gpu_name": "NVIDIA GeForce RTX 3060",
+  "torch": "2.9.1+cu126",
+  "cuda": "12.6",
+  "data_keys": [
+    "obs",
+    "next_obs",
+    "actions"
+  ],
+  "eval_only_keys_stripped": [
+    "canonical",
+    "cause_a",
+    "cause_b",
+    "cause_names",
+    "ctx",
+    "ctx_id",
+    "env_seed",
+    "seg_id",
+    "signal",
+    "switch",
+    "x_a",
+    "x_b"
+  ],
+  "oom_retries": 0,
+  "status": "ok",
+  "steps": 3000,
+  "best_step": 1620,
+  "best_val_loss": 5.706788539886475,
+  "val_loss": 5.706788539886475,
+  "batch_size_final": 32,
+  "wall_sec": 16.083351373672485
+}

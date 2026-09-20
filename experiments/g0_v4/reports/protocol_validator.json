@@ -1,0 +1,137 @@
+{
+  "pass": true,
+  "checks": [
+    {
+      "name": "scope",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "eval_isolation",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "label_access",
+      "pass": true,
+      "hits": []
+    },
+    {
+      "name": "run:cpc@horizon-16__seed0",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:cpc@horizon-4__seed0",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:cpc@horizon-4__seed1",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:cpc@horizon-4__seed2",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:cpc@horizon-4__seed3",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:cpc@horizon-4__seed4",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:cpc@temperature-0.07__seed0",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:cpc@temperature-0.2__seed0",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:cpc__seed0",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:gru__seed0",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:gru__seed1",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:gru__seed2",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:gru__seed3",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:gru__seed4",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:jepa@horizon-16__seed0",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:jepa@jepa_var-4.0__seed0",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:jepa__seed0",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:jepa__seed1",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:jepa__seed2",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:jepa__seed3",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:jepa__seed4",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:vicreg@vicreg_sim-25_vicreg_var-25__seed0",
+      "pass": true,
+      "issues": []
+    },
+    {
+      "name": "run:vicreg__seed0",
+      "pass": true,
+      "issues": []
+    }
+  ],
+  "config": "experiments/g0_v4/configs/default.yaml",
+  "seed": 0
+}

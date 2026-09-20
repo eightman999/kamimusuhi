@@ -1,0 +1,693 @@
+{
+  "paired_diffs": {
+    "cpc@temperature-0.07 - cpc@temperature-0.07_untrained": {
+      "acc_in": {
+        "mean_diff": -0.019455252918287924,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_loco": {
+        "mean_diff": 0.08969098636740103,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "acc_ood_ctx": {
+        "mean_diff": -0.03813769192669639,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_dense_ctx": {
+        "mean_diff": -0.019589552238805957,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "seg_acc_in": {
+        "mean_diff": 0.0,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "seg_acc_loco": {
+        "mean_diff": 0.10505131810067578,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "seg_acc_ood_ctx": {
+        "mean_diff": -0.03468208092485553,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_in": {
+        "mean_diff": -0.047058823529411764,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_loco": {
+        "mean_diff": -0.1074095272011939,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_ood_ctx": {
+        "mean_diff": -0.09090909090909094,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "match_ood": {
+        "mean_diff": -0.07692307692307687,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "midctx_acc": {
+        "mean_diff": -0.06380952380952379,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "best_action_delta": {
+        "mean_diff": -0.053501945525291805,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "nmi_pooled": {
+        "mean_diff": 0.030654336104673212,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "combo_oodctx_auc": {
+        "mean_diff": 0.0832235480672186,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "intervention_selectivity": {
+        "mean_diff": -0.14807071472597075,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      }
+    },
+    "cpc@temperature-0.2 - cpc@temperature-0.2_untrained": {
+      "acc_in": {
+        "mean_diff": -0.04571984435797666,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_loco": {
+        "mean_diff": 0.04187112965182216,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "acc_ood_ctx": {
+        "mean_diff": -0.0629024269440317,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_dense_ctx": {
+        "mean_diff": 0.004197761194029842,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "seg_acc_in": {
+        "mean_diff": 0.011363636363636354,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "seg_acc_loco": {
+        "mean_diff": 0.08242565225323847,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "seg_acc_ood_ctx": {
+        "mean_diff": -0.04624277456647402,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_in": {
+        "mean_diff": 0.0117647058823529,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "dynseg_acc_loco": {
+        "mean_diff": -0.062324481074481075,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_ood_ctx": {
+        "mean_diff": -0.024242424242424232,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "match_ood": {
+        "mean_diff": -0.051282051282051266,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "midctx_acc": {
+        "mean_diff": -0.08571428571428572,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "best_action_delta": {
+        "mean_diff": -0.1264591439688716,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "nmi_pooled": {
+        "mean_diff": 0.01688330030832287,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "combo_oodctx_auc": {
+        "mean_diff": 0.040313300438400534,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "intervention_selectivity": {
+        "mean_diff": -0.1408707950392236,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      }
+    },
+    "cpc@horizon-4 - cpc@horizon-4_untrained": {
+      "acc_in": {
+        "mean_diff": -0.01556420233463035,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_loco": {
+        "mean_diff": 0.1106085583539711,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "acc_ood_ctx": {
+        "mean_diff": -0.041109460128776615,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_dense_ctx": {
+        "mean_diff": 0.04197761194029853,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "seg_acc_in": {
+        "mean_diff": 0.011363636363636354,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "seg_acc_loco": {
+        "mean_diff": 0.09090306620732583,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "seg_acc_ood_ctx": {
+        "mean_diff": -0.0809248554913295,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_in": {
+        "mean_diff": 0.0,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_loco": {
+        "mean_diff": -0.1107151336318003,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_ood_ctx": {
+        "mean_diff": -0.10909090909090913,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "match_ood": {
+        "mean_diff": -0.038461538461538436,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "midctx_acc": {
+        "mean_diff": 0.03142857142857142,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "best_action_delta": {
+        "mean_diff": -0.057392996108949434,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "nmi_pooled": {
+        "mean_diff": 0.07862083863798328,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "combo_oodctx_auc": {
+        "mean_diff": 0.022343353797167786,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "intervention_selectivity": {
+        "mean_diff": -0.1709878963411879,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      }
+    },
+    "cpc@horizon-16 - cpc@horizon-16_untrained": {
+      "acc_in": {
+        "mean_diff": -0.07101167315175094,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_loco": {
+        "mean_diff": 0.02823901058120959,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "acc_ood_ctx": {
+        "mean_diff": -0.0554730064388311,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_dense_ctx": {
+        "mean_diff": -0.03544776119402984,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "seg_acc_in": {
+        "mean_diff": -0.05681818181818182,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "seg_acc_loco": {
+        "mean_diff": 0.01997465570498788,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "seg_acc_ood_ctx": {
+        "mean_diff": -0.07514450867052025,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_in": {
+        "mean_diff": 0.047058823529411764,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "dynseg_acc_loco": {
+        "mean_diff": -0.10647215438882107,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_ood_ctx": {
+        "mean_diff": -0.024242424242424232,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "match_ood": {
+        "mean_diff": -0.11538461538461536,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "midctx_acc": {
+        "mean_diff": -0.0819047619047619,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "best_action_delta": {
+        "mean_diff": -0.11381322957198442,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "nmi_pooled": {
+        "mean_diff": -0.0051436813781420496,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "combo_oodctx_auc": {
+        "mean_diff": 0.03151078028842408,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "intervention_selectivity": {
+        "mean_diff": -0.13067635879355557,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      }
+    },
+    "jepa@jepa_var-4.0 - jepa@jepa_var-4.0_untrained": {
+      "acc_in": {
+        "mean_diff": -0.08171206225680933,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_loco": {
+        "mean_diff": -0.05936931103709983,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_ood_ctx": {
+        "mean_diff": 0.027736503219415565,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "acc_dense_ctx": {
+        "mean_diff": -0.06483208955223879,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "seg_acc_in": {
+        "mean_diff": -0.04545454545454544,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "seg_acc_loco": {
+        "mean_diff": -0.01537759502927774,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "seg_acc_ood_ctx": {
+        "mean_diff": 0.011560693641618491,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "dynseg_acc_in": {
+        "mean_diff": -0.09411764705882353,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_loco": {
+        "mean_diff": -0.21474104599104593,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_ood_ctx": {
+        "mean_diff": -0.18181818181818182,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "match_ood": {
+        "mean_diff": -0.06410256410256412,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "midctx_acc": {
+        "mean_diff": -0.05333333333333333,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "best_action_delta": {
+        "mean_diff": -0.050583657587548625,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "nmi_pooled": {
+        "mean_diff": -0.10977607842450678,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "combo_oodctx_auc": {
+        "mean_diff": 0.006545052748150815,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "intervention_selectivity": {
+        "mean_diff": -0.17626103323392367,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      }
+    },
+    "jepa@horizon-16 - jepa@horizon-16_untrained": {
+      "acc_in": {
+        "mean_diff": -0.06614785992217898,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_loco": {
+        "mean_diff": -0.03332573529831501,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_ood_ctx": {
+        "mean_diff": 0.0549777117384844,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "acc_dense_ctx": {
+        "mean_diff": -0.048507462686567165,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "seg_acc_in": {
+        "mean_diff": -0.03409090909090909,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "seg_acc_loco": {
+        "mean_diff": -0.011872885354858781,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "seg_acc_ood_ctx": {
+        "mean_diff": 0.02890173410404623,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "dynseg_acc_in": {
+        "mean_diff": -0.08235294117647057,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_loco": {
+        "mean_diff": -0.18911697870031202,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_ood_ctx": {
+        "mean_diff": -0.1333333333333333,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "match_ood": {
+        "mean_diff": -0.07692307692307696,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "midctx_acc": {
+        "mean_diff": -0.02857142857142858,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "best_action_delta": {
+        "mean_diff": -0.038910505836575904,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "nmi_pooled": {
+        "mean_diff": -0.10835306981890183,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "combo_oodctx_auc": {
+        "mean_diff": 0.019778333449390728,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "intervention_selectivity": {
+        "mean_diff": -0.19084100055490394,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      }
+    },
+    "vicreg@vicreg_sim-25_vicreg_var-25 - vicreg@vicreg_sim-25_vicreg_var-25_untrained": {
+      "acc_in": {
+        "mean_diff": -0.10116731517509728,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_loco": {
+        "mean_diff": -0.03629892873512289,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_ood_ctx": {
+        "mean_diff": -0.02823179791976227,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "acc_dense_ctx": {
+        "mean_diff": -0.06156716417910446,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "seg_acc_in": {
+        "mean_diff": 0.04545454545454547,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "seg_acc_loco": {
+        "mean_diff": -0.04039823732401543,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "seg_acc_ood_ctx": {
+        "mean_diff": -0.04046242774566475,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_in": {
+        "mean_diff": -0.09411764705882353,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_loco": {
+        "mean_diff": -0.29791369895536557,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "dynseg_acc_ood_ctx": {
+        "mean_diff": -0.15757575757575754,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "match_ood": {
+        "mean_diff": -0.11538461538461542,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "midctx_acc": {
+        "mean_diff": 0.037142857142857144,
+        "std_diff": 0.0,
+        "n_pos": 1,
+        "n": 1
+      },
+      "best_action_delta": {
+        "mean_diff": -0.09630350194552528,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "nmi_pooled": {
+        "mean_diff": -0.14341647154364234,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "combo_oodctx_auc": {
+        "mean_diff": -0.012953411684415439,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      },
+      "intervention_selectivity": {
+        "mean_diff": -0.3096759770093487,
+        "std_diff": 0.0,
+        "n_pos": 0,
+        "n": 1
+      }
+    }
+  },
+  "seeds": [
+    0
+  ]
+}
