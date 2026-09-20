@@ -1,5 +1,5 @@
 """Standalone trainer. Monitoring is optional and cannot own training lifetime."""
-import argparse,json,os,random,time,traceback,signal
+import argparse, json, os, random, time, signal
 from pathlib import Path
 import numpy as np
 import torch
