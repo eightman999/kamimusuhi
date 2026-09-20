@@ -13,11 +13,15 @@ User
   -> Jev /v1/systemone: preparation batch
        invocation_gate + observation_need + recall relevance
   -> bounded local context selection / clarification guidance
-  -> all eligible language organs /chat/completions (concurrent)
-  -> wait for all completions/timeouts
-  -> Jev /v1/systemone: assessment batch
+  -> all eligible language organs /chat/completions (concurrent race)
+  -> first valid completion, plus at most one near-simultaneous completion
+       (one shared 10 ms grace window)
+  -> Jev /v1/systemone: anonymous assessment batch (active pool <= 2)
        response_candidate + per-candidate grounding / attribution / task_fit / gate / repair_reason
-  -> optional reasoned regeneration of one organ, then one more assessment batch
+  -> ACCEPT: deliver immediately without waiting for slower organs
+     RETRY/REJECT: continue the race and assess the next completed batch
+  -> if all organs finish without ACCEPT, optionally regenerate the earliest
+     RETRY candidate once, then run one more assessment batch
   -> DialogueSession state update
   -> User
 ```
@@ -109,6 +113,8 @@ JSONで分離し、命令や根拠にしない。選択器官だけを1回再生
 KAMIMUSUHI_LLM_PROVIDER=hai
 KAMIMUSUHI_LLM_BASE_URL=https://hai-api.hcloud.ltd/v1
 KAMIMUSUHI_LLM_MODEL=llm-jp-4-vl-9b
+# generic openai-compatible only:
+# KAMIMUSUHI_LLM_AUTH_ENV=OPENAI_API_KEY
 HAI_API_KEY=
 ```
 
@@ -123,8 +129,11 @@ J72は今回の経路で使わない。`KAMIMUSUHI_LLM_PROVIDER=mock`を指定�
 `HAI_API_KEY` が実行環境に設定されている場合、次の2つのOpenAI-compatible言語器官を
 起動時に自動登録する。キー値は設定・trace・Jevのstateへコピーしない。
 primaryに設定済みのモデルは重複登録せず、同じ自動登録presetが残っていれば除去する。
-手動でカスタマイズされた登録は保持する。HAIをprimaryにするときの認証は常に
-`HAI_API_KEY` を使い、以前のGrokbot用credentialを引き継がない。
+HAI presetの自動登録は `HAI_API_KEY` とJev設定が両方ある場合だけ行い、Jev未設定時は
+未変更の自動presetを除去する。手動でカスタマイズされた登録は保持する。HAIをprimaryに
+するときの認証は常に `HAI_API_KEY` を使う。generic `openai-compatible` は
+`KAMIMUSUHI_LLM_AUTH_ENV` でcredential環境変数名を明示した場合だけ認証を付け、
+以前のproviderのcredentialを継承しない。
 
 ```bash
 HAI_API_KEY=
@@ -149,9 +158,10 @@ HAI_API_KEY=
 
 遅延は各呼出しの計測値で、成功率などは現在のセッション内の統計である。
 実運用のスループット、tokens/s、継続的なサービス性能を証明する値ではない。
-`generation_latency_ms` は初回並行生成のwall timeで、器官ごとの遅延の合計でも
-retryを含めた時間でもない。全器官の完了またはtimeoutを待つため、最も遅い器官が
-初回生成の待ち時間を左右する。preparationと各assessmentの遅延はbatch単位で記録する。
+`generation_latency_ms` は言語器官race開始から、初回の採用候補が決まるか全候補を
+使い切るまでのwall timeである。途中のJev品質判定を含むが、採用後も走り続ける遅い器官や
+理由付きretry生成は含めない。器官ごとの遅延の合計ではない。preparationと各assessmentの
+遅延はbatch単位で記録する。
 互換フィールドのselectionとresponse gateには同じbatch時間が入るため、合算しない。
 各判定の時間にはJevの形式修復を含む。`assessments`に再生成前後の評価を残し、
 言語器官retryの生成時間は該当attemptに記録する。
@@ -162,9 +172,12 @@ retryを含めた時間でもない。全器官の完了またはtimeoutを待�
 `/chat/completions` 言語器官を `runtime.json` の `language_providers` に登録できる。
 保存するのはID、endpoint、model、認証環境変数名だけで、キー値は保存しない。
 発話前処理が生成を許可すると、primaryを含む有効・privacy許可・必要な認証が
-設定済みの全器官が並行生成する。認証不要の器官も対象である。全試行が終了してから、
-生成済み応答を比較する次のtyped choiceをJevへ送る。生成前の `language_provider`
-選択ではない。
+設定済みの全器官を同時に開始する。認証不要の器官も対象で、provider数にハード上限は
+設けない。最初の有効完了を受け取った時点から10msだけ共通graceを取り、同時着弾を最大
+もう1件だけactive poolへ入れる。Jevへ送る候補は常に最大2件で、IDは
+`candidate-0` 等の匿名IDとしprovider名・model名はwireへ送らない。ACCEPTなら遅い器官を
+待たずに採用し、RETRY/REJECTなら次に完了したbatchを新たに判定する。生成前の
+`language_provider` 選択ではない。
 
 ```json
 {
@@ -184,12 +197,14 @@ retryを含めた時間でもない。全器官の完了またはtimeoutを待�
 だけ、その候補に結び付いた同batchの評価を使う。形式不正を1回再要求しても失敗する場合、
 primaryの自動選択や自動ACCEPTで補わない。Jev自身のwireは `/v1/systemone` のままである。
 
-`RETRY` は選択された器官だけを1回再生成し、その結果で更新した候補群全体から
-`response_candidate` を再選択し、同batchの候補別gateを適用する。他の器官は再生成せず、
-再選択で採用されるIDが変わることもある。2回目の `RETRY` は上限エラーとなる。
+race中の `RETRY` はただちに再生成せず、まだ未完了の器官があれば次の完了候補を判定する。
+全器官を使い切ってもACCEPTがなく、RETRY候補が存在する場合だけ、最初のRETRY候補の器官を
+1回再生成して再判定する。2回目の `RETRY` は上限エラーとなる。
 
-`generated_candidates` はprimary・失敗・retryを含む全試行のID、provider、model、
-`attempt`（初回0・retry 1）、遅延、response bytes、digest、エラー分類、観測値を保持する。
+`generated_candidates` はraceが採用/終了するまでに受信した初回試行と、明示的なretryの
+ID、provider、model、`attempt`（初回0・retry 1）、遅延、response bytes、digest、
+エラー分類、観測値を保持する。採用後もHTTP呼出し自体は強制cancelしないため、遅れて完了した
+器官はこのターンの候補記録・telemetryへ入らない。
 候補の本文はこのメタデータに保存しない。既存の `provider_selection` フィールドは
 生成後の `response_candidate` 選択結果を格納する。GUIの採用マークは成功トレースの
 最終IDとdigestに一致する最新の成功試行だけに付く。
@@ -201,7 +216,7 @@ primaryの自動選択や自動ACCEPTで補わない。Jev自身のwireは `/v1/
 GUIは送信時に前回の成功トレース・生成レポート・ターン遅延を消す。
 `DialogueSession::turn` の終了後、成功・失敗を問わず
 `last_generated_candidates()` と `last_generation_latency_ms()` から
-`GenerationReport` を送る。`elapsed_ms` は初回並行生成のwall timeを表す。
+`GenerationReport` を送る。`elapsed_ms` は初回race-to-qualityのwall timeを表す。
 選択・gate等が失敗しても生成レポートは表示し、成功トレースがない場合は採用マークを
 付けない。生成前の失敗なら試行数は0となる。生成途中の進捗callbackは設けない。
 
