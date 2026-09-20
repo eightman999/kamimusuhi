@@ -23,7 +23,7 @@ import argparse
 import json
 import time
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Dict, Optional
 
 import numpy as np
 
