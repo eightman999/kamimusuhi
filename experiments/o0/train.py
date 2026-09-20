@@ -20,7 +20,6 @@ Artifacts per run dir under <artifacts>/runs/<run_id>/:
 from __future__ import annotations
 
 import argparse
-import copy
 import dataclasses
 import hashlib
 import json
