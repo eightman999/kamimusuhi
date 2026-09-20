@@ -100,7 +100,7 @@ length.
 ## Usage
 
 ```bash
-PY=/Users/eightman/dev/sandbox/kamimusuhi/.venv/bin/python
+PY=.venv/bin/python   # python 3.12+ with torch, numpy, pyyaml, matplotlib
 $PY -m pytest experiments/o0/tests                       # tests
 $PY -m experiments.o0.train --config experiments/o0/configs/smoke.yaml \
     --run-id smoke --artifacts experiments/o0/artifacts  # <60s smoke
