@@ -28,7 +28,7 @@ use kamimusuhi_core::routing::{LocalityClass, PrivacyConstraint, Urgency};
 use kamimusuhi_runtime::config::GENERAL_SLOT;
 use kamimusuhi_runtime::dialogue::{DialogueSession, MAX_INPUT_BYTES};
 use kamimusuhi_runtime::dialogue_setup::{
-    persona_backend_id_for, persona_setting_from_environment,
+    persona_backend_id_for, persona_setting_from_environment, register_hai_language_providers,
 };
 use kamimusuhi_runtime::mio::MioBinding;
 use kamimusuhi_runtime::runtime::ClockMode;
@@ -241,6 +241,10 @@ fn run_dialogue(command: &str, options: &Options) -> Result<String, RuntimeError
     if options.mio_options_present() {
         config.mio = options.mio_setting(config.mio.as_ref())?;
     }
+    // Keep CLI and desktop provider discovery identical. HAI presets are only
+    // auto-registered while Jev is configured; otherwise unchanged presets are
+    // removed so a missing judge cannot silently fan out paid model calls.
+    let hai_presets_changed = register_hai_language_providers(&mut config)?;
     if config.persona.backend == PersonaBackendKind::Fake
         && options.persona != Some(PersonaBackendKind::Fake)
     {
@@ -257,7 +261,11 @@ fn run_dialogue(command: &str, options: &Options) -> Result<String, RuntimeError
     if let Some(mio) = &config.mio {
         mio.validate()?;
     }
-    if options.persona.is_some() || options.mio_options_present() || env_persona_changed {
+    if options.persona.is_some()
+        || options.mio_options_present()
+        || env_persona_changed
+        || hai_presets_changed
+    {
         runtime.save_config(config)?;
     }
     let mut session = DialogueSession::start(
