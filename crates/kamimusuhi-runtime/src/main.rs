@@ -24,13 +24,11 @@
 use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
 
-use kamimusuhi_core::digest::content_digest;
-use kamimusuhi_core::ids::PersonaBackendId;
 use kamimusuhi_core::routing::{LocalityClass, PrivacyConstraint, Urgency};
 use kamimusuhi_runtime::config::GENERAL_SLOT;
 use kamimusuhi_runtime::dialogue::{DialogueSession, MAX_INPUT_BYTES};
-use kamimusuhi_runtime::llm_jev::{
-    GROKBOT_API_KEY_ENV, LLM_BASE_URL_ENV, LLM_MODEL_ENV, LLM_PROVIDER_ENV,
+use kamimusuhi_runtime::dialogue_setup::{
+    persona_backend_id_for, persona_setting_from_environment,
 };
 use kamimusuhi_runtime::mio::MioBinding;
 use kamimusuhi_runtime::runtime::ClockMode;
@@ -39,73 +37,6 @@ use kamimusuhi_runtime::{
     DemoPhase, PersonaBackendKind, PersonaProviderConfig, PersonaSetting, ResourceImplementation,
     Runtime, RuntimeError, RuntimeOptions, inspect, scenario,
 };
-
-/// A stable backend ID for an endpoint the operator named on the command line.
-///
-/// Derived from the endpoint and model rather than minted, so restarting
-/// against the same endpoint keeps the same attribution in the trace.
-fn persona_backend_id_for(base_url: &str, model: &str) -> PersonaBackendId {
-    let digest = content_digest(format!("{base_url}|{model}").as_bytes());
-    let bytes: Vec<u8> = digest
-        .trim_start_matches("sha256:")
-        .as_bytes()
-        .chunks(2)
-        .take(16)
-        .filter_map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
-        .collect();
-    let mut raw = [0_u8; 16];
-    raw[..bytes.len().min(16)].copy_from_slice(&bytes[..bytes.len().min(16)]);
-    let value = u128::from_be_bytes(raw);
-    PersonaBackendId::from_u128(if value == 0 { 1 } else { value })
-}
-
-/// Resolve the language-organ environment contract into the existing Persona
-/// provider namespace. The key value is never read here; only the credential
-/// variable name is placed in runtime configuration.
-fn persona_setting_from_env(
-    config: &kamimusuhi_runtime::RuntimeConfig,
-) -> Result<Option<PersonaSetting>, RuntimeError> {
-    let provider = match std::env::var(LLM_PROVIDER_ENV) {
-        Ok(value) if !value.trim().is_empty() => value.to_ascii_lowercase(),
-        _ => return Ok(None),
-    };
-    if provider == "mock" {
-        return Ok(None);
-    }
-    if !matches!(provider.as_str(), "grokbot" | "hai" | "openai-compatible") {
-        return Err(RuntimeError::Usage(format!(
-            "unsupported {LLM_PROVIDER_ENV} value {provider:?}"
-        )));
-    }
-    let base_url = std::env::var(LLM_BASE_URL_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| RuntimeError::Usage(format!("{LLM_BASE_URL_ENV} is required")))?;
-    let model = std::env::var(LLM_MODEL_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| RuntimeError::Usage(format!("{LLM_MODEL_ENV} is required")))?;
-    let existing = config.persona.provider.as_ref();
-    let auth_env = if provider == "grokbot" {
-        Some(GROKBOT_API_KEY_ENV.to_owned())
-    } else {
-        existing.and_then(|provider| provider.auth_env.clone())
-    };
-    Ok(Some(PersonaSetting {
-        backend: PersonaBackendKind::OpenaiCompatible,
-        provider: Some(PersonaProviderConfig {
-            backend_id: persona_backend_id_for(&base_url, &model),
-            locality: LocalityClass::External,
-            base_url,
-            model,
-            auth_env,
-            timeout_ms: existing.map_or(60_000, |provider| provider.timeout_ms),
-            tls_root_ca_path: existing.and_then(|provider| provider.tls_root_ca_path.clone()),
-            system_instruction: existing.and_then(|provider| provider.system_instruction.clone()),
-        }),
-        seed: config.persona.seed.clone(),
-    }))
-}
 
 const USAGE: &str = "\
 kamimusuhi-runtime <command> [options]
@@ -303,7 +234,7 @@ fn run_dialogue(command: &str, options: &Options) -> Result<String, RuntimeError
     let mut env_persona_changed = false;
     if let Some(backend) = options.persona {
         config.persona = options.persona_setting(backend, &config)?;
-    } else if let Some(setting) = persona_setting_from_env(&config)? {
+    } else if let Some(setting) = persona_setting_from_environment(&config)? {
         config.persona = setting;
         env_persona_changed = true;
     }

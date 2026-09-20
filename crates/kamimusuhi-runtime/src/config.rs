@@ -233,6 +233,34 @@ fn default_persona_locality() -> LocalityClass {
     LocalityClass::External
 }
 
+impl PersonaProviderConfig {
+    /// Validate and build one language-organ Persona without changing the
+    /// configured primary Persona setting. Additional GUI-registered organs
+    /// use this same adapter and the same secret boundary.
+    pub fn build_persona(&self) -> Result<Box<dyn PersonaCore>, RuntimeError> {
+        if self.locality == LocalityClass::InProcess {
+            return Err(RuntimeError::PersonaConfig {
+                message: "HTTP Persona cannot declare in_process locality".to_owned(),
+            });
+        }
+        let mut config =
+            PersonaBackendConfig::new(self.backend_id, self.base_url.clone(), self.model.clone())
+                .with_timeout_ms(self.timeout_ms)
+                .with_auth_env(self.auth_env.clone())
+                .with_trust_anchors(match &self.tls_root_ca_path {
+                    Some(path) => TrustAnchors::PemFile(path.clone()),
+                    None => TrustAnchors::Webpki,
+                });
+        if let Some(instruction) = &self.system_instruction {
+            config = config.with_system_instruction(instruction.clone());
+        }
+        config
+            .validate()
+            .map_err(|message| RuntimeError::PersonaConfig { message })?;
+        Ok(Box::new(OpenAiCompatiblePersona::new(config)))
+    }
+}
+
 /// Which disposition the Persona backend starts from.
 ///
 /// Configuration, and only configuration. There is deliberately no variant
@@ -358,24 +386,7 @@ impl PersonaSetting {
                         .ok_or_else(|| RuntimeError::PersonaConfig {
                             message: "openai-compatible needs a persona provider entry".to_owned(),
                         })?;
-                let mut config = PersonaBackendConfig::new(
-                    provider.backend_id,
-                    provider.base_url.clone(),
-                    provider.model.clone(),
-                )
-                .with_timeout_ms(provider.timeout_ms)
-                .with_auth_env(provider.auth_env.clone())
-                .with_trust_anchors(match &provider.tls_root_ca_path {
-                    Some(path) => TrustAnchors::PemFile(path.clone()),
-                    None => TrustAnchors::Webpki,
-                });
-                if let Some(instruction) = &provider.system_instruction {
-                    config = config.with_system_instruction(instruction.clone());
-                }
-                config
-                    .validate()
-                    .map_err(|message| RuntimeError::PersonaConfig { message })?;
-                Ok(Box::new(OpenAiCompatiblePersona::new(config)))
+                provider.build_persona()
             }
         }
     }
@@ -482,6 +493,11 @@ pub struct RuntimeConfig {
     /// candidate, never confused with a delegated resource.
     #[serde(default)]
     pub persona: PersonaSetting,
+    /// Extra language organs registered by the operator. They are separate
+    /// from the primary Persona and are offered to Jev as turn-local choices;
+    /// none of them is a router resource or a source of canonical state.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub language_providers: BTreeMap<String, PersonaProviderConfig>,
     /// C0 derived-lane runtime knobs. The lane itself lives in the store;
     /// this only configures how often reflection runs and which reflector
     /// fills the slot.
@@ -509,6 +525,7 @@ impl RuntimeConfig {
             config_version: Self::VERSION,
             node_id,
             persona: PersonaSetting::default(),
+            language_providers: BTreeMap::new(),
             c0: C0Config::default(),
             mio: None,
             resources,
@@ -616,6 +633,20 @@ impl RuntimeConfig {
         self.providers.insert(slot.to_owned(), provider);
     }
 
+    pub fn set_language_provider(
+        &mut self,
+        id: &str,
+        provider: PersonaProviderConfig,
+    ) -> Result<Option<PersonaProviderConfig>, RuntimeError> {
+        validate_language_provider_id(id)?;
+        provider.build_persona()?;
+        Ok(self.language_providers.insert(id.to_owned(), provider))
+    }
+
+    pub fn remove_language_provider(&mut self, id: &str) -> Option<PersonaProviderConfig> {
+        self.language_providers.remove(id)
+    }
+
     pub fn provider(&self, slot: &str) -> Option<&ProviderConfig> {
         self.providers.get(slot)
     }
@@ -649,6 +680,21 @@ impl RuntimeConfig {
         }
         Ok(registry)
     }
+}
+
+pub fn validate_language_provider_id(id: &str) -> Result<(), RuntimeError> {
+    if id.is_empty()
+        || id.len() > 48
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(RuntimeError::PersonaConfig {
+            message: "language provider id must be 1-48 ASCII letters, digits, '.', '_' or '-'"
+                .to_owned(),
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]

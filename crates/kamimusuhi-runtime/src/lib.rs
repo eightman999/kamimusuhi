@@ -22,6 +22,8 @@
 pub mod c0;
 pub mod config;
 pub mod dialogue;
+pub mod dialogue_recall;
+pub mod dialogue_setup;
 pub mod error;
 pub mod inspect;
 pub mod kcore;

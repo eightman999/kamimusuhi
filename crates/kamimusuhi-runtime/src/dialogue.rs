@@ -2,7 +2,7 @@
 //! Raw conversation is recallable, but never activated as a belief. Generated
 //! text and a successful write to the output surface have separate records.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 use kamimusuhi_core::continuity::WriterIdentity;
@@ -13,8 +13,8 @@ use kamimusuhi_core::evidence::{
 use kamimusuhi_core::ids::{EvidenceId, IndividualId, SessionId, TurnId};
 use kamimusuhi_core::mutation::OriginClass;
 use kamimusuhi_core::persona::{
-    ConversationMessage, ConversationRole, CurrentInput, PersonaBackendDescriptor,
-    PersonaTurnInput, SessionWorkingState, TurnContext,
+    ConversationMessage, ConversationRole, CurrentInput, PersonaBackendDescriptor, PersonaEnvelope,
+    PersonaTurnInput, ResponseGuidance, SessionWorkingState, TurnContext,
 };
 use kamimusuhi_core::routing::{LocalityClass, PrivacyConstraint};
 use kamimusuhi_core::trace::{TraceCorrelation, TraceEventKind};
@@ -22,15 +22,80 @@ use kamimusuhi_core::workspace::WorkspaceBuilder;
 use serde::Serialize;
 
 use crate::c0::{self, eval};
+use crate::config::validate_language_provider_id;
+use crate::dialogue_recall::RecallPool;
+use crate::dialogue_setup::{
+    language_provider_auth_available, language_provider_kind, public_endpoint_origin,
+};
 use crate::llm_jev::{
-    ConversationCoreState, ConversationTrace, Decision, DecisionKind, DecisionProvider,
-    DecisionRequest, LanguageProvider, configured_decision_provider, configured_language_provider,
+    ConversationCoreState, ConversationError, ConversationTrace, Decision, DecisionEvidence,
+    DecisionKind, DecisionProvider, DecisionRequest, GeneratedLanguageCandidate, LanguageProvider,
+    LanguageProviderCandidate, LanguageProviderTelemetry, LanguageProviderTelemetrySnapshot,
+    LanguageResponseCandidate, LanguageResponseSelectionRequest, LanguageResult,
+    MAX_JEV_CANDIDATE_RESPONSE_BYTES, ObservationNeed, PRIMARY_LANGUAGE_PROVIDER_ID,
+    PersonaLanguageProvider, ResponseAssessment, ResponseAssessmentRequest, TurnPreparationRequest,
+    configured_decision_provider, configured_language_provider,
 };
 use crate::research::ResearchCatalog;
 use crate::{Runtime, RuntimeError};
 
 pub const MAX_INPUT_BYTES: usize = 8_192;
 const HISTORY_BYTES: usize = 16_384;
+
+/// Only the already selected, attributed turn context is exposed to the
+/// decision provider. Provider configuration and authentication never enter it.
+fn decision_evidence(input: &PersonaTurnInput) -> Result<DecisionEvidence, ConversationError> {
+    let envelope = &input.envelope;
+    DecisionEvidence::new(serde_json::json!({
+        "turn": input.context,
+        "user_input": input.input,
+        "conversation_history": envelope.conversation_history,
+        "relationship": envelope.relationship,
+        "episodic": envelope.episodic,
+        "recalled_evidence": envelope.recalled_evidence,
+        "durable_self": envelope.durable_self,
+        "active_policy": envelope.active_policy,
+        "observed_runtime": envelope.observed_runtime,
+        "mio_observation": envelope.mio_observation,
+        "research_findings": envelope.research_findings,
+        "body_state": envelope.body_state,
+        "library": envelope.library,
+        "external_results": envelope.external_results,
+        "response_guidance": envelope.response_guidance,
+    }))
+}
+
+fn observation_guidance(
+    need: ObservationNeed,
+    recall_available: bool,
+    research_available: bool,
+) -> Option<ResponseGuidance> {
+    let (reason_code, instruction) = match need {
+        ObservationNeed::None => return None,
+        ObservationNeed::Recall if recall_available => (
+            "OBSERVE_RECALL",
+            "今回選んだ記憶と発言記録を確認して答えてください。発言者と出典を保ち、根拠が足りなければ必要な情報を一つ質問してください。",
+        ),
+        ObservationNeed::Runtime => (
+            "OBSERVE_RUNTIME",
+            "このターンのOBSERVED_RUNTIMEとMIO_OBSERVATIONを確認して答えてください。未接続・記録済みの観測を現在の身体感覚と解釈せず、不明な点は確認してください。",
+        ),
+        ObservationNeed::Research if research_available => (
+            "OBSERVE_RESEARCH",
+            "今回取得したRESEARCH_FINDINGSの主張・失敗・制限を確認して答えてください。研究結果を自分の経験や獲得能力として述べないでください。",
+        ),
+        ObservationNeed::Recall | ObservationNeed::Research | ObservationNeed::Clarify => (
+            "OBSERVE_CLARIFY",
+            "回答に必要な根拠が不足しています。推測で回答せず、足りない情報を相手に一つだけ短く質問してください。",
+        ),
+    };
+    Some(ResponseGuidance {
+        reason_code: reason_code.to_owned(),
+        instruction: instruction.to_owned(),
+        previous_response_digest: None,
+        previous_response: None,
+    })
+}
 
 fn required_information(state: &ConversationCoreState) -> Vec<String> {
     match state.speech_act.as_str() {
@@ -83,6 +148,43 @@ pub struct DialogueReply {
     pub llm_jev: Option<ConversationTrace>,
 }
 
+struct LanguageAttempt {
+    provider_id: String,
+    elapsed_ms: u64,
+    result: Result<crate::llm_jev::LanguageResult, crate::llm_jev::ConversationError>,
+}
+
+impl LanguageAttempt {
+    fn generate(
+        provider_id: &str,
+        provider: &dyn LanguageProvider,
+        request: &crate::llm_jev::LanguageRequest,
+    ) -> Self {
+        let started = Instant::now();
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| provider.generate(request)))
+                .unwrap_or(Err(ConversationError::Transport));
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let result = result.and_then(|mut result| {
+            if result.persona.response_intent.trim().is_empty() {
+                return Err(ConversationError::InvalidCandidate("EMPTY_RESPONSE"));
+            }
+            if result.persona.response_intent.len() > MAX_JEV_CANDIDATE_RESPONSE_BYTES {
+                return Err(ConversationError::InvalidCandidate("RESPONSE_TOO_LARGE"));
+            }
+            // Identity and timing are supplied by the host, not by returned material.
+            result.provider_id = provider_id.to_owned();
+            result.latency_ms = elapsed_ms;
+            Ok(result)
+        });
+        Self {
+            provider_id: provider_id.to_owned(),
+            elapsed_ms,
+            result,
+        }
+    }
+}
+
 pub struct DialogueSession {
     session_id: SessionId,
     individual_id: IndividualId,
@@ -102,7 +204,10 @@ pub struct DialogueSession {
     /// Conversation-side K-CORE state. This is not `KCore::tick()` state.
     core_state: ConversationCoreState,
     decision_provider: Box<dyn DecisionProvider>,
-    language_provider: Box<dyn LanguageProvider>,
+    language_providers: BTreeMap<String, Box<dyn LanguageProvider>>,
+    language_candidates: Vec<LanguageProviderCandidate>,
+    last_generated_candidates: Vec<GeneratedLanguageCandidate>,
+    last_generation_latency_ms: u64,
     /// The last assembled workspace, for `/context` inspection.
     last_context: Option<serde_json::Value>,
 }
@@ -164,10 +269,61 @@ impl DialogueSession {
             .as_ref()
             .map(|provider| provider.model.clone())
             .unwrap_or_else(|| persona.descriptor().name.clone());
+        let override_selected = language_provider_override.is_some();
         let language_provider = match language_provider_override {
             Some(provider) => provider,
-            None => configured_language_provider(persona, language_model)?,
+            None => configured_language_provider(persona, language_model.clone())?,
         };
+        let primary_provider = if override_selected {
+            "override".to_owned()
+        } else {
+            std::env::var(crate::llm_jev::LLM_PROVIDER_ENV)
+                .unwrap_or_else(|_| "in-process".to_owned())
+        };
+        let mut language_providers = BTreeMap::new();
+        language_providers.insert(PRIMARY_LANGUAGE_PROVIDER_ID.to_owned(), language_provider);
+        let mut language_candidates = vec![LanguageProviderCandidate {
+            id: PRIMARY_LANGUAGE_PROVIDER_ID.to_owned(),
+            provider: primary_provider,
+            model: language_model,
+            endpoint: runtime.config().persona.provider.as_ref().map_or_else(
+                || "in-process".to_owned(),
+                |provider| public_endpoint_origin(&provider.base_url),
+            ),
+            telemetry: LanguageProviderTelemetry::default().snapshot(),
+        }];
+        if !override_selected {
+            for (id, provider_config) in &runtime.config().language_providers {
+                validate_language_provider_id(id)?;
+                if id == PRIMARY_LANGUAGE_PROVIDER_ID {
+                    return Err(RuntimeError::PersonaConfig {
+                        message: "language provider id 'primary' is reserved".to_owned(),
+                    });
+                }
+                if !privacy.admits(provider_config.locality)
+                    || !language_provider_auth_available(provider_config)
+                {
+                    continue;
+                }
+                let persona = provider_config.build_persona()?;
+                let model = provider_config.model.clone();
+                let provider_kind = language_provider_kind(provider_config);
+                let provider = PersonaLanguageProvider::with_id(
+                    persona,
+                    id.clone(),
+                    provider_kind,
+                    model.clone(),
+                );
+                language_providers.insert(id.clone(), Box::new(provider));
+                language_candidates.push(LanguageProviderCandidate {
+                    id: id.clone(),
+                    provider: provider_kind.to_owned(),
+                    model,
+                    endpoint: public_endpoint_origin(&provider_config.base_url),
+                    telemetry: LanguageProviderTelemetry::default().snapshot(),
+                });
+            }
+        }
         if decision_provider.is_external() && !privacy.admits(LocalityClass::External) {
             return Err(RuntimeError::PersonaPrivacy {
                 privacy,
@@ -214,7 +370,10 @@ impl DialogueSession {
             debug_trace: false,
             core_state: ConversationCoreState::default(),
             decision_provider,
-            language_provider,
+            language_providers,
+            language_candidates,
+            last_generated_candidates: Vec::new(),
+            last_generation_latency_ms: 0,
             last_context: None,
         })
     }
@@ -227,6 +386,15 @@ impl DialogueSession {
     /// Include the secret-free Jev/LLM/core decision trace in replies.
     pub fn set_debug_trace(&mut self, enabled: bool) {
         self.debug_trace = enabled;
+    }
+
+    /// Latest attempt metadata remains available even when Jev rejects or fails.
+    pub fn last_generated_candidates(&self) -> &[GeneratedLanguageCandidate] {
+        &self.last_generated_candidates
+    }
+
+    pub fn last_generation_latency_ms(&self) -> u64 {
+        self.last_generation_latency_ms
     }
 
     /// The workspace assembled for the most recent turn, as inspectable JSON.
@@ -246,6 +414,301 @@ impl DialogueSession {
         self.sequence
     }
 
+    /// Return the subject-scoped conversation history for a frontend that
+    /// needs to restore its transcript without taking ownership of the
+    /// canonical store.  This is display/context data, not durable persona
+    /// state.
+    pub fn history_for_display(
+        &self,
+        runtime: &Runtime,
+    ) -> Result<Vec<ConversationMessage>, RuntimeError> {
+        let operative = c0::operative(runtime)?;
+        self.history(runtime, operative.view.params.retrieval.history_messages)
+    }
+
+    /// Add or replace an operator-registered language organ for subsequent
+    /// turns. The provider is usable only when the session privacy scope
+    /// admits its declared locality; registration itself remains a config/UI
+    /// concern and may be retained for a later unconstrained session.
+    pub fn set_language_provider(
+        &mut self,
+        id: &str,
+        provider_config: &crate::config::PersonaProviderConfig,
+    ) -> Result<(), RuntimeError> {
+        validate_language_provider_id(id)?;
+        if id == PRIMARY_LANGUAGE_PROVIDER_ID {
+            return Err(RuntimeError::PersonaConfig {
+                message: "language provider id 'primary' is reserved".to_owned(),
+            });
+        }
+        let provider = provider_config.build_persona()?;
+        self.language_providers.remove(id);
+        self.language_candidates
+            .retain(|candidate| candidate.id != id);
+        if self.privacy.admits(provider_config.locality)
+            && language_provider_auth_available(provider_config)
+        {
+            let model = provider_config.model.clone();
+            let provider_kind = language_provider_kind(provider_config);
+            self.language_providers.insert(
+                id.to_owned(),
+                Box::new(PersonaLanguageProvider::with_id(
+                    provider,
+                    id,
+                    provider_kind,
+                    model.clone(),
+                )),
+            );
+            self.language_candidates.push(LanguageProviderCandidate {
+                id: id.to_owned(),
+                provider: provider_kind.to_owned(),
+                model,
+                endpoint: public_endpoint_origin(&provider_config.base_url),
+                telemetry: LanguageProviderTelemetry::default().snapshot(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Remove an operator-registered language organ from subsequent turns.
+    pub fn remove_language_provider(&mut self, id: &str) -> Result<(), RuntimeError> {
+        if id == PRIMARY_LANGUAGE_PROVIDER_ID {
+            return Err(RuntimeError::PersonaConfig {
+                message: "the primary language provider cannot be removed".to_owned(),
+            });
+        }
+        self.language_providers.remove(id);
+        self.language_candidates
+            .retain(|candidate| candidate.id != id);
+        Ok(())
+    }
+
+    /// Secret-free provider observations for the desktop connection panel.
+    pub fn language_provider_telemetry(
+        &self,
+    ) -> BTreeMap<String, LanguageProviderTelemetrySnapshot> {
+        self.language_candidates
+            .iter()
+            .map(|candidate| (candidate.id.clone(), candidate.telemetry.clone()))
+            .collect()
+    }
+
+    /// Fan out the same immutable turn request to every currently admitted
+    /// language organ.  Providers own independent PersonaCore instances, so
+    /// the network calls can run concurrently while Runtime, telemetry and
+    /// canonical writes remain owned by this conversation thread.
+    fn generate_all_languages(
+        &mut self,
+        request: &crate::llm_jev::LanguageRequest,
+    ) -> Vec<LanguageAttempt> {
+        let attempts = std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(self.language_providers.len());
+            for (provider_id, provider) in &self.language_providers {
+                let provider_id = provider_id.clone();
+                let request = request.clone();
+                handles.push((
+                    provider_id.clone(),
+                    scope.spawn(move || {
+                        LanguageAttempt::generate(&provider_id, provider.as_ref(), &request)
+                    }),
+                ));
+            }
+            handles
+                .into_iter()
+                .map(|(provider_id, handle)| match handle.join() {
+                    Ok(attempt) => attempt,
+                    Err(_) => LanguageAttempt {
+                        provider_id,
+                        elapsed_ms: 0,
+                        result: Err(crate::llm_jev::ConversationError::Transport),
+                    },
+                })
+                .collect::<Vec<_>>()
+        });
+
+        for attempt in &attempts {
+            self.record_language_attempt(attempt, 0);
+        }
+        attempts
+    }
+
+    fn record_language_attempt(&mut self, attempt: &LanguageAttempt, attempt_index: u8) {
+        let (response_bytes, response_digest, error_code) = match &attempt.result {
+            Ok(result) => {
+                self.record_provider_success(&attempt.provider_id, attempt.elapsed_ms);
+                let response = &result.persona.response_intent;
+                (
+                    Some(response.len()),
+                    Some(content_digest(response.as_bytes())),
+                    None,
+                )
+            }
+            Err(error) => {
+                self.record_provider_failure(
+                    &attempt.provider_id,
+                    attempt.elapsed_ms,
+                    error.code(),
+                );
+                (None, None, Some(error.code().to_owned()))
+            }
+        };
+        let metadata = self
+            .language_candidates
+            .iter()
+            .find(|candidate| candidate.id == attempt.provider_id)
+            .expect("generated provider is registered");
+        self.last_generated_candidates
+            .push(GeneratedLanguageCandidate {
+                id: attempt.provider_id.clone(),
+                attempt: attempt_index,
+                provider: attempt.result.as_ref().map_or_else(
+                    |_| metadata.provider.clone(),
+                    |result| result.provider.clone(),
+                ),
+                model: metadata.model.clone(),
+                latency_ms: attempt.elapsed_ms,
+                response_bytes,
+                response_digest,
+                error_code,
+                telemetry: metadata.telemetry.clone(),
+            });
+    }
+
+    fn record_provider_success(&mut self, provider_id: &str, latency_ms: u64) {
+        if let Some(candidate) = self
+            .language_candidates
+            .iter_mut()
+            .find(|candidate| candidate.id == provider_id)
+        {
+            let mut telemetry = LanguageProviderTelemetry {
+                calls: candidate.telemetry.calls,
+                successes: candidate.telemetry.successes,
+                failures: candidate.telemetry.failures,
+                last_latency_ms: candidate.telemetry.last_latency_ms,
+                ewma_latency_ms: candidate.telemetry.ewma_latency_ms,
+                last_error: candidate.telemetry.last_error.clone(),
+            };
+            telemetry.record_success(latency_ms);
+            candidate.telemetry = telemetry.snapshot();
+        }
+    }
+
+    fn record_provider_failure(&mut self, provider_id: &str, latency_ms: u64, error_code: &str) {
+        if let Some(candidate) = self
+            .language_candidates
+            .iter_mut()
+            .find(|candidate| candidate.id == provider_id)
+        {
+            let mut telemetry = LanguageProviderTelemetry {
+                calls: candidate.telemetry.calls,
+                successes: candidate.telemetry.successes,
+                failures: candidate.telemetry.failures,
+                last_latency_ms: candidate.telemetry.last_latency_ms,
+                ewma_latency_ms: candidate.telemetry.ewma_latency_ms,
+                last_error: candidate.telemetry.last_error.clone(),
+            };
+            telemetry.record_failure(latency_ms, error_code);
+            candidate.telemetry = telemetry.snapshot();
+        }
+    }
+
+    fn generate_language(
+        &mut self,
+        provider_id: &str,
+        request: &crate::llm_jev::LanguageRequest,
+    ) -> Result<crate::llm_jev::LanguageResult, RuntimeError> {
+        let provider = self.language_providers.get(provider_id).ok_or_else(|| {
+            RuntimeError::Conversation(crate::llm_jev::ConversationError::InvalidDecision(
+                "selected language provider is not registered".to_owned(),
+            ))
+        })?;
+        let attempt = LanguageAttempt::generate(provider_id, provider.as_ref(), request);
+        self.record_language_attempt(&attempt, 1);
+        attempt.result.map_err(RuntimeError::Conversation)
+    }
+
+    fn assess_language_responses(
+        &self,
+        request: &crate::llm_jev::LanguageRequest,
+        results: &[LanguageResult],
+        evidence: &DecisionEvidence,
+    ) -> Result<(ResponseAssessment, usize), RuntimeError> {
+        let telemetry = self.language_provider_telemetry();
+        let candidates = results
+            .iter()
+            .map(|result| LanguageResponseCandidate {
+                id: result.provider_id.clone(),
+                provider: result.provider.clone(),
+                model: result.model.clone(),
+                latency_ms: result.latency_ms,
+                response_bytes: result.persona.response_intent.len(),
+                response_digest: content_digest(result.persona.response_intent.as_bytes()),
+                response: result.persona.response_intent.clone(),
+                telemetry: telemetry[&result.provider_id].clone(),
+            })
+            .collect();
+        let attempts: BTreeMap<String, u8> = results
+            .iter()
+            .map(|result| {
+                let digest = content_digest(result.persona.response_intent.as_bytes());
+                let attempt = self
+                    .last_generated_candidates
+                    .iter()
+                    .rev()
+                    .find(|candidate| {
+                        candidate.id == result.provider_id
+                            && candidate.error_code.is_none()
+                            && candidate.response_digest.as_deref() == Some(digest.as_str())
+                    })
+                    .ok_or_else(|| {
+                        ConversationError::InvalidDecision(
+                            "candidate attempt is missing".to_owned(),
+                        )
+                    })?;
+                Ok((result.provider_id.clone(), attempt.attempt))
+            })
+            .collect::<Result<_, ConversationError>>()?;
+        let assessment = self
+            .decision_provider
+            .assess_responses(&ResponseAssessmentRequest {
+                selection: LanguageResponseSelectionRequest {
+                    user_text: request.user_text.clone(),
+                    speech_act: request.speech_act.clone(),
+                    state: request.core_state.clone(),
+                    candidates,
+                },
+                evidence: evidence.clone(),
+                attempts: attempts.clone(),
+            })?;
+        if assessment.selection.fallback || assessment.gate.fallback {
+            return Err(ConversationError::DecisionUnavailable(
+                "Jev fallback is not allowed for response assessment".to_owned(),
+            )
+            .into());
+        }
+        let selected_index = results
+            .iter()
+            .position(|result| result.provider_id == assessment.selection.provider_id)
+            .ok_or_else(|| {
+                ConversationError::InvalidDecision(
+                    "selected response candidate is not available".to_owned(),
+                )
+            })?;
+        let selected = &results[selected_index];
+        if assessment.candidate_id != selected.provider_id
+            || assessment.candidate_digest
+                != content_digest(selected.persona.response_intent.as_bytes())
+            || assessment.evidence_digest != evidence.snapshot_digest
+            || attempts.get(&selected.provider_id) != Some(&assessment.attempt)
+        {
+            return Err(ConversationError::InvalidDecision(
+                "response assessment does not match the current candidate and evidence".to_owned(),
+            )
+            .into());
+        }
+        Ok((assessment, selected_index))
+    }
+
     /// The writer cache, for reflection cycles run inside this session.
     pub fn writer_cache(&mut self) -> &mut Option<WriterIdentity> {
         &mut self.writer
@@ -259,6 +722,8 @@ impl DialogueSession {
         text: &str,
         emit: impl FnOnce(&DialogueReply) -> std::io::Result<()>,
     ) -> Result<DialogueReply, RuntimeError> {
+        self.last_generated_candidates.clear();
+        self.last_generation_latency_ms = 0;
         if runtime.individual_id() != self.individual_id {
             return Err(RuntimeError::Usage(
                 "dialogue belongs to another individual".to_owned(),
@@ -270,7 +735,27 @@ impl DialogueSession {
             )));
         }
         runtime.config().persona.check_privacy(self.privacy)?;
-        let backend = self.language_provider.descriptor();
+        if self.decision_provider.is_external() && !self.privacy.admits(LocalityClass::External) {
+            return Err(RuntimeError::PersonaPrivacy {
+                privacy: self.privacy,
+                locality: LocalityClass::External,
+            });
+        }
+        for id in self.language_providers.keys() {
+            if let Some(config) = runtime.config().language_providers.get(id)
+                && !self.privacy.admits(config.locality)
+            {
+                return Err(RuntimeError::PersonaPrivacy {
+                    privacy: self.privacy,
+                    locality: config.locality,
+                });
+            }
+        }
+        let backend = self
+            .language_providers
+            .get(PRIMARY_LANGUAGE_PROVIDER_ID)
+            .expect("primary language provider is always registered")
+            .descriptor();
         // The operative view in force this turn: retrieval knobs, conversation
         // policy and the self model all come from the derived lane's head.
         let operative = c0::operative(runtime)?;
@@ -307,25 +792,20 @@ impl DialogueSession {
         // Retrieval is subject-bound everywhere: relationship and episodic
         // records are scoped to this interlocutor, and recalled evidence is
         // filtered to this channel's source id.
-        let memories = c0::retrieve_memories(
+        let mut exclude: BTreeSet<EvidenceId> = history.iter().map(|m| m.evidence_id).collect();
+        exclude.insert(input_evidence_id);
+        let recall_pool = RecallPool::load(
             runtime.store(),
             self.individual_id,
             &self.subject,
-            text,
-            &operative.view.params,
-        )?;
-        let mut exclude: BTreeSet<EvidenceId> = history.iter().map(|m| m.evidence_id).collect();
-        exclude.insert(input_evidence_id);
-        let recalled_evidence = c0::recall_evidence(
-            runtime.store(),
-            self.individual_id,
             &self.source_id,
             text,
             &operative.view.params,
             &exclude,
         )?;
+        let (mut memories, mut recalled_evidence) = recall_pool.baseline();
         let head = runtime.head()?;
-        let workspace = WorkspaceBuilder::new(self.individual_id, runtime.now())
+        let mut workspace = WorkspaceBuilder::new(self.individual_id, runtime.now())
             .with_continuity(&head)
             .with_current_input(&current_input)
             .with_memories(&memories)
@@ -374,7 +854,7 @@ impl DialogueSession {
             research_context["evidence_id"] = serde_json::json!(evidence_id);
         }
         let core_state = ConversationCoreState::for_input(&self.core_state, sequence, text);
-        let observed = serde_json::json!({
+        let mut observed = serde_json::json!({
             "observed_at": runtime.now(),
             "individual_id": self.individual_id,
             "continuity_generation": head.generation.0,
@@ -422,11 +902,81 @@ impl DialogueSession {
                     error.to_string(),
                 ))
             })?);
-        let context_digest = json_digest(&serde_json::json!(input));
+        let preparation_evidence = decision_evidence(&input)?;
+        let preparation = self
+            .decision_provider
+            .prepare_turn(&TurnPreparationRequest {
+                invocation: DecisionRequest {
+                    kind: DecisionKind::InvocationGate,
+                    user_text: text.to_owned(),
+                    speech_act: core_state.speech_act.clone(),
+                    required_information: required_information(&core_state),
+                    candidate_response: None,
+                    candidate_digest: None,
+                    state: core_state.clone(),
+                },
+                evidence: preparation_evidence.clone(),
+                recall_candidates: recall_pool.candidates(),
+            })?;
+        if preparation.evidence_digest != preparation_evidence.snapshot_digest {
+            return Err(ConversationError::InvalidDecision(
+                "preparation does not match the current evidence".to_owned(),
+            )
+            .into());
+        }
+        let invocation_gate = preparation.invocation.clone();
+        if invocation_gate.fallback {
+            return Err(ConversationError::DecisionUnavailable(
+                "Jev fallback is not allowed for turn preparation".to_owned(),
+            )
+            .into());
+        }
+        if !matches!(
+            invocation_gate.decision,
+            Decision::Speak | Decision::ObserveMore
+        ) || (matches!(invocation_gate.decision, Decision::ObserveMore)
+            && matches!(preparation.observation, ObservationNeed::None))
+        {
+            self.core_state = core_state;
+            return Err(ConversationError::GateRefused(
+                invocation_gate.decision.as_str().to_owned(),
+            )
+            .into());
+        }
+        (memories, recalled_evidence) = recall_pool.apply(&preparation.recall)?;
+        // Rebuild the actual language workspace from the chosen original
+        // records, preserving their types and provenance. No memory is written.
+        workspace = WorkspaceBuilder::new(self.individual_id, runtime.now())
+            .with_continuity(&head)
+            .with_current_input(&input.input)
+            .with_memories(&memories)
+            .with_self_state(&operative.view.self_model)
+            .with_active_policy(&operative.view.params, operative.activation_seq)
+            .with_recalled_evidence(&recalled_evidence)
+            .build();
+        let selected = PersonaEnvelope::from_workspace(&workspace, input.envelope.session);
+        input.envelope.relationship = selected.relationship;
+        input.envelope.episodic = selected.episodic;
+        input.envelope.recalled_evidence = selected.recalled_evidence;
+        observed["retained_memory_records_available"] = serde_json::json!(memories.len());
+        if matches!(preparation.observation, ObservationNeed::Runtime) {
+            // One bounded local refresh. No sensor or cloud polling is implied.
+            observed["observed_at"] = serde_json::json!(runtime.now());
+            observed["session_uptime_seconds"] =
+                serde_json::json!(self.started.elapsed().as_secs());
+        }
+        input.envelope.observed_runtime = Some(observed.clone());
+        input.envelope.response_guidance = observation_guidance(
+            preparation.observation,
+            !memories.is_empty() || !recalled_evidence.is_empty(),
+            recalled > 0,
+        );
+        let assessment_evidence = decision_evidence(&input)?;
+        let mut context_digest = json_digest(&serde_json::json!(input));
         let history_messages = input.envelope.conversation_history.len();
         // The inspectable context: what the model was actually shown, in the
         // shape the C0 spec asks `--debug-context` to expose.
-        let workspace_context = serde_json::json!({
+        let mut workspace_context = serde_json::json!({
             "activation_seq": operative.activation_seq,
             "recent_context": input.envelope.conversation_history,
             "relationship_memories": input.envelope.relationship,
@@ -437,19 +987,12 @@ impl DialogueSession {
             "open_threads": self.open_threads(runtime, &operative.view)?,
             "body_state": input.envelope.body_state,
             "conversation_core": input.envelope.conversation_core,
+            "response_guidance": input.envelope.response_guidance,
+            "decision_evidence_digest": assessment_evidence.snapshot_digest,
+            "generation_input_digest": context_digest,
             "workspace_digest": workspace.digest(),
         });
         self.last_context = Some(workspace_context.clone());
-        let invocation_request = DecisionRequest {
-            kind: DecisionKind::InvocationGate,
-            user_text: text.to_owned(),
-            speech_act: core_state.speech_act.clone(),
-            required_information: required_information(&core_state),
-            candidate_response: None,
-            candidate_digest: None,
-            state: core_state.clone(),
-        };
-        let invocation_gate = self.decision_provider.decide(&invocation_request)?;
         runtime.trace().record_with(
             TraceEventKind::PersonaInvoked,
             TraceCorrelation {
@@ -461,16 +1004,10 @@ impl DialogueSession {
                 "history_messages": history_messages,
                 "core_state": core_state.clone(),
                 "invocation_gate": invocation_gate.clone(),
+                "preparation": preparation,
             }),
         );
-        if !matches!(invocation_gate.decision, Decision::Speak) {
-            self.core_state = core_state;
-            return Err(RuntimeError::Conversation(
-                crate::llm_jev::ConversationError::GateRefused(
-                    invocation_gate.decision.as_str().to_owned(),
-                ),
-            ));
-        }
+        let provider_candidates = self.language_candidates.clone();
         let language_request = crate::llm_jev::LanguageRequest {
             user_text: text.to_owned(),
             speech_act: core_state.speech_act.clone(),
@@ -490,25 +1027,83 @@ impl DialogueSession {
             recent_turns: history.clone(),
             persona_input: input,
         };
-        let mut language_result = self.language_provider.generate(&language_request)?;
+        let generation_started = Instant::now();
+        let attempts = self.generate_all_languages(&language_request);
+        self.last_generation_latency_ms =
+            u64::try_from(generation_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let mut language_results = Vec::new();
+        let mut first_error = None;
+        for attempt in attempts {
+            match attempt.result {
+                Ok(result) => language_results.push(result),
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+            }
+        }
+        if language_results.is_empty() {
+            return Err(RuntimeError::Conversation(first_error.unwrap_or(
+                crate::llm_jev::ConversationError::InvalidDecision(
+                    "NO_VALID_CANDIDATES".to_owned(),
+                ),
+            )));
+        }
+        let (mut assessment, mut selected_index) = self.assess_language_responses(
+            &language_request,
+            &language_results,
+            &assessment_evidence,
+        )?;
+        let mut assessments = Vec::new();
+        let mut repaired_context = None;
         let mut response_gate = None;
         let mut retry_count = 0_u8;
         for attempt in 0..=1 {
             if attempt > 0 {
-                language_result = self.language_provider.generate(&language_request)?;
+                // Replace only the retried organ's candidate, then let Jev compare
+                // the updated pool. The old candidate can no longer be accepted.
+                let mut repair_request = language_request.clone();
+                let repair = assessment.repair_reason.as_instruction().unwrap_or(
+                    "先の候補を見直し、相手の質問と提示された根拠に合う短い日本語の回答を作り直してください。",
+                );
+                // Preserve any observation/clarification instruction as well
+                // as the original input. The rejected prose is wire-only.
+                let instruction = match &language_request.persona_input.envelope.response_guidance {
+                    Some(guidance) => format!("{}\n{repair}", guidance.instruction),
+                    None => repair.to_owned(),
+                };
+                repair_request.persona_input.envelope.response_guidance = Some(ResponseGuidance {
+                    reason_code: assessment.repair_reason.as_str().to_owned(),
+                    instruction,
+                    previous_response_digest: Some(assessment.candidate_digest.clone()),
+                    previous_response: Some(
+                        language_results[selected_index]
+                            .persona
+                            .response_intent
+                            .clone(),
+                    ),
+                });
+                repair_request.constraints.push(repair.to_owned());
+                repaired_context = Some((
+                    assessment.candidate_id.clone(),
+                    json_digest(&serde_json::json!(repair_request.persona_input)),
+                    repair_request
+                        .persona_input
+                        .envelope
+                        .response_guidance
+                        .clone(),
+                ));
+                language_results[selected_index] =
+                    self.generate_language(&assessment.candidate_id, &repair_request)?;
+                (assessment, selected_index) = self.assess_language_responses(
+                    &language_request,
+                    &language_results,
+                    &assessment_evidence,
+                )?;
             }
-            let response_request = DecisionRequest {
-                kind: DecisionKind::ResponseGate,
-                user_text: text.to_owned(),
-                speech_act: core_state.speech_act.clone(),
-                required_information: required_information(&core_state),
-                candidate_response: Some(language_result.persona.response_intent.clone()),
-                candidate_digest: Some(content_digest(
-                    language_result.persona.response_intent.as_bytes(),
-                )),
-                state: core_state.clone(),
-            };
-            let gate = self.decision_provider.decide(&response_request)?;
+            assessments.push(assessment.clone());
+            let gate = assessment.gate.clone();
             match gate.decision {
                 Decision::Accept => {
                     response_gate = Some(gate);
@@ -543,6 +1138,23 @@ impl DialogueSession {
                 "RESPONSE_GATE_MISSING".to_owned(),
             ))
         })?;
+        let provider_selection = assessment.selection.clone();
+        let selected_provider_id = provider_selection.provider_id.clone();
+        // The factual assessment snapshot remains fixed across retries, while
+        // the selected generator's actual input also includes repair guidance.
+        // Keep that input's provenance accurate when the repaired candidate wins.
+        if let Some((repaired_id, repaired_digest, guidance)) = repaired_context
+            && repaired_id == selected_provider_id
+            && assessment.attempt == 1
+        {
+            context_digest = repaired_digest;
+            workspace_context["generation_input_digest"] = serde_json::json!(context_digest);
+            workspace_context["response_guidance"] = serde_json::json!(guidance);
+        }
+        self.last_context = Some(workspace_context.clone());
+        let language_result = language_results.swap_remove(selected_index);
+        let generated_candidates = self.last_generated_candidates.clone();
+        let provider_selection_trace = provider_selection.clone();
         let next_core_state = core_state.after_response(
             response_gate.decision,
             &language_result.persona.response_intent,
@@ -551,6 +1163,14 @@ impl DialogueSession {
         let conversation_trace = ConversationTrace {
             core_state_before: core_state.clone(),
             invocation_gate: invocation_gate.clone(),
+            preparation: Some(preparation.clone()),
+            assessments: assessments.clone(),
+            provider_candidates: provider_candidates.clone(),
+            provider_selection: Some(provider_selection),
+            provider_telemetry: self.language_provider_telemetry(),
+            generation_latency_ms: self.last_generation_latency_ms,
+            generated_candidates: generated_candidates.clone(),
+            language_provider_id: selected_provider_id,
             language_provider: language_result.provider.clone(),
             language_model: language_result.model.clone(),
             language_latency_ms: language_result.latency_ms,
@@ -584,7 +1204,13 @@ impl DialogueSession {
                 "draft_count": draft_outcomes.len(),
                 "drafts_activated": drafts_activated,
                 "invocation_gate": invocation_gate,
+                "provider_selection": provider_selection_trace,
+                "provider_candidates": conversation_trace.provider_candidates.clone(),
+                "provider_telemetry": conversation_trace.provider_telemetry.clone(),
+                "generated_candidates": generated_candidates,
+                "generation_latency_ms": self.last_generation_latency_ms,
                 "response_gate": response_gate,
+                "assessments": assessments,
                 "language_provider": language_provider_name,
                 "language_model": language_model,
                 "language_latency_ms": language_latency_ms,
@@ -780,5 +1406,135 @@ impl DialogueSession {
             serde_json::json!({"kind": kind, "content_digest": digest}),
         );
         Ok(evidence_id)
+    }
+}
+
+#[cfg(test)]
+mod fanout_tests {
+    use super::*;
+    use crate::llm_jev::{LanguageRequest, MockLanguageProvider, RuleBasedDecisionProvider};
+    use crate::{ResourceImplementation, RuntimeOptions};
+    use kamimusuhi_core::mutation::{MutationDomain, MutationOperation};
+    use kamimusuhi_core::persona::ProposalDraft;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
+
+    struct CoordinatedProvider {
+        id: String,
+        started: mpsc::Sender<String>,
+        released: Arc<AtomicBool>,
+    }
+
+    impl LanguageProvider for CoordinatedProvider {
+        fn generate(&self, request: &LanguageRequest) -> Result<LanguageResult, ConversationError> {
+            self.started.send(self.id.clone()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !self.released.load(Ordering::SeqCst) {
+                if Instant::now() >= deadline {
+                    return Err(ConversationError::Timeout);
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let mut result = MockLanguageProvider.generate(request)?;
+            result.persona.response_intent = format!("{} response", self.id);
+            if self.id != "primary" {
+                result.persona.proposals.push(ProposalDraft {
+                    domain: MutationDomain::Relationship,
+                    operation: MutationOperation::Fact,
+                    subject_key: Some("alice".to_owned()),
+                    candidate: serde_json::json!({ "marker": "UNSELECTED_PROPOSAL" }),
+                    evidence_refs: vec![request.persona_input.input.evidence_id],
+                    supersedes: None,
+                    origin_class: OriginClass::Inferred,
+                });
+            }
+            // Deliberately retains MockLanguageProvider's primary ID. The host
+            // must bind this response to the registered organ that made it.
+            Ok(result)
+        }
+
+        fn descriptor(&self) -> PersonaBackendDescriptor {
+            MockLanguageProvider.descriptor()
+        }
+    }
+
+    #[test]
+    fn all_organs_start_before_release_and_only_selected_proposals_reach_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut runtime = Runtime::init(
+            dir.path(),
+            RuntimeOptions::deterministic(42),
+            ResourceImplementation::FakeA,
+        )
+        .unwrap();
+        let mut session = DialogueSession::start_with_providers(
+            &mut runtime,
+            "alice",
+            PrivacyConstraint::LocalOnly,
+            Box::new(RuleBasedDecisionProvider),
+            Some(Box::new(MockLanguageProvider)),
+        )
+        .unwrap();
+        session.set_debug_trace(true);
+        let (started_tx, started_rx) = mpsc::channel();
+        let released = Arc::new(AtomicBool::new(false));
+        for id in ["primary", "extra-a", "extra-b"] {
+            if id != "primary" {
+                let mut metadata = session.language_candidates[0].clone();
+                metadata.id = id.to_owned();
+                session.language_candidates.push(metadata);
+            }
+            session.language_providers.insert(
+                id.to_owned(),
+                Box::new(CoordinatedProvider {
+                    id: id.to_owned(),
+                    started: started_tx.clone(),
+                    released: Arc::clone(&released),
+                }),
+            );
+        }
+        let controller = std::thread::spawn(move || {
+            let mut seen = BTreeSet::new();
+            for _ in 0..3 {
+                match started_rx.recv_timeout(Duration::from_secs(2)) {
+                    Ok(id) => {
+                        seen.insert(id);
+                    }
+                    Err(_) => break,
+                }
+            }
+            released.store(true, Ordering::SeqCst);
+            seen
+        });
+        let reply = session
+            .turn(&mut runtime, "こんにちは", |_| Ok(()))
+            .unwrap();
+        assert_eq!(
+            controller.join().unwrap(),
+            BTreeSet::from([
+                "primary".to_owned(),
+                "extra-a".to_owned(),
+                "extra-b".to_owned()
+            ])
+        );
+        assert_eq!(reply.response, "primary response");
+        assert_eq!(reply.c0.as_ref().unwrap().drafts_submitted, 0);
+        assert!(session.writer.is_none());
+        let trace = reply.llm_jev.unwrap();
+        assert_eq!(trace.generated_candidates.len(), 3);
+        for telemetry in trace.provider_telemetry.values() {
+            assert_eq!(telemetry.calls, 1);
+            assert_eq!(telemetry.successes, 1);
+        }
+        let metadata = serde_json::to_string(&trace).unwrap();
+        assert!(!metadata.contains("UNSELECTED_PROPOSAL"));
+        assert!(!metadata.contains("extra-a response"));
+        let history = session.history_for_display(&runtime).unwrap();
+        assert!(
+            history
+                .iter()
+                .all(|message| !message.text.contains("extra-"))
+        );
     }
 }

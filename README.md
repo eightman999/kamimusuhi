@@ -402,6 +402,26 @@ OpenAI互換APIへ接続して自由入力に返答し、同じ相手との最�
 
 MIO coordinatorのURL・実験ID・genome IDを後から設定すると、その個体の完了済み評価記録を読み取り、出典・時刻と一緒に発話APIへ渡せます。モデルの言語能力によって応答の正確さは変わります。実行中の神経状態のストリーム、発話の自律開始、音声出力は今後の段階です。設定、上限、検証結果は [Text dialogue v0](./docs/implementation/text-dialogue-v0.md) を参照してください。
 
+### ネイティブ対話GUI
+
+現在の実API構成はHAIのLLM-jp（primary）とQwenの2モデルです。LFMは生成対象から除外し、primaryと同じHAI presetは重複登録しません。環境変数は [会話側K-CORE + LLM + Jev](./docs/kcore_llm_jev.md) を参照してください。
+
+画像の暗色・高密度パネルを視覚参考にした、Rust/eframe製のネイティブGUIを起動できます。Webサーバーは使わず、専用ワーカーが Runtime と DialogueSession を常駐保持します。
+
+    # 外部送信なしのMock / local-only
+    ./scripts/run-desktop.sh
+
+    # Jev -> 全対象器官の並行生成 -> Jevの候補選択・gate（外部送信を明示）
+    /Users/eightman/dev/sandbox/kamimusuhi/scripts/run-desktop.sh \
+      --privacy unconstrained \
+      --dir /Users/eightman/dev/sandbox/kamimusuhi/.local/desktop
+
+画面にはチャット、会話用K-CORE state、追加LLM API登録、生成候補一覧、Jevの根拠・帰属・依頼適合性評価と各遅延を表示します。`HAI_API_KEY` をexportして起動すると、HAIの `qwen3.8-27b-uncensored` と `llm-jp-4-vl-9b` を自動登録します。追加APIはOpenAI-compatible `/chat/completions` として登録します。発話前のJev batchで発話可否・記憶の関連性・不足情報を判定した後、primaryを含む有効・privacy許可・必要な認証設定済みの全器官が並行生成します。全件の完了またはtimeoutを待ち、候補選択と候補別評価・gateを一つのJev batchで取得します。初回生成の待ち時間は最も遅い器官に左右されます。
+
+選択は生成済み応答の品質を優先し、遅延・成功率は補助情報です。空の応答と16 KiB超の応答を除外し、有効な応答と実際の出典付き根拠を全文で評価します。`RETRY` は理由に応じた修正指示を付け、選択された器官だけを1回再生成して候補群を再評価します。通常のJev論理呼出しは2回、再生成時は3回です。設定済みJevの失敗を自動ACCEPTやprimary選択で補いません。キー未設定時はMock互換のrule-based経路を使い、意味評価は未実施と明示します。実APIでの精度・速度改善は未検証です。
+
+トレースにはprimary・retryを含む全試行のID、model、遅延、bytes、エラーと最終採用マークを表示します。送信時に前回のトレースを消し、失敗したターンでも生成レポートを表示します。レポートはターン終了後に届き、生成途中の進捗ではありません。初回並行生成のwall timeとretryの時間を分け、統計は呼出し・セッション内の観測値として扱います。GPU使用率・料金・tokens/sや実運用のスループットは示しません。詳細は [Native dialogue GUI](./docs/native-dialogue-gui.md) を参照してください。
+
 実験成果は [研究catalog](./knowledge/experiment-findings.json) に結論・限界・出典の版を記録し、対話開始時にLibraryへ蓄積します。質問とMIOの状態に関連する最大4カードを想起し、失敗・失効・再評価待ちも保持します。最初の8カードと動作への反映、追加手順は [実験成果の反映 v0](./docs/implementation/research-integration-v0.md) を参照してください。
 
 ### 実モデルの Persona Core を試す

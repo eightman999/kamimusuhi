@@ -7,6 +7,7 @@ members = [
     "crates/kamimusuhi-resource-http",
     "crates/kamimusuhi-testkit",
     "crates/kamimusuhi-runtime",
+    "crates/kamimusuhi-desktop",
 ]
 
 [workspace.package]
@@ -27,6 +28,7 @@ kamimusuhi-testkit = { path = "crates/kamimusuhi-testkit" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
+eframe = { version = "=0.33.3", default-features = false, features = ["default_fonts", "glow"] }
 uuid = { version = "1.26", features = ["v4"] }
 sha2 = "0.11"
 rusqlite = { version = "0.40", features = ["bundled"] }

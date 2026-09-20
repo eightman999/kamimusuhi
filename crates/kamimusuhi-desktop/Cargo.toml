@@ -1,0 +1,19 @@
+[package]
+name = "kamimusuhi-desktop"
+description = "Native Kamimusuhi dialogue surface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+eframe = { workspace = true }
+kamimusuhi-core = { workspace = true }
+kamimusuhi-runtime = { path = "../kamimusuhi-runtime" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

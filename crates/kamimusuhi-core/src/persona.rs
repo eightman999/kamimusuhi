@@ -63,6 +63,17 @@ pub struct ConversationMessage {
     pub text: String,
 }
 
+/// Host-authored instructions for this generation only. Never remembered as
+/// an experience or accepted as mutation authority. Previous candidate prose
+/// remains untrusted material to repair, not new evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResponseGuidance {
+    pub reason_code: String,
+    pub instruction: String,
+    pub previous_response_digest: Option<String>,
+    pub previous_response: Option<String>,
+}
+
 /// Non-durable state of the session this turn belongs to.
 ///
 /// Working state, not memory: it describes the conversation as a running
@@ -133,6 +144,8 @@ pub struct PersonaEnvelope {
     /// own section so a language backend cannot mistake it for any of those.
     #[serde(default)]
     pub conversation_core: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_guidance: Option<ResponseGuidance>,
     /// Runtime observations supplied independently of generated prose.
     /// These measured values are not emotions, bodily sensations or beliefs.
     #[serde(default)]
@@ -198,6 +211,7 @@ impl PersonaEnvelope {
             persona_seed: None,
             session,
             conversation_core: None,
+            response_guidance: None,
         }
     }
 
@@ -258,6 +272,7 @@ impl PersonaEnvelope {
             && self.organ_signals.is_empty()
             && self.conversation_history.is_empty()
             && self.conversation_core.is_none()
+            && self.response_guidance.is_none()
             && self.observed_runtime.is_none()
             && self.mio_observation.is_none()
             && self.research_findings.is_none()
