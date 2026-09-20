@@ -1034,13 +1034,14 @@ impl DialogueSession {
         };
         let generation_started = Instant::now();
         let (attempt_rx, provider_count) = self.start_language_race(&language_request);
-        let mut language_results = Vec::new();
         let mut first_error = None;
-        let mut assessment = None;
+        let mut accepted = None;
+        let mut retry_fallback = None;
+        let mut rejected_fallback = None;
         let mut race_assessments = Vec::new();
-        let mut selected_index = 0_usize;
         let mut received = 0_usize;
-        while received < provider_count {
+
+        'race: while received < provider_count {
             let first = match attempt_rx.recv() {
                 Ok(attempt) => attempt,
                 Err(_) => break,
@@ -1049,8 +1050,8 @@ impl DialogueSession {
             let mut ready = vec![first];
 
             // Give simultaneously-finishing local/fast organs a tiny shared
-            // grace window. This is one deadline for the whole batch, not per
-            // provider, so an unbounded provider list cannot multiply it.
+            // grace window. This is one deadline for the whole ready batch,
+            // never one delay per configured provider.
             let grace_deadline = Instant::now() + Duration::from_millis(10);
             while received < provider_count {
                 let remaining = grace_deadline.saturating_duration_since(Instant::now());
@@ -1068,11 +1069,11 @@ impl DialogueSession {
                 }
             }
 
-            let before = language_results.len();
+            let mut ready_results = Vec::new();
             for attempt in ready {
                 self.record_language_attempt(&attempt, 0);
                 match attempt.result {
-                    Ok(result) => language_results.push(result),
+                    Ok(result) => ready_results.push(result),
                     Err(error) => {
                         if first_error.is_none() {
                             first_error = Some(error);
@@ -1080,46 +1081,59 @@ impl DialogueSession {
                     }
                 }
             }
-            if language_results.len() == before {
-                continue;
-            }
 
-            // Fastest valid response gets the first quality check. If Jev does
-            // not accept it, keep racing and re-assess the enlarged anonymous
-            // candidate pool when another organ finishes.
-            let (candidate_assessment, candidate_index) = self.assess_language_responses(
-                &language_request,
-                &language_results,
-                &assessment_evidence,
-            )?;
-            let gate = candidate_assessment.gate.decision;
-            race_assessments.push(candidate_assessment.clone());
-            assessment = Some(candidate_assessment);
-            selected_index = candidate_index;
-            match gate {
-                Decision::Accept => break,
-                Decision::Retry | Decision::Reject => {}
-                Decision::Speak | Decision::Wait | Decision::ObserveMore => {
-                    return Err(RuntimeError::Conversation(
-                        ConversationError::InvalidDecision(
-                            "response assessment returned an invocation choice".to_owned(),
-                        ),
-                    ));
+            // Judge each completion independently. Jev therefore sees a
+            // constant-size anonymous candidate set regardless of how many
+            // providers the operator registered.
+            for result in ready_results {
+                let single = vec![result];
+                let (candidate_assessment, _) = self.assess_language_responses(
+                    &language_request,
+                    &single,
+                    &assessment_evidence,
+                )?;
+                let gate = candidate_assessment.gate.decision;
+                race_assessments.push(candidate_assessment.clone());
+                match gate {
+                    Decision::Accept => {
+                        accepted = Some((single.into_iter().next().unwrap(), candidate_assessment));
+                        break 'race;
+                    }
+                    Decision::Retry => {
+                        if retry_fallback.is_none() {
+                            retry_fallback =
+                                Some((single.into_iter().next().unwrap(), candidate_assessment));
+                        }
+                    }
+                    Decision::Reject => {
+                        rejected_fallback =
+                            Some((single.into_iter().next().unwrap(), candidate_assessment));
+                    }
+                    Decision::Speak | Decision::Wait | Decision::ObserveMore => {
+                        return Err(RuntimeError::Conversation(
+                            ConversationError::InvalidDecision(
+                                "response assessment returned an invocation choice".to_owned(),
+                            ),
+                        ));
+                    }
                 }
             }
         }
         self.last_generation_latency_ms =
             u64::try_from(generation_started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        if language_results.is_empty() {
+        let (final_result, mut assessment) = if let Some(accepted) = accepted {
+            accepted
+        } else if let Some(retry) = retry_fallback {
+            retry
+        } else if let Some(rejected) = rejected_fallback {
+            rejected
+        } else {
             return Err(RuntimeError::Conversation(first_error.unwrap_or(
                 ConversationError::InvalidDecision("NO_VALID_CANDIDATES".to_owned()),
             )));
-        }
-        let mut assessment = assessment.ok_or_else(|| {
-            RuntimeError::Conversation(ConversationError::InvalidDecision(
-                "NO_RESPONSE_ASSESSMENT".to_owned(),
-            ))
-        })?;
+        };
+        let mut language_results = vec![final_result];
+        let mut selected_index = 0_usize;
         let mut assessments = race_assessments;
         let mut repaired_context = None;
         let mut response_gate = None;
