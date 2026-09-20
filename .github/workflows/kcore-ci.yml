@@ -1,0 +1,43 @@
+name: K-CORE focused CI
+
+on:
+  push:
+    paths:
+      - 'crates/**'
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/kcore-ci.yml'
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/kcore-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kcore-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kcore:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        if: ${{ !cancelled() }}
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: K-CORE and existing runtime unit tests
+        if: ${{ !cancelled() }}
+        run: cargo test -p kamimusuhi-runtime --lib
+      - name: K-CORE subprocess and continuity tests
+        if: ${{ !cancelled() }}
+        run: cargo test -p kamimusuhi-runtime --test kcore_loop

@@ -23,6 +23,7 @@ pub mod config;
 pub mod dialogue;
 pub mod error;
 pub mod inspect;
+pub mod kcore;
 pub mod mio;
 pub mod organs;
 pub mod research;
