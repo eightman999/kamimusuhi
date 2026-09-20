@@ -1,17 +1,11 @@
 """Synthetic-only independent-audit regression tests; never use K0-F records."""
 import copy
-import math
 import unittest
 
 import numpy as np
 import torch
 
-from experiments.k0_f2_interoception_confirmatory.audit import (
-    ACTIONS, AuditError, action_utilities, audit_counterfactual, audit_input_traces,
-    audit_live, audit_probe, audit_rows, audit_sessions, audit_shuffle,
-    expected_policy_sequence, independent_describe, independent_gru_inference,
-    independent_pair, independent_probe_features, independent_sign_test, unique_seed_values,
-)
+from experiments.k0_f2_interoception_confirmatory.audit import AuditError, action_utilities, audit_counterfactual, audit_input_traces, audit_rows, audit_sessions, audit_shuffle, expected_policy_sequence, independent_describe, independent_gru_inference, independent_pair, independent_probe_features, independent_sign_test, unique_seed_values
 
 
 def row(session="A", block=0, task=0, length=1):
