@@ -623,9 +623,20 @@ impl DialogueSession {
         evidence: &DecisionEvidence,
     ) -> Result<(ResponseAssessment, usize), RuntimeError> {
         let telemetry = self.language_provider_telemetry();
-        let candidate_ids = (0..results.len())
-            .map(|index| format!("candidate-{index}"))
-            .collect::<Vec<_>>();
+        let candidate_ids = results
+            .iter()
+            .map(|result| {
+                self.language_candidates
+                    .iter()
+                    .position(|candidate| candidate.id == result.provider_id)
+                    .map(|index| format!("candidate-{index}"))
+                    .ok_or_else(|| {
+                        ConversationError::InvalidDecision(
+                            "response provider has no anonymous candidate identity".to_owned(),
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, ConversationError>>()?;
         let candidates = results
             .iter()
             .enumerate()
