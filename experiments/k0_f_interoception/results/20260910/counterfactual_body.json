@@ -1,0 +1,344 @@
+{
+  "exploratory_after_failed_probe": true,
+  "confirmatory_eligible": false,
+  "decision_sha256": "9c23956d66a5604efe19d17743624adc3745942bce8969d42954ebc5f329d657",
+  "research_status_locked": "FAIL",
+  "failed_probe_sha256": "633ebbf624e114ea75473a5300f0c925960e0fe5a98aac0b272322897915dae1",
+  "experiment_scope": "exploratory_after_failed_probe",
+  "schema_version": "k0-f-policy-v1",
+  "rows": [
+    {
+      "seed": 0,
+      "architecture": "GRU128",
+      "available": true,
+      "n_pairs": 3840,
+      "action_change_rate": 0.10625,
+      "matched_utility": 0.21480912860237517,
+      "frozen_utility": 0.20097766652742796,
+      "utility_gain": 0.013831462074947204,
+      "matched_latency_seconds": 0.00840322533908117,
+      "frozen_latency_seconds": 0.008568113407265324,
+      "outcome_provenance": "measured_action_cost_replay",
+      "control": "identical task, A history, model weights and hidden; replace final body only",
+      "exploratory_after_failed_probe": true,
+      "confirmatory_eligible": false,
+      "decision_sha256": "9c23956d66a5604efe19d17743624adc3745942bce8969d42954ebc5f329d657",
+      "research_status_locked": "FAIL",
+      "failed_probe_sha256": "633ebbf624e114ea75473a5300f0c925960e0fe5a98aac0b272322897915dae1",
+      "experiment_scope": "exploratory_after_failed_probe"
+    },
+    {
+      "seed": 1,
+      "architecture": "GRU128",
+      "available": true,
+      "n_pairs": 3840,
+      "action_change_rate": 0.13385416666666666,
+      "matched_utility": 0.21935981147024802,
+      "frozen_utility": 0.2044317542841971,
+      "utility_gain": 0.01492805718605092,
+      "matched_latency_seconds": 0.008381399239018114,
+      "frozen_latency_seconds": 0.008572892742927251,
+      "outcome_provenance": "measured_action_cost_replay",
+      "control": "identical task, A history, model weights and hidden; replace final body only",
+      "exploratory_after_failed_probe": true,
+      "confirmatory_eligible": false,
+      "decision_sha256": "9c23956d66a5604efe19d17743624adc3745942bce8969d42954ebc5f329d657",
+      "research_status_locked": "FAIL",
+      "failed_probe_sha256": "633ebbf624e114ea75473a5300f0c925960e0fe5a98aac0b272322897915dae1",
+      "experiment_scope": "exploratory_after_failed_probe"
+    },
+    {
+      "seed": 2,
+      "architecture": "GRU128",
+      "available": true,
+      "n_pairs": 3840,
+      "action_change_rate": 0.09817708333333333,
+      "matched_utility": 0.21575485790116442,
+      "frozen_utility": 0.20248858776457407,
+      "utility_gain": 0.013266270136590347,
+      "matched_latency_seconds": 0.008399495472627905,
+      "frozen_latency_seconds": 0.008573476435877107,
+      "outcome_provenance": "measured_action_cost_replay",
+      "control": "identical task, A history, model weights and hidden; replace final body only",
+      "exploratory_after_failed_probe": true,
+      "confirmatory_eligible": false,
+      "decision_sha256": "9c23956d66a5604efe19d17743624adc3745942bce8969d42954ebc5f329d657",
+      "research_status_locked": "FAIL",
+      "failed_probe_sha256": "633ebbf624e114ea75473a5300f0c925960e0fe5a98aac0b272322897915dae1",
+      "experiment_scope": "exploratory_after_failed_probe"
+    },
+    {
+      "seed": 3,
+      "architecture": "GRU128",
+      "available": true,
+      "n_pairs": 3840,
+      "action_change_rate": 0.11901041666666666,
+      "matched_utility": 0.21596535726301783,
+      "frozen_utility": 0.20125738612147312,
+      "utility_gain": 0.014707971141544707,
+      "matched_latency_seconds": 0.008322069073199146,
+      "frozen_latency_seconds": 0.00854733293642577,
+      "outcome_provenance": "measured_action_cost_replay",
+      "control": "identical task, A history, model weights and hidden; replace final body only",
+      "exploratory_after_failed_probe": true,
+      "confirmatory_eligible": false,
+      "decision_sha256": "9c23956d66a5604efe19d17743624adc3745942bce8969d42954ebc5f329d657",
+      "research_status_locked": "FAIL",
+      "failed_probe_sha256": "633ebbf624e114ea75473a5300f0c925960e0fe5a98aac0b272322897915dae1",
+      "experiment_scope": "exploratory_after_failed_probe"
+    },
+    {
+      "seed": 4,
+      "architecture": "GRU128",
+      "available": true,
+      "n_pairs": 3840,
+      "action_change_rate": 0.10807291666666667,
+      "matched_utility": 0.21568891900872383,
+      "frozen_utility": 0.20410043360386299,
+      "utility_gain": 0.011588485404860849,
+      "matched_latency_seconds": 0.008383120070557954,
+      "frozen_latency_seconds": 0.008531954731703687,
+      "outcome_provenance": "measured_action_cost_replay",
+      "control": "identical task, A history, model weights and hidden; replace final body only",
+      "exploratory_after_failed_probe": true,
+      "confirmatory_eligible": false,
+      "decision_sha256": "9c23956d66a5604efe19d17743624adc3745942bce8969d42954ebc5f329d657",
+      "research_status_locked": "FAIL",
+      "failed_probe_sha256": "633ebbf624e114ea75473a5300f0c925960e0fe5a98aac0b272322897915dae1",
+      "experiment_scope": "exploratory_after_failed_probe"
+    },
+    {
+      "seed": 5,
+      "architecture": "GRU128",
+      "available": true,
+      "n_pairs": 3840,
+      "action_change_rate": 0.07239583333333334,
+      "matched_utility": 0.2078207367434023,
+      "frozen_utility": 0.2012971242368192,
+      "utility_gain": 0.006523612506583093,
+      "matched_latency_seconds": 0.008495143546302113,
+      "frozen_latency_seconds": 0.00857815968845254,
+      "outcome_provenance": "measured_action_cost_replay",
+      "control": "identical task, A history, model weights and hidden; replace final body only",
+      "exploratory_after_failed_probe": true,
+      "confirmatory_eligible": false,
+      "decision_sha256": "9c23956d66a5604efe19d17743624adc3745942bce8969d42954ebc5f329d657",
+      "research_status_locked": "FAIL",
+      "failed_probe_sha256": "633ebbf624e114ea75473a5300f0c925960e0fe5a98aac0b272322897915dae1",
+      "experiment_scope": "exploratory_after_failed_probe"
+    },
+    {
+      "seed": 6,
+      "architecture": "GRU128",
+      "available": true,
+      "n_pairs": 3840,
+      "action_change_rate": 0.10729166666666666,
+      "matched_utility": 0.22040831906514438,
+      "frozen_utility": 0.20736563239466047,
+      "utility_gain": 0.013042686670483916,
+      "matched_latency_seconds": 0.008275174291162557,
+      "frozen_latency_seconds": 0.008457382723412366,
+      "outcome_provenance": "measured_action_cost_replay",
+      "control": "identical task, A history, model weights and hidden; replace final body only",
+      "exploratory_after_failed_probe": true,
+      "confirmatory_eligible": false,
+      "decision_sha256": "9c23956d66a5604efe19d17743624adc3745942bce8969d42954ebc5f329d657",
+      "research_status_locked": "FAIL",
+      "failed_probe_sha256": "633ebbf624e114ea75473a5300f0c925960e0fe5a98aac0b272322897915dae1",
+      "experiment_scope": "exploratory_after_failed_probe"
+    },
+    {
+      "seed": 7,
+      "architecture": "GRU128",
+      "available": true,
+      "n_pairs": 3840,
+      "action_change_rate": 0.10286458333333333,
+      "matched_utility": 0.216528966275372,
+      "frozen_utility": 0.20490933595304517,
+      "utility_gain": 0.011619630322326824,
+      "matched_latency_seconds": 0.008365300400765819,
+      "frozen_latency_seconds": 0.008513628675202275,
+      "outcome_provenance": "measured_action_cost_replay",
+      "control": "identical task, A history, model weights and hidden; replace final body only",
+      "exploratory_after_failed_probe": true,
+      "confirmatory_eligible": false,
+      "decision_sha256": "9c23956d66a5604efe19d17743624adc3745942bce8969d42954ebc5f329d657",
+      "research_status_locked": "FAIL",
+      "failed_probe_sha256": "633ebbf624e114ea75473a5300f0c925960e0fe5a98aac0b272322897915dae1",
+      "experiment_scope": "exploratory_after_failed_probe"
+    }
+  ],
+  "comparisons": {
+    "GRU128": {
+      "n_seeds": 8,
+      "mean": 0.012438521930423482,
+      "sd": 0.0026917320216830864,
+      "median": 0.013154478403537131,
+      "ci95": [
+        0.01047448514944449,
+        0.01393259200837117
+      ],
+      "unit": "training_seed",
+      "bootstrap_resamples": 20000,
+      "bootstrap_seed": 1847,
+      "values": [
+        0.013831462074947204,
+        0.01492805718605092,
+        0.013266270136590347,
+        0.014707971141544707,
+        0.011588485404860849,
+        0.006523612506583093,
+        0.013042686670483916,
+        0.011619630322326824
+      ],
+      "mean_difference": 0.012438521930423482,
+      "exact_sign_p": 0.0078125,
+      "non_tied_seeds": 8,
+      "pass": true,
+      "multiplicity": "unadjusted; prespecified primary comparisons require conjunction"
+    }
+  },
+  "statistics": {
+    "GRU128": {
+      "action_change_rate": {
+        "n_seeds": 8,
+        "mean": 0.10598958333333333,
+        "sd": 0.017531284041361284,
+        "median": 0.10677083333333333,
+        "ci95": [
+          0.094140625,
+          0.1169921875
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.10625,
+          0.13385416666666666,
+          0.09817708333333333,
+          0.11901041666666666,
+          0.10807291666666667,
+          0.07239583333333334,
+          0.10729166666666666,
+          0.10286458333333333
+        ]
+      },
+      "matched_utility": {
+        "n_seeds": 8,
+        "mean": 0.21579201204118098,
+        "sd": 0.0037632040251718585,
+        "median": 0.21586010758209112,
+        "ci95": [
+          0.21313003555946702,
+          0.21800475268840716
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.21480912860237517,
+          0.21935981147024802,
+          0.21575485790116442,
+          0.21596535726301783,
+          0.21568891900872383,
+          0.2078207367434023,
+          0.22040831906514438,
+          0.216528966275372
+        ]
+      },
+      "frozen_utility": {
+        "n_seeds": 8,
+        "mean": 0.20335349011075748,
+        "sd": 0.0022441481524111385,
+        "median": 0.20329451068421853,
+        "ci95": [
+          0.20198453265669325,
+          0.20486914737216932
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.20097766652742796,
+          0.2044317542841971,
+          0.20248858776457407,
+          0.20125738612147312,
+          0.20410043360386299,
+          0.2012971242368192,
+          0.20736563239466047,
+          0.20490933595304517
+        ]
+      },
+      "utility_gain": {
+        "n_seeds": 8,
+        "mean": 0.012438521930423482,
+        "sd": 0.0026917320216830864,
+        "median": 0.013154478403537131,
+        "ci95": [
+          0.01047448514944449,
+          0.01393259200837117
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.013831462074947204,
+          0.01492805718605092,
+          0.013266270136590347,
+          0.014707971141544707,
+          0.011588485404860849,
+          0.006523612506583093,
+          0.013042686670483916,
+          0.011619630322326824
+        ]
+      },
+      "matched_latency_seconds": {
+        "n_seeds": 8,
+        "mean": 0.008378115929089347,
+        "sd": 6.405502181597676e-05,
+        "median": 0.008382259654788034,
+        "ci95": [
+          0.00833756502861947,
+          0.008420535360721928
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.00840322533908117,
+          0.008381399239018114,
+          0.008399495472627905,
+          0.008322069073199146,
+          0.008383120070557954,
+          0.008495143546302113,
+          0.008275174291162557,
+          0.008365300400765819
+        ]
+      },
+      "frozen_latency_seconds": {
+        "n_seeds": 8,
+        "mean": 0.008542867667658289,
+        "sd": 4.144342288972276e-05,
+        "median": 0.008557723171845548,
+        "ci95": [
+          0.008513551947054766,
+          0.008566701543521068
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.008568113407265324,
+          0.008572892742927251,
+          0.008573476435877107,
+          0.00854733293642577,
+          0.008531954731703687,
+          0.00857815968845254,
+          0.008457382723412366,
+          0.008513628675202275
+        ]
+      }
+    }
+  },
+  "limitation": "Archived real outcomes; body swapping is controlled in model replay, not a randomized physical intervention."
+}

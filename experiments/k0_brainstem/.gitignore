@@ -1,0 +1,6 @@
+REQUEST.md
+INTERFACES.md
+__pycache__/
+*.pyc
+artifacts/*
+!artifacts/.gitkeep

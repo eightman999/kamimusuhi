@@ -1,0 +1,27 @@
+{
+  "files": [
+    "voi_cost_curve.png",
+    "voi_performance_curve.png",
+    "reliability_curve.png",
+    "latency_curve.png",
+    "policy_intervention.png",
+    "response_ablation.png",
+    "retention_curve.png",
+    "ppo_ablation.png",
+    "ood_heatmap.png",
+    "pareto.png"
+  ],
+  "inputs": [
+    "voi_results.json",
+    "policy_interventions.json",
+    "language_response_ablation.json",
+    "retention_results.json",
+    "ood_results.json",
+    "run_summary.json"
+  ],
+  "uncertainty": "95% percentile bootstrap of independent training-seed means; episode count is not n",
+  "call_rate_unit": "fraction of episodes containing one accepted language call",
+  "reward_unit": "sum of step rewards per episode",
+  "cpu_latency_unit": "milliseconds, batch=1, four CPU threads",
+  "plot_count": 10
+}

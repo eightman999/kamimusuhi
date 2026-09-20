@@ -1,0 +1,17 @@
+{
+  "architecture": "mlp",
+  "seed": 3,
+  "arm": "B0",
+  "env": {
+    "episode_length": 48
+  },
+  "num_envs": 1024,
+  "imitation_updates": 256,
+  "ppo_updates": 8,
+  "ppo_epochs": 2,
+  "minibatch_envs": 256,
+  "validation_envs": 256,
+  "device": "cuda:0",
+  "gpu_uuid": "GPU-d11b6f7f-002d-b252-1921-149ed2d84f15",
+  "source_commit": "a8c4196ebcdc7c3d4c250da04b970931f8682ae8"
+}

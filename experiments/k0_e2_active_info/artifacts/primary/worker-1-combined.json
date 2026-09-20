@@ -1,0 +1,22 @@
+[
+  {
+    "run_id": "gru128-s1-B8",
+    "exit_code": 0,
+    "gpu_uuid": "GPU-d11b6f7f-002d-b252-1921-149ed2d84f15"
+  },
+  {
+    "run_id": "gru128-s3-B8",
+    "exit_code": 0,
+    "gpu_uuid": "GPU-d11b6f7f-002d-b252-1921-149ed2d84f15"
+  },
+  {
+    "run_id": "gru128-s5-B8",
+    "exit_code": 0,
+    "gpu_uuid": "GPU-d11b6f7f-002d-b252-1921-149ed2d84f15"
+  },
+  {
+    "run_id": "gru128-s7-B8",
+    "exit_code": 0,
+    "gpu_uuid": "GPU-d11b6f7f-002d-b252-1921-149ed2d84f15"
+  }
+]

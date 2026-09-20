@@ -1,0 +1,22 @@
+{
+  "run_id": "mlp-s7-B0",
+  "architecture": "mlp",
+  "seed": 7,
+  "arm": "B0",
+  "status": "complete",
+  "pid": 202226,
+  "started_at": 1789026167.2001011,
+  "gpu_uuid": "GPU-d11b6f7f-002d-b252-1921-149ed2d84f15",
+  "timestamp": 1789026211.0465634,
+  "update": 256,
+  "stage": "imitation",
+  "validation": {
+    "task_success": 0.68359375,
+    "scenario_macro_success": 0.6968495945135752,
+    "reward": 0.3373750150203705,
+    "call_rate": 0.1484375,
+    "action_agreement": 0.9444173574447632
+  },
+  "transitions": 12582912,
+  "finished_at": 1789026211.046563
+}

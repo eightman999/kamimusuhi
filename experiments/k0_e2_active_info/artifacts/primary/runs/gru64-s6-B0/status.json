@@ -1,0 +1,22 @@
+{
+  "run_id": "gru64-s6-B0",
+  "architecture": "gru64",
+  "seed": 6,
+  "arm": "B0",
+  "status": "complete",
+  "pid": 202391,
+  "started_at": 1789026195.6009316,
+  "gpu_uuid": "GPU-1d6afaad-67b7-b965-46c7-efe6c9c395f3",
+  "timestamp": 1789026245.0131955,
+  "update": 256,
+  "stage": "imitation",
+  "validation": {
+    "task_success": 0.99609375,
+    "scenario_macro_success": 0.9958333273728689,
+    "reward": 1.002312421798706,
+    "call_rate": 0.32421875,
+    "action_agreement": 0.964111328125
+  },
+  "transitions": 12582912,
+  "finished_at": 1789026245.0131948
+}

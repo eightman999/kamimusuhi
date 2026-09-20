@@ -1,0 +1,17 @@
+architecture: gru128
+hidden_size: 128
+density: 0.1
+seed: 0
+num_envs: 8192
+episode_length: 128
+imitation_updates: 16
+ppo_updates: 8
+learning_rate: 0.001
+ppo_epochs: 2
+minibatch_envs: 256
+gamma: 0.99
+gae_lambda: 0.95
+clip_ratio: 0.2
+llm_cost: 0.15
+eval_episodes: 512
+device: cuda:0

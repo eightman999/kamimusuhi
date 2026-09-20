@@ -1,0 +1,53 @@
+{
+  "schema_version": "k0-f-diagnostic-amendment-v1",
+  "status": "frozen_before_policy_training_and_test_performance",
+  "experiment_scope": "exploratory_after_failed_probe",
+  "confirmatory_eligible": false,
+  "research_status_locked": "FAIL",
+  "test_performance_examined_before_amendment": false,
+  "dataset_sha256": "737441329ab7bd8ea8dd34aa773757f55ff181a82eb635d65079091aff2c725b",
+  "probe_sha256": "633ebbf624e114ea75473a5300f0c925960e0fe5a98aac0b272322897915dae1",
+  "previous_probe_sha256": "7b0c04f126f18919352c4cdaeace4b4eb1f86ccb03c79f3d09718ab319bb2d4e",
+  "frozen_at_utc": "2026-09-10T12:01:34.641221+00:00",
+  "reason": "Both original and numerical-stability-corrected validation probes fail the unchanged 10% MAE gate. Subsequent policy experiments only diagnose task-specific resource decisions after documented sensor-design reconsideration; they cannot rescue the confirmatory K0-F result.",
+  "sensor_design_review": {
+    "raw_and_frame": "physical values/masks/provenance retained; no normalizer or raw data change",
+    "probe_mismatch": "10-second GPU target falls beyond current workload for 62.5% of train/validation decisions; minimum latency removes which-resource cost difference",
+    "descriptive_evidence": "validation task-centered busy vs own GPU latency correlation RTX .469 / P100 .444; not a significance claim",
+    "retained_limitation": "stable low-duty workload and short observation history may be insufficient; no target selection or further scaling search"
+  },
+  "frozen_policy": {
+    "architecture": "GRU128",
+    "seeds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "epochs": 160,
+    "training_modes": [
+      "BODY",
+      "BLIND"
+    ],
+    "primary_inputs": [
+      "BODY",
+      "BLIND",
+      "SHUFFLED",
+      "STALE"
+    ],
+    "learning_rate": 0.001,
+    "batch_size": 64,
+    "checkpoint_selection": "validation only"
+  },
+  "prohibited": [
+    "additional probe tuning",
+    "test-driven policy tuning",
+    "PASS promotion after probe failure",
+    "automatic next phase"
+  ],
+  "probe_test_evaluation": "not run; original gate enforcement retained"
+}

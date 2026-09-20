@@ -1,0 +1,389 @@
+{
+  "schema_version": "k0f.report_statistics.v1",
+  "execution_complete": true,
+  "experiment_scope": "exploratory_after_failed_probe",
+  "research_status": "FAIL",
+  "best_core_validation_only": {
+    "architecture": "GRU128",
+    "selection": "validation only",
+    "n_seeds": 8,
+    "mean_validation_utility": 0.18612275135113993,
+    "architectures_evaluated": [
+      "GRU128"
+    ]
+  },
+  "telemetry": {
+    "mac": {
+      "samples": 1087,
+      "span_seconds": 1086.008684873581,
+      "strictly_increasing": true,
+      "source_kinds": [
+        "real"
+      ],
+      "real_stream": true,
+      "max_interval_seconds": 1.009275197982788
+    },
+    "master": {
+      "samples": 1085,
+      "span_seconds": 1084.0001587867737,
+      "strictly_increasing": true,
+      "source_kinds": [
+        "real"
+      ],
+      "real_stream": true,
+      "max_interval_seconds": 1.0026628971099854
+    }
+  },
+  "frame": {
+    "frames": 1081,
+    "valid_fixed_frames": 1081,
+    "all_valid": true,
+    "normalization_identities": [
+      "fa4ccb3d405ca670bbfad8b3015fdeb733848a7bf69d308b6df8d617d23065f3"
+    ],
+    "schema_versions": [
+      "k0f.frame.v1"
+    ],
+    "mean_availability": 0.9999486072566554
+  },
+  "probe_gate": {
+    "pass": false,
+    "split": "validation",
+    "threshold_relative_mae_improvement": 0.1,
+    "relative_mae_improvement": -0.0016650756803269218,
+    "targets": [
+      "future_rtx3060_util",
+      "future_p100_util",
+      "next_job_latency_seconds"
+    ],
+    "normalized_mae": {
+      "BODY": 0.6080800418283293,
+      "BLIND": 0.6070692256244671,
+      "SHUFFLED": 0.5578533391981672,
+      "STALE": 0.78230046519274
+    },
+    "rule": "at least 2 nonconstant targets, BODY aggregate normalized MAE <= 0.9*BLIND; validation only",
+    "inferential_claim": false,
+    "independence_note": "descriptive probe gate; telemetry samples are not independent n for significance"
+  },
+  "replay_comparisons": {
+    "GRU128_BODY_vs_BLIND": {
+      "n_seeds": 8,
+      "mean": 0.036835306136093024,
+      "sd": 0.0038604167233595916,
+      "median": 0.037391593763080294,
+      "ci95": [
+        0.03447512714074831,
+        0.03953377578080601
+      ],
+      "unit": "training_seed",
+      "bootstrap_resamples": 20000,
+      "bootstrap_seed": 1847,
+      "values": [
+        0.03333937940760734,
+        0.0326414721718796,
+        0.03854391365302945,
+        0.0443252948660984,
+        0.03317969009784369,
+        0.03786951136612515,
+        0.03692325510981695,
+        0.03785993241634364
+      ],
+      "mean_difference": 0.036835306136093024,
+      "exact_sign_p": 0.0078125,
+      "non_tied_seeds": 8,
+      "pass": true,
+      "multiplicity": "unadjusted; prespecified primary comparisons require conjunction"
+    },
+    "GRU128_BODY_vs_SHUFFLED": {
+      "n_seeds": 8,
+      "mean": 0.015061084510695849,
+      "sd": 0.014064649200533219,
+      "median": 0.013656480665209372,
+      "ci95": [
+        0.006069726829545403,
+        0.024275106199420794
+      ],
+      "unit": "training_seed",
+      "bootstrap_resamples": 20000,
+      "bootstrap_seed": 1847,
+      "values": [
+        0.038269622950792836,
+        -0.005973045736936883,
+        0.013850298912681552,
+        0.026836518996068093,
+        0.007463604269067531,
+        0.013462662417737192,
+        0.003366072322667918,
+        0.023212941953488553
+      ],
+      "mean_difference": 0.015061084510695849,
+      "exact_sign_p": 0.0703125,
+      "non_tied_seeds": 8,
+      "pass": false,
+      "multiplicity": "unadjusted; prespecified primary comparisons require conjunction"
+    },
+    "GRU128_BODY_vs_STALE": {
+      "n_seeds": 8,
+      "mean": 0.08077157611330203,
+      "sd": 0.07146024064889646,
+      "median": 0.04031338858440374,
+      "ci95": [
+        0.03793973915333501,
+        0.13039513333421712
+      ],
+      "unit": "training_seed",
+      "bootstrap_resamples": 20000,
+      "bootstrap_seed": 1847,
+      "values": [
+        0.017036412023079123,
+        0.20344375302045137,
+        0.035394347139761806,
+        0.02304039444728312,
+        0.036763773360310864,
+        0.043863003808496615,
+        0.15109173112368052,
+        0.13553919398335287
+      ],
+      "mean_difference": 0.08077157611330203,
+      "exact_sign_p": 0.0078125,
+      "non_tied_seeds": 8,
+      "pass": true,
+      "multiplicity": "unadjusted; prespecified primary comparisons require conjunction"
+    },
+    "GRU128_BODY_vs_independently_trained_BLIND": {
+      "n_seeds": 8,
+      "mean": 0.01140715480814929,
+      "sd": 0.0061534719451472545,
+      "median": 0.009883687965365581,
+      "ci95": [
+        0.007834329561248417,
+        0.01575506475706828
+      ],
+      "unit": "training_seed",
+      "bootstrap_resamples": 20000,
+      "bootstrap_seed": 1847,
+      "values": [
+        0.006596268119096749,
+        0.005898360883369008,
+        0.011800802364518859,
+        0.023611607403950102,
+        0.006436578809333099,
+        0.009587232109424804,
+        0.010180143821306359,
+        0.01714624495419534
+      ],
+      "mean_difference": 0.01140715480814929,
+      "exact_sign_p": 0.0078125,
+      "non_tied_seeds": 8,
+      "pass": true,
+      "multiplicity": "unadjusted; prespecified primary comparisons require conjunction"
+    }
+  },
+  "counterfactual_comparison": {
+    "n_seeds": 8,
+    "mean": 0.012438521930423482,
+    "sd": 0.0026917320216830864,
+    "median": 0.013154478403537131,
+    "ci95": [
+      0.01047448514944449,
+      0.01393259200837117
+    ],
+    "unit": "training_seed",
+    "bootstrap_resamples": 20000,
+    "bootstrap_seed": 1847,
+    "values": [
+      0.013831462074947204,
+      0.01492805718605092,
+      0.013266270136590347,
+      0.014707971141544707,
+      0.011588485404860849,
+      0.006523612506583093,
+      0.013042686670483916,
+      0.011619630322326824
+    ],
+    "mean_difference": 0.012438521930423482,
+    "exact_sign_p": 0.0078125,
+    "non_tied_seeds": 8,
+    "pass": true,
+    "multiplicity": "unadjusted; prespecified primary comparisons require conjunction"
+  },
+  "acquisition_attempts": [
+    {
+      "artifact_directory": "primary",
+      "collection_complete": false,
+      "included_in_primary_data": false,
+      "reason": "First attempt interrupted by Mac idle sleep; preserved, never pooled"
+    },
+    {
+      "artifact_directory": "primary_v2",
+      "collection_complete": true,
+      "included_in_primary_data": true,
+      "reason": "Fresh fixed-protocol recording with process-scoped idle sleep prevention"
+    }
+  ],
+  "record_only_workloads": [
+    {
+      "workload_label": "rtx3060_inference",
+      "start_timestamp": 1789041129.7981138,
+      "end_timestamp": 1789041154.313393,
+      "source_kind": "real",
+      "model": "existing_j72",
+      "requests": 17,
+      "record_only": true,
+      "pid": 284432,
+      "returncode": 0
+    },
+    {
+      "workload_label": "p100_inference",
+      "start_timestamp": 1789041159.3148851,
+      "end_timestamp": 1789041183.8314836,
+      "source_kind": "real",
+      "model": "existing_j72",
+      "requests": 17,
+      "record_only": true,
+      "pid": 284704,
+      "returncode": 0
+    }
+  ],
+  "live_comparisons": {
+    "BODY_vs_BLIND": {
+      "n_seeds": 8,
+      "mean": 0.0923766836183025,
+      "sd": 0.07264775413656066,
+      "median": 0.08961856057688539,
+      "ci95": [
+        0.04570124406435623,
+        0.14082603042078287
+      ],
+      "unit": "training_seed",
+      "bootstrap_resamples": 20000,
+      "bootstrap_seed": 1847,
+      "values": [
+        0.12723185618627514,
+        0.08321871455639973,
+        0.0046154356476412195,
+        0.16635504318810485,
+        0.04953047913901781,
+        0.20664197231659875,
+        0.005401561315011405,
+        0.09601840659737104
+      ],
+      "mean_difference": 0.0923766836183025,
+      "exact_sign_p": 0.0078125,
+      "non_tied_seeds": 8,
+      "pass": true,
+      "multiplicity": "unadjusted; prespecified primary comparisons require conjunction"
+    },
+    "BODY_vs_SHUFFLED": {
+      "n_seeds": 8,
+      "mean": 0.022819883811829797,
+      "sd": 0.03905740478686064,
+      "median": 0.027015521426013323,
+      "ci95": [
+        -0.0038748845218113323,
+        0.04707372777772888
+      ],
+      "unit": "training_seed",
+      "bootstrap_resamples": 20000,
+      "bootstrap_seed": 1847,
+      "values": [
+        0.011833028821304992,
+        0.06831299056633117,
+        0.009737626890758633,
+        0.04219801403072165,
+        -0.008697618232720972,
+        0.044294511486289934,
+        0.06227545080931424,
+        -0.04739493387736127
+      ],
+      "mean_difference": 0.022819883811829797,
+      "exact_sign_p": 0.2890625,
+      "non_tied_seeds": 8,
+      "pass": false,
+      "multiplicity": "unadjusted; prespecified primary comparisons require conjunction"
+    },
+    "BODY_vs_STALE": {
+      "n_seeds": 8,
+      "mean": 0.07892449868694484,
+      "sd": 0.09123339244291433,
+      "median": 0.06821820693479214,
+      "ci95": [
+        0.021779237503570442,
+        0.13983164871827586
+      ],
+      "unit": "training_seed",
+      "bootstrap_resamples": 20000,
+      "bootstrap_seed": 1847,
+      "values": [
+        0.023495541189125446,
+        0.20246000805597453,
+        0.03458597230140492,
+        0.10185044156817935,
+        -0.020917686896003262,
+        0.11465512047834636,
+        0.20174508900269453,
+        -0.026478496204163093
+      ],
+      "mean_difference": 0.07892449868694484,
+      "exact_sign_p": 0.2890625,
+      "non_tied_seeds": 8,
+      "pass": false,
+      "multiplicity": "unadjusted; prespecified primary comparisons require conjunction"
+    },
+    "BODY_vs_TRAINED_BLIND": {
+      "n_seeds": 8,
+      "mean": 0.02250211085093195,
+      "sd": 0.04362962951633201,
+      "median": 0.009522416109651544,
+      "ci95": [
+        -0.006733021528968174,
+        0.05047201248832304
+      ],
+      "unit": "training_seed",
+      "bootstrap_resamples": 20000,
+      "bootstrap_seed": 1847,
+      "values": [
+        0.0021336520861344743,
+        0.010907460822030202,
+        0.008137371397272886,
+        0.0830604560132997,
+        -0.048638098442097544,
+        0.06352579780999201,
+        -0.001427967756778059,
+        0.06231821487760192
+      ],
+      "mean_difference": 0.02250211085093195,
+      "exact_sign_p": 0.2890625,
+      "non_tied_seeds": 8,
+      "pass": false,
+      "multiplicity": "unadjusted; prespecified primary comparisons require conjunction"
+    }
+  },
+  "source_hashes": {
+    "primary/raw_mac_telemetry.jsonl": "542abe1cd4db669733bc7e87b061d9c3f96f95cebca71a449f8fb506f45926d6",
+    "primary/raw_master_telemetry.jsonl": "6719d49deeab423d4a37aa8d1bb66f8b32b8e9cabb9a2987a8c0819c089fe042",
+    "primary/interoceptive_frames.jsonl": "e2d22de665c7d6498c8b633d0269668c9d38bd901cfa6196c74ff11e2def99ef",
+    "primary/aligned_body_telemetry.jsonl": "f38b84a839f23e5616c8123e82446d60031616a4947bebbf5a95bb11feeafbfa",
+    "primary/normalization_config.json": "14bedb0549125626351a7cf8016d0e902484cf105b8d09e04fe6deb74aa66c2a",
+    "primary/workload_manifest.json": "0b0928cde8972a959a009875de7efa66a37466afd8444f49c1c000e698d70abb",
+    "primary/record_only_workload_manifest.json": "4dbae7d54f67938b46d593cfad0ab6bd1908f2a3cd599dfea94cffdb71cde31f",
+    "policy/training_config.json": "893af7d82fe504585d37861c090af28cfd3781504d5fbe5faaf3ab10aab2ab64",
+    "policy/run_summary.json": "50d032972dcd875acfaa690c88ed5c415c2c1e5cdae2f35773f6ef7885c376c9",
+    "policy/prediction_probe.json": "633ebbf624e114ea75473a5300f0c925960e0fe5a98aac0b272322897915dae1",
+    "policy/ablation_results.json": "9cb87eab3e5d5b9415acb8a5789dae2c464b688d4f8a0157af40c4ac31ba4fa7",
+    "policy/counterfactual_body.json": "5704f5bf755443018a754fdd1f3a78096aba1c23b25a586c91fe065f2b298fd2",
+    "policy/ood_results.json": "a5a0f3707f678cfeb83ea06248cab1af0e64907b4c52dcc0bd7285abcf911672",
+    "policy/final_checkpoint_results.json": "7f6f98df959859c273da65c9d0bb1c368c9d82b2ff3166800cf82d0202abecf7",
+    "live/live_results.json": "aae3730849e3fac9413659ef189283057a850067956dd5b678196e7548a20ca3",
+    "live/live_config.json": "52949909894ab5712859d9122ecda4f4ffeec74df9da606db6bfc346f1860fc3",
+    "primary/resource_summary.json": "ae3ad90b5f92846e1e46a6dac603a5358d51c9fec954050e93707f756f25bde5",
+    "primary/final_runtime_state.json": "98aff4d16c6671e8172d2d95c32123aefbb50ed6c21052f2133af8e0157d40e7",
+    "primary/baseline_integrity.json": "e4f5aca0a98d5be0b0d4c07afff4d84b6f0b4ad385dac74347ba8f212cef7b33",
+    "primary/acquisition_attempts.json": "7bb293cb955b442d6d31305e5be72082a6b3ddfa6b5cb46e760aac9629c86cdc",
+    "primary/commits.json": "d390505a50443e1f2a65170603722e5a2bee313fc8137d51fe286855aa11b3e3",
+    "primary/validation_results.json": "4fc037568a4ec49e9c2b985e33e55691b6c7070820bef834663870f5e04f37c5"
+  },
+  "read_errors": [],
+  "statistical_unit": "training seed; shared heldout workloads, not 1 Hz samples"
+}

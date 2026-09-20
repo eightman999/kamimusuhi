@@ -1,0 +1,169 @@
+{
+  "schema_version": "k0-f-probe-v2",
+  "rows": [
+    {
+      "mode": "BODY",
+      "target": "future_rtx3060_util",
+      "split": "validation",
+      "target_kind": "future_10_second_observation",
+      "n": 64,
+      "mae": 0.2113524847463204,
+      "normalized_mae": 0.8951004562196568,
+      "rmse": 0.25260763102076494,
+      "r2": -0.1770170123632604
+    },
+    {
+      "mode": "BLIND",
+      "target": "future_rtx3060_util",
+      "split": "validation",
+      "target_kind": "future_10_second_observation",
+      "n": 64,
+      "mae": 0.21935992408894953,
+      "normalized_mae": 0.9290128212308438,
+      "rmse": 0.2345882256111169,
+      "r2": -0.015084575822311264
+    },
+    {
+      "mode": "SHUFFLED",
+      "target": "future_rtx3060_util",
+      "split": "validation",
+      "target_kind": "future_10_second_observation",
+      "n": 64,
+      "mae": 0.19210935631824277,
+      "normalized_mae": 0.8136037420658593,
+      "rmse": 0.22286470952366358,
+      "r2": 0.08383770251013256
+    },
+    {
+      "mode": "STALE",
+      "target": "future_rtx3060_util",
+      "split": "validation",
+      "target_kind": "future_10_second_observation",
+      "n": 64,
+      "mae": 0.2769796944350015,
+      "normalized_mae": 1.1730387326646619,
+      "rmse": 0.30579956566687244,
+      "r2": -0.7248984683274553
+    },
+    {
+      "mode": "BODY",
+      "target": "future_p100_util",
+      "split": "validation",
+      "target_kind": "future_10_second_observation",
+      "n": 64,
+      "mae": 0.16725140676786093,
+      "normalized_mae": 0.8088738154682886,
+      "rmse": 0.1942137828158566,
+      "r2": -0.18659191974643163
+    },
+    {
+      "mode": "BLIND",
+      "target": "future_p100_util",
+      "split": "validation",
+      "target_kind": "future_10_second_observation",
+      "n": 64,
+      "mae": 0.16061501428235772,
+      "normalized_mae": 0.7767783956782198,
+      "rmse": 0.18555358028479296,
+      "r2": -0.08312846406741614
+    },
+    {
+      "mode": "SHUFFLED",
+      "target": "future_p100_util",
+      "split": "validation",
+      "target_kind": "future_10_second_observation",
+      "n": 64,
+      "mae": 0.15108673485562735,
+      "normalized_mae": 0.7306970150567421,
+      "rmse": 0.19450997826547642,
+      "r2": -0.1902140224654152
+    },
+    {
+      "mode": "STALE",
+      "target": "future_p100_util",
+      "split": "validation",
+      "target_kind": "future_10_second_observation",
+      "n": 64,
+      "mae": 0.21670356900623924,
+      "normalized_mae": 1.0480380767796047,
+      "rmse": 0.25684529152508456,
+      "r2": -1.0753173137277057
+    },
+    {
+      "mode": "BODY",
+      "target": "next_job_latency_seconds",
+      "split": "validation",
+      "target_kind": "measured_next_job_completion_cost",
+      "n": 64,
+      "mae": 0.000913524256464641,
+      "normalized_mae": 0.12026585379704255,
+      "rmse": 0.001735858207953159,
+      "r2": 0.9444378265865817
+    },
+    {
+      "mode": "BLIND",
+      "target": "next_job_latency_seconds",
+      "split": "validation",
+      "target_kind": "measured_next_job_completion_cost",
+      "n": 64,
+      "mae": 0.0008766888725592315,
+      "normalized_mae": 0.1154164599643377,
+      "rmse": 0.0018716265485101624,
+      "r2": 0.9354064542895245
+    },
+    {
+      "mode": "SHUFFLED",
+      "target": "next_job_latency_seconds",
+      "split": "validation",
+      "target_kind": "measured_next_job_completion_cost",
+      "n": 64,
+      "mae": 0.0009818370392400235,
+      "normalized_mae": 0.1292592604719,
+      "rmse": 0.00200897281489976,
+      "r2": 0.9255784260174927
+    },
+    {
+      "mode": "STALE",
+      "target": "next_job_latency_seconds",
+      "split": "validation",
+      "target_kind": "measured_next_job_completion_cost",
+      "n": 64,
+      "mae": 0.0009557476861800473,
+      "normalized_mae": 0.12582458613395375,
+      "rmse": 0.001896335310184827,
+      "r2": 0.9336896997304123
+    }
+  ],
+  "gate": {
+    "pass": false,
+    "split": "validation",
+    "threshold_relative_mae_improvement": 0.1,
+    "relative_mae_improvement": -0.0016650756803269218,
+    "targets": [
+      "future_rtx3060_util",
+      "future_p100_util",
+      "next_job_latency_seconds"
+    ],
+    "normalized_mae": {
+      "BODY": 0.6080800418283293,
+      "BLIND": 0.6070692256244671,
+      "SHUFFLED": 0.5578533391981672,
+      "STALE": 0.78230046519274
+    },
+    "rule": "at least 2 nonconstant targets, BODY aggregate normalized MAE <= 0.9*BLIND; validation only",
+    "inferential_claim": false,
+    "independence_note": "descriptive probe gate; telemetry samples are not independent n for significance"
+  },
+  "ridge_lambda": 10.0,
+  "seed": 0,
+  "fit_split": "train",
+  "feature_standardization": "train only",
+  "test_evaluated": false,
+  "body_scale_floor": 0.05,
+  "body_feature_start_index": 4,
+  "preprocessing": "task4: original train standard deviation; normalized body/mask features: max(train standard deviation,0.05)",
+  "target_weighting": "equal average after train-target standard deviation scaling",
+  "limitations": "Frozen ridge diagnostic; gate is validation screening, not primary causal policy success.",
+  "dataset_sha256": "737441329ab7bd8ea8dd34aa773757f55ff181a82eb635d65079091aff2c725b",
+  "source_sha256": "75a47f08859468d6ca2e28a2dd3f62b18d1b4ab87d31333e756431ceacd08eef"
+}
