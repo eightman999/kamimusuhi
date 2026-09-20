@@ -12,7 +12,6 @@ publish.workspace = true
 eframe = { workspace = true }
 kamimusuhi-core = { workspace = true }
 kamimusuhi-runtime = { path = "../kamimusuhi-runtime" }
-serde = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]
