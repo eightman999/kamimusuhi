@@ -1119,6 +1119,9 @@ impl DialogueSession {
                 }
             }
         }
+        // Stop accepting late race results immediately. In-flight HTTP calls
+        // may still finish, but their send fails instead of growing a queue.
+        drop(attempt_rx);
         self.last_generation_latency_ms =
             u64::try_from(generation_started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let (final_result, mut assessment) = if let Some(accepted) = accepted {
