@@ -16,8 +16,7 @@ import argparse
 import json
 from pathlib import Path
 
-from experiments.g0.evaluate import (_eval_datasets, eval_dynfeat,
-                                     eval_representation)
+from experiments.g0.evaluate import _eval_datasets, eval_representation
 from experiments.g0.representations import TorchRep
 
 from .config import load_config

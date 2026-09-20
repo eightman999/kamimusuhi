@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-import numpy as np
 
 from ..config import load_config
 from ..protocol_validator import (check_eval_isolation,
