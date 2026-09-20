@@ -2,9 +2,7 @@
 
 import numpy as np
 
-from experiments.u0.env.u0_env import (ENERGY, U0Config, U0Env,
-                                       INTERNAL_NAMES, PREFERRED_RANGES,
-                                       var_deviation)
+from experiments.u0.env.u0_env import ENERGY, U0Config, U0Env, var_deviation
 
 
 def cfg(**kw):
