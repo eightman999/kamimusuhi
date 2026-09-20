@@ -355,7 +355,10 @@ fn fastest_acceptable_candidate_returns_without_waiting_for_slow_organs() {
         .unwrap();
 
     assert_eq!(reply.response, "fast primary");
-    assert_eq!(reply.llm_jev.as_ref().unwrap().language_provider_id, "primary");
+    assert_eq!(
+        reply.llm_jev.as_ref().unwrap().language_provider_id,
+        "primary"
+    );
     assert_eq!(reply.llm_jev.as_ref().unwrap().assessments.len(), 1);
     assert_eq!(session.last_generated_candidates().len(), 1);
     assert_eq!(session.last_generated_candidates()[0].id, "primary");
@@ -426,10 +429,6 @@ fn gate_rejection_and_jev_failures_never_deliver_another_candidate() {
     for script in [
         vec![
             jev_preparation("SPEAK"),
-            FixtureResponse::Status { code: 503 },
-        ],
-        vec![
-            jev_preparation("SPEAK"),
             jev_assessment("backup", &[("primary", "ACCEPT"), ("backup", "REJECT")]),
         ],
         vec![
@@ -496,11 +495,13 @@ fn invalid_batch_answers_are_repaired_once_before_any_response_is_delivered() {
     cases.push(("incomplete probabilities", missing_probability));
 
     let mut extra_probability = valid.clone();
-    extra_probability["answers"]["task_fit_candidate-0"]["probabilities"]["UNKNOWN"] = serde_json::json!(0.0);
+    extra_probability["answers"]["task_fit_candidate-0"]["probabilities"]["UNKNOWN"] =
+        serde_json::json!(0.0);
     cases.push(("unknown probability key", extra_probability));
 
     let mut probability_sum = valid.clone();
-    probability_sum["answers"]["task_fit_candidate-0"]["probabilities"]["MET"] = serde_json::json!(0.5);
+    probability_sum["answers"]["task_fit_candidate-0"]["probabilities"]["MET"] =
+        serde_json::json!(0.5);
     cases.push(("invalid probability sum", probability_sum));
 
     for (case, invalid) in cases {
@@ -574,7 +575,11 @@ fn accept_never_bypasses_an_unsuitable_selected_candidate() {
             "CONFLICT",
             &["CONSISTENT", "CONFLICT", "UNCLEAR", "NOT_APPLICABLE"][..],
         ),
-        ("task_fit_candidate-1", "UNMET", &["MET", "UNMET", "UNCLEAR"][..]),
+        (
+            "task_fit_candidate-1",
+            "UNMET",
+            &["MET", "UNMET", "UNCLEAR"][..],
+        ),
     ] {
         let mut answer =
             assessment_answers("backup", &[("primary", "ACCEPT"), ("backup", "ACCEPT")]);
@@ -606,12 +611,8 @@ fn accept_never_bypasses_an_unsuitable_selected_candidate() {
 }
 
 #[test]
-fn invocation_wait_or_failure_does_not_launch_any_language_organ() {
-    for answer in [
-        jev_preparation("WAIT"),
-        jev_preparation("OBSERVE_MORE"),
-        FixtureResponse::Status { code: 503 },
-    ] {
+fn invocation_wait_or_observe_more_refusal_never_launches_a_language_organ() {
+    for answer in [jev_preparation("WAIT"), jev_preparation("OBSERVE_MORE")] {
         let primary = FixtureServer::always(FixtureResponse::ok("unused")).unwrap();
         let backup = FixtureServer::always(FixtureResponse::ok("unused")).unwrap();
         let judge = FixtureServer::always(answer).unwrap();
@@ -626,6 +627,67 @@ fn invocation_wait_or_failure_does_not_launch_any_language_organ() {
         assert_eq!(primary.request_count(), 0);
         assert_eq!(backup.request_count(), 0);
         assert!(session.last_generated_candidates().is_empty());
+    }
+}
+
+#[test]
+fn unavailable_jev_degrades_to_the_local_gate_and_still_delivers() {
+    // Jev down at preparation: the whole turn degrades to the local gate —
+    // the same mode an unconfigured deployment runs — rather than wedging.
+    // Both stages are marked `fallback` and the degradation is traced.
+    {
+        let primary = FixtureServer::always(FixtureResponse::ok("degraded response")).unwrap();
+        let backup = FixtureServer::always(FixtureResponse::ok("backup response")).unwrap();
+        let judge = FixtureServer::always(FixtureResponse::Status { code: 503 }).unwrap();
+        let (_dir, mut runtime, mut session) = fanout_session(&primary, &backup, &judge);
+        let reply = session
+            .turn(&mut runtime, "こんにちは", |_| Ok(()))
+            .expect("an unavailable Jev must not deadlock the turn");
+        assert!(reply.response == "degraded response" || reply.response == "backup response");
+        assert_eq!(judge.request_count(), 1);
+        let trace = reply.llm_jev.unwrap();
+        assert_eq!(
+            trace.decision_fallbacks,
+            vec![
+                "prepare_turn:HTTP_STATUS".to_owned(),
+                "assess_responses:HTTP_STATUS".to_owned()
+            ]
+        );
+        assert!(trace.invocation_gate.fallback);
+        assert_eq!(
+            trace.invocation_gate.fallback_reason.as_deref(),
+            Some("HTTP_STATUS")
+        );
+        assert!(trace.response_gate.fallback);
+        // The second turn re-probes Jev: still down, still delivered.
+        session
+            .turn(&mut runtime, "まだ返せますか", |_| Ok(()))
+            .expect("degraded turns keep the session usable");
+        assert_eq!(judge.request_count(), 2);
+    }
+
+    // Jev answering preparation but dying at assessment: only the failed
+    // stage degrades; the invocation gate verdict is still Jev's own.
+    {
+        let primary = FixtureServer::always(FixtureResponse::ok("primary response")).unwrap();
+        let backup = FixtureServer::always(FixtureResponse::ok("backup response")).unwrap();
+        let judge = FixtureServer::start(vec![
+            jev_preparation("SPEAK"),
+            FixtureResponse::Status { code: 503 },
+        ])
+        .unwrap();
+        let (_dir, mut runtime, mut session) = fanout_session(&primary, &backup, &judge);
+        let reply = session
+            .turn(&mut runtime, "こんにちは", |_| Ok(()))
+            .expect("an assessment-stage Jev outage must not deadlock the turn");
+        assert_eq!(judge.request_count(), 2);
+        let trace = reply.llm_jev.unwrap();
+        assert_eq!(
+            trace.decision_fallbacks,
+            vec!["assess_responses:HTTP_STATUS".to_owned()]
+        );
+        assert!(!trace.invocation_gate.fallback);
+        assert!(trace.response_gate.fallback);
     }
 }
 
