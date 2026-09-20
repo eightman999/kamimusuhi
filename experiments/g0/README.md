@@ -97,7 +97,7 @@ cause-independent distractor dims:
 
 ## Reproduce
 
-    PY=/Users/eightman/dev/sandbox/kamimusuhi/.venv/bin/python
+    PY=.venv/bin/python   # python 3.12+ with torch, numpy, pyyaml, matplotlib
     cd <worktree root>
 
     # tests
