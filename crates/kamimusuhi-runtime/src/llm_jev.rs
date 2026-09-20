@@ -887,9 +887,8 @@ impl JevDecisionProvider {
                 (
                     candidate.id.clone(),
                     format!(
-                        "Use {} with model {}. Observed calls={}, successes={}, failures={}, success_rate={}, last_latency_ms={}, ewma_latency_ms={}, last_error={}.",
-                        candidate.provider,
-                        candidate.model,
+                        "Evaluate anonymous provider candidate ID {:?}. Observed calls={}, successes={}, failures={}, success_rate={}, last_latency_ms={}, ewma_latency_ms={}, last_error={}.",
+                        candidate.id,
                         candidate.telemetry.calls,
                         candidate.telemetry.successes,
                         candidate.telemetry.failures,
@@ -901,8 +900,23 @@ impl JevDecisionProvider {
                 )
             })
             .collect();
-        let state = serde_json::to_string(request)
-            .map_err(|error| ConversationError::Serialization(error.to_string()))?;
+        let wire_candidates = request
+            .candidates
+            .iter()
+            .map(|candidate| {
+                serde_json::json!({
+                    "id": candidate.id,
+                    "telemetry": candidate.telemetry,
+                })
+            })
+            .collect::<Vec<_>>();
+        let state = serde_json::json!({
+            "user_text": request.user_text,
+            "speech_act": request.speech_act,
+            "state": request.state,
+            "candidates": wire_candidates,
+        })
+        .to_string();
         Ok(serde_json::json!({
             "model": self.config.model,
             "state": state,
