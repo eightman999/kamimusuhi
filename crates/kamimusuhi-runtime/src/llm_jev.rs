@@ -905,15 +905,15 @@ impl JevDecisionProvider {
             .iter()
             .map(|candidate| {
                 serde_json::json!({
-                    "id": candidate.id,
-                    "telemetry": candidate.telemetry,
+                    "id": &candidate.id,
+                    "telemetry": &candidate.telemetry,
                 })
             })
             .collect::<Vec<_>>();
         let state = serde_json::json!({
-            "user_text": request.user_text,
-            "speech_act": request.speech_act,
-            "state": request.state,
+            "user_text": &request.user_text,
+            "speech_act": &request.speech_act,
+            "state": &request.state,
             "candidates": wire_candidates,
         })
         .to_string();
