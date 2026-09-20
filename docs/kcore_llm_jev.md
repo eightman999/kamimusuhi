@@ -283,7 +283,8 @@ Jev評価済みとは扱わない。degrade後の候補選択もホスト側のc
   late candidate観測、Jev payloadへのmodel/provider名非漏洩、連続turnの状態整合。
 - `tests/dialogue_soak.rs`: seed固定の1,000 turn soak（`KAMIMUSUHI_SOAK_TURNS`で変更可、
   10,000対応）。crash/deadlock/thread leak/starvationなし、RSS bounded、
-  trace完備（rotation含む）、replyごとのemit 1回を検証する。
+  trace完備（rotationを無効化し、全eventが1fileに残ることを検査）、
+  replyごとのemit 1回を検証する。
 - Mock closed-loop: 外部APIなしのK-CORE state → Mock language → state update。
 - GUIの検証はdesktopの静的検査・ローカルテストと、アプリの実表示確認を区別する。
   実APIのsmokeは対象への明示的な実行承認がある場合だけ行う。credentialの値は

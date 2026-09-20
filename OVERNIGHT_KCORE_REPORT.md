@@ -36,15 +36,16 @@ Mac上で再現可能な deterministic test 付きで存在する。
   timeoutまで走るだけで結果は破棄される。
 - **Late candidates**: race終了後に完了した試行を10ms上限でdrainし、
   `late_candidates` として記録。評価・配信の対象にはしない。
-- **Jev fail-soft**: availability障害（timeout/transport/TLS/HTTP status/
-  credential/invalid config）のみ、そのターンを rule-based gate へ degrade。
+- **Jev fail-soft**: availability障害（timeout/transport/TLS/429・5xxの
+  HTTP status）のみ、そのターンを rule-based gate へ degrade。
   `fallback=true` + 障害codeを結果へ付与し、`decision_fallbacks` に
   `stage:CODE` を記録。一度degradeしたターン内は残りのJev呼出しも local gate
   で処理し、同一dead endpointへの繰り返しtimeoutを避ける。次ターンは
   Jevを再試行する（per-turn回復）。
 - **Fail-closed維持**: 応答が届いたが契約違反（malformed 1回修復後も、無効
   choice、未知候補、確率分布破綻、不適格選択、provider申告 `fallback=true`、
-  明示 `REJECT`、発話前 `WAIT`／観測先なし `OBSERVE_MORE`）は従来どおり
+  明示 `REJECT`、発話前 `WAIT`／観測先なし `OBSERVE_MORE`）と設定・request
+  起因の不備（credential未設定、無効な設定、429以外の4xx応答）は従来どおり
   エラー。自動ACCEPT・primary自動選択で補わない。
 - **Observability**: `ConversationTrace` に `total_turn_latency_ms`、
   `late_candidates`、`decision_fallbacks` を追加し、turn trace eventにも
