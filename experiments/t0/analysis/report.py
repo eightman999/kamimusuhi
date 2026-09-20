@@ -10,7 +10,6 @@ import json
 import subprocess
 from pathlib import Path
 
-from experiments.t0.analysis.protocol import PROTOCOL_VERSION
 
 GATE_INTERP_PRIMARY = .8   # H2: mean success on held-out 40/56
 GATE_INTERP_BAND = .7      # H2 secondary: mean success over the holdout bands
