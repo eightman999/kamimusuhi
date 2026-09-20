@@ -46,9 +46,16 @@ fn seeded_dialogue_soak() {
         .unwrap_or(DEFAULT_TURNS);
 
     let dir = tempfile::tempdir().unwrap();
+    // Rotation disabled: with `Some(0)` every event stays in one file, so the
+    // completeness check below is exact for any turn count — including the
+    // 10,000-turn configuration, which would otherwise rotate past the single
+    // retained generation and legitimately drop early events.
     let mut runtime = Runtime::init(
         dir.path(),
-        RuntimeOptions::deterministic(77),
+        RuntimeOptions {
+            trace_max_bytes: Some(0),
+            ..RuntimeOptions::deterministic(77)
+        },
         ResourceImplementation::FakeA,
     )
     .unwrap();
@@ -222,17 +229,20 @@ fn seeded_dialogue_soak() {
     });
     println!("{summary}");
 
-    // Trace completeness: one turn.started event per attempted turn, across
-    // the live file and its single retained rotation.
+    // Trace completeness: one turn.started event per attempted turn. Rotation
+    // is disabled for this run, so the live file holds every event and the
+    // rotated path must not exist.
     let trace_path = dir.path().join(JsonlTraceSink::FILE_NAME);
+    assert!(
+        !trace_path.with_extension("jsonl.1").exists(),
+        "rotation disabled: no previous generation may appear"
+    );
     let mut turn_starts = 0_usize;
-    for path in [trace_path.clone(), trace_path.with_extension("jsonl.1")] {
-        if let Ok(events) = read_trace(&path) {
-            turn_starts += events
-                .iter()
-                .filter(|event| event.event_kind == TraceEventKind::TurnStarted)
-                .count();
-        }
+    if let Ok(events) = read_trace(&trace_path) {
+        turn_starts += events
+            .iter()
+            .filter(|event| event.event_kind == TraceEventKind::TurnStarted)
+            .count();
     }
     assert_eq!(
         turn_starts, turns,
