@@ -29,7 +29,7 @@ import numpy as np
 import torch
 
 from .env.ctx_world import EP_LEN
-from .models.arms import ARMS, build_arm, count_params
+from .models.arms import ARMS, build_arm
 from .organs.base import DIMS, FIELDS
 from .organs.pretrain import build_organ_set
 from .runner import Intervention, rollout
