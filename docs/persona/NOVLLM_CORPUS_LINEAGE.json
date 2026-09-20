@@ -1,0 +1,113 @@
+{
+  "schema_version": "0.2",
+  "generated_at": "2026-09-17",
+  "status": "VERIFIED — reconstructed from local artifacts at /Users/eightman/dev/apps/novllm (HEAD e9deba5) plus GitHub mirror; J-series dataset membership is per-record verified, not inferred",
+  "evidence_boundary": {
+    "verified_directly": [
+      "runs/canonical_raw/legacy-main-20260906 (works-00000.jsonl: 1,189 works)",
+      "runs/tokenizer_lab/phase5-20260907 (recipes J/N/W manifests + pools + protocol)",
+      "results/phase55_cuda_same_source_20260909/bundle/dataset/{train,eval,manifest}.json (+ .sha256)",
+      "results/phase551_private/j64_run/artifacts + results/phase551_public/J64_REPORT.md",
+      "docs/{CORPUS_AUDIT_20260906, CORPUS_PHASE55_20260908, J64_P100_AND_SEED2_20260909, J72_SEED1_P100_20260909, NOVTOKENIZER_PHASE551_PLAN}.md",
+      "config/cultural/{final_registry,phase46_aozora,...}.json",
+      "cache/official_extended_utf8.zip (Aozora official metadata CSV, CC-BY-4.0)"
+    ],
+    "not_accessible": [
+      "llm_master_now remote checkpoints and logs (model weights stay remote; only metrics/manifests recovered locally)",
+      "per-span work selection inside the 100M-char tokenizer inputs (train.escaped.txt has no per-line IDs; pool membership is the honest boundary)",
+      "Phase 5-era intermediate LM runs predating phase55 (if any) — no manifests found"
+    ],
+    "rule": "lm_train/lm_eval roles are per-record verified from the dataset bundle. tokenizer_pool means 'eligible member of a fixed source pool'; the deterministic sha256 selection into the 100M-char recipe file is not manifested per-work."
+  },
+  "source_dbs": {
+    "novel_status.db": {
+      "location": "knowledge_folder/novel_status.db → symlink to charforge_cli/novel_status.db",
+      "schema": "legacy 3-table (novels_descs/episodes/rast_read_novel), user_version=0 — NOT the Room v18 schema assumed by build_dataset.py",
+      "size_bytes": 3663372288,
+      "sha256": "bf27eb37beb5f46c88ce0c4370b7a6e195cb20ef4cd531743f54324ae2c0dfc2",
+      "works": 1189, "episodes": 288358, "body_chars": 1465484376,
+      "rating": {"1_r18": 426, "2_general": 661, "5_unknown": 102},
+      "nature": "the operator's personal novel-reader library (Syosetu + Kakuyomu downloads), not a curated benchmark set"
+    },
+    "novel_status_r18.db": {
+      "works": 426, "episodes": 45497, "body_chars": 301034148,
+      "note": "100% subset of main DB (verified: 0 mismatches). Do not count as independent corpus."
+    },
+    "canonical_layer": {
+      "raw_snapshot": "runs/canonical_raw/legacy-main-20260906, snapshot_b04f8d8c..., adapter legacy_novel_status_v0 1.0.0, lossless JSONL",
+      "derived": "runs/canonical_derived/phase2-main-base-v3-20260906 (preserving renderer)",
+      "note": "canonical_corpus is a deliberate lossless redesign after CORPUS_AUDIT_20260906 found the old dataset_v2 path lossy"
+    }
+  },
+  "cultural_sources": {
+    "registry": "config/cultural/final_registry.json (13 sources)",
+    "in_j_series_lm": {
+      "aozora": "bulk mirror of aozorabunko_text + official CSV; 17,338 successful units of 17,352 eligible public-domain works (bulk_complete=false, quarantine preserved); aozora-v3 pool = 17,169 works / 267,482,756 chars",
+      "aa_private": "heuristic AA extraction from the same private library; 671 works / 11,266,211 chars"
+    },
+    "in_j_series_eval_only": {
+      "kanbun_lm": "kanbun test split (kanbun + kakikudashi categories)",
+      "technical_open": "Python 3.14.7 ja tutorial (technical category)",
+      "gyaru_synthetic": "original-authored gyaru-moji probes"
+    },
+    "acquired_but_not_in_j_series": ["kojiki_kochu (Kojiki annotated edition)", "hojoki", "jhpt_rekihaku", "jhpt_fukui", "jhpt_srhca", "jhpt_edo_cooking"],
+    "newer_expansion": "newruns/aozora, newruns/wikisource — post-dates the J-series dataset"
+  },
+  "tokenizer_layer": {
+    "phase": "Phase 5 (2026-09-07), runs/tokenizer_lab/phase5-20260907",
+    "candidates": "18 = 3 recipes × 6 vocab sizes {8k,16k,24k,32k,48k,64k}; J recipe later extended to 72k for J72",
+    "recipes": {
+      "W": {"shares": {"web": 100}, "note": "web-pure"},
+      "N": {"shares": {"web": 80, "aozora": 20}, "aozora_shares": {"shin_shin": 74, "shin_kyu": 15, "kyu_kyu": 11}},
+      "J": {"shares": {"web": 70, "aozora": 26, "aa": 4}, "aozora_shares": {"shin_shin": 50, "shin_kyu": 25, "kyu_kyu": 25}}
+    },
+    "input": "100,000,000 chars per recipe, seed 20260907; J input sha256 59676c1602602501fbe33b8fe38a5181487ecd0882444544236914a74d1adf6e",
+    "trainer": "SentencePiece 0.2.2 unigram, reversible adapter escape-e000-v2, byte_fallback, normalization=identity, split_by_whitespace=false, max_sentence_length 153624",
+    "exactness": "J-64K: 1,645/1,645 probe texts byte-exact roundtrip",
+    "naming": "J-series number = vocab size (J32=32k ... J72=72k), NOT parameter count"
+  },
+  "lm_dataset": {
+    "id": "phase55-common-lm-data-1.0",
+    "sha256": "b25391d37b412e4ef926a493eae3e933467d2773b76d3ce0ddda5c66ffce25e5",
+    "train": {"chars": 30000000, "records": 7441, "unique_document_ids": 1368,
+      "categories": {"web_novel": {"chars": 21000000, "docs": 756}, "aozora_shin_shin": {"chars": 3900000, "docs": 205}, "aozora_shin_kyu": {"chars": 1950000, "docs": 230}, "aozora_kyu_kyu": {"chars": 1950000, "docs": 135}, "aa": {"chars": 1200000, "docs": 195}}},
+    "eval": {"chars": 1625009, "records": 1637, "known_docs": 154,
+      "categories": ["web_novel(25)", "aa(26)", "aozora_shin_shin(37)", "aozora_shin_kyu(51)", "aozora_kyu_kyu(15)", "kanbun", "kakikudashi", "gyaru", "historical_kana", "old_orthography", "technical", "whitespace", "unicode_edge"]},
+    "selection": "deterministic sha256(seed, category, record id), exact prefix, no repeats; seed 20260908",
+    "contamination": {"status": "pass", "reserved_works": 313, "reserved_records": 1782, "work_overlap": 0, "record_overlap": 0, "text_overlap": 0,
+      "caveat": "tokenizer_training_exposure not certified clean: Phase5 tokenizer recipes may have seen held-out works; LM exclusions cannot undo tokenizer fitting exposure"},
+    "web_subset_measured": {"resolved_works": 754, "rating": {"general": 491, "r18": 235, "unknown_rating5": 28}, "r18_char_share_of_web": 0.289, "isekai_tensei_teni_tagged": 276, "harem_tagged": 135, "main_tags_top": {"fantasy": 200, "male_oriented": 158, "romance": 59, "bungei_literary": 49, "sf": 14}, "declared_episodes": {"median": 161, "p90": 714, "max": 6472}}
+  },
+  "j_series_runs": {
+    "common": {"params": "~150M (150,001,152 / 150,007,296 / 149,995,008 — FFN width adjusted per vocab)", "context": 4096, "precision": "FP32", "dataset": "phase55-common-lm-data-1.0 (SHA-verified identical across runs)", "eval_method": "BPB per category + hardening"},
+    "runs": [
+      {"run_id": "J32", "tokenizer": "j-reversible-sp-unigram-32k", "params": 150007296, "embedding_params": 24576000, "train_tokens": 12492649, "overall_bpb": 2.069051, "seeds": [20260908, 20260909], "status": "baseline"},
+      {"run_id": "J48", "tokenizer": "j-reversible-sp-unigram-48k", "params": 150001152, "embedding_params": 36864000, "train_tokens": 11538896, "overall_bpb": 1.998724, "seeds": [20260908, 20260909], "status": "leading candidate after Phase 5.5"},
+      {"run_id": "J64", "tokenizer": "j-reversible-sp-unigram-64k", "params": 149995008, "embedding_params": 49152000, "train_tokens": 11030202, "overall_bpb": 1.896598, "delta_vs_j48": "-5.110%", "decision": "A: second seed recommended", "seeds": [1, 2], "status": "seed1 RTX3060 complete; seed2 RTX3060 launched"},
+      {"run_id": "J72 / J72-30M", "tokenizer": "j-reversible-sp-unigram-72k (same J 100M-char input; vocab 72000)", "params": 150001152, "train_chars": 30000000, "seed": 1, "hardware": "Tesla P100", "status": "exploratory; artifacts on llm_master_now", "kamimusuhi_role": "external cognitive resource via ProbeLM server (0x0472, last_resort) — explicitly NOT Persona Core; not instruction-tuned, 0/36 task success in routing smoke", "behavior_notes": "raw LM; follows no instructions; context overflow not rejected (declared 4096 is the only defense)"},
+      {"run_id": "J96", "status": "DOES_NOT_EXIST — zero references in novllm docs/config/results"},
+      {"run_id": "J128", "status": "DOES_NOT_EXIST — zero references in novllm docs/config/results"},
+      {"run_id": "N-24K / N-32K", "tokenizer": "n-reversible-sp-unigram-24k/32k", "note": "N recipe (web80/aozora20) screened at 10M tokens in Phase 5.5 screening; no 30M main run"},
+      {"run_id": "W-*", "status": "tokenizer candidates only; no LM run"}
+    ]
+  },
+  "legacy_dataset_v2_path": {
+    "note": "separate older lineage — LoRA on Qwen/Qwen3-8B-Base, NOT the J-series. The 1,520 works / 810,533 chunks / ~5.5GB figures belong to this path (July 2026 PLAN docs).",
+    "dataset_v2_partial": "dataset_v2.tmp.partial_bak: 908 train rows / 4 works, inconsistent manifests — partial artifact, not the J-series input",
+    "runs": ["2026-07-29 non-ctx seq2048 → step 600", "2026-07-30 probe-B ctx4096", "2026-07-31 ctx4096 phase1 QLoRA r=16 → step 418/1000 stopped"]
+  },
+  "known_contamination_and_caveats": [
+    "Author notes / afterwords (後書き・活動報告・ブクマ依頼) are present verbatim in training text — visible in the first line of the J tokenizer input itself",
+    "Web works are the operator's reading library; selection bias = personal taste, not corpus design",
+    "aozora bulk download incomplete (bulk_complete=false); pool = 17,169 of 17,352 eligible works",
+    "AA pool is heuristic-only extraction from the same library (not an independent source)",
+    "3 LM-train works (n4694ep, n5304ho, +1) are absent from the current DB snapshot — removed post-build",
+    "Phase 5-era stats (73% first-person etc.) describe dataset_v2, not the J-series dataset; J-series web subset measured separately here"
+  ],
+  "verification": {
+    "dataset_sha256": "b25391d37b412e4ef926a493eae3e933467d2773b76d3ce0ddda5c66ffce25e5",
+    "j_tokenizer_input_sha256": "59676c1602602501fbe33b8fe38a5181487ecd0882444544236914a74d1adf6e",
+    "source_pools_sha256": {"web": "03361affdce1df61ca02f3e9b3bf722c4cf03911adccfe8cd6d13fc49a7663ad", "aozora": "2b24ac15e3fea4f3ad4cc166c2c6c5a70c1d351f191aebc3c426ed0df24a0a6d", "aa": "be09c38ce078df1e90da1c40b8add74477d0c0b77170916a1ab09036339151ab"},
+    "registry_file": "NOVEL_SOURCE_REGISTRY.jsonl — 18,471 entries; lm_train/lm_eval verified per-record, tokenizer_pool = eligibility"
+  }
+}
