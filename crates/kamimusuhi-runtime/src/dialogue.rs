@@ -3,6 +3,7 @@
 //! text and a successful write to the output surface have separate records.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, mpsc};
 use std::time::Instant;
 
 use kamimusuhi_core::continuity::WriterIdentity;
@@ -204,7 +205,7 @@ pub struct DialogueSession {
     /// Conversation-side K-CORE state. This is not `KCore::tick()` state.
     core_state: ConversationCoreState,
     decision_provider: Box<dyn DecisionProvider>,
-    language_providers: BTreeMap<String, Box<dyn LanguageProvider>>,
+    language_providers: BTreeMap<String, Arc<dyn LanguageProvider>>,
     language_candidates: Vec<LanguageProviderCandidate>,
     last_generated_candidates: Vec<GeneratedLanguageCandidate>,
     last_generation_latency_ms: u64,
@@ -281,7 +282,10 @@ impl DialogueSession {
                 .unwrap_or_else(|_| "in-process".to_owned())
         };
         let mut language_providers = BTreeMap::new();
-        language_providers.insert(PRIMARY_LANGUAGE_PROVIDER_ID.to_owned(), language_provider);
+        language_providers.insert(
+            PRIMARY_LANGUAGE_PROVIDER_ID.to_owned(),
+            Arc::from(language_provider),
+        );
         let mut language_candidates = vec![LanguageProviderCandidate {
             id: PRIMARY_LANGUAGE_PROVIDER_ID.to_owned(),
             provider: primary_provider,
@@ -452,7 +456,7 @@ impl DialogueSession {
             let provider_kind = language_provider_kind(provider_config);
             self.language_providers.insert(
                 id.to_owned(),
-                Box::new(PersonaLanguageProvider::with_id(
+                Arc::new(PersonaLanguageProvider::with_id(
                     provider,
                     id,
                     provider_kind,
@@ -493,43 +497,28 @@ impl DialogueSession {
             .collect()
     }
 
-    /// Fan out the same immutable turn request to every currently admitted
-    /// language organ.  Providers own independent PersonaCore instances, so
-    /// the network calls can run concurrently while Runtime, telemetry and
-    /// canonical writes remain owned by this conversation thread.
-    fn generate_all_languages(
-        &mut self,
+    /// Start every admitted language organ concurrently and return results in
+    /// completion order. The caller may accept an early candidate without
+    /// waiting for slower organs; late sends are simply dropped once the turn
+    /// no longer needs them. Provider calls themselves are not force-cancelled.
+    fn start_language_race(
+        &self,
         request: &crate::llm_jev::LanguageRequest,
-    ) -> Vec<LanguageAttempt> {
-        let attempts = std::thread::scope(|scope| {
-            let mut handles = Vec::with_capacity(self.language_providers.len());
-            for (provider_id, provider) in &self.language_providers {
-                let provider_id = provider_id.clone();
-                let request = request.clone();
-                handles.push((
-                    provider_id.clone(),
-                    scope.spawn(move || {
-                        LanguageAttempt::generate(&provider_id, provider.as_ref(), &request)
-                    }),
-                ));
-            }
-            handles
-                .into_iter()
-                .map(|(provider_id, handle)| match handle.join() {
-                    Ok(attempt) => attempt,
-                    Err(_) => LanguageAttempt {
-                        provider_id,
-                        elapsed_ms: 0,
-                        result: Err(crate::llm_jev::ConversationError::Transport),
-                    },
-                })
-                .collect::<Vec<_>>()
-        });
-
-        for attempt in &attempts {
-            self.record_language_attempt(attempt, 0);
+    ) -> (mpsc::Receiver<LanguageAttempt>, usize) {
+        let (tx, rx) = mpsc::channel();
+        let count = self.language_providers.len();
+        for (provider_id, provider) in &self.language_providers {
+            let tx = tx.clone();
+            let provider_id = provider_id.clone();
+            let provider = Arc::clone(provider);
+            let request = request.clone();
+            std::thread::spawn(move || {
+                let attempt = LanguageAttempt::generate(&provider_id, provider.as_ref(), &request);
+                let _ = tx.send(attempt);
+            });
         }
-        attempts
+        drop(tx);
+        (rx, count)
     }
 
     fn record_language_attempt(&mut self, attempt: &LanguageAttempt, attempt_index: u8) {
