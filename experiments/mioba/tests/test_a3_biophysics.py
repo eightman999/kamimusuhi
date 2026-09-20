@@ -6,7 +6,6 @@ excitatory/inhibitory conductance synapses, unknown-NT policy,
 dendrite→soma propagation, soma→output relay, passive-mode freeze,
 and numerical-failure handling.
 """
-import json
 
 import numpy as np
 import pandas as pd
@@ -14,8 +13,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from experiments.mioba.anatomy.compartments import (
-    EntityReduction, compile_reduced_graph_v2)
+from experiments.mioba.anatomy.compartments import EntityReduction
 from experiments.mioba.anatomy.provenance import Provenance, rank
 from experiments.mioba.fba.torch_backend import TorchBackend
 from experiments.mioba.physio.channels import (
