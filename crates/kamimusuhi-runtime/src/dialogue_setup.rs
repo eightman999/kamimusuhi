@@ -298,11 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn switching_to_hai_never_inherits_the_grokbot_credential() {
-        let mut previous = hai_language_providers()
-            .remove(HAI_LLM_JP_PROVIDER_ID)
-            .unwrap();
-        previous.auth_env = Some(GROKBOT_API_KEY_ENV.to_owned());
+    fn provider_credentials_are_explicit_and_never_inherited() {
         assert_eq!(
             provider_auth_env("hai", Some("SHOULD_NOT_BE_USED"))
                 .unwrap()
