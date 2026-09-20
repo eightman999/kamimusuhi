@@ -1170,7 +1170,6 @@ version = "0.1.0"
 dependencies = [
  "kamimusuhi-core",
  "kamimusuhi-resource-http",
- "kamimusuhi-testkit",
  "serde",
  "serde_json",
 ]
