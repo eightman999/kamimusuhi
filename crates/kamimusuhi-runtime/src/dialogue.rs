@@ -623,10 +623,14 @@ impl DialogueSession {
         evidence: &DecisionEvidence,
     ) -> Result<(ResponseAssessment, usize), RuntimeError> {
         let telemetry = self.language_provider_telemetry();
+        let candidate_ids = (0..results.len())
+            .map(|index| format!("candidate-{index}"))
+            .collect::<Vec<_>>();
         let candidates = results
             .iter()
-            .map(|result| LanguageResponseCandidate {
-                id: result.provider_id.clone(),
+            .enumerate()
+            .map(|(index, result)| LanguageResponseCandidate {
+                id: candidate_ids[index].clone(),
                 provider: result.provider.clone(),
                 model: result.model.clone(),
                 latency_ms: result.latency_ms,
@@ -638,7 +642,8 @@ impl DialogueSession {
             .collect();
         let attempts: BTreeMap<String, u8> = results
             .iter()
-            .map(|result| {
+            .enumerate()
+            .map(|(index, result)| {
                 let digest = content_digest(result.persona.response_intent.as_bytes());
                 let attempt = self
                     .last_generated_candidates
@@ -654,7 +659,7 @@ impl DialogueSession {
                             "candidate attempt is missing".to_owned(),
                         )
                     })?;
-                Ok((result.provider_id.clone(), attempt.attempt))
+                Ok((candidate_ids[index].clone(), attempt.attempt))
             })
             .collect::<Result<_, ConversationError>>()?;
         let assessment = self
@@ -675,20 +680,20 @@ impl DialogueSession {
             )
             .into());
         }
-        let selected_index = results
+        let selected_index = candidate_ids
             .iter()
-            .position(|result| result.provider_id == assessment.selection.provider_id)
+            .position(|id| id == &assessment.selection.provider_id)
             .ok_or_else(|| {
                 ConversationError::InvalidDecision(
-                    "selected response candidate is not available".to_owned(),
+                    "selected anonymous response candidate is not available".to_owned(),
                 )
             })?;
         let selected = &results[selected_index];
-        if assessment.candidate_id != selected.provider_id
+        if assessment.candidate_id != candidate_ids[selected_index]
             || assessment.candidate_digest
                 != content_digest(selected.persona.response_intent.as_bytes())
             || assessment.evidence_digest != evidence.snapshot_digest
-            || attempts.get(&selected.provider_id) != Some(&assessment.attempt)
+            || attempts.get(&candidate_ids[selected_index]) != Some(&assessment.attempt)
         {
             return Err(ConversationError::InvalidDecision(
                 "response assessment does not match the current candidate and evidence".to_owned(),
@@ -1017,33 +1022,62 @@ impl DialogueSession {
             persona_input: input,
         };
         let generation_started = Instant::now();
-        let attempts = self.generate_all_languages(&language_request);
-        self.last_generation_latency_ms =
-            u64::try_from(generation_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let (attempt_rx, provider_count) = self.start_language_race(&language_request);
         let mut language_results = Vec::new();
         let mut first_error = None;
-        for attempt in attempts {
+        let mut assessment = None;
+        let mut selected_index = 0_usize;
+        for _ in 0..provider_count {
+            let attempt = match attempt_rx.recv() {
+                Ok(attempt) => attempt,
+                Err(_) => break,
+            };
+            self.record_language_attempt(&attempt, 0);
             match attempt.result {
                 Ok(result) => language_results.push(result),
                 Err(error) => {
                     if first_error.is_none() {
                         first_error = Some(error);
                     }
+                    continue;
+                }
+            }
+
+            // Fastest valid response gets the first quality check. If Jev does
+            // not accept it, keep racing and re-assess the enlarged anonymous
+            // candidate pool when the next organ finishes.
+            let (candidate_assessment, candidate_index) = self.assess_language_responses(
+                &language_request,
+                &language_results,
+                &assessment_evidence,
+            )?;
+            let gate = candidate_assessment.gate.decision;
+            assessment = Some(candidate_assessment);
+            selected_index = candidate_index;
+            match gate {
+                Decision::Accept => break,
+                Decision::Retry | Decision::Reject => {}
+                Decision::Speak | Decision::Wait | Decision::ObserveMore => {
+                    return Err(RuntimeError::Conversation(
+                        ConversationError::InvalidDecision(
+                            "response assessment returned an invocation choice".to_owned(),
+                        ),
+                    ));
                 }
             }
         }
+        self.last_generation_latency_ms =
+            u64::try_from(generation_started.elapsed().as_millis()).unwrap_or(u64::MAX);
         if language_results.is_empty() {
             return Err(RuntimeError::Conversation(first_error.unwrap_or(
-                crate::llm_jev::ConversationError::InvalidDecision(
-                    "NO_VALID_CANDIDATES".to_owned(),
-                ),
+                ConversationError::InvalidDecision("NO_VALID_CANDIDATES".to_owned()),
             )));
         }
-        let (mut assessment, mut selected_index) = self.assess_language_responses(
-            &language_request,
-            &language_results,
-            &assessment_evidence,
-        )?;
+        let mut assessment = assessment.ok_or_else(|| {
+            RuntimeError::Conversation(ConversationError::InvalidDecision(
+                "NO_RESPONSE_ASSESSMENT".to_owned(),
+            ))
+        })?;
         let mut assessments = Vec::new();
         let mut repaired_context = None;
         let mut response_gate = None;
@@ -1074,8 +1108,9 @@ impl DialogueSession {
                     ),
                 });
                 repair_request.constraints.push(repair.to_owned());
+                let retried_provider_id = language_results[selected_index].provider_id.clone();
                 repaired_context = Some((
-                    assessment.candidate_id.clone(),
+                    retried_provider_id.clone(),
                     json_digest(&serde_json::json!(repair_request.persona_input)),
                     repair_request
                         .persona_input
@@ -1084,7 +1119,7 @@ impl DialogueSession {
                         .clone(),
                 ));
                 language_results[selected_index] =
-                    self.generate_language(&assessment.candidate_id, &repair_request)?;
+                    self.generate_language(&retried_provider_id, &repair_request)?;
                 (assessment, selected_index) = self.assess_language_responses(
                     &language_request,
                     &language_results,
@@ -1128,7 +1163,7 @@ impl DialogueSession {
             ))
         })?;
         let provider_selection = assessment.selection.clone();
-        let selected_provider_id = provider_selection.provider_id.clone();
+        let selected_provider_id = language_results[selected_index].provider_id.clone();
         // The factual assessment snapshot remains fixed across retries, while
         // the selected generator's actual input also includes repair guidance.
         // Keep that input's provenance accurate when the repaired candidate wins.
