@@ -53,10 +53,12 @@ TYPESAFE_API_KEY=
 だけを受け付ける。返却の `choice`、`confidence`、確率分布はスキーマと意味の
 両方を検証し、壊れた応答は1回だけ再試行する。
 
-通常は発話前と生成後の2回、言語器官のRETRY時は3回の論理呼出しになる。
-各batchの形式修復を含めたHTTP試行は最大4回／6回。通信障害は自動再試行しない。
-同じrequest内の質問は独立しているため、各評価質問に候補ID・index・attempt・本文digest・
-根拠digestを明示し、他の質問で選ばれた候補を参照させない。
+最短経路では発話前preparation 1回 + 最初のresponse assessment 1回となる。
+品質NGでraceを続ける場合は完了batchごとにassessmentを追加し、全候補後の理由付きrepairを
+行う場合はさらに1回追加する。各論理batchの形式不正は1回だけ再要求できるため、HTTP試行は
+1 batchあたり最大2回。通信障害は自動再試行しない。同じrequest内の質問は独立しているため、
+各評価質問に匿名候補ID・attempt・本文digest・根拠digestを明示し、他の質問で選ばれた候補を
+参照させない。
 
 ## 判断に渡す根拠と発話前の選択
 
@@ -80,25 +82,27 @@ recall候補はepisodic memoryと過去の発言記録をそれぞれ最大4件�
 
 ## 候補別評価と理由付き再生成
 
-生成後は候補選択と全候補の5観点を同じbatchで取得する。
+生成後はactive pool（最大2候補）の候補選択と各候補の5観点を同じbatchで取得する。
 
 | 質問 | 選択肢 |
 | --- | --- |
-| `grounding_i` | `SUPPORTED / CONTRADICTED / INSUFFICIENT / NOT_APPLICABLE` |
-| `attribution_i` | `CONSISTENT / CONFLICT / UNCLEAR / NOT_APPLICABLE` |
-| `task_fit_i` | `MET / UNMET / UNCLEAR` |
-| `response_gate_i` | `ACCEPT / RETRY / REJECT` |
-| `repair_reason_i` | `NONE / GROUNDING / ATTRIBUTION / TASK_FIT / LANGUAGE` |
+| `grounding_<candidate-id>` | `SUPPORTED / CONTRADICTED / INSUFFICIENT / NOT_APPLICABLE` |
+| `attribution_<candidate-id>` | `CONSISTENT / CONFLICT / UNCLEAR / NOT_APPLICABLE` |
+| `task_fit_<candidate-id>` | `MET / UNMET / UNCLEAR` |
+| `response_gate_<candidate-id>` | `ACCEPT / RETRY / REJECT` |
+| `repair_reason_<candidate-id>` | `NONE / GROUNDING / ATTRIBUTION / TASK_FIT / LANGUAGE` |
 
 未選択の候補も含め、質問キー・選択肢・確率ラベルを過不足なく検証する。
 選んだ候補に根拠不足、帰属不明、依頼未達などがあれば、raw gateが`ACCEPT`でも
 ホスト側で`RETRY`へ変更する。具体的な修正理由と`ACCEPT`の矛盾も同様に扱う。
 `REJECT`は維持する。confidenceは正解率とみなさず、未調整の閾値には使わない。
 
-RETRYでは理由コードから固定の日本語指示を作り、元の依頼・根拠に加えて
-`RESPONSE_GUIDANCE`へ渡す。棄却候補の全文とdigestは「修正対象の未信頼データ」として
-JSONで分離し、命令や根拠にしない。選択器官だけを1回再生成し、更新した候補群を再評価する。
-採用された候補の`response_generated.input_digest`は修正指示を含む実生成入力に対応する。
+race中のRETRYは修復を即実行せず、未完了providerがあれば次の完了batchを先に判定する。
+全providerを使い切ってもACCEPTがない場合、最初のRETRY候補について理由コードから固定の
+日本語指示を作り、元の依頼・根拠に加えて`RESPONSE_GUIDANCE`へ渡す。棄却候補の全文と
+digestは「修正対象の未信頼データ」としてJSONで分離し、命令や根拠にしない。その器官だけを
+1回再生成し、修正版を再評価する。採用された候補の`response_generated.input_digest`は
+修正指示を含む実生成入力に対応する。
 明示的なdebug-contextでは、その入力のdigestと修正指示も確認できる。
 
 根拠本文64 KiB、state 128 KiB、request 256 KiBのUTF-8サイズ上限を設け、超過時は停止する。
@@ -126,7 +130,7 @@ J72は今回の経路で使わない。`KAMIMUSUHI_LLM_PROVIDER=mock`を指定�
 
 ## HAIの2モデル
 
-`HAI_API_KEY` が実行環境に設定されている場合、次の2つのOpenAI-compatible言語器官を
+`HAI_API_KEY` とJev設定が実行環境にそろっている場合、次の2つのOpenAI-compatible言語器官を
 起動時に自動登録する。キー値は設定・trace・Jevのstateへコピーしない。
 primaryに設定済みのモデルは重複登録せず、同じ自動登録presetが残っていれば除去する。
 HAI presetの自動登録は `HAI_API_KEY` とJev設定が両方ある場合だけ行い、Jev未設定時は
@@ -184,8 +188,8 @@ HAI_API_KEY=
   "response_candidate": {
     "type": "choice",
     "criteria": {
-      "primary": "Evaluate the generated response from the primary organ.",
-      "backup": "Evaluate the generated response from the registered backup organ."
+      "candidate-0": "Evaluate anonymous candidate candidate-0.",
+      "candidate-1": "Evaluate anonymous candidate candidate-1."
     }
   }
 }
@@ -246,14 +250,14 @@ Jevのキーが未設定ならrule-based decision providerを使い、外部API�
 `fallback` / `fallback_reason` を持っても、失敗したJev判定を承認の根拠にはしない。
 ローカル互換経路の根拠・帰属・依頼適合性は`NOT_EVALUATED`とし、Jev評価済みとは扱わない。
 `WAIT`と観測先のない`OBSERVE_MORE`は生成前に停止し、`REJECT`は生成済み応答を採用しない。
-`RETRY` は上述の選択器官1回の再生成・候補群全体の再選択に限る。
+`RETRY` は上述のrace継続を優先し、provider枯渇後のみ最初のRETRY候補を1回再生成する。
 
 ## 検証範囲と制限
 
 - Rust unit test: 全batch質問のschema・確率検証、根拠／候補binding、判定矛盾、
   recallの出典・subject・サイズ境界、設定済みJev失敗時の非承認、Mock互換。
 - ローカルfixture: Jevの `/v1/systemone`、LLMの`/v1/chat/completions`、2ターンの
-  preparation→並行生成→assessmentの順序、理由付きretry後の再選択、state伝播、state update。
+  preparation→race生成→匿名assessmentの順序、最速ACCEPT、品質NG後の次候補再判定、理由付きretry、state伝播、state update。
 - Mock closed-loop: 外部APIなしのK-CORE state → Mock language → state update。
 - GUIの検証はdesktopの静的検査・ローカルテストと、アプリの実表示確認を区別する。
   実APIのsmokeは対象への明示的な実行承認がある場合だけ行う。credentialの値は
