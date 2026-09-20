@@ -1,0 +1,14 @@
+{
+  "run_id": "binder-s0",
+  "model": "binder",
+  "seed": 0,
+  "status": "complete",
+  "pid": 72055,
+  "started_at": 1789116270.170617,
+  "timestamp": 1789116275.49584,
+  "step": 60,
+  "val_loss": 1.551426649093628,
+  "finished_at": 1789116275.4958389,
+  "wall_time": 5.32522177696228,
+  "best_val": 1.551426649093628
+}
