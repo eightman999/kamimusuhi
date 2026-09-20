@@ -15,7 +15,6 @@ from fastapi.responses import JSONResponse, Response
 from ..gui import mount_gui
 from ..gui.neural_activity import (InvalidFrame, MAX_FRAME_BYTES,
                                   NeuralActivityCache, StaleFrame)
-from ..storage import models as M
 from ..storage.db import InvalidTransition
 from . import lifecycle
 

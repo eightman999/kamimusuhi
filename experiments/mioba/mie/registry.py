@@ -17,7 +17,6 @@ constructor. ``module`` is required for non-builtin collectors.
 from __future__ import annotations
 
 import importlib
-from typing import Any
 
 from .collectors import BUILTIN, Collector, Normalizer
 

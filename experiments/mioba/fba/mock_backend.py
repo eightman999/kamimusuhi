@@ -11,7 +11,7 @@ import time
 
 import numpy as np
 
-from .backend import BackendUnavailable, FbaBackend, validate_neuron_selection
+from .backend import FbaBackend, validate_neuron_selection
 from .params import DEFAULT_PARAMS
 from .replicates import replicate_seeds as _default_replicate_seeds
 

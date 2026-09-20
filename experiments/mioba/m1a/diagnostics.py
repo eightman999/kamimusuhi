@@ -41,8 +41,7 @@ import torch
 
 from ..development.phenotype import develop
 from ..fba.torch_backend import TorchBackend
-from ..genome.schema import (ArtificialOrgan, Attachment, Genome,
-                             ParameterMutation, fba0_genome)
+from ..genome.schema import Genome, ParameterMutation, fba0_genome
 
 DEFAULT_OUT = Path(__file__).resolve().parents[1] / ".runs" / "m1a"
 

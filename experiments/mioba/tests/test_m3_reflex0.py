@@ -30,9 +30,7 @@ from experiments.mioba.development.phenotype import develop
 from experiments.mioba.fba.mock_backend import MockBackend
 from experiments.mioba.fba.replicates import replicate_seeds
 from experiments.mioba.genome import mutation as mut
-from experiments.mioba.genome.mutation import (SUBSTRATE_OPERATORS,
-                                               apply_operator,
-                                               merged_config, mutate)
+from experiments.mioba.genome.mutation import apply_operator, merged_config, mutate
 from experiments.mioba.genome.schema import (ArtificialOrgan, Attachment,
                                              Genome, SubstrateGene,
                                              fba0_genome)

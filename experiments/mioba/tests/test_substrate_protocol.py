@@ -7,11 +7,7 @@ import pytest
 
 from experiments.mioba.substrate.base import (PORT_SIGNALS, LesionSpec,
                                               PortSpec, check_substrate)
-from experiments.mioba.substrate.registry import (SubstrateRegistry,
-                                                  UnknownSubstrate,
-                                                  adapter_for,
-                                                  default_registry,
-                                                  substrate_ids_of)
+from experiments.mioba.substrate.registry import UnknownSubstrate, adapter_for, default_registry, substrate_ids_of
 from experiments.mioba.genome.schema import fba0_genome
 
 

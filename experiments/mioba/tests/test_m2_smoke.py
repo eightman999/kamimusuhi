@@ -5,11 +5,9 @@ from __future__ import annotations
 
 import random
 
-import pytest
 
 from experiments.mioba.development.phenotype import develop
 from experiments.mioba.fba.mock_backend import MockBackend
-from experiments.mioba.fba.replicates import replicate_seeds
 from experiments.mioba.genome.schema import (SubstrateGene, fba0_genome)
 from experiments.mioba.substrate.base import (LesionSpec, PortSpec,
                                               SubstrateProtocol)
