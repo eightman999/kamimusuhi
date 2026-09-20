@@ -1037,6 +1037,7 @@ impl DialogueSession {
         let mut language_results = Vec::new();
         let mut first_error = None;
         let mut assessment = None;
+        let mut race_assessments = Vec::new();
         let mut selected_index = 0_usize;
         let mut received = 0_usize;
         while received < provider_count {
@@ -1092,6 +1093,7 @@ impl DialogueSession {
                 &assessment_evidence,
             )?;
             let gate = candidate_assessment.gate.decision;
+            race_assessments.push(candidate_assessment.clone());
             assessment = Some(candidate_assessment);
             selected_index = candidate_index;
             match gate {
@@ -1118,7 +1120,7 @@ impl DialogueSession {
                 "NO_RESPONSE_ASSESSMENT".to_owned(),
             ))
         })?;
-        let mut assessments = Vec::new();
+        let mut assessments = race_assessments;
         let mut repaired_context = None;
         let mut response_gate = None;
         let mut retry_count = 0_u8;
@@ -1166,7 +1168,9 @@ impl DialogueSession {
                     &assessment_evidence,
                 )?;
             }
-            assessments.push(assessment.clone());
+            if attempt > 0 || assessments.is_empty() {
+                assessments.push(assessment.clone());
+            }
             let gate = assessment.gate.clone();
             match gate.decision {
                 Decision::Accept => {
