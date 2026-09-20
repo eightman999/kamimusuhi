@@ -2,8 +2,7 @@
 
 import numpy as np
 
-from ..env import (LatentCauseEnv, EnvConfig, N_ACTIONS, N_CAUSES,
-                   CAUSE_TABLE, TAP, NOOP)
+from ..env import LatentCauseEnv, EnvConfig, N_ACTIONS, N_CAUSES, CAUSE_TABLE, NOOP
 from ..env.dynamics import make_dynamics_params
 
 
