@@ -1152,7 +1152,12 @@ fn jev_provider_choice_uses_a_typed_choice_and_declared_candidates() {
             .unwrap()
             .contains("ewma_latency_ms=unknown")
     );
-    assert!(!body.to_string().contains("Authorization"));
+    let wire = body.to_string();
+    assert!(!wire.contains("backup-model"));
+    assert!(!wire.contains("lfm2.5"));
+    assert!(!wire.contains("https://backup"));
+    assert!(!wire.contains("http://primary"));
+    assert!(!wire.contains("Authorization"));
 }
 
 #[test]
