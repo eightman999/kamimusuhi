@@ -412,9 +412,9 @@ MIO coordinatorのURL・実験ID・genome IDを後から設定すると、その
     ./scripts/run-desktop.sh
 
     # Jev -> 全対象器官のrace開始 -> 匿名候補の品質判定（外部送信を明示）
-    /Users/eightman/dev/sandbox/kamimusuhi/scripts/run-desktop.sh \
+    ./scripts/run-desktop.sh \
       --privacy unconstrained \
-      --dir /Users/eightman/dev/sandbox/kamimusuhi/.local/desktop
+      --dir .local/desktop
 
 画面にはチャット、会話用K-CORE state、追加LLM API登録、観測済み生成候補、Jevの根拠・帰属・依頼適合性評価と各遅延を表示します。`HAI_API_KEY` とJev設定をexportして起動すると、HAIの `qwen3.8-27b-uncensored` と `llm-jp-4-vl-9b` を自動登録します。追加APIはOpenAI-compatible `/chat/completions` として登録します。発話前のJev batchで発話可否・記憶の関連性・不足情報を判定した後、primaryを含む有効・privacy許可・必要な認証設定済みの全器官をrace開始します。最初の有効完了と10ms以内の同着1件までを匿名候補として品質判定し、ACCEPTなら遅い器官を待たずに返します。
 
