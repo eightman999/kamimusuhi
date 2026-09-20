@@ -1,7 +1,7 @@
 """Real telemetry alignment and bounded, block-separated hardware job measurement."""
-import argparse,bisect,copy,hashlib,json,os,random,signal,subprocess,sys,threading,time
+import argparse, bisect, copy, json, os, random, signal, subprocess, sys, threading, time
 from pathlib import Path
-from .workloads import JobPool,devices,gpu_temperatures
+from .workloads import JobPool, devices
 from .normalize import align_records,DEFAULT_CONFIG
 
 TASKS=[dict(matrix_dimension=n,repetitions=r,deadline_seconds=d) for n,r,d in [(128,8,.001),(512,16,.004),(1024,16,.015),(2048,8,.05)]]

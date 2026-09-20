@@ -1,5 +1,4 @@
 """Reports must distinguish actual downstream evidence and never promote missing gates."""
-import copy
 import json
 from pathlib import Path
 import tempfile
