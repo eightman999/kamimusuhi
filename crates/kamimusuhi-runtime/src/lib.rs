@@ -19,6 +19,7 @@
 //! loses nothing that matters. Process B is handed a directory and no
 //! transcript, and rebuilds the individual from canonical state alone.
 
+pub mod c0;
 pub mod config;
 pub mod dialogue;
 pub mod error;

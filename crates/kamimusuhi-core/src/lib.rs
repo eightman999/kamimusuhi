@@ -15,6 +15,7 @@
 //!   the runtime layer, outside the canonical domain interface.
 
 pub mod audit;
+pub mod c0;
 pub mod continuity;
 pub mod digest;
 pub mod domain_separation;

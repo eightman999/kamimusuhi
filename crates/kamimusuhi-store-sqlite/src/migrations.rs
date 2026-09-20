@@ -38,10 +38,15 @@ const MIGRATIONS: &[Migration] = &[
         name: "resource_call_correlation",
         sql: include_str!("../migrations/0004_resource_call_correlation.sql"),
     },
+    Migration {
+        version: SchemaVersion(5),
+        name: "c0_derived_lane",
+        sql: include_str!("../migrations/0005_c0_derived_lane.sql"),
+    },
 ];
 
 /// Newest schema this build can read and write.
-pub const SUPPORTED_SCHEMA_VERSION: SchemaVersion = SchemaVersion(4);
+pub const SUPPORTED_SCHEMA_VERSION: SchemaVersion = SchemaVersion(5);
 
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 

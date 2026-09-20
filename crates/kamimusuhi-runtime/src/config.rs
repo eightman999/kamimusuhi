@@ -271,6 +271,31 @@ impl PersonaSeedSetting {
     }
 }
 
+/// Build an HTTP reflector from a persona-style provider entry. Same wire
+/// protocol as the persona backend; the reflection contract differs in what
+/// the prompt asks for and how the output is validated.
+fn build_http_reflector(
+    provider: &PersonaProviderConfig,
+) -> Result<Box<dyn kamimusuhi_core::c0::Reflector>, RuntimeError> {
+    let config = kamimusuhi_persona_http::ReflectorBackendConfig::new(
+        provider.backend_id,
+        provider.base_url.clone(),
+        provider.model.clone(),
+    )
+    .with_timeout_ms(provider.timeout_ms)
+    .with_auth_env(provider.auth_env.clone())
+    .with_trust_anchors(match &provider.tls_root_ca_path {
+        Some(path) => TrustAnchors::PemFile(path.clone()),
+        None => TrustAnchors::Webpki,
+    });
+    config
+        .validate()
+        .map_err(|message| RuntimeError::PersonaConfig { message })?;
+    Ok(Box::new(
+        kamimusuhi_persona_http::OpenAiCompatibleReflector::new(config),
+    ))
+}
+
 /// The Persona namespace of the runtime config.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersonaSetting {
@@ -356,6 +381,94 @@ impl PersonaSetting {
     }
 }
 
+/// Which implementation fills the reflection slot.
+///
+/// `Mirror` (the default) reuses whatever the persona slot is configured
+/// with — a fake persona pairs with the fake reflector, an HTTP persona
+/// endpoint is asked to reflect over the same wire protocol. The choice is
+/// recorded in every reflection report, because "the model evaluated itself"
+/// is a materially different claim than "a separate evaluator did".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReflectorBackend {
+    /// Use the persona backend's implementation and provider entry.
+    #[default]
+    Mirror,
+    /// The deterministic fixture reflector.
+    Fake,
+    /// A model behind an OpenAI-compatible endpoint.
+    OpenaiCompatible,
+}
+
+impl ReflectorBackend {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mirror => "mirror",
+            Self::Fake => "fake",
+            Self::OpenaiCompatible => "openai-compatible",
+        }
+    }
+}
+
+impl fmt::Display for ReflectorBackend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ReflectorBackend {
+    type Err = UnknownVocabulary;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "mirror" => Self::Mirror,
+            "fake" => Self::Fake,
+            "openai-compatible" => Self::OpenaiCompatible,
+            other => return Err(UnknownVocabulary::new("reflector_backend", other)),
+        })
+    }
+}
+
+/// The reflector slot: which implementation reflects on recent experience.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReflectorSetting {
+    #[serde(default)]
+    pub backend: ReflectorBackend,
+    /// Provider entry for `openai-compatible`; ignored for `fake`, and for
+    /// `mirror` (which always uses the persona provider entry).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<PersonaProviderConfig>,
+}
+
+/// C0 derived-lane configuration. Runtime infrastructure: intervals and
+/// limits, not semantics — the gate, the policy and the store decide what
+/// actually happens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct C0Config {
+    /// Run a reflection cycle every N turns in `chat`. 0 = only on `/reflect`
+    /// or the `reflect` command.
+    pub reflection_interval_turns: u32,
+    /// Whether a gate-passed proposal activates immediately. When false the
+    /// gate still runs and records its decision; activation stays manual.
+    pub auto_activate: bool,
+    /// Recent user inputs a proposal replay evaluates against.
+    pub replay_turns: usize,
+    #[serde(default)]
+    pub reflector: ReflectorSetting,
+}
+
+impl Default for C0Config {
+    fn default() -> Self {
+        Self {
+            reflection_interval_turns: 0,
+            auto_activate: true,
+            replay_turns: 4,
+            reflector: ReflectorSetting::default(),
+        }
+    }
+}
+
 /// On-disk runtime configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeConfig {
@@ -369,6 +482,11 @@ pub struct RuntimeConfig {
     /// candidate, never confused with a delegated resource.
     #[serde(default)]
     pub persona: PersonaSetting,
+    /// C0 derived-lane runtime knobs. The lane itself lives in the store;
+    /// this only configures how often reflection runs and which reflector
+    /// fills the slot.
+    #[serde(default)]
+    pub c0: C0Config,
     /// Operator-selected experimental organism, separate from canonical identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mio: Option<crate::mio::MioBinding>,
@@ -391,6 +509,7 @@ impl RuntimeConfig {
             config_version: Self::VERSION,
             node_id,
             persona: PersonaSetting::default(),
+            c0: C0Config::default(),
             mio: None,
             resources,
             providers: BTreeMap::new(),
@@ -401,6 +520,33 @@ impl RuntimeConfig {
     /// [`Self::build_registry`]: the two namespaces never mix.
     pub fn build_persona(&self) -> Result<Box<dyn PersonaCore>, RuntimeError> {
         self.persona.build()
+    }
+
+    /// Build the reflector this config selects. `Mirror` resolves against the
+    /// persona setting, so the default needs no extra configuration.
+    pub fn build_reflector(&self) -> Result<Box<dyn kamimusuhi_core::c0::Reflector>, RuntimeError> {
+        match self.c0.reflector.backend {
+            ReflectorBackend::Fake => Ok(Box::new(kamimusuhi_testkit::FakeReflector)),
+            ReflectorBackend::Mirror => match self.persona.backend {
+                PersonaBackendKind::Fake => Ok(Box::new(kamimusuhi_testkit::FakeReflector)),
+                PersonaBackendKind::OpenaiCompatible => {
+                    let provider = self.persona.provider.as_ref().ok_or_else(|| {
+                        RuntimeError::PersonaConfig {
+                            message: "mirror reflector needs a persona provider entry".to_owned(),
+                        }
+                    })?;
+                    build_http_reflector(provider)
+                }
+            },
+            ReflectorBackend::OpenaiCompatible => {
+                let provider = self.c0.reflector.provider.as_ref().ok_or_else(|| {
+                    RuntimeError::PersonaConfig {
+                        message: "openai-compatible reflector needs a provider entry".to_owned(),
+                    }
+                })?;
+                build_http_reflector(provider)
+            }
+        }
     }
 
     /// The configured disposition, if any. Separate from

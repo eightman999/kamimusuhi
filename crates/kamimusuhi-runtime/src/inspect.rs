@@ -67,6 +67,21 @@ pub struct InspectReport {
     pub relationship: MemorySummary,
     pub library: LibrarySummary,
     pub resource_calls: ResourceCallSummary,
+    /// The derived C0 lane, summarized separately from canonical state: it
+    /// has a movable head and is the only part of this report rollback can
+    /// change.
+    pub c0: C0Summary,
+}
+
+/// Derived-lane position and lifecycle counts. All `SELECT`s.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct C0Summary {
+    pub activation_seq: u64,
+    pub self_entries: usize,
+    /// lifecycle status → proposal count.
+    pub proposals: std::collections::BTreeMap<String, usize>,
+    pub evaluations: usize,
+    pub rolled_back_activations: usize,
 }
 
 /// Collect the report. Read-only by construction.
@@ -133,6 +148,29 @@ pub fn inspect(runtime: &Runtime) -> Result<InspectReport, RuntimeError> {
         resources_used,
     };
 
+    let operative = crate::c0::operative(runtime).unwrap_or_default();
+    let proposals = store.c0_proposals(individual.individual_id, None)?;
+    let mut proposal_counts: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for proposal in &proposals {
+        *proposal_counts
+            .entry(proposal.status.as_str().to_owned())
+            .or_default() += 1;
+    }
+    let activations = store.c0_activations(individual.individual_id)?;
+    let c0 = C0Summary {
+        activation_seq: operative.activation_seq,
+        self_entries: operative.view.self_model.entry_count(),
+        proposals: proposal_counts,
+        evaluations: store
+            .c0_evaluations(individual.individual_id, None, 1024)?
+            .len(),
+        rolled_back_activations: activations
+            .iter()
+            .filter(|a| a.rolled_back_at.is_some())
+            .count(),
+    };
+
     let report = InspectReport {
         individual_id: individual.individual_id,
         root_commit_id: individual.root_commit_id,
@@ -151,6 +189,7 @@ pub fn inspect(runtime: &Runtime) -> Result<InspectReport, RuntimeError> {
         relationship: summarize(MutationDomain::Relationship)?,
         library,
         resource_calls,
+        c0,
     };
 
     // Operational only. Inspection is not a canonical event and gets no audit

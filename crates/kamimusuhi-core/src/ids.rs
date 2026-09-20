@@ -196,6 +196,23 @@ define_id!(ResourceId);
 define_id!(ResourceCallId);
 define_id!(TraceId);
 define_id!(AuditEventId);
+define_id!(
+    /// One improvement proposal in the C0 derived lane. Distinct from
+    /// [`ProposalId`]: canonical mutation proposals and derived-lane
+    /// improvement proposals live under different lifecycle rules, and the
+    /// type system keeps the namespaces unmixable.
+    C0ProposalId
+);
+define_id!(
+    /// One activation in the C0 derived lane — a recorded point where the
+    /// operative view changed under an accepted proposal.
+    C0ActivationId
+);
+define_id!(
+    /// One recorded evaluation in the C0 lane (turn, replay or reflection
+    /// scope).
+    C0EvaluationId
+);
 
 /// Version of the mutation policy that evaluated a proposal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

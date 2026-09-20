@@ -21,7 +21,7 @@
 //! Two processes sharing a runtime directory must use different ID seeds. The
 //! same seed replays the same IDs, which the runtime detects and refuses.
 
-use std::io::{BufRead, IsTerminal, Write};
+use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
 
 use kamimusuhi_core::digest::content_digest;
@@ -66,7 +66,11 @@ commands:
                     and resource calls
   demo-continuity   run one phase of the deterministic restart scenario
   talk              answer --message once; JSON on stdout
-  chat              interactive text conversation; /quit or EOF to stop
+  chat              interactive text conversation; /quit or EOF to stop,
+                    /status /memory /reflect /rollback /context /help
+  reflect           run one reflection cycle now; JSON report on stdout
+  rollback          move the derived lane back one activation; JSON on stdout
+  activate          gate + apply a pending C0 proposal (--proposal-id <hex>)
   research-check    verify bundled research source files; no runtime writes
 
 options:
@@ -100,6 +104,9 @@ options:
   --persona-model <m>  model name to ask the persona endpoint for
   --persona-auth-env <name>  environment variable holding the API key (never its value)
   --persona-locality <l>  local-host | local-network | external (default: external)
+  --debug-context   talk/chat: emit the assembled workspace context
+                    (stderr in chat; a `debug_context` field in talk's JSON)
+  --proposal-id <hex>  activate only: the pending C0 proposal to gate+apply
 ";
 
 fn main() -> ExitCode {
@@ -133,7 +140,7 @@ fn run() -> Result<String, RuntimeError> {
             "--source-root is only supported by research-check".to_owned(),
         ));
     }
-    if !matches!(command.as_str(), "talk" | "chat")
+    if !matches!(command.as_str(), "talk" | "chat" | "reflect" | "activate")
         && (options.message.is_some() || options.subject.is_some() || options.mio_options_present())
     {
         return Err(RuntimeError::Usage(
@@ -199,6 +206,7 @@ fn run() -> Result<String, RuntimeError> {
             encode(&report)
         }
         "talk" | "chat" => run_dialogue(&command, &options),
+        "reflect" | "rollback" | "activate" => run_c0_command(&command, &options),
         "--help" | "-h" | "help" => Ok(USAGE.to_owned()),
         other => Err(RuntimeError::Usage(format!(
             "unknown command {other:?}\n\n{USAGE}"
@@ -270,6 +278,7 @@ fn run_dialogue(command: &str, options: &Options) -> Result<String, RuntimeError
         options.subject.as_deref().unwrap_or("local-user"),
         privacy,
     )?;
+    session.set_debug_context(options.debug_context);
     let stdout = std::io::stdout();
     let mut output = stdout.lock();
     let result = if let Some(message) = &options.message {
@@ -283,61 +292,91 @@ fn run_dialogue(command: &str, options: &Options) -> Result<String, RuntimeError
     } else {
         let stdin = std::io::stdin();
         let terminal = stdin.is_terminal();
-        if terminal {
-            eprintln!("かみむすび — テキスト対話。終了: /quit");
-        }
         let mut input = stdin.lock();
-        (|| {
-            loop {
-                if terminal {
-                    eprint!("あなた > ");
-                    std::io::stderr().flush().map_err(io_error)?;
-                }
-                // Bound allocation even for a very large piped input line.
-                let mut bytes = Vec::new();
-                let read = std::io::Read::take(&mut input, (MAX_INPUT_BYTES + 2) as u64)
-                    .read_until(b'\n', &mut bytes)
-                    .map_err(io_error)?;
-                if read == 0 {
-                    break;
-                }
-                if read == MAX_INPUT_BYTES + 2 && !bytes.ends_with(b"\n") {
-                    return Err(RuntimeError::Usage(format!(
-                        "input exceeds {MAX_INPUT_BYTES} bytes"
-                    )));
-                }
-                let line = String::from_utf8(bytes)
-                    .map_err(|_| RuntimeError::Usage("input must be UTF-8".to_owned()))?;
-                let text = line.trim_end_matches(['\r', '\n']);
-                if text.len() > MAX_INPUT_BYTES {
-                    return Err(RuntimeError::Usage(format!(
-                        "input exceeds {MAX_INPUT_BYTES} bytes"
-                    )));
-                }
-                if text == "/quit" {
-                    break;
-                }
-                if text.trim().is_empty() {
-                    continue;
-                }
-                session.turn(&mut runtime, text, |reply| {
-                    if terminal {
-                        write!(output, "かみむすび > ")?;
-                    }
-                    writeln!(output, "{}", reply.response)?;
-                    output.flush()
-                })?;
-            }
-            Ok(())
-        })()
+        kamimusuhi_runtime::c0::chat::run_repl(
+            &mut runtime,
+            &mut session,
+            &mut input,
+            &mut output,
+            terminal,
+            options.debug_context,
+        )
     };
     runtime.stopping();
     result?;
     Ok(String::new())
 }
 
-fn io_error(error: std::io::Error) -> RuntimeError {
-    RuntimeError::Usage(format!("text input/output failed: {error}"))
+/// Standalone derived-lane commands: `reflect` and `activate` read + decide;
+/// `rollback` moves the head back. None touches canonical history.
+fn run_c0_command(command: &str, options: &Options) -> Result<String, RuntimeError> {
+    let mut runtime = Runtime::open(options.dir()?, options.runtime_options())?;
+    let subject = options.subject.as_deref().unwrap_or("local-user");
+    match command {
+        "reflect" => {
+            let mut writer = None;
+            let report = kamimusuhi_runtime::c0::reflection::run(
+                &mut runtime,
+                subject,
+                None,
+                None,
+                &mut writer,
+            )?;
+            runtime.stopping();
+            encode(&report)
+        }
+        "rollback" => {
+            let outcome = kamimusuhi_runtime::c0::rollback(&runtime, None, None)?;
+            runtime.stopping();
+            encode(&serde_json::json!({
+                "rolled_back_seq": outcome.rolled_back_seq,
+                "restored_seq": outcome.restored_seq,
+                "proposal_id": outcome.proposal_id,
+            }))
+        }
+        "activate" => {
+            let raw = options.proposal_id.as_deref().ok_or_else(|| {
+                RuntimeError::Usage("activate requires --proposal-id <hex>".to_owned())
+            })?;
+            let proposal_id: kamimusuhi_core::ids::C0ProposalId = raw.parse().map_err(|_| {
+                RuntimeError::Usage("--proposal-id must be a 32-char hex id".to_owned())
+            })?;
+            let proposal = runtime
+                .store()
+                .c0_proposal(proposal_id)?
+                .ok_or_else(|| RuntimeError::Usage("proposal not found".to_owned()))?;
+            let report =
+                kamimusuhi_runtime::c0::replay::replay_proposal(&runtime, subject, &proposal)?;
+            let decision = kamimusuhi_core::c0::gate_decision(&proposal, &report);
+            match decision {
+                kamimusuhi_core::c0::GateDecision::Accept => {
+                    let activation =
+                        kamimusuhi_runtime::c0::activate(&runtime, proposal_id, None, None)?;
+                    runtime.stopping();
+                    encode(&serde_json::json!({
+                        "gate": "accept",
+                        "activation_seq": activation.activation_seq,
+                        "replay": report,
+                    }))
+                }
+                kamimusuhi_core::c0::GateDecision::Reject { reason } => {
+                    runtime.store().c0_decide(
+                        proposal_id,
+                        kamimusuhi_core::c0::ProposalStatus::Rejected,
+                        Some(&reason),
+                        runtime.now(),
+                    )?;
+                    runtime.stopping();
+                    encode(&serde_json::json!({
+                        "gate": "reject",
+                        "reason": reason,
+                        "replay": report,
+                    }))
+                }
+            }
+        }
+        _ => unreachable!(),
+    }
 }
 
 fn encode<T: serde::Serialize>(value: &T) -> Result<String, RuntimeError> {
@@ -367,6 +406,8 @@ struct Options {
     persona_model: Option<String>,
     persona_auth_env: Option<String>,
     persona_locality: Option<LocalityClass>,
+    debug_context: bool,
+    proposal_id: Option<String>,
 }
 
 impl Options {
@@ -449,6 +490,8 @@ impl Options {
                         RuntimeError::Usage("invalid --persona-locality; expected local-host, local-network or external".to_owned())
                     })?);
                 }
+                "--debug-context" => options.debug_context = true,
+                "--proposal-id" => options.proposal_id = Some(value()?),
                 "--privacy" => {
                     let raw = value()?;
                     // Hyphens on the command line, underscores on the wire.

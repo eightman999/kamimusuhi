@@ -20,8 +20,10 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::c0::{OperativeParams, SelfSnapshot};
 use crate::continuity::ContinuityHead;
 use crate::digest::json_digest;
+use crate::evidence::{EvidenceKind, EvidenceRecord};
 use crate::ids::{
     CommitId, EvidenceId, IndividualId, LibraryArtifactId, LibraryChunkId, MemoryId,
     ResourceCallId, ResourceId,
@@ -49,6 +51,16 @@ pub enum WorkspaceDomain {
     LibraryEvidence,
     /// The output of a cognitive resource call. External material.
     ExternalResourceResult,
+    /// The individual's structured self model from the C0 derived lane:
+    /// what was accepted about itself, with provenance. Derived state, not
+    /// canonical — it arrives through an activation, never through a write.
+    SelfMemory,
+    /// Canonical utterance records recalled by retrieval. Raw first-party
+    /// record, distinct from activated episodic *beliefs* about the past.
+    RecalledEvidence,
+    /// The operative policy in force for this turn, as an overlay. Derived
+    /// lane content: it modulates behaviour but is not a belief.
+    ActivePolicy,
 }
 
 impl WorkspaceDomain {
@@ -60,6 +72,9 @@ impl WorkspaceDomain {
             Self::EpisodicMemory => "EPISODIC_MEMORY",
             Self::LibraryEvidence => "LIBRARY_EVIDENCE",
             Self::ExternalResourceResult => "EXTERNAL_RESOURCE_RESULT",
+            Self::SelfMemory => "SELF_MEMORY",
+            Self::RecalledEvidence => "RECALLED_EVIDENCE",
+            Self::ActivePolicy => "ACTIVE_POLICY",
         }
     }
 
@@ -73,6 +88,11 @@ impl WorkspaceDomain {
             Self::EpisodicMemory => 3,
             Self::LibraryEvidence => 4,
             Self::ExternalResourceResult => 5,
+            // C0 additions keep the existing ranks stable: prompt order is
+            // fixed by the envelope's section order, not by this rank.
+            Self::SelfMemory => 6,
+            Self::RecalledEvidence => 7,
+            Self::ActivePolicy => 8,
         }
     }
 }
@@ -153,6 +173,21 @@ pub enum SourceRef {
         resource_id: ResourceId,
         resource_call_id: ResourceCallId,
     },
+    /// An activated C0 self-model section, by field name.
+    SelfState {
+        field: String,
+    },
+    /// The operative parameter snapshot in force, identified by the
+    /// activation that produced it. `0` means defaults — never activated.
+    OperativePolicy {
+        activation_seq: u64,
+    },
+    /// A raw canonical evidence record recalled by retrieval. Not a belief
+    /// about the past — the record itself.
+    Evidence {
+        evidence_id: EvidenceId,
+        kind: EvidenceKind,
+    },
 }
 
 /// Why the assembler included an item. Deterministic and inspectable.
@@ -169,6 +204,12 @@ pub enum InclusionReason {
     LibraryMatch,
     /// The result of a resource call made for this turn.
     ResourceInvocation,
+    /// A self-model entry from the active derived-lane snapshot.
+    SelfState,
+    /// The operative parameters in force, surfaced as an overlay.
+    OperativePolicy,
+    /// A canonical record that matched this turn's recall query.
+    EvidenceRecall,
 }
 
 impl InclusionReason {
@@ -179,6 +220,9 @@ impl InclusionReason {
             Self::ActiveMemory => "active_memory",
             Self::LibraryMatch => "library_match",
             Self::ResourceInvocation => "resource_invocation",
+            Self::SelfState => "self_state",
+            Self::OperativePolicy => "operative_policy",
+            Self::EvidenceRecall => "evidence_recall",
         }
     }
 }
@@ -241,6 +285,13 @@ pub struct WorkspaceBudget {
     pub episodic_memory: usize,
     pub library: usize,
     pub external_resource: usize,
+    /// One item per non-empty self-model field.
+    pub self_memory: usize,
+    /// Recalled raw utterance records.
+    pub recalled_evidence: usize,
+    /// The operative-policy overlay. One item suffices; the budget exists so
+    /// the cap is an explicit choice rather than an accident.
+    pub active_policy: usize,
 }
 
 impl Default for WorkspaceBudget {
@@ -250,6 +301,9 @@ impl Default for WorkspaceBudget {
             episodic_memory: 8,
             library: 4,
             external_resource: 4,
+            self_memory: 16,
+            recalled_evidence: 8,
+            active_policy: 4,
         }
     }
 }
@@ -442,6 +496,80 @@ impl WorkspaceBuilder {
         self
     }
 
+    /// The C0 self model: one item per non-empty field, carrying each entry's
+    /// provenance. Derived-lane content — the snapshot an activation wrote,
+    /// attributed to the field it belongs to.
+    pub fn with_self_state(mut self, self_model: &SelfSnapshot) -> Self {
+        for (field, entries) in &self_model.fields {
+            if entries.is_empty() {
+                continue;
+            }
+            self.staged.push((
+                WorkspaceDomain::SelfMemory,
+                StagedItem {
+                    source_ref: SourceRef::SelfState {
+                        field: field.clone(),
+                    },
+                    content: WorkspaceContent::structured(serde_json::json!({
+                        "field": field,
+                        "entries": entries,
+                    })),
+                    // Activated derived state: held about the individual, by
+                    // the individual's own accepted proposals.
+                    authority: AuthorityClass::CanonicalState,
+                    source_time: None,
+                    inclusion_reason: InclusionReason::SelfState,
+                },
+            ));
+        }
+        self
+    }
+
+    /// The operative parameters in force, as one overlay item. Presented as
+    /// policy, not as fact: the backend may honour or ignore it, which is
+    /// what evaluation exists to observe.
+    pub fn with_active_policy(mut self, params: &OperativeParams, activation_seq: u64) -> Self {
+        self.staged.push((
+            WorkspaceDomain::ActivePolicy,
+            StagedItem {
+                source_ref: SourceRef::OperativePolicy { activation_seq },
+                content: WorkspaceContent::structured(
+                    serde_json::to_value(params).unwrap_or(serde_json::Value::Null),
+                ),
+                authority: AuthorityClass::CanonicalState,
+                source_time: None,
+                inclusion_reason: InclusionReason::OperativePolicy,
+            },
+        ));
+        self
+    }
+
+    /// Raw canonical utterance records surfaced by recall. Each carries its
+    /// evidence id and kind; retrieval decided *which* records, not what they
+    /// say.
+    pub fn with_recalled_evidence(mut self, records: &[EvidenceRecord]) -> Self {
+        for record in records {
+            let content = match record.payload.get("text").and_then(|t| t.as_str()) {
+                Some(text) => WorkspaceContent::text(text.to_owned()),
+                None => WorkspaceContent::structured(record.payload.clone()),
+            };
+            self.staged.push((
+                WorkspaceDomain::RecalledEvidence,
+                StagedItem {
+                    source_ref: SourceRef::Evidence {
+                        evidence_id: record.evidence_id,
+                        kind: record.kind,
+                    },
+                    content,
+                    authority: AuthorityClass::CanonicalState,
+                    source_time: Some(record.created_at),
+                    inclusion_reason: InclusionReason::EvidenceRecall,
+                },
+            ));
+        }
+        self
+    }
+
     /// Emit the workspace. Stable sort by domain rank keeps each domain's
     /// caller-supplied order, so the result is a pure function of the inputs.
     pub fn build(self) -> Workspace {
@@ -482,6 +610,9 @@ struct DomainCounts {
     episodic: usize,
     library: usize,
     resource: usize,
+    self_memory: usize,
+    recalled_evidence: usize,
+    active_policy: usize,
 }
 
 impl DomainCounts {
@@ -495,6 +626,11 @@ impl DomainCounts {
             WorkspaceDomain::ExternalResourceResult => {
                 (&mut self.resource, budget.external_resource)
             }
+            WorkspaceDomain::SelfMemory => (&mut self.self_memory, budget.self_memory),
+            WorkspaceDomain::RecalledEvidence => {
+                (&mut self.recalled_evidence, budget.recalled_evidence)
+            }
+            WorkspaceDomain::ActivePolicy => (&mut self.active_policy, budget.active_policy),
             // The head and the current input are never budgeted away: a turn
             // without its own input is not a smaller turn, it is a broken one.
             WorkspaceDomain::CurrentContinuityState | WorkspaceDomain::CurrentInput => {
