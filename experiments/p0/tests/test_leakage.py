@@ -84,7 +84,6 @@ def test_obs_dim_and_layout():
 
 def test_predictor_trains_only_on_observed():
     """The harness must call predictor.update with mask=observed only."""
-    import torch
 
     from experiments.p0.agents.harness import BeliefHarness
     from experiments.p0.models.predictor import ChannelPredictor
