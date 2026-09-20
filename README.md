@@ -411,16 +411,16 @@ MIO coordinatorのURL・実験ID・genome IDを後から設定すると、その
     # 外部送信なしのMock / local-only
     ./scripts/run-desktop.sh
 
-    # Jev -> 全対象器官の並行生成 -> Jevの候補選択・gate（外部送信を明示）
+    # Jev -> 全対象器官のrace開始 -> 匿名候補の品質判定（外部送信を明示）
     /Users/eightman/dev/sandbox/kamimusuhi/scripts/run-desktop.sh \
       --privacy unconstrained \
       --dir /Users/eightman/dev/sandbox/kamimusuhi/.local/desktop
 
-画面にはチャット、会話用K-CORE state、追加LLM API登録、生成候補一覧、Jevの根拠・帰属・依頼適合性評価と各遅延を表示します。`HAI_API_KEY` をexportして起動すると、HAIの `qwen3.8-27b-uncensored` と `llm-jp-4-vl-9b` を自動登録します。追加APIはOpenAI-compatible `/chat/completions` として登録します。発話前のJev batchで発話可否・記憶の関連性・不足情報を判定した後、primaryを含む有効・privacy許可・必要な認証設定済みの全器官が並行生成します。全件の完了またはtimeoutを待ち、候補選択と候補別評価・gateを一つのJev batchで取得します。初回生成の待ち時間は最も遅い器官に左右されます。
+画面にはチャット、会話用K-CORE state、追加LLM API登録、観測済み生成候補、Jevの根拠・帰属・依頼適合性評価と各遅延を表示します。`HAI_API_KEY` とJev設定をexportして起動すると、HAIの `qwen3.8-27b-uncensored` と `llm-jp-4-vl-9b` を自動登録します。追加APIはOpenAI-compatible `/chat/completions` として登録します。発話前のJev batchで発話可否・記憶の関連性・不足情報を判定した後、primaryを含む有効・privacy許可・必要な認証設定済みの全器官をrace開始します。最初の有効完了と10ms以内の同着1件までを匿名候補として品質判定し、ACCEPTなら遅い器官を待たずに返します。
 
-選択は生成済み応答の品質を優先し、遅延・成功率は補助情報です。空の応答と16 KiB超の応答を除外し、有効な応答と実際の出典付き根拠を全文で評価します。`RETRY` は理由に応じた修正指示を付け、選択された器官だけを1回再生成して候補群を再評価します。通常のJev論理呼出しは2回、再生成時は3回です。設定済みJevの失敗を自動ACCEPTやprimary選択で補いません。キー未設定時はMock互換のrule-based経路を使い、意味評価は未実施と明示します。実APIでの精度・速度改善は未検証です。
+選択は生成済み応答の品質を優先し、遅延・成功率は補助情報です。Jevへは `candidate-N` の匿名IDだけを渡し、provider名・model名は見せません。空の応答と16 KiB超の応答を除外し、有効な応答と実際の出典付き根拠を全文で評価します。RETRY/REJECTなら次の完了候補を判定し、全providerを使い切ってもACCEPTがなければ最初のRETRY候補だけを1回修復します。設定済みJevの失敗を自動ACCEPTやprimary選択で補いません。キー未設定時はMock互換のrule-based経路を使い、意味評価は未実施と明示します。実APIでの精度・速度改善は未検証です。
 
-トレースにはprimary・retryを含む全試行のID、model、遅延、bytes、エラーと最終採用マークを表示します。送信時に前回のトレースを消し、失敗したターンでも生成レポートを表示します。レポートはターン終了後に届き、生成途中の進捗ではありません。初回並行生成のwall timeとretryの時間を分け、統計は呼出し・セッション内の観測値として扱います。GPU使用率・料金・tokens/sや実運用のスループットは示しません。詳細は [Native dialogue GUI](./docs/native-dialogue-gui.md) を参照してください。
+トレースにはrace停止までに受信したprimary・追加器官・retryのID、model、遅延、bytes、エラーと最終採用マークを表示します。送信時に前回のトレースを消し、失敗したターンでも生成レポートを表示します。レポートはターン終了後に届き、生成途中の進捗ではありません。`generation_latency_ms` はrace開始から採用または候補枯渇までのwall timeで、途中のJev判定を含みます。採用後に遅れて完了した器官と明示的retry生成は含みません。GPU使用率・料金・tokens/sや実運用のスループットは示しません。詳細は [Native dialogue GUI](./docs/native-dialogue-gui.md) を参照してください。
 
 実験成果は [研究catalog](./knowledge/experiment-findings.json) に結論・限界・出典の版を記録し、対話開始時にLibraryへ蓄積します。質問とMIOの状態に関連する最大4カードを想起し、失敗・失効・再評価待ちも保持します。最初の8カードと動作への反映、追加手順は [実験成果の反映 v0](./docs/implementation/research-integration-v0.md) を参照してください。
 
