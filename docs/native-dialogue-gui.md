@@ -7,9 +7,9 @@ K-CORE path. It is not a web frontend and does not start a local HTTP server.
     ./scripts/run-desktop.sh
 
     # Jev -> all admitted organs -> Jev selection/gate. External transfer is explicit.
-    /Users/eightman/dev/sandbox/kamimusuhi/scripts/run-desktop.sh \
+    ./scripts/run-desktop.sh \
       --privacy unconstrained \
-      --dir /Users/eightman/dev/sandbox/kamimusuhi/.local/desktop
+      --dir .local/desktop
 
 The first launch creates .local/desktop with a FakeA runtime if the directory
 has not been initialized. When the operator exports the configured TYPESAFE_*,
@@ -154,6 +154,5 @@ temporary runtime, leaves the user's dialogue history untouched, and prints
 only timing/decision metadata. Omitting `--live` sends no requests.
 
 ```bash
-cargo run --manifest-path /Users/eightman/dev/sandbox/kamimusuhi/Cargo.toml \
-  -p kamimusuhi-runtime --example dialogue_fanout_smoke -- --live
+cargo run -p kamimusuhi-runtime --example dialogue_fanout_smoke -- --live
 ```
