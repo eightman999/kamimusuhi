@@ -355,7 +355,10 @@ fn fastest_acceptable_candidate_returns_without_waiting_for_slow_organs() {
         .unwrap();
 
     assert_eq!(reply.response, "fast primary");
-    assert_eq!(reply.llm_jev.as_ref().unwrap().language_provider_id, "primary");
+    assert_eq!(
+        reply.llm_jev.as_ref().unwrap().language_provider_id,
+        "primary"
+    );
     assert_eq!(reply.llm_jev.as_ref().unwrap().assessments.len(), 1);
     assert_eq!(session.last_generated_candidates().len(), 1);
     assert_eq!(session.last_generated_candidates()[0].id, "primary");
@@ -496,11 +499,13 @@ fn invalid_batch_answers_are_repaired_once_before_any_response_is_delivered() {
     cases.push(("incomplete probabilities", missing_probability));
 
     let mut extra_probability = valid.clone();
-    extra_probability["answers"]["task_fit_candidate-0"]["probabilities"]["UNKNOWN"] = serde_json::json!(0.0);
+    extra_probability["answers"]["task_fit_candidate-0"]["probabilities"]["UNKNOWN"] =
+        serde_json::json!(0.0);
     cases.push(("unknown probability key", extra_probability));
 
     let mut probability_sum = valid.clone();
-    probability_sum["answers"]["task_fit_candidate-0"]["probabilities"]["MET"] = serde_json::json!(0.5);
+    probability_sum["answers"]["task_fit_candidate-0"]["probabilities"]["MET"] =
+        serde_json::json!(0.5);
     cases.push(("invalid probability sum", probability_sum));
 
     for (case, invalid) in cases {
@@ -574,7 +579,11 @@ fn accept_never_bypasses_an_unsuitable_selected_candidate() {
             "CONFLICT",
             &["CONSISTENT", "CONFLICT", "UNCLEAR", "NOT_APPLICABLE"][..],
         ),
-        ("task_fit_candidate-1", "UNMET", &["MET", "UNMET", "UNCLEAR"][..]),
+        (
+            "task_fit_candidate-1",
+            "UNMET",
+            &["MET", "UNMET", "UNCLEAR"][..],
+        ),
     ] {
         let mut answer =
             assessment_answers("backup", &[("primary", "ACCEPT"), ("backup", "ACCEPT")]);
