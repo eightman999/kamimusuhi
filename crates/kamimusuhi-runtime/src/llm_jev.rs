@@ -1368,9 +1368,10 @@ pub struct ConversationTrace {
     pub provider_candidates: Vec<LanguageProviderCandidate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_selection: Option<ProviderSelectionResult>,
-    /// Updated observations after all language-organ attempts.
+    /// Updated observations for attempts received before the race stopped.
     pub provider_telemetry: BTreeMap<String, LanguageProviderTelemetrySnapshot>,
-    /// Initial fan-out wall time, not the sum of concurrent provider times.
+    /// Race-to-quality wall time: generation plus interim assessments until
+    /// acceptance or provider exhaustion, excluding explicit repair generation.
     pub generation_latency_ms: u64,
     /// Secret-free result metadata for every language-organ attempt.
     pub generated_candidates: Vec<GeneratedLanguageCandidate>,
