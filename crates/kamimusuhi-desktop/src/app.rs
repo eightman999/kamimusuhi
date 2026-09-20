@@ -391,7 +391,7 @@ impl NativeApp {
                             ui.spinner();
                             ui.label(
                                 RichText::new(
-                                    "発話・記憶・不足情報の判定 → 全対象器官の並行生成 → 候補別の根拠確認と選択",
+                                    "発話・記憶・不足情報の判定 → 言語器官race → 匿名候補の品質判定",
                                 )
                                     .small()
                                     .color(MUTED),
@@ -672,8 +672,8 @@ impl NativeApp {
                 ui.label(RichText::new("DialogueSession").color(TEXT));
                 ui.label(RichText::new("↓ 会話用 K-CORE state").color(MUTED));
                 ui.label(RichText::new("↓ Jev : 発話・記憶・不足情報を一括判定").color(BLUE));
-                ui.label(RichText::new("↓ 全対象器官 /chat/completions を並行生成").color(GREEN));
-                ui.label(RichText::new("↓ 全生成の完了・timeoutを待つ").color(MUTED));
+                ui.label(RichText::new("↓ 全対象器官 /chat/completions をrace開始").color(GREEN));
+                ui.label(RichText::new("↓ 最速候補 + 同着1件までを匿名化して判定").color(MUTED));
                 ui.label(
                     RichText::new("↓ Jev : 候補選択・根拠・帰属・適合・gateを一括判定").color(BLUE),
                 );
@@ -877,7 +877,7 @@ impl NativeApp {
                     "生成試行数 (primary・retry含む)",
                     &candidates.len().to_string(),
                 );
-                key_value(ui, "初回並行生成", &format!("{elapsed_ms} ms"));
+                key_value(ui, "race-to-quality", &format!("{elapsed_ms} ms"));
                 if ui.link("全候補・エラーを内部トレースで見る").clicked() {
                     self.view = View::Trace;
                 }
@@ -1081,10 +1081,10 @@ fn generated_candidates_card(
     trace: Option<&ConversationTrace>,
 ) {
     let selected_index = selected_candidate_index(candidates, trace);
-    card(ui, "全生成候補 / primary・retryを含む", |ui| {
-        key_value(ui, "初回並行生成 (wall time)", &format!("{elapsed_ms} ms"));
+    card(ui, "観測済み生成候補 / primary・retryを含む", |ui| {
+        key_value(ui, "race-to-quality (wall time)", &format!("{elapsed_ms} ms"));
         ui.label(
-            RichText::new("全器官の完了・timeoutまでの待ち時間です。各器官の時間の合計ではなく、retryは別計測です。")
+            RichText::new("race開始から採用または候補枯渇までの時間です。途中のJev判定を含み、採用後に遅れて完了した器官やretry生成は含みません。")
                 .small()
                 .color(MUTED),
         );
