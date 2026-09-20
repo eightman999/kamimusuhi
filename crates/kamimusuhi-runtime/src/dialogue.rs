@@ -16,17 +16,33 @@ use kamimusuhi_core::persona::{
     ConversationMessage, ConversationRole, CurrentInput, PersonaBackendDescriptor,
     PersonaTurnInput, SessionWorkingState, TurnContext,
 };
-use kamimusuhi_core::routing::PrivacyConstraint;
+use kamimusuhi_core::routing::{LocalityClass, PrivacyConstraint};
 use kamimusuhi_core::trace::{TraceCorrelation, TraceEventKind};
 use kamimusuhi_core::workspace::WorkspaceBuilder;
 use serde::Serialize;
 
 use crate::c0::{self, eval};
+use crate::llm_jev::{
+    ConversationCoreState, ConversationTrace, Decision, DecisionKind, DecisionProvider,
+    DecisionRequest, LanguageProvider, configured_decision_provider, configured_language_provider,
+};
 use crate::research::ResearchCatalog;
 use crate::{Runtime, RuntimeError};
 
 pub const MAX_INPUT_BYTES: usize = 8_192;
 const HISTORY_BYTES: usize = 16_384;
+
+fn required_information(state: &ConversationCoreState) -> Vec<String> {
+    match state.speech_act.as_str() {
+        "report_problem" => vec![
+            "the observed problem or failure".to_owned(),
+            "one concrete next step or clarification".to_owned(),
+        ],
+        "answer_question" => vec!["the answer supported by the supplied context".to_owned()],
+        "greeting" => vec!["a brief acknowledgement".to_owned()],
+        _ => Vec::new(),
+    }
+}
 
 /// Per-turn C0 bookkeeping, surfaced for inspection.
 #[derive(Debug, Clone, Serialize)]
@@ -62,6 +78,9 @@ pub struct DialogueReply {
     /// populated when debug-context output was requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub debug_context: Option<serde_json::Value>,
+    /// Secret-free Jev/LLM/core trace, populated only in debug mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_jev: Option<ConversationTrace>,
 }
 
 pub struct DialogueSession {
@@ -78,6 +97,12 @@ pub struct DialogueSession {
     writer: Option<WriterIdentity>,
     /// Emit the assembled context on each turn (`--debug-context`).
     debug_context: bool,
+    /// Emit the secret-free closed-loop trace (`--debug`).
+    debug_trace: bool,
+    /// Conversation-side K-CORE state. This is not `KCore::tick()` state.
+    core_state: ConversationCoreState,
+    decision_provider: Box<dyn DecisionProvider>,
+    language_provider: Box<dyn LanguageProvider>,
     /// The last assembled workspace, for `/context` inspection.
     last_context: Option<serde_json::Value>,
 }
@@ -87,6 +112,37 @@ impl DialogueSession {
         runtime: &mut Runtime,
         subject: &str,
         privacy: PrivacyConstraint,
+    ) -> Result<Self, RuntimeError> {
+        Self::start_with_providers(
+            runtime,
+            subject,
+            privacy,
+            configured_decision_provider(),
+            None,
+        )
+    }
+
+    /// Start a session with a caller-selected decision provider. This keeps
+    /// Jev behind the same interface while allowing fixture and mock tests to
+    /// exercise the complete loop without contacting an external service.
+    pub fn start_with_decision_provider(
+        runtime: &mut Runtime,
+        subject: &str,
+        privacy: PrivacyConstraint,
+        decision_provider: Box<dyn DecisionProvider>,
+    ) -> Result<Self, RuntimeError> {
+        Self::start_with_providers(runtime, subject, privacy, decision_provider, None)
+    }
+
+    /// Start a session with explicit providers. The language provider is
+    /// optional because production sessions construct it from the configured
+    /// Persona endpoint and `KAMIMUSUHI_LLM_*` settings.
+    pub fn start_with_providers(
+        runtime: &mut Runtime,
+        subject: &str,
+        privacy: PrivacyConstraint,
+        decision_provider: Box<dyn DecisionProvider>,
+        language_provider_override: Option<Box<dyn LanguageProvider>>,
     ) -> Result<Self, RuntimeError> {
         if subject.is_empty()
             || subject.len() > 80
@@ -100,7 +156,24 @@ impl DialogueSession {
         }
         // Configuration and destination failures precede any interaction write.
         runtime.config().persona.check_privacy(privacy)?;
-        runtime.config().build_persona()?;
+        let persona = runtime.config().build_persona()?;
+        let language_model = runtime
+            .config()
+            .persona
+            .provider
+            .as_ref()
+            .map(|provider| provider.model.clone())
+            .unwrap_or_else(|| persona.descriptor().name.clone());
+        let language_provider = match language_provider_override {
+            Some(provider) => provider,
+            None => configured_language_provider(persona, language_model)?,
+        };
+        if decision_provider.is_external() && !privacy.admits(LocalityClass::External) {
+            return Err(RuntimeError::PersonaPrivacy {
+                privacy,
+                locality: LocalityClass::External,
+            });
+        }
         runtime.config().persona_seed()?;
         if let Some(mio) = &runtime.config().mio {
             mio.validate()?;
@@ -138,6 +211,10 @@ impl DialogueSession {
             research,
             writer: None,
             debug_context: false,
+            debug_trace: false,
+            core_state: ConversationCoreState::default(),
+            decision_provider,
+            language_provider,
             last_context: None,
         })
     }
@@ -145,6 +222,11 @@ impl DialogueSession {
     /// Surface the assembled workspace on each turn (`--debug-context`).
     pub fn set_debug_context(&mut self, enabled: bool) {
         self.debug_context = enabled;
+    }
+
+    /// Include the secret-free Jev/LLM/core decision trace in replies.
+    pub fn set_debug_trace(&mut self, enabled: bool) {
+        self.debug_trace = enabled;
     }
 
     /// The workspace assembled for the most recent turn, as inspectable JSON.
@@ -188,8 +270,7 @@ impl DialogueSession {
             )));
         }
         runtime.config().persona.check_privacy(self.privacy)?;
-        let persona = runtime.config().build_persona()?;
-        let backend = persona.descriptor();
+        let backend = self.language_provider.descriptor();
         // The operative view in force this turn: retrieval knobs, conversation
         // policy and the self model all come from the derived lane's head.
         let operative = c0::operative(runtime)?;
@@ -292,6 +373,7 @@ impl DialogueSession {
             )?;
             research_context["evidence_id"] = serde_json::json!(evidence_id);
         }
+        let core_state = ConversationCoreState::for_input(&self.core_state, sequence, text);
         let observed = serde_json::json!({
             "observed_at": runtime.now(),
             "individual_id": self.individual_id,
@@ -304,6 +386,7 @@ impl DialogueSession {
             "history_messages_available": history.len(),
             "retained_memory_records_available": memories.len(),
             "research_findings_recalled": recalled,
+            "conversation_core_state": core_state.clone(),
             "speech_output": "not_connected",
             "body_sensors": "not_connected_to_this_interface",
             "experimental_neural_state": match mio.as_ref().map(|m| m.connection.as_str()) {
@@ -333,6 +416,12 @@ impl DialogueSession {
         input.envelope.observed_runtime = Some(observed.clone());
         input.envelope.mio_observation = mio_context.clone();
         input.envelope.research_findings = Some(research_context.clone());
+        input.envelope.conversation_core =
+            Some(serde_json::to_value(&core_state).map_err(|error| {
+                RuntimeError::Conversation(crate::llm_jev::ConversationError::Serialization(
+                    error.to_string(),
+                ))
+            })?);
         let context_digest = json_digest(&serde_json::json!(input));
         let history_messages = input.envelope.conversation_history.len();
         // The inspectable context: what the model was actually shown, in the
@@ -347,13 +436,133 @@ impl DialogueSession {
             "active_policy": input.envelope.active_policy,
             "open_threads": self.open_threads(runtime, &operative.view)?,
             "body_state": input.envelope.body_state,
+            "conversation_core": input.envelope.conversation_core,
             "workspace_digest": workspace.digest(),
         });
         self.last_context = Some(workspace_context.clone());
-        runtime.trace().record_with(TraceEventKind::PersonaInvoked, TraceCorrelation {
-            persona_backend_id: Some(backend.backend_id), ..TraceCorrelation::default()
-        }, serde_json::json!({"input_digest": context_digest, "history_messages": history_messages}));
-        let result = persona.turn(input)?;
+        let invocation_request = DecisionRequest {
+            kind: DecisionKind::InvocationGate,
+            user_text: text.to_owned(),
+            speech_act: core_state.speech_act.clone(),
+            required_information: required_information(&core_state),
+            candidate_response: None,
+            candidate_digest: None,
+            state: core_state.clone(),
+        };
+        let invocation_gate = self.decision_provider.decide(&invocation_request)?;
+        runtime.trace().record_with(
+            TraceEventKind::PersonaInvoked,
+            TraceCorrelation {
+                persona_backend_id: Some(backend.backend_id),
+                ..TraceCorrelation::default()
+            },
+            serde_json::json!({
+                "input_digest": context_digest,
+                "history_messages": history_messages,
+                "core_state": core_state.clone(),
+                "invocation_gate": invocation_gate.clone(),
+            }),
+        );
+        if !matches!(invocation_gate.decision, Decision::Speak) {
+            self.core_state = core_state;
+            return Err(RuntimeError::Conversation(
+                crate::llm_jev::ConversationError::GateRefused(
+                    invocation_gate.decision.as_str().to_owned(),
+                ),
+            ));
+        }
+        let language_request = crate::llm_jev::LanguageRequest {
+            user_text: text.to_owned(),
+            speech_act: core_state.speech_act.clone(),
+            goal: core_state.active_goal.clone(),
+            core_state: core_state.clone(),
+            attention: core_state.attention.clone(),
+            memories: vec![
+                format!("relationship_records={}", memories.len()),
+                format!("recalled_evidence={}", recalled_evidence.len()),
+                format!("research_findings={recalled}"),
+            ],
+            constraints: vec![
+                "respond_in_short_japanese".to_owned(),
+                "do_not_invent_memory_or_observation".to_owned(),
+                "do_not_mutate_canonical_state_from_prose".to_owned(),
+            ],
+            recent_turns: history.clone(),
+            persona_input: input,
+        };
+        let mut language_result = self.language_provider.generate(&language_request)?;
+        let mut response_gate = None;
+        let mut retry_count = 0_u8;
+        for attempt in 0..=1 {
+            if attempt > 0 {
+                language_result = self.language_provider.generate(&language_request)?;
+            }
+            let response_request = DecisionRequest {
+                kind: DecisionKind::ResponseGate,
+                user_text: text.to_owned(),
+                speech_act: core_state.speech_act.clone(),
+                required_information: required_information(&core_state),
+                candidate_response: Some(language_result.persona.response_intent.clone()),
+                candidate_digest: Some(content_digest(
+                    language_result.persona.response_intent.as_bytes(),
+                )),
+                state: core_state.clone(),
+            };
+            let gate = self.decision_provider.decide(&response_request)?;
+            match gate.decision {
+                Decision::Accept => {
+                    response_gate = Some(gate);
+                    break;
+                }
+                Decision::Retry if attempt == 0 => {
+                    retry_count = 1;
+                }
+                Decision::Retry => {
+                    return Err(RuntimeError::Conversation(
+                        crate::llm_jev::ConversationError::GateRefused(
+                            "RETRY_AFTER_LIMIT".to_owned(),
+                        ),
+                    ));
+                }
+                Decision::Reject => {
+                    return Err(RuntimeError::Conversation(
+                        crate::llm_jev::ConversationError::GateRefused("REJECT".to_owned()),
+                    ));
+                }
+                Decision::Speak | Decision::Wait | Decision::ObserveMore => {
+                    return Err(RuntimeError::Conversation(
+                        crate::llm_jev::ConversationError::InvalidDecision(
+                            "response gate returned an invocation choice".to_owned(),
+                        ),
+                    ));
+                }
+            }
+        }
+        let response_gate = response_gate.ok_or_else(|| {
+            RuntimeError::Conversation(crate::llm_jev::ConversationError::GateRefused(
+                "RESPONSE_GATE_MISSING".to_owned(),
+            ))
+        })?;
+        let next_core_state = core_state.after_response(
+            response_gate.decision,
+            &language_result.persona.response_intent,
+        );
+        self.core_state = next_core_state.clone();
+        let conversation_trace = ConversationTrace {
+            core_state_before: core_state.clone(),
+            invocation_gate: invocation_gate.clone(),
+            language_provider: language_result.provider.clone(),
+            language_model: language_result.model.clone(),
+            language_latency_ms: language_result.latency_ms,
+            response_gate: response_gate.clone(),
+            candidate_digest: content_digest(language_result.persona.response_intent.as_bytes()),
+            retry_count,
+            core_state_after: next_core_state,
+        };
+        let language_provider_name = language_result.provider.clone();
+        let language_model = language_result.model.clone();
+        let language_latency_ms = language_result.latency_ms;
+        let result = language_result.persona;
         // Persona drafts are proposals, not state: submit each through the
         // canonical kernel so the mutation policy decides. The writer epoch
         // is claimed lazily here — a turn with no drafts never takes it.
@@ -374,6 +583,13 @@ impl DialogueSession {
             serde_json::json!({
                 "draft_count": draft_outcomes.len(),
                 "drafts_activated": drafts_activated,
+                "invocation_gate": invocation_gate,
+                "response_gate": response_gate,
+                "language_provider": language_provider_name,
+                "language_model": language_model,
+                "language_latency_ms": language_latency_ms,
+                "retry_count": retry_count,
+                "core_state_after": self.core_state,
             }),
         );
         let generated_evidence_id = self.append(
@@ -387,6 +603,7 @@ impl DialogueSession {
                 "input_digest": context_digest, "observed_runtime": observed,
                 "mio_observation": mio_context,
                 "research_findings": research_context,
+                "conversation_trace": conversation_trace.clone(),
                 "delivery": "not_yet_emitted"
             }),
         )?;
@@ -404,6 +621,7 @@ impl DialogueSession {
             response: result.response_intent,
             c0: None,
             debug_context: None,
+            llm_jev: self.debug_trace.then_some(conversation_trace),
         };
         emit(&reply)
             .map_err(|error| RuntimeError::Usage(format!("response output failed: {error}")))?;

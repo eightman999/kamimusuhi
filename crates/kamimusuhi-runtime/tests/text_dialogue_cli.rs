@@ -249,6 +249,23 @@ fn piped_chat_emits_two_responses_and_quit_prevents_a_third_turn() {
 }
 
 #[test]
+fn debug_trace_exposes_decisions_and_latency_without_provider_secrets() {
+    let dir = initialized();
+    let output: serde_json::Value = serde_json::from_str(&success(run(
+        dir.path(),
+        "talk",
+        &["--persona", "fake", "--message", "こんにちは", "--debug"],
+        None,
+    )))
+    .unwrap();
+    assert_eq!(output["llm_jev"]["invocation_gate"]["decision"], "SPEAK");
+    assert_eq!(output["llm_jev"]["response_gate"]["decision"], "ACCEPT");
+    assert_eq!(output["llm_jev"]["language_provider"], "openai-compatible");
+    assert!(output["llm_jev"]["candidate_digest"].as_str().is_some());
+    assert!(output["llm_jev"].get("fallback_reason").is_none());
+}
+
+#[test]
 fn the_default_fake_requires_explicit_selection_on_each_invocation() {
     let dir = initialized();
     let config = config_bytes(dir.path());

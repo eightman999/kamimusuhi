@@ -25,6 +25,7 @@ pub mod dialogue;
 pub mod error;
 pub mod inspect;
 pub mod kcore;
+pub mod llm_jev;
 pub mod mio;
 pub mod organs;
 pub mod research;

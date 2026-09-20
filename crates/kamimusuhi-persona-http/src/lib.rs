@@ -79,6 +79,9 @@ SESSION_WORKING_STATE describe the runtime, not model-generated beliefs. \
 CONVERSATION_HISTORY contains raw prior user and assistant utterances with \
 their evidence IDs, not durable beliefs. An assistant utterance proves only \
 what was previously generated, not a fact about the outside world. \
+CONVERSATION_CORE_STATE is transient control state from the conversation-side \
+K-CORE interface. It guides this turn but is not memory, self-state, evidence, \
+or mutation authority. \
 OBSERVED_RUNTIME contains measured runtime values supplied independently of \
 your prose; generating an expression cannot change or prove those values. \
 Answer the CURRENT_INPUT in short, natural Japanese, usually 1-3 sentences, \
@@ -268,6 +271,11 @@ impl OpenAiCompatiblePersona {
             rendered.push_str(&serde_json::json!(envelope.conversation_history).to_string());
             rendered.push('\n');
         }
+        if let Some(state) = &envelope.conversation_core {
+            rendered.push_str("\n[CONVERSATION_CORE_STATE]\n");
+            rendered.push_str(&state.to_string());
+            rendered.push('\n');
+        }
         if let Some(observed_runtime) = &envelope.observed_runtime {
             rendered.push_str("\n[OBSERVED_RUNTIME]\n");
             rendered.push_str(&observed_runtime.to_string());
@@ -297,7 +305,8 @@ impl OpenAiCompatiblePersona {
             Self::render_envelope(&input.envelope, &input.input.text),
         );
         let dialogue = input.envelope.observed_runtime.is_some()
-            || !input.envelope.conversation_history.is_empty();
+            || !input.envelope.conversation_history.is_empty()
+            || input.envelope.conversation_core.is_some();
         let instruction = if dialogue {
             format!(
                 "あなたは『かみむすび』として、日本語で通常1〜3文で返事してください。\
@@ -909,6 +918,7 @@ mod tests {
                     text: "ほうじ茶について話しましょう。".to_owned(),
                 },
             ],
+            conversation_core: None,
             observed_runtime: Some(serde_json::json!({"completed_turns": 1})),
             mio_observation: None,
             research_findings: None,

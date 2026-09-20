@@ -136,6 +136,7 @@ pub fn run_repl(
     output: &mut impl Write,
     terminal: bool,
     debug_context: bool,
+    debug_trace: bool,
 ) -> Result<(), RuntimeError> {
     let reflection_interval = runtime.config().c0.reflection_interval_turns;
     if terminal {
@@ -214,7 +215,7 @@ pub fn run_repl(
             }
             continue;
         }
-        session.turn(runtime, text, |reply| {
+        let reply = session.turn(runtime, text, |reply| {
             if terminal {
                 write!(output, "かみむすび > ")?;
             }
@@ -224,6 +225,10 @@ pub fn run_repl(
         if debug_context && let Some(context) = session.last_context() {
             serde_json::to_writer_pretty(std::io::stderr(), context).map_err(json_error)?;
             writeln!(std::io::stderr()).map_err(io_error)?;
+        }
+        if debug_trace && let Some(trace) = reply.llm_jev {
+            let value = serde_json::to_value(trace).map_err(json_error)?;
+            emit_json(&mut std::io::stderr(), &value)?;
         }
         // Interval-driven reflection: the same cycle `/reflect` runs, on a
         // configured cadence.

@@ -86,6 +86,8 @@ pub enum RuntimeError {
     /// reading stderr sees the same classification the trace records.
     #[error("persona turn failed [{code}]: {0}", code = .0.code())]
     Persona(#[from] PersonaError),
+    #[error("conversation provider failed [{code}]: {0}", code = .0.code())]
+    Conversation(#[from] crate::llm_jev::ConversationError),
     #[error("mutation was not activated: {reason}")]
     MutationNotActivated { reason: String },
     #[error("{0}")]

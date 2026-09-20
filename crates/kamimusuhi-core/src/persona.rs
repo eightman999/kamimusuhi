@@ -126,6 +126,13 @@ pub struct PersonaEnvelope {
     /// of conversation, separate from the individual's retained beliefs.
     #[serde(default)]
     pub conversation_history: Vec<ConversationMessage>,
+    /// Transient state owned by the conversation-side K-CORE interface.
+    ///
+    /// This is control state for the current dialogue process, not durable
+    /// self-state, memory, evidence, or mutation authority. It is kept in its
+    /// own section so a language backend cannot mistake it for any of those.
+    #[serde(default)]
+    pub conversation_core: Option<serde_json::Value>,
     /// Runtime observations supplied independently of generated prose.
     /// These measured values are not emotions, bodily sensations or beliefs.
     #[serde(default)]
@@ -190,6 +197,7 @@ impl PersonaEnvelope {
             // material, so no amount of retrieved content can become one.
             persona_seed: None,
             session,
+            conversation_core: None,
         }
     }
 
@@ -202,6 +210,14 @@ impl PersonaEnvelope {
     #[must_use]
     pub fn with_seed(mut self, seed: PersonaSeed) -> Self {
         self.persona_seed = Some(seed);
+        self
+    }
+
+    /// Attach transient conversation-side K-CORE state without merging it into
+    /// memory, self-state, or observations.
+    #[must_use]
+    pub fn with_conversation_core(mut self, state: serde_json::Value) -> Self {
+        self.conversation_core = Some(state);
         self
     }
 
@@ -241,6 +257,7 @@ impl PersonaEnvelope {
             && self.external_results.is_empty()
             && self.organ_signals.is_empty()
             && self.conversation_history.is_empty()
+            && self.conversation_core.is_none()
             && self.observed_runtime.is_none()
             && self.mio_observation.is_none()
             && self.research_findings.is_none()
