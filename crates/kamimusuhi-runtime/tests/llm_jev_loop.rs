@@ -337,6 +337,64 @@ fn failed_or_oversized_organs_are_excluded_without_losing_healthy_candidates() {
 }
 
 #[test]
+fn fastest_acceptable_candidate_returns_without_waiting_for_slow_organs() {
+    let primary = FixtureServer::always(FixtureResponse::ok("fast primary")).unwrap();
+    let backup = FixtureServer::always(FixtureResponse::Delayed {
+        ms: 250,
+        content: "slow backup".to_owned(),
+    })
+    .unwrap();
+    let judge = FixtureServer::start(vec![
+        jev_preparation("SPEAK"),
+        jev_assessment("primary", &[("primary", "ACCEPT")]),
+    ])
+    .unwrap();
+    let (_dir, mut runtime, mut session) = fanout_session(&primary, &backup, &judge);
+    let reply = session
+        .turn(&mut runtime, "こんにちは", |_| Ok(()))
+        .unwrap();
+
+    assert_eq!(reply.response, "fast primary");
+    assert_eq!(reply.llm_jev.as_ref().unwrap().language_provider_id, "primary");
+    assert_eq!(reply.llm_jev.as_ref().unwrap().assessments.len(), 1);
+    assert_eq!(session.last_generated_candidates().len(), 1);
+    assert_eq!(session.last_generated_candidates()[0].id, "primary");
+    assert_eq!(judge.request_count(), 2);
+}
+
+#[test]
+fn low_quality_fast_candidate_is_rejudged_when_slower_candidate_arrives() {
+    let primary = FixtureServer::always(FixtureResponse::ok("fast but bad")).unwrap();
+    let backup = FixtureServer::always(FixtureResponse::Delayed {
+        ms: 50,
+        content: "slower but good".to_owned(),
+    })
+    .unwrap();
+    let judge = FixtureServer::start(vec![
+        jev_preparation("SPEAK"),
+        jev_assessment("primary", &[("primary", "RETRY")]),
+        jev_assessment(
+            "backup",
+            &[("primary", "RETRY"), ("backup", "ACCEPT")],
+        ),
+    ])
+    .unwrap();
+    let (_dir, mut runtime, mut session) = fanout_session(&primary, &backup, &judge);
+    let reply = session
+        .turn(&mut runtime, "こんにちは", |_| Ok(()))
+        .unwrap();
+
+    assert_eq!(reply.response, "slower but good");
+    let trace = reply.llm_jev.unwrap();
+    assert_eq!(trace.language_provider_id, "backup");
+    assert_eq!(trace.retry_count, 0);
+    assert_eq!(trace.assessments.len(), 2);
+    assert_eq!(trace.assessments[0].gate.decision, Decision::Retry);
+    assert_eq!(trace.assessments[1].gate.decision, Decision::Accept);
+    assert_eq!(judge.request_count(), 3);
+}
+
+#[test]
 fn all_failures_stop_before_selection_and_remain_inspectable() {
     let primary = FixtureServer::always(FixtureResponse::Status { code: 503 }).unwrap();
     let backup = FixtureServer::always(FixtureResponse::WrongShape).unwrap();
