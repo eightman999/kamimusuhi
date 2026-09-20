@@ -878,7 +878,10 @@ impl NativeApp {
                     &candidates.len().to_string(),
                 );
                 key_value(ui, "race-to-quality", &format!("{elapsed_ms} ms"));
-                if ui.link("観測済み候補・エラーを内部トレースで見る").clicked() {
+                if ui
+                    .link("観測済み候補・エラーを内部トレースで見る")
+                    .clicked()
+                {
                     self.view = View::Trace;
                 }
             }
@@ -1081,67 +1084,75 @@ fn generated_candidates_card(
     trace: Option<&ConversationTrace>,
 ) {
     let selected_index = selected_candidate_index(candidates, trace);
-    card(ui, "観測済み生成候補 / primary・retryを含む", |ui| {
-        key_value(ui, "race-to-quality (wall time)", &format!("{elapsed_ms} ms"));
-        ui.label(
+    card(
+        ui,
+        "観測済み生成候補 / primary・retryを含む",
+        |ui| {
+            key_value(
+                ui,
+                "race-to-quality (wall time)",
+                &format!("{elapsed_ms} ms"),
+            );
+            ui.label(
             RichText::new("race開始から採用または候補枯渇までの時間です。途中のJev判定を含み、採用後に遅れて完了した器官やretry生成は含みません。")
                 .small()
                 .color(MUTED),
         );
-        if candidates.is_empty() {
-            ui.label(RichText::new("生成試行なし（生成前の中断を含む）。").color(MUTED));
-        }
-        for (index, candidate) in candidates.iter().enumerate() {
-            ui.add_space(6.0);
-            ui.separator();
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(&candidate.id).strong().color(TEXT));
-                ui.label(
-                    RichText::new(format!(
-                        "attempt={} ({})",
-                        candidate.attempt,
-                        if candidate.attempt == 0 {
-                            "初回"
-                        } else {
-                            "retry"
-                        },
-                    ))
-                    .small()
-                    .color(MUTED),
+            if candidates.is_empty() {
+                ui.label(RichText::new("生成試行なし（生成前の中断を含む）。").color(MUTED));
+            }
+            for (index, candidate) in candidates.iter().enumerate() {
+                ui.add_space(6.0);
+                ui.separator();
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(&candidate.id).strong().color(TEXT));
+                    ui.label(
+                        RichText::new(format!(
+                            "attempt={} ({})",
+                            candidate.attempt,
+                            if candidate.attempt == 0 {
+                                "初回"
+                            } else {
+                                "retry"
+                            },
+                        ))
+                        .small()
+                        .color(MUTED),
+                    );
+                    if selected_index == Some(index) {
+                        ui.label(RichText::new("✓ 採用").strong().color(GREEN));
+                    }
+                });
+                key_value(
+                    ui,
+                    "provider / model",
+                    &format!("{} / {}", candidate.provider, candidate.model),
                 );
-                if selected_index == Some(index) {
-                    ui.label(RichText::new("✓ 採用").strong().color(GREEN));
-                }
-            });
-            key_value(
-                ui,
-                "provider / model",
-                &format!("{} / {}", candidate.provider, candidate.model),
-            );
-            key_value(
-                ui,
-                "generation latency",
-                &format!("{} ms", candidate.latency_ms),
-            );
-            key_value(
-                ui,
-                "response bytes (UTF-8)",
-                &candidate
-                    .response_bytes
-                    .map_or_else(|| "—".to_owned(), |bytes| bytes.to_string()),
-            );
-            key_value(
-                ui,
-                "error",
-                candidate.error_code.as_deref().unwrap_or("なし"),
-            );
-            key_value(
-                ui,
-                "session telemetry",
-                &provider_telemetry_label(&candidate.telemetry),
-            );
-        }
-    });
+                key_value(
+                    ui,
+                    "generation latency",
+                    &format!("{} ms", candidate.latency_ms),
+                );
+                key_value(
+                    ui,
+                    "response bytes (UTF-8)",
+                    &candidate
+                        .response_bytes
+                        .map_or_else(|| "—".to_owned(), |bytes| bytes.to_string()),
+                );
+                key_value(
+                    ui,
+                    "error",
+                    candidate.error_code.as_deref().unwrap_or("なし"),
+                );
+                key_value(
+                    ui,
+                    "session telemetry",
+                    &provider_telemetry_label(&candidate.telemetry),
+                );
+            }
+        },
+    );
 }
 
 fn gate_card(
