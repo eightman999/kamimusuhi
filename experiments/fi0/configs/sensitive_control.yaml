@@ -1,0 +1,13 @@
+# Fi0 positive control — byte-sensitive mock; the harness MUST detect drift.
+name: sensitive-control
+seed: 0
+model: sensitive
+reps: 3
+
+variants:
+  orders: [sys_mem_user, sys_user_mem, mem_sys_user, user_mem_sys,
+           cache_max, cache_scattered]
+  formats: [plain, json, yaml, xml, tagged]
+  whitespace: [tight, spaced, noisy]
+  metadata_positions: [prefix, middle, suffix]
+  include_canonical: true

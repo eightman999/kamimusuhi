@@ -1,0 +1,14 @@
+# Fi0 smoke config — small grid for fast iteration / tests.
+name: smoke
+seed: 0
+model: mock
+reps: 2
+
+tasks: [binary_decision, tool_selection]
+
+variants:
+  orders: [sys_mem_user, user_mem_sys]
+  formats: [plain, json]
+  whitespace: [tight]
+  metadata_positions: [prefix, suffix]
+  include_canonical: true
