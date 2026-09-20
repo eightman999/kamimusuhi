@@ -1050,7 +1050,7 @@ impl DialogueSession {
             // Give simultaneously-finishing local/fast organs a tiny shared
             // grace window. This is one deadline for the whole batch, not per
             // provider, so an unbounded provider list cannot multiply it.
-            let grace_deadline = Instant::now() + Duration::from_millis(2);
+            let grace_deadline = Instant::now() + Duration::from_millis(10);
             while received < provider_count {
                 let remaining = grace_deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
