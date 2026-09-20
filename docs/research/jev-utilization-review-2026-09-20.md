@@ -187,3 +187,24 @@ crates/kamimusuhi-runtime/src/c0.rs
 実API・日本語の独立品質評価・token上限での実運用・レイテンシ／料金の比較・
 GUIの実表示操作は未検証。新しい外部観測器官、生成前ルーター、文脈圧縮、confidence閾値の
 調整は実装していない。既存設定の変更、commit／pushは行っていない。
+
+
+## 実装追記2 — fastest-wins race / provider blind
+
+追加レビュー後、全provider待ちをやめて次の方式へ変更した。
+
+- 許可された言語器官は同時に開始するが、最初の有効完了を受けた時点で品質判定へ進む。
+  10msの共通grace内で同着した候補をもう1件だけ加え、Jevのactive poolは最大2候補に固定する。
+  provider総数にはハード上限を置かない。
+- JevがACCEPTした時点でターンは遅い器官を待たずに進む。RETRY/REJECTなら次の完了batchを
+  新たに判定し、全providerを使い切ってもACCEPTがない場合だけ最初のRETRY候補を1回修復する。
+- response assessmentのIDは `candidate-N` へ匿名化し、provider名・model名をJev wire stateと
+  criteriaから除外した。質問bindingもindexではなく匿名candidate IDへ変更した。
+- generic OpenAI-compatible primaryのcredentialは以前のproviderから継承しない。
+  `KAMIMUSUHI_LLM_AUTH_ENV` にcredential環境変数名を明示した場合だけ付与する。
+- HAI presetの自動登録はJev設定がある場合だけとし、CLIとdesktopで同じ登録処理を使う。
+- 採用後にまだ実行中のHTTP callはtransport上の強制cancelを行わないが、result receiverを閉じ、
+  遅延結果をturn内queue・candidate traceへ蓄積しない。
+
+この追記後も実Jev APIの日本語品質、実providerでのp50/p95、採用後に残るin-flight requestの
+料金影響は未測定である。
