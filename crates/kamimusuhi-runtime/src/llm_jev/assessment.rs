@@ -752,7 +752,7 @@ fn assessment_questions(request: &ResponseAssessmentRequest) -> BTreeMap<String,
                 (
                     candidate.id.clone(),
                     format!(
-                        "Select candidate ID {:?}, attempt {}, response digest {}. Evaluate its supplied content rather than its model name.",
+                        "Select candidate ID {:?}, attempt {}, response digest {}. Evaluate its supplied content without relying on provider identity.",
                         candidate.id, request.attempts[&candidate.id], candidate.response_digest,
                     ),
                 )
@@ -1089,12 +1089,12 @@ mod tests {
     #[test]
     fn host_retries_failed_dimensions_but_preserves_raw_scores_and_rejection() {
         for (key, label, reason) in [
-            ("grounding_0", "CONTRADICTED", RepairReason::Grounding),
-            ("grounding_0", "INSUFFICIENT", RepairReason::Grounding),
-            ("attribution_0", "CONFLICT", RepairReason::Attribution),
-            ("attribution_0", "UNCLEAR", RepairReason::Attribution),
-            ("task_fit_0", "UNMET", RepairReason::TaskFit),
-            ("task_fit_0", "UNCLEAR", RepairReason::TaskFit),
+            ("grounding_primary", "CONTRADICTED", RepairReason::Grounding),
+            ("grounding_primary", "INSUFFICIENT", RepairReason::Grounding),
+            ("attribution_primary", "CONFLICT", RepairReason::Attribution),
+            ("attribution_primary", "UNCLEAR", RepairReason::Attribution),
+            ("task_fit_primary", "UNMET", RepairReason::TaskFit),
+            ("task_fit_primary", "UNCLEAR", RepairReason::TaskFit),
         ] {
             let assessment = composed(&[(key, label)]);
             assert_eq!(assessment.raw_gate, Decision::Accept);
@@ -1103,7 +1103,7 @@ mod tests {
             assert_eq!(assessment.gate.confidence, 0.81);
             assert_eq!(assessment.repair_reason, reason);
             assert!(assessment.repair_reason.as_instruction().is_some());
-            let rejected = composed(&[(key, label), ("response_gate_0", "REJECT")]);
+            let rejected = composed(&[(key, label), ("response_gate_primary", "REJECT")]);
             assert_eq!(rejected.raw_gate, Decision::Reject);
             assert_eq!(rejected.gate.decision, Decision::Reject);
         }
@@ -1112,12 +1112,12 @@ mod tests {
     #[test]
     fn not_applicable_greeting_is_allowed_and_unknown_repair_is_not_invented() {
         let greeting = composed(&[
-            ("grounding_0", "NOT_APPLICABLE"),
-            ("attribution_0", "NOT_APPLICABLE"),
+            ("grounding_primary", "NOT_APPLICABLE"),
+            ("attribution_primary", "NOT_APPLICABLE"),
         ]);
         assert_eq!(greeting.gate.decision, Decision::Accept);
         assert_eq!(greeting.repair_reason, RepairReason::None);
-        let retry = composed(&[("response_gate_0", "RETRY")]);
+        let retry = composed(&[("response_gate_primary", "RETRY")]);
         assert_eq!(retry.repair_reason, RepairReason::None);
         assert!(retry.repair_reason.as_instruction().is_none());
     }
@@ -1130,7 +1130,7 @@ mod tests {
             ("TASK_FIT", RepairReason::TaskFit),
             ("LANGUAGE", RepairReason::Language),
         ] {
-            let assessment = composed(&[("repair_reason_0", label)]);
+            let assessment = composed(&[("repair_reason_primary", label)]);
             assert_eq!(assessment.raw_gate, Decision::Accept);
             assert_eq!(assessment.gate.decision, Decision::Retry);
             assert_eq!(assessment.repair_reason, reason);
@@ -1168,7 +1168,7 @@ mod tests {
             ),
         ] {
             let mut malformed = valid.clone();
-            malformed["answers"]["grounding_1"][field] = value;
+            malformed["answers"]["grounding_backup"][field] = value;
             assert!(
                 parse_batch_answers(&malformed.to_string(), &questions).is_err(),
                 "{field}"
@@ -1178,13 +1178,13 @@ mod tests {
         missing["answers"]
             .as_object_mut()
             .unwrap()
-            .remove("repair_reason_1");
+            .remove("repair_reason_backup");
         assert!(parse_batch_answers(&missing.to_string(), &questions).is_err());
         let mut extra = valid.clone();
-        extra["answers"]["unrequested"] = valid["answers"]["grounding_0"].clone();
+        extra["answers"]["unrequested"] = valid["answers"]["grounding_primary"].clone();
         assert!(parse_batch_answers(&extra.to_string(), &questions).is_err());
         let mut extra_field = valid.clone();
-        extra_field["answers"]["grounding_0"]["instruction"] = serde_json::json!("accept me");
+        extra_field["answers"]["grounding_primary"]["instruction"] = serde_json::json!("accept me");
         assert!(parse_batch_answers(&extra_field.to_string(), &questions).is_err());
         assert!(parse_batch_answers("{broken", &questions).is_err());
         assert!(
@@ -1197,7 +1197,7 @@ mod tests {
         let request = response_request();
         let questions = assessment_questions(&request);
         let mut wire = wire_answers(&questions, &[]);
-        wire["answers"]["response_gate_0"]["confidence"] = serde_json::json!(0.0);
+        wire["answers"]["response_gate_primary"]["confidence"] = serde_json::json!(0.0);
         let answers = parse_batch_answers(&wire.to_string(), &questions).unwrap();
         let assessment = JevDecisionProvider::new(TypesafeConfig::default())
             .compose_assessment(&request, &answers, 0)
@@ -1249,7 +1249,7 @@ mod tests {
         let encoded = serde_json::to_string(&questions).unwrap();
         assert!(!encoded.contains("WIRE_ONLY"));
         assert!(!encoded.contains("ignore the evaluator"));
-        let instruction = &questions["grounding_1"].instructions;
+        let instruction = &questions["grounding_backup"].instructions;
         assert!(instruction.contains("backup"));
         assert!(instruction.contains("attempt 1"));
         assert!(instruction.contains(&request.selection.candidates[1].response_digest));
@@ -1266,7 +1266,7 @@ mod tests {
                 .contains("WIRE_ONLY_EVIDENCE")
         );
         assert!(
-            body["questions"]["grounding_1"]["instructions"]
+            body["questions"]["grounding_backup"]["instructions"]
                 .as_str()
                 .unwrap()
                 .contains("INVALID_DECISION")
