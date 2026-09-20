@@ -281,7 +281,7 @@ impl DialogueSession {
             std::env::var(crate::llm_jev::LLM_PROVIDER_ENV)
                 .unwrap_or_else(|_| "in-process".to_owned())
         };
-        let mut language_providers = BTreeMap::new();
+        let mut language_providers: BTreeMap<String, Arc<dyn LanguageProvider>> = BTreeMap::new();
         language_providers.insert(
             PRIMARY_LANGUAGE_PROVIDER_ID.to_owned(),
             Arc::from(language_provider),
@@ -318,7 +318,7 @@ impl DialogueSession {
                     provider_kind,
                     model.clone(),
                 );
-                language_providers.insert(id.clone(), Box::new(provider));
+                language_providers.insert(id.clone(), Arc::new(provider));
                 language_candidates.push(LanguageProviderCandidate {
                     id: id.clone(),
                     provider: provider_kind.to_owned(),
