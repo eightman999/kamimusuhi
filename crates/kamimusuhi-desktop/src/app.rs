@@ -878,7 +878,7 @@ impl NativeApp {
                     &candidates.len().to_string(),
                 );
                 key_value(ui, "race-to-quality", &format!("{elapsed_ms} ms"));
-                if ui.link("全候補・エラーを内部トレースで見る").clicked() {
+                if ui.link("観測済み候補・エラーを内部トレースで見る").clicked() {
                     self.view = View::Trace;
                 }
             }
@@ -975,7 +975,7 @@ impl NativeApp {
                 }
                 ui.label(
                     RichText::new(
-                        "許可された全APIを並行生成し、response_candidateで応答の品質を優先して選択します。セッション内の遅延・成功率は補助情報です。",
+                        "許可された全APIをrace開始し、最速の十分な品質の応答を採用します。Jevには匿名候補だけを渡し、遅延・成功率は補助情報です。",
                     )
                     .small()
                     .color(MUTED),
