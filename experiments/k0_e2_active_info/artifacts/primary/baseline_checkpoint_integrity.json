@@ -1,0 +1,126 @@
+{
+  "checked": 24,
+  "unchanged": true,
+  "checks": [
+    {
+      "path": "checkpoints/fly_modular-s0.pt",
+      "sha256": "e1f1e83f7f5ebea335c85681d265276dfc868807646ce37499f7d6a7fc800549",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/fly_modular-s1.pt",
+      "sha256": "f8177f00e4d0a49e330cc655aa4673b4b0bac3cd0e4c35c467f18a428d4c7be5",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/fly_modular-s2.pt",
+      "sha256": "8e3ac24bb4afff40c91f85054fb1329c1194353fb7c0bf6ecf501b0eef149c9a",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/fly_modular-s3.pt",
+      "sha256": "948f1946463dbebda521be55739e23074c71c9c85c78c9b221bf987adc66fcf4",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/gru128-s0.pt",
+      "sha256": "5c72f5a99ee413753f3ca39c2dab16ca1e94552e583e50dc77d06baf8f67b71f",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/gru128-s1.pt",
+      "sha256": "74fe5c8143888eeac5bc03428f7aedab3913f11d080c28f226adc364836470ea",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/gru128-s2.pt",
+      "sha256": "ed9c6f590d0d8a36d7a3e6e49bc4bd61f09b0d4c51db40aca4723f18b475589f",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/gru128-s3.pt",
+      "sha256": "9c59022312ed500bf333a65b94846824220e2f05ca776381992d9ed7fe8b2d6f",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/gru64-s0.pt",
+      "sha256": "dcd8ae5999a5a09d4929b24a1b66ddea003d91d25c040808ee6d386e833a218c",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/gru64-s1.pt",
+      "sha256": "4d65022d9a173d15e2f57874ebb7e1e0d175285b2e8005cf6b3ecdb029355038",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/gru64-s2.pt",
+      "sha256": "7351ef5b5e98b92392b554fccae68de7fcc2ffa7f7312bd4858fcf3a0e88adf4",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/gru64-s3.pt",
+      "sha256": "eec8949d9bdfd041c9eef94fde31f72b008f7d120156fdacd755a52c848231eb",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/mlp-s0.pt",
+      "sha256": "35274424ba0e206c49fbeeb8e154c2bcefaac524529d67140b68a89f165d54cc",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/mlp-s1.pt",
+      "sha256": "b53a054b551d948d70b906d083c36c1b80a37154e39a57add2d7812c0e1507e4",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/mlp-s2.pt",
+      "sha256": "3f937d428a1fa1b454de51d925df2381f2335c10612824c51855b9d8acfee4d2",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/mlp-s3.pt",
+      "sha256": "008deb645bd03d8460a1d84bf476445a06bb68e09b416dae6668162554ac2109",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/softlogic_rnn-s0.pt",
+      "sha256": "7fc29df55c159952d904657a7d12e9dbe78a57a0a1b292662b974063b67df737",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/softlogic_rnn-s1.pt",
+      "sha256": "c2fe37fe3427e1dba418b87ca9733ccee2b9ba6c992a83614b45165784cc478d",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/softlogic_rnn-s2.pt",
+      "sha256": "54483fd5e27180de0fc0100a1aee70116f400972b8e2724eb4786d8f105ebe6f",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/softlogic_rnn-s3.pt",
+      "sha256": "2f017810204ddae38afa9afa5381ddf8dd40db532da66f2530767553e0cc13f0",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/sparse_rnn-s0.pt",
+      "sha256": "2640920fe94108a60144d6359c6442114e646640c424c8956f8d1ee6fb989eb3",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/sparse_rnn-s1.pt",
+      "sha256": "8878e68748b7189dff237858f248f7401e35ca92f45ee607d488675237256fd1",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/sparse_rnn-s2.pt",
+      "sha256": "7141f6c13e6ba7e1fab275480fc3e3da522af54a2e759598848efaa1d22ea796",
+      "unchanged": true
+    },
+    {
+      "path": "checkpoints/sparse_rnn-s3.pt",
+      "sha256": "039aeac936b8e54245c3c02c5b09dafb71bbf6c2780ab52e1ee51b1d3260c4bc",
+      "unchanged": true
+    }
+  ]
+}

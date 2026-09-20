@@ -1,0 +1,3485 @@
+[
+  {
+    "architecture": "mlp",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "never",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.09375,
+      "sd": 0.0,
+      "median": 0.09375,
+      "ci95": [
+        0.09375,
+        0.09375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru64",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "never",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.09375,
+      "sd": 0.0,
+      "median": 0.09375,
+      "ci95": [
+        0.09375,
+        0.09375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "never",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.09375,
+      "sd": 0.0,
+      "median": 0.09375,
+      "ci95": [
+        0.09375,
+        0.09375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "mlp",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "matched_rate_random",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0703125,
+      0.0703125,
+      0.0703125,
+      0.0703125,
+      0.0703125,
+      0.0703125,
+      0.0703125,
+      0.0703125
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.0703125,
+      "sd": 0.0,
+      "median": 0.0703125,
+      "ci95": [
+        0.0703125,
+        0.0703125
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru64",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "matched_rate_random",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.09765625,
+      0.09765625,
+      0.09375,
+      0.078125,
+      0.1015625,
+      0.09765625,
+      0.10546875,
+      0.09375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.095703125,
+      "sd": 0.008086705773543213,
+      "median": 0.09765625,
+      "ci95": [
+        0.09033203125,
+        0.10009765625
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "matched_rate_random",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.09765625,
+      0.09375,
+      0.1015625,
+      0.1015625,
+      0.09375,
+      0.09765625,
+      0.09375,
+      0.09375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.0966796875,
+      "sd": 0.003462520548546556,
+      "median": 0.095703125,
+      "ci95": [
+        0.0947265625,
+        0.09912109375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "mlp",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "shuffled",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.0859375,
+      "sd": 0.0,
+      "median": 0.0859375,
+      "ci95": [
+        0.0859375,
+        0.0859375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru64",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "shuffled",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.0859375,
+      "sd": 0.0,
+      "median": 0.0859375,
+      "ci95": [
+        0.0859375,
+        0.0859375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "shuffled",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375,
+      0.0859375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.0859375,
+      "sd": 0.0,
+      "median": 0.0859375,
+      "ci95": [
+        0.0859375,
+        0.0859375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "mlp",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "missing",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.09375,
+      "sd": 0.0,
+      "median": 0.09375,
+      "ci95": [
+        0.09375,
+        0.09375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru64",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "missing",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.09375,
+      "sd": 0.0,
+      "median": 0.09375,
+      "ci95": [
+        0.09375,
+        0.09375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "missing",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375,
+      0.09375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.09375,
+      "sd": 0.0,
+      "median": 0.09375,
+      "ci95": [
+        0.09375,
+        0.09375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "mlp",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "never",
+    "metric": "scenario_success.language",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.5333333313465118,
+      "sd": 0.0,
+      "median": 0.5333333313465118,
+      "ci95": [
+        0.5333333313465118,
+        0.5333333313465118
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru64",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "never",
+    "metric": "scenario_success.language",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.5333333313465118,
+      "sd": 0.0,
+      "median": 0.5333333313465118,
+      "ci95": [
+        0.5333333313465118,
+        0.5333333313465118
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "never",
+    "metric": "scenario_success.language",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.5333333313465118,
+      "sd": 0.0,
+      "median": 0.5333333313465118,
+      "ci95": [
+        0.5333333313465118,
+        0.5333333313465118
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "mlp",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "matched_rate_random",
+    "metric": "scenario_success.language",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.3999999761581421,
+      0.3999999761581421,
+      0.3999999761581421,
+      0.3999999761581421,
+      0.3999999761581421,
+      0.3999999761581421,
+      0.3999999761581421,
+      0.3999999761581421
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.3999999761581421,
+      "sd": 0.0,
+      "median": 0.3999999761581421,
+      "ci95": [
+        0.3999999761581421,
+        0.3999999761581421
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru64",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "matched_rate_random",
+    "metric": "scenario_success.language",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.46666663885116577,
+      0.46666663885116577,
+      0.4444444179534912,
+      0.4444444179534912,
+      0.48888885974884033,
+      0.46666663885116577,
+      0.5111111104488373,
+      0.4444444179534912
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.46666664257645607,
+      "sd": 0.023756561385665627,
+      "median": 0.46666663885116577,
+      "ci95": [
+        0.45277775079011917,
+        0.4833333119750023
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "matched_rate_random",
+    "metric": "scenario_success.language",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.46666663885116577,
+      0.4444444179534912,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.4444444179534912,
+      0.46666663885116577,
+      0.4444444179534912,
+      0.4444444179534912
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.46111108362674713,
+      "sd": 0.019697893502089947,
+      "median": 0.4555555284023285,
+      "ci95": [
+        0.44999997317790985,
+        0.47499997168779373
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "mlp",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "shuffled",
+    "metric": "scenario_success.language",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.48888885974884033,
+      "sd": 0.0,
+      "median": 0.48888885974884033,
+      "ci95": [
+        0.48888885974884033,
+        0.48888885974884033
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru64",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "shuffled",
+    "metric": "scenario_success.language",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.48888885974884033,
+      "sd": 0.0,
+      "median": 0.48888885974884033,
+      "ci95": [
+        0.48888885974884033,
+        0.48888885974884033
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "shuffled",
+    "metric": "scenario_success.language",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033,
+      0.48888885974884033
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.48888885974884033,
+      "sd": 0.0,
+      "median": 0.48888885974884033,
+      "ci95": [
+        0.48888885974884033,
+        0.48888885974884033
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "mlp",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "missing",
+    "metric": "scenario_success.language",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.5333333313465118,
+      "sd": 0.0,
+      "median": 0.5333333313465118,
+      "ci95": [
+        0.5333333313465118,
+        0.5333333313465118
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru64",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "missing",
+    "metric": "scenario_success.language",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.5333333313465118,
+      "sd": 0.0,
+      "median": 0.5333333313465118,
+      "ci95": [
+        0.5333333313465118,
+        0.5333333313465118
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "missing",
+    "metric": "scenario_success.language",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118,
+      0.5333333313465118
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.5333333313465118,
+      "sd": 0.0,
+      "median": 0.5333333313465118,
+      "ci95": [
+        0.5333333313465118,
+        0.5333333313465118
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "mlp",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "never",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.19453129172325134,
+      0.19453126192092896,
+      0.19453120231628418,
+      0.19453126192092896,
+      0.19453123211860657,
+      0.19453120231628418,
+      0.19453129172325134,
+      0.19453129172325134
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.19453125447034836,
+      "sd": 3.8198825386861305e-08,
+      "median": 0.19453126192092896,
+      "ci95": [
+        0.19453122839331627,
+        0.19453127682209015
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru64",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "never",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.17677342891693115,
+      0.17427337169647217,
+      0.17257815599441528,
+      0.17272663116455078,
+      0.17428910732269287,
+      0.17823439836502075,
+      0.17396092414855957,
+      0.17820322513580322
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.17512990534305573,
+      "sd": 0.002295293350595777,
+      "median": 0.17428123950958252,
+      "ci95": [
+        0.1737108113244176,
+        0.17656950689852238
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "never",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.1734921932220459,
+      0.17600786685943604,
+      0.17168742418289185,
+      0.17075783014297485,
+      0.176679790019989,
+      0.17119532823562622,
+      0.17347657680511475,
+      0.17041409015655518
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.17296388745307922,
+      "sd": 0.0023827059996359154,
+      "median": 0.1725820004940033,
+      "ci95": [
+        0.1715673390775919,
+        0.17457818444818257
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "mlp",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "matched_rate_random",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.1557265818119049,
+      0.15568754076957703,
+      0.15568751096725464,
+      0.1557265818119049,
+      0.15568748116493225,
+      0.15572655200958252,
+      0.15568754076957703,
+      0.15568754076957703
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.1557021662592888,
+      "sd": 2.0209784282733425e-05,
+      "median": 0.15568754076957703,
+      "ci95": [
+        0.15569237992167473,
+        0.15571680665016174
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru64",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "matched_rate_random",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.20521873235702515,
+      0.20268744230270386,
+      0.193312406539917,
+      0.16114068031311035,
+      0.2105390429496765,
+      0.20667189359664917,
+      0.2181328535079956,
+      0.19884377717971802
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.19956835359334946,
+      "sd": 0.017210712674749853,
+      "median": 0.2039530873298645,
+      "ci95": [
+        0.1879125775769353,
+        0.20881932228803635
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "policy_interventions.json",
+    "left": "learned",
+    "right": "matched_rate_random",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.20195317268371582,
+      0.19658595323562622,
+      0.20792949199676514,
+      0.20703911781311035,
+      0.1975000500679016,
+      0.1997031569480896,
+      0.19412505626678467,
+      0.19106245040893555
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.19948730617761612,
+      "sd": 0.005934480409713564,
+      "median": 0.1986016035079956,
+      "ci95": [
+        0.19567642454057932,
+        0.20337700806558132
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "mlp",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "shuffled",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.1718750298023224,
+      0.171875,
+      0.1718749701976776,
+      0.171875,
+      0.171875,
+      0.1718749701976776,
+      0.17187505960464478,
+      0.17187505960464478
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.1718750111758709,
+      "sd": 3.539725956813755e-08,
+      "median": 0.171875,
+      "ci95": [
+        0.1718749888241291,
+        0.1718750335276127
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru64",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "shuffled",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.17187505960464478,
+      0.17185932397842407,
+      0.17210936546325684,
+      0.1721094846725464,
+      0.17207026481628418,
+      0.17187511920928955,
+      0.17209374904632568,
+      0.171875
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.17198342084884644,
+      "sd": 0.00012076827721658436,
+      "median": 0.17197269201278687,
+      "ci95": [
+        0.1719004360958934,
+        0.17206542938947678
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "shuffled",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.17185938358306885,
+      0.171875,
+      0.17187488079071045,
+      0.171875,
+      0.17190629243850708,
+      0.171875,
+      0.171875,
+      0.17187494039535522
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.1718769371509552,
+      "sd": 1.3055302800392204e-05,
+      "median": 0.171875,
+      "ci95": [
+        0.17186912894248962,
+        0.17188671976327896
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "mlp",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "missing",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.1875000298023224,
+      0.1875,
+      0.1874999701976776,
+      0.1875,
+      0.1875,
+      0.1874999701976776,
+      0.1875,
+      0.1875
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.1874999962747097,
+      "sd": 1.9099412693430653e-08,
+      "median": 0.1875,
+      "ci95": [
+        0.1874999850988388,
+        0.1875000074505806
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru64",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "missing",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.18855470418930054,
+      0.18874996900558472,
+      0.18838286399841309,
+      0.18879693746566772,
+      0.1881718635559082,
+      0.18963289260864258,
+      0.18639057874679565,
+      0.18939846754074097
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.18850978463888168,
+      "sd": 0.0009866700833824945,
+      "median": 0.18865233659744263,
+      "ci95": [
+        0.1878281231969595,
+        0.1890527755022049
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "language_response_ablation.json",
+    "left": "correct",
+    "right": "missing",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.18907040357589722,
+      0.19095313549041748,
+      0.18981242179870605,
+      0.1891953945159912,
+      0.19003134965896606,
+      0.18996089696884155,
+      0.1890859603881836,
+      0.18904685974121094
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.18964455276727676,
+      "sd": 0.0006751621045928711,
+      "median": 0.18950390815734863,
+      "ci95": [
+        0.18926569670438767,
+        0.19011329133063554
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "mlp",
+    "source": "active_sensing.json",
+    "left": "orient/learned",
+    "right": "orient/disabled",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.38671875,
+      0.453125,
+      0.4296875,
+      0.44921875,
+      0.36328125,
+      0.48046875,
+      0.42578125,
+      0.4296875
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.42724609375,
+      "sd": 0.037288834164134345,
+      "median": 0.4296875,
+      "ci95": [
+        0.40185546875,
+        0.44970703125
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru64",
+    "source": "active_sensing.json",
+    "left": "orient/learned",
+    "right": "orient/disabled",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.52734375,
+      1.0,
+      1.0,
+      0.52734375,
+      0.52734375,
+      1.0,
+      0.52734375,
+      1.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.763671875,
+      "sd": 0.25264539274533865,
+      "median": 0.763671875,
+      "ci95": [
+        0.58642578125,
+        0.94091796875
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "active_sensing.json",
+    "left": "orient/learned",
+    "right": "orient/disabled",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 1.0,
+      "sd": 0.0,
+      "median": 1.0,
+      "ci95": [
+        1.0,
+        1.0
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "mlp",
+    "source": "active_sensing.json",
+    "left": "observe/learned",
+    "right": "observe/disabled",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.52734375,
+      0.52734375,
+      0.52734375,
+      0.52734375,
+      0.52734375,
+      0.52734375,
+      0.52734375,
+      0.52734375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.52734375,
+      "sd": 0.0,
+      "median": 0.52734375,
+      "ci95": [
+        0.52734375,
+        0.52734375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru64",
+    "source": "active_sensing.json",
+    "left": "observe/learned",
+    "right": "observe/disabled",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.52734375,
+      0.52734375,
+      0.52734375,
+      0.52734375,
+      0.52734375,
+      0.52734375,
+      0.52734375,
+      0.52734375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.52734375,
+      "sd": 0.0,
+      "median": 0.52734375,
+      "ci95": [
+        0.52734375,
+        0.52734375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "active_sensing.json",
+    "left": "observe/learned",
+    "right": "observe/disabled",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.52734375,
+      0.52734375,
+      0.52734375,
+      1.0,
+      0.52734375,
+      1.0,
+      0.52734375,
+      0.52734375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.6455078125,
+      "sd": 0.21879732826656,
+      "median": 0.52734375,
+      "ci95": [
+        0.52734375,
+        0.763671875
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B1",
+    "right": "B0",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      -0.31640625,
+      -0.328125,
+      -0.5078125,
+      -0.1484375,
+      -0.49609375,
+      -0.66015625,
+      0.0,
+      -0.1484375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.32568359375,
+      "sd": 0.22138418640538415,
+      "median": -0.322265625,
+      "ci95": [
+        -0.4736328125,
+        -0.17918701171874996
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 7,
+      "positive": 0,
+      "negative": 7,
+      "two_sided_exact_p": 0.015625
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B1",
+    "right": "B0",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      -0.6387422382831573,
+      -0.6562500298023224,
+      -1.0402811504900455,
+      -0.296875,
+      -0.993046972900629,
+      -1.3151953220367432,
+      -6.246566772460938e-05,
+      -0.34089064598083496
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.6601679781451821,
+      "sd": 0.4398845259577732,
+      "median": -0.6474961340427399,
+      "ci95": [
+        -0.9518496254459023,
+        -0.36561661354498937
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 0,
+      "negative": 8,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B1",
+    "right": "B0",
+    "metric": "llm_call_rate",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -0.00390625,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.00048828125,
+      "sd": 0.0013810679320049757,
+      "median": 0.0,
+      "ci95": [
+        -0.00146484375,
+        0.0
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 1,
+      "positive": 0,
+      "negative": 1,
+      "two_sided_exact_p": 1.0
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B2",
+    "right": "B0",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      -0.40234375,
+      -0.2421875,
+      -0.16796875,
+      -0.14453125,
+      -0.13671875,
+      0.0,
+      -0.3984375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.1865234375,
+      "sd": 0.1552668567507101,
+      "median": -0.15625,
+      "ci95": [
+        -0.28759765625,
+        -0.08935546875
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 6,
+      "positive": 0,
+      "negative": 6,
+      "two_sided_exact_p": 0.03125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B2",
+    "right": "B0",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0031328201293945312,
+      -0.8048594146966934,
+      -0.5220389664173126,
+      -0.3800390958786011,
+      -0.31782037019729614,
+      -0.33265626430511475,
+      -0.007250010967254639,
+      -0.8203047066926956
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.3977295011281967,
+      "sd": 0.31256432313449367,
+      "median": -0.3563476800918579,
+      "ci95": [
+        -0.5985058806836605,
+        -0.2010214887559414
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 1,
+      "negative": 7,
+      "two_sided_exact_p": 0.0703125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B2",
+    "right": "B0",
+    "metric": "llm_call_rate",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.00390625,
+      0.0,
+      0.0,
+      0.046875,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.00634765625,
+      "sd": 0.01643247001308771,
+      "median": 0.0,
+      "ci95": [
+        0.0,
+        0.01806640625
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 2,
+      "positive": 2,
+      "negative": 0,
+      "two_sided_exact_p": 0.5
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B2",
+    "right": "B1",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.31640625,
+      -0.07421875,
+      0.265625,
+      -0.01953125,
+      0.3515625,
+      0.5234375,
+      0.0,
+      -0.25
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.13916015625,
+      "sd": 0.2623296898818334,
+      "median": 0.1328125,
+      "ci95": [
+        -0.0283203125,
+        0.3057128906250002
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 7,
+      "positive": 4,
+      "negative": 3,
+      "two_sided_exact_p": 1.0
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B2",
+    "right": "B1",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.6418750584125519,
+      -0.14860938489437103,
+      0.5182421840727329,
+      -0.08316409587860107,
+      0.6752266027033329,
+      0.9825390577316284,
+      -0.007187545299530029,
+      -0.47941406071186066
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.2624384770169854,
+      "sd": 0.5084698897837275,
+      "median": 0.25552731938660145,
+      "ci95": [
+        -0.0605318176676519,
+        0.5843833618797363
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 4,
+      "negative": 4,
+      "two_sided_exact_p": 1.0
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B2",
+    "right": "B1",
+    "metric": "llm_call_rate",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.00390625,
+      0.0,
+      0.0,
+      0.05078125,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.0068359375,
+      "sd": 0.017809122095126056,
+      "median": 0.0,
+      "ci95": [
+        0.0,
+        0.01953125
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 2,
+      "positive": 2,
+      "negative": 0,
+      "two_sided_exact_p": 0.5
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B3",
+    "right": "B0",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.0,
+      "sd": 0.0,
+      "median": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 0,
+      "positive": 0,
+      "negative": 0,
+      "two_sided_exact_p": 1.0
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B3",
+    "right": "B0",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0017265081405639648,
+      0.0,
+      0.00022661685943603516,
+      0.0,
+      7.021427154541016e-05,
+      3.898143768310547e-05,
+      0.0013594627380371094,
+      0.00047659873962402344
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.00048729777336120605,
+      "sd": 0.0006776268982018933,
+      "median": 0.00014841556549072266,
+      "ci95": [
+        9.176097810268403e-05,
+        0.0009511560201644897
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 6,
+      "positive": 6,
+      "negative": 0,
+      "two_sided_exact_p": 0.03125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B3",
+    "right": "B0",
+    "metric": "llm_call_rate",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -0.00390625,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.00048828125,
+      "sd": 0.0013810679320049757,
+      "median": 0.0,
+      "ci95": [
+        -0.00146484375,
+        0.0
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 1,
+      "positive": 0,
+      "negative": 1,
+      "two_sided_exact_p": 1.0
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B3",
+    "right": "B1",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.31640625,
+      0.328125,
+      0.5078125,
+      0.1484375,
+      0.49609375,
+      0.66015625,
+      0.0,
+      0.1484375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.32568359375,
+      "sd": 0.22138418640538415,
+      "median": 0.322265625,
+      "ci95": [
+        0.17918701171875,
+        0.4736328125
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 7,
+      "positive": 7,
+      "negative": 0,
+      "two_sided_exact_p": 0.015625
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B3",
+    "right": "B1",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.6404687464237213,
+      0.6562500298023224,
+      1.0405077673494816,
+      0.296875,
+      0.9931171871721745,
+      1.3152343034744263,
+      0.0014219284057617188,
+      0.341367244720459
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.6606552759185433,
+      "sd": 0.4395759296753653,
+      "median": 0.6483593881130219,
+      "ci95": [
+        0.3660863834549673,
+        0.9521767357364297
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B3",
+    "right": "B1",
+    "metric": "llm_call_rate",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.0,
+      "sd": 0.0,
+      "median": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 0,
+      "positive": 0,
+      "negative": 0,
+      "two_sided_exact_p": 1.0
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B4",
+    "right": "B0",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      -0.07421875,
+      -0.09375,
+      0.0,
+      -0.23828125,
+      -0.6640625,
+      -0.1484375,
+      -0.359375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.197265625,
+      "sd": 0.2242220554136648,
+      "median": -0.12109375,
+      "ci95": [
+        -0.35694580078125,
+        -0.07125244140624987
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 6,
+      "positive": 0,
+      "negative": 6,
+      "two_sided_exact_p": 0.03125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B4",
+    "right": "B0",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      -0.014859437942504883,
+      -0.19312500953674316,
+      -0.18610930442810059,
+      -0.009296894073486328,
+      -0.47785162925720215,
+      -1.3360937535762787,
+      -0.3251953125,
+      -0.7480781376361847
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.41132618486881256,
+      "sd": 0.4468283345631433,
+      "median": -0.2591601610183716,
+      "ci95": [
+        -0.7277186708524823,
+        -0.15772071480751038
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 0,
+      "negative": 8,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B4",
+    "right": "B0",
+    "metric": "llm_call_rate",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -0.00390625,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.00048828125,
+      "sd": 0.0013810679320049757,
+      "median": 0.0,
+      "ci95": [
+        -0.00146484375,
+        0.0
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 1,
+      "positive": 0,
+      "negative": 1,
+      "two_sided_exact_p": 1.0
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B4",
+    "right": "B1",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.31640625,
+      0.25390625,
+      0.4140625,
+      0.1484375,
+      0.2578125,
+      -0.00390625,
+      -0.1484375,
+      -0.2109375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.12841796875,
+      "sd": 0.22650897516605312,
+      "median": 0.201171875,
+      "ci95": [
+        -0.01904296875,
+        0.27149658203125004
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 5,
+      "negative": 3,
+      "two_sided_exact_p": 0.7265625
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B4",
+    "right": "B1",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.6238828003406525,
+      0.4631250202655792,
+      0.854171846061945,
+      0.28757810592651367,
+      0.5151953436434269,
+      -0.020898431539535522,
+      -0.3251328468322754,
+      -0.40718749165534973
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.24884179327636957,
+      "sd": 0.45638695141052665,
+      "median": 0.37535156309604645,
+      "ci95": [
+        -0.045657141960691656,
+        0.5403447243967093
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 5,
+      "negative": 3,
+      "two_sided_exact_p": 0.7265625
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B4",
+    "right": "B1",
+    "metric": "llm_call_rate",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.0,
+      "sd": 0.0,
+      "median": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 0,
+      "positive": 0,
+      "negative": 0,
+      "two_sided_exact_p": 1.0
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B5",
+    "right": "B0",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      -0.37109375,
+      -0.578125,
+      -0.56640625,
+      -0.578125,
+      -0.6640625,
+      -0.66015625,
+      -0.66015625,
+      -0.4765625
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.5693359375,
+      "sd": 0.10249720127657755,
+      "median": -0.578125,
+      "ci95": [
+        -0.62841796875,
+        -0.49609375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 0,
+      "negative": 8,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B5",
+    "right": "B0",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      -0.7426563203334808,
+      -1.1619531512260437,
+      -1.138132706284523,
+      -1.1592578440904617,
+      -1.3348048031330109,
+      -1.314921885728836,
+      -1.320117175579071,
+      -0.9639062732458115
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -1.1419687699526548,
+      "sd": 0.20378737465971286,
+      "median": -1.1606054976582527,
+      "ci95": [
+        -1.2595403293613345,
+        -0.9960208512842655
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 0,
+      "negative": 8,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B5",
+    "right": "B0",
+    "metric": "llm_call_rate",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -0.00390625,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.00048828125,
+      "sd": 0.0013810679320049757,
+      "median": 0.0,
+      "ci95": [
+        -0.00146484375,
+        0.0
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 1,
+      "positive": 0,
+      "negative": 1,
+      "two_sided_exact_p": 1.0
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B5",
+    "right": "B1",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      -0.0546875,
+      -0.25,
+      -0.05859375,
+      -0.4296875,
+      -0.16796875,
+      0.0,
+      -0.66015625,
+      -0.328125
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.24365234375,
+      "sd": 0.22370560116502677,
+      "median": -0.208984375,
+      "ci95": [
+        -0.39599609375,
+        -0.107421875
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 7,
+      "positive": 0,
+      "negative": 7,
+      "two_sided_exact_p": 0.015625
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B5",
+    "right": "B1",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      -0.10391408205032349,
+      -0.5057031214237213,
+      -0.09785155579447746,
+      -0.8623828440904617,
+      -0.3417578302323818,
+      0.0002734363079071045,
+      -1.3200547099113464,
+      -0.6230156272649765
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.4818007918074727,
+      "sd": 0.44884745334127074,
+      "median": -0.42373047582805157,
+      "ci95": [
+        -0.7865937645547092,
+        -0.20911817206069827
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 1,
+      "negative": 7,
+      "two_sided_exact_p": 0.0703125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B5",
+    "right": "B1",
+    "metric": "llm_call_rate",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.0,
+      "sd": 0.0,
+      "median": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 0,
+      "positive": 0,
+      "negative": 0,
+      "two_sided_exact_p": 1.0
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B6",
+    "right": "B0",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -0.3203125,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.0400390625,
+      "sd": 0.113247570424408,
+      "median": 0.0,
+      "ci95": [
+        -0.1201171875,
+        0.0
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 1,
+      "positive": 0,
+      "negative": 1,
+      "two_sided_exact_p": 1.0
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B6",
+    "right": "B0",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0028983354568481445,
+      -5.4717063903808594e-05,
+      0.002062559127807617,
+      0.0008983612060546875,
+      -0.6400781869888306,
+      0.004999995231628418,
+      0.0014843940734863281,
+      0.0006718635559082031
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.07838967442512512,
+      "sd": 0.2269618206820574,
+      "median": 0.0011913776397705078,
+      "ci95": [
+        -0.23921981863677502,
+        0.002686525136232376
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 6,
+      "negative": 2,
+      "two_sided_exact_p": 0.2890625
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B6",
+    "right": "B0",
+    "metric": "llm_call_rate",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -0.00390625,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.00048828125,
+      "sd": 0.0013810679320049757,
+      "median": 0.0,
+      "ci95": [
+        -0.00146484375,
+        0.0
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 1,
+      "positive": 0,
+      "negative": 1,
+      "two_sided_exact_p": 1.0
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B6",
+    "right": "B1",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.31640625,
+      0.328125,
+      0.5078125,
+      0.1484375,
+      0.17578125,
+      0.66015625,
+      0.0,
+      0.1484375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.28564453125,
+      "sd": 0.21503580599989777,
+      "median": 0.24609375,
+      "ci95": [
+        0.15478515625,
+        0.43359375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 7,
+      "positive": 7,
+      "negative": 0,
+      "two_sided_exact_p": 0.015625
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B6",
+    "right": "B1",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.6416405737400055,
+      0.6561953127384186,
+      1.0423437096178532,
+      0.2977733612060547,
+      0.3529687859117985,
+      1.3201953172683716,
+      0.0015468597412109375,
+      0.34156250953674316
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.581778303720057,
+      "sd": 0.42993127702983286,
+      "median": 0.497304679825902,
+      "ci95": [
+        0.3201155428774655,
+        0.8758378899656236
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 8,
+      "negative": 0,
+      "two_sided_exact_p": 0.0078125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B6",
+    "right": "B1",
+    "metric": "llm_call_rate",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.0,
+      "sd": 0.0,
+      "median": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 0,
+      "positive": 0,
+      "negative": 0,
+      "two_sided_exact_p": 1.0
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B7",
+    "right": "B0",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.0,
+      -0.15625,
+      -0.1484375,
+      -0.04296875,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.04345703125,
+      "sd": 0.06885383987871356,
+      "median": 0.0,
+      "ci95": [
+        -0.09375,
+        -0.00537109375
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 3,
+      "positive": 0,
+      "negative": 3,
+      "two_sided_exact_p": 0.25
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B7",
+    "right": "B0",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      -0.0011641979217529297,
+      7.82012939453125e-05,
+      -0.32028114795684814,
+      -0.2983984351158142,
+      -0.09580475091934204,
+      -0.01703125238418579,
+      -0.004539132118225098,
+      -0.0015937089920043945
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.09234180301427841,
+      "sd": 0.1377879790019917,
+      "median": -0.010785192251205444,
+      "ci95": [
+        -0.1913489419966936,
+        -0.013579747453331943
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 1,
+      "negative": 7,
+      "two_sided_exact_p": 0.0703125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B7",
+    "right": "B0",
+    "metric": "llm_call_rate",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -0.00390625,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": -0.00048828125,
+      "sd": 0.0013810679320049757,
+      "median": 0.0,
+      "ci95": [
+        -0.00146484375,
+        0.0
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 1,
+      "positive": 0,
+      "negative": 1,
+      "two_sided_exact_p": 1.0
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B7",
+    "right": "B1",
+    "metric": "task_success",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.31640625,
+      0.328125,
+      0.3515625,
+      0.0,
+      0.453125,
+      0.66015625,
+      0.0,
+      0.1484375
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.2822265625,
+      "sd": 0.22593383761974392,
+      "median": 0.322265625,
+      "ci95": [
+        0.1376953125,
+        0.4326171875
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 6,
+      "positive": 6,
+      "negative": 0,
+      "two_sided_exact_p": 0.03125
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B7",
+    "right": "B1",
+    "metric": "reward",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.6375780403614044,
+      0.6563282310962677,
+      0.7200000025331974,
+      -0.001523435115814209,
+      0.897242221981287,
+      1.2981640696525574,
+      -0.004476666450500488,
+      0.33929693698883057
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.5678261751309037,
+      "sd": 0.4442776346115738,
+      "median": 0.6469531357288361,
+      "ci95": [
+        0.2823202721774578,
+        0.8613024356542156
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 8,
+      "positive": 6,
+      "negative": 2,
+      "two_sided_exact_p": 0.2890625
+    }
+  },
+  {
+    "architecture": "gru128",
+    "source": "ppo_ablation.json",
+    "left": "B7",
+    "right": "B1",
+    "metric": "llm_call_rate",
+    "seed_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "seed_paired_differences": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "difference_statistics": {
+      "n_seeds": 8,
+      "mean": 0.0,
+      "sd": 0.0,
+      "median": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ]
+    },
+    "exact_sign_test": {
+      "n_nonzero_seeds": 0,
+      "positive": 0,
+      "negative": 0,
+      "two_sided_exact_p": 1.0
+    }
+  }
+]

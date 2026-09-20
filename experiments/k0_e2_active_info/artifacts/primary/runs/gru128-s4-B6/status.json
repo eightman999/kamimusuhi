@@ -1,0 +1,22 @@
+{
+  "run_id": "gru128-s4-B6",
+  "architecture": "gru128",
+  "seed": 4,
+  "arm": "B6",
+  "status": "complete",
+  "pid": 241852,
+  "started_at": 1789034498.6902971,
+  "gpu_uuid": "GPU-1d6afaad-67b7-b965-46c7-efe6c9c395f3",
+  "timestamp": 1789034501.8394487,
+  "update": 8,
+  "stage": "ppo",
+  "validation": {
+    "task_success": 0.70703125,
+    "scenario_macro_success": 0.6922278006871542,
+    "reward": 0.4296015501022339,
+    "call_rate": 0.32421875,
+    "action_agreement": 0.979736328125
+  },
+  "transitions": 393216,
+  "finished_at": 1789034501.8394475
+}

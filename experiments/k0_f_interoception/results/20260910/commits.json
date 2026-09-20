@@ -1,0 +1,66 @@
+[
+  {
+    "hash": "f592b49d1ddf63ac15d354bcf351727704079c3e",
+    "subject": "docs: fix K0-F interoception protocol and preserve prior experiments"
+  },
+  {
+    "hash": "3e483dc5acb628fa8c11b93ec26850a706258fcf",
+    "subject": "feat: add distributed machine telemetry and versioned body frames"
+  },
+  {
+    "hash": "43643d7361a0b21b0a2433ece9a9c33510480497",
+    "subject": "feat: add bounded real workloads and distributed telemetry acquisition"
+  },
+  {
+    "hash": "70b0bf8a4ebc1b84f9c06ed06aea305831a2261b",
+    "subject": "feat: add paired recurrent body policies and causal information evaluations"
+  },
+  {
+    "hash": "28b582151e61389944795160bc1d2c6a1047186c",
+    "subject": "feat: add Japanese interoception dashboard and research plots"
+  },
+  {
+    "hash": "eb9b1c2193877b209f7faa1391d5477a86241e95",
+    "subject": "fix: preserve matched histories and enforce held-out evaluation gates"
+  },
+  {
+    "hash": "6a8a6b70deb324402845f3014ac0704d170fa357",
+    "subject": "feat: validate body-selected jobs on live hardware and audit provenance"
+  },
+  {
+    "hash": "74f099491378a0fddd036342f83969a5a7d15c30",
+    "subject": "fix: retain interrupted recordings and prevent idle sleep during acquisition"
+  },
+  {
+    "hash": "9bb0429eb0e047ef01fbbb17ba326979434c7e71",
+    "subject": "test: verify acquisition boundaries and add finite dashboard mirroring"
+  },
+  {
+    "hash": "846ad92beacbb0484d4b48b0a4139458469986c8",
+    "subject": "docs: generate evidence-gated K0-F reports and document live verification"
+  },
+  {
+    "hash": "16be1e767bb7c365f11e0e4400fdba46f687b541",
+    "subject": "test: reject malformed evidence before declaring research success"
+  },
+  {
+    "hash": "89401bd112d7a07d37a22f4e8f5b587c17992867",
+    "subject": "feat: expose validation progress and distinguish recorded LLM workloads"
+  },
+  {
+    "hash": "7eb4151ede8f018d849fa881627447975ad7c4ea",
+    "subject": "fix: bound probe scaling of low-variance body measurements"
+  },
+  {
+    "hash": "0fb0603f3872aed2dbbf1b045769d0dc4dcb37a4",
+    "subject": "feat: isolate exploratory diagnostics after failed informativeness gate"
+  },
+  {
+    "hash": "f0d9243ddfe03320406bd9a02b18aa384535087b",
+    "subject": "fix: show failed validation probes and audited diagnostic results clearly"
+  },
+  {
+    "hash": "e41e42f4ec677f63e28f3713b72638856523afe5",
+    "subject": "docs: report failed research gates and concrete verification limits"
+  }
+]

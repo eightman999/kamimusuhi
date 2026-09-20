@@ -1,0 +1,370 @@
+{
+  "schema_version": "k0-f2-protocol-spec-v1",
+  "research_question": "Current real machine body improves action outcome prediction, resource selection and new real-job utility compared with independently trained BLIND and incorrect-time controls.",
+  "hypotheses": [
+    "P1 BODY > independently-trained BLIND on untouched test",
+    "P2 BODY > same-task/session/length deranged SHUFFLED on untouched test",
+    "P3 BODY > age-aware 30-second STALE on untouched test",
+    "P4 BODY > independently-trained BLIND on new live jobs",
+    "CF matched-body utility > frozen-action utility with identical prefix history/hidden"
+  ],
+  "actions": [
+    "RUN_CPU",
+    "RUN_RTX3060",
+    "RUN_P100",
+    "WAIT"
+  ],
+  "tasks": [
+    {
+      "matrix_dimension": 128,
+      "repetitions": 8,
+      "deadline_seconds": 0.003
+    },
+    {
+      "matrix_dimension": 512,
+      "repetitions": 16,
+      "deadline_seconds": 0.008
+    },
+    {
+      "matrix_dimension": 1024,
+      "repetitions": 16,
+      "deadline_seconds": 0.025
+    },
+    {
+      "matrix_dimension": 2048,
+      "repetitions": 8,
+      "deadline_seconds": 0.07
+    }
+  ],
+  "matrix_seed_base": 20260911,
+  "dtype": "float32; TF32 disabled",
+  "task_features": [
+    "dimension/2048",
+    "repetitions/16",
+    "deadline_seconds/0.1",
+    "3*dimension^2*4/(64MiB)"
+  ],
+  "wait": {
+    "seconds": 0.02,
+    "then_resource": "RUN_RTX3060",
+    "reobserve_or_replan": false,
+    "includes_wait_in_latency": true,
+    "limitation": "May be dominated for short deadlines; dominance and selection rates reported without adjustment."
+  },
+  "utility": "failure=-1; otherwise 1-min(compute_completion_latency_seconds/deadline_seconds,2)",
+  "latency_definition": "dispatch_monotonic to completion_monotonic on same host; full output finite/checksum validation and return transport measured separately, excluded from primary latency",
+  "validation_definition": "every output matrix element finite; checksum first row against deterministic independent reference; not an elementwise correctness proof",
+  "sessions": {
+    "A": {
+      "split": "train",
+      "seed": 911001
+    },
+    "B": {
+      "split": "train",
+      "seed": 912003
+    },
+    "C": {
+      "split": "validation",
+      "seed": 913007
+    },
+    "D": {
+      "split": "test",
+      "seed": 914009
+    }
+  },
+  "collection": {
+    "blocks_per_session": 16,
+    "block_seconds": 45.0,
+    "decisions_per_block": 32,
+    "tasks_per_block": "each (task_id in0..3,history_length1..8) exactly once",
+    "history_lengths": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "record_only_warmup_seconds": 45,
+    "background_settle_seconds": 5,
+    "inter_session_buffer_seconds": 45,
+    "all_workloads_per_session": 2,
+    "label_round_seed": "session_seed+round_index*101",
+    "case_order_seed": "session_seed+1000+block",
+    "source_sampling_hz": 1.0,
+    "retry_policy": "No retries or performance-driven extension; interrupted/invalid sessions are preserved and F2 marked INVALID_COLLECTION. Any recovery or changed scientific protocol requires a separate phase."
+  },
+  "normalization": {
+    "version": "k0f2.normalize.v1",
+    "frame_schema": "k0f2.frame.v1",
+    "raw_schema": "k0f.raw.v1",
+    "frame_names": [
+      "master_cpu_thermal",
+      "master_cpu_busy",
+      "master_ram_pressure",
+      "master_io_pressure",
+      "rtx3060_thermal",
+      "rtx3060_compute_busy",
+      "rtx3060_vram_pressure",
+      "rtx3060_power_pressure",
+      "p100_thermal",
+      "p100_compute_busy",
+      "p100_vram_pressure",
+      "p100_power_pressure",
+      "mac_thermal",
+      "mac_cpu_busy",
+      "mac_memory_pressure",
+      "mac_power_pressure",
+      "network_latency",
+      "network_loss",
+      "body_staleness",
+      "body_availability"
+    ],
+    "temperature_low_c": 30.0,
+    "temperature_high_c": 85.0,
+    "rtt_scale_ms": 1000.0,
+    "staleness_scale_s": 60.0,
+    "max_age_s": 60.0,
+    "clock_future_tolerance_s": 2.0,
+    "missing_value": 0.0,
+    "policy_layout": "20-values-then-20-mask"
+  },
+  "normalization_identity": "c1cbcff40ee532ba8242bed486865a956d350c9346eabe44691a0d54239f5865",
+  "normalization_fit": "No empirical fit for physical frame; fixed versioned physical constants. Probe feature/target statistics fit from train only.",
+  "splits": {
+    "train": [
+      "A",
+      "B"
+    ],
+    "validation": [
+      "C"
+    ],
+    "test": [
+      "D"
+    ],
+    "ratio_if_all_stages_reached": [
+      0.5,
+      0.25,
+      0.25
+    ],
+    "test_collection_condition": "only after passed validation probe and all 24 policy runs frozen; on probe failure D is not collected",
+    "row_random_split": false
+  },
+  "probe": {
+    "architecture": "ridge_action_heads",
+    "ridge_lambda": 10.0,
+    "seed": 0,
+    "feature_dimensions": 126,
+    "scale_floor": 0.05,
+    "feature_basis": "task4,t0^2,compute=t0^3*t1,last maskedbody+mask40,history mean maskedbody+mask40,compute*lastmasked20,compute*historymeanmasked20",
+    "standardization": "train mean/std; body and interaction feature indices>=6 std floor .05; task/poly6 zero std<1e-8 replaced1",
+    "targets": [
+      "log_latency",
+      "utility"
+    ],
+    "latency_clip_seconds": [
+      1e-08,
+      20.0
+    ],
+    "utility_clip": [
+      -1.0,
+      1.0
+    ],
+    "gate": "both targets nonconstant in train and validation; for each target validation BODY MAE < BLIND and < SHUFFLED; predicted-utility argmax mean regret BODY < BLIND and < SHUFFLED",
+    "selection_accuracy": "descriptive secondary; regret is gate metric",
+    "failure_status": "FAIL_AT_PROBE_GATE",
+    "test_at_failed_gate": "not collected, never opened; no exploratory continuation"
+  },
+  "policy": {
+    "architecture": "GRU128",
+    "input_dimensions": 44,
+    "body_dimensions": 20,
+    "mask_dimensions": 20,
+    "seeds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11
+    ],
+    "epochs": 240,
+    "batch_size": 128,
+    "learning_rate": 0.001,
+    "optimizer": "Adam",
+    "gradient_clip_norm": 1.0,
+    "loss": "teacher cross entropy + expected utility regret",
+    "training_modes": [
+      "BODY",
+      "BLIND"
+    ],
+    "initial_weights": "identical within seed",
+    "task_order": "identical within seed and epoch across modes",
+    "checkpoint_selection": "first strictly best validation mean utility",
+    "best_final_separate": true,
+    "PPO": false,
+    "DAgger": false,
+    "device": "cpu",
+    "torch_threads": 4,
+    "checkpoint_stages": [
+      "initial",
+      "best",
+      "final"
+    ],
+    "best_improvement_tolerance": 1e-12
+  },
+  "shuffle": {
+    "strata": [
+      "session_id",
+      "split",
+      "exact task_features",
+      "history_length"
+    ],
+    "mapping": "bijective derangement to a different block; no self mapping",
+    "mapping_saved": true,
+    "preserve": [
+      "task",
+      "sequence_length",
+      "body marginal distribution",
+      "task order",
+      "same split/session"
+    ]
+  },
+  "stale": {
+    "primary_age_seconds": 30,
+    "age_aware": true,
+    "same_history_length": true,
+    "source_same_session": true,
+    "secondary_curve": false
+  },
+  "counterfactual": {
+    "eligibility": "all ordered same-task different-block pairs in held-out D",
+    "fork": "same weights/task/A prefix history/hidden; swap final body only",
+    "outcome": "both forked actions scored on B real measured outcome vector; no improving-pair selection"
+  },
+  "live": {
+    "sessions": {
+      "L1": {
+        "seed": 921001
+      },
+      "L2": {
+        "seed": 922003
+      }
+    },
+    "blocks_per_session": 8,
+    "block_max_seconds": 120.0,
+    "background_max_seconds": 240,
+    "modes": [
+      "BODY",
+      "TRAINED_BLIND",
+      "SHUFFLED",
+      "STALE"
+    ],
+    "cases_per_block": "12 seeds x 4 tasks",
+    "planned_jobs": 3072,
+    "case_seed": "live_session_seed+1000+block",
+    "labels_seed": "live_session_seed",
+    "common_base_body": true,
+    "within_case_mode_order": "randomized",
+    "shuffle_donors": "same-task/same-history-length held-out real body; labels and costs never used for donor choice",
+    "order_effect": "per-position utility/latency and within-mode centered latency by order; descriptive shared-session diagnostic",
+    "outcome": "new numerical jobs on selected physical resource; no replayed reward",
+    "policy_inference_timing": "all four mode actions computed from a common pre-action frame before randomized execution; policy compute time separately recorded and excluded from job latency",
+    "history_length": "1+case_rng.randrange(8) per group",
+    "warmup_seconds": 45,
+    "block_overrun": "INVALID_COLLECTION if case begins after the fixed 120s maximum; no reduced cohort or block extension"
+  },
+  "statistics": {
+    "n_seeds": 12,
+    "minimum_effect": 0.01,
+    "bootstrap_resamples": 20000,
+    "bootstrap_seed": 1847,
+    "sign_alpha": 0.05,
+    "sign_test": "exact two-sided paired sign test, zeros excluded",
+    "success": "each P1-P4 and CF n12 mean>=.01,CI95 lower>0,sign p<=.05; conjunction",
+    "independent_unit": "training seed; all seeds share held-out and live workload cohorts",
+    "multiplicity": "intersection-union all primary endpoints required; no picking successful comparisons"
+  },
+  "temporal_ood": [
+    "sampling_interval_2x",
+    "body_update_delay",
+    "network_jitter",
+    "temporal_sensor_dropout",
+    "stale_frames",
+    "task_start_timing"
+  ],
+  "sensor_ood": [
+    "sensor_noise",
+    "sensor_dropout",
+    "constant_value",
+    "scaled_telemetry",
+    "partial_sensor_inversion",
+    "sensor_permutation",
+    "rtx3060_sensor_unavailable",
+    "p100_sensor_unavailable",
+    "mac_unavailable",
+    "network_latency_increase"
+  ],
+  "resource_ood": [
+    "controlled_rtx_unavailable",
+    "controlled_p100_unavailable",
+    "controlled_cpu_constrained"
+  ],
+  "ood_success_gate": false,
+  "mac_contribution": "No independent MASTER_ONLY training; Mac-unavailable observation OOD only. Additional value remains unverified.",
+  "safety": {
+    "gpu_stop_c": 75,
+    "cpu_stop_c": 80,
+    "mac_stop_pressure": 0.6666666666666666,
+    "gpu_background_max_duty": 0.5,
+    "gpu_tensor_allocation_max_bytes_per_device": 268435456,
+    "foreground_cpu_processes": 1,
+    "background_cpu_processes": 1,
+    "threads_per_cpu_process": 2,
+    "policy_training_threads": 4,
+    "minimum_free_ram_bytes": 4294967296,
+    "job_timeout_seconds": 20,
+    "invalid_or_nonfinite_job": "abort collection and preserve incomplete records",
+    "services": "must match initial; unrelated compute is not stopped",
+    "own_processes_only": true
+  },
+  "forbidden_policy_inputs": [
+    "workload label",
+    "session or split identity",
+    "absolute timestamp",
+    "teacher or oracle action",
+    "measured cost or latency",
+    "future telemetry",
+    "protocol or frame ids"
+  ],
+  "final_statuses": [
+    "PASS",
+    "FAIL",
+    "FAIL_AT_PROBE_GATE",
+    "INVALID_COLLECTION"
+  ],
+  "publication": {
+    "commit": true,
+    "push": false,
+    "automatic_next_phase": false
+  },
+  "prelock_smoke": "new synthetic fixtures in work only; no old F data and no fresh confirmatory real acquisition before lock",
+  "checksum_tolerance": {
+    "atol": 0.0001,
+    "rtol": 0.0001,
+    "reference": "independent float64 first-row sum from regenerated operands; full matrix finite separate"
+  },
+  "resource_ood_semantics": {
+    "controlled_rtx_unavailable": "synthetic RTX sensor mask=0 and RTX/WAIT selected outcome failure=-1",
+    "controlled_p100_unavailable": "synthetic P100 sensor mask=0 and P100 selected outcome failure=-1",
+    "controlled_cpu_constrained": "synthetic CPU sensor mask=0, CPU measured latency x2, original failure flag unchanged"
+  }
+}

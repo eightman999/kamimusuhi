@@ -1,0 +1,263 @@
+{
+  "mlp": {
+    "curve": {
+      "8": {
+        "n_seeds": 8,
+        "mean": 0.546875,
+        "sd": 0.0,
+        "median": 0.546875,
+        "ci95": [
+          0.546875,
+          0.546875
+        ]
+      },
+      "16": {
+        "n_seeds": 8,
+        "mean": 0.546875,
+        "sd": 0.0,
+        "median": 0.546875,
+        "ci95": [
+          0.546875,
+          0.546875
+        ]
+      },
+      "24": {
+        "n_seeds": 8,
+        "mean": 0.544921875,
+        "sd": 0.005524271728019903,
+        "median": 0.546875,
+        "ci95": [
+          0.541015625,
+          0.546875
+        ]
+      },
+      "40": {
+        "n_seeds": 8,
+        "mean": 0.548828125,
+        "sd": 0.005524271728019903,
+        "median": 0.546875,
+        "ci95": [
+          0.546875,
+          0.552734375
+        ]
+      },
+      "80": {
+        "n_seeds": 8,
+        "mean": 0.546875,
+        "sd": 0.0,
+        "median": 0.546875,
+        "ci95": [
+          0.546875,
+          0.546875
+        ]
+      },
+      "160": {
+        "n_seeds": 8,
+        "mean": 0.54296875,
+        "sd": 0.011048543456039806,
+        "median": 0.546875,
+        "ci95": [
+          0.53515625,
+          0.546875
+        ]
+      },
+      "320": {
+        "n_seeds": 8,
+        "mean": 0.544921875,
+        "sd": 0.005524271728019903,
+        "median": 0.546875,
+        "ci95": [
+          0.541015625,
+          0.546875
+        ]
+      },
+      "640": {
+        "n_seeds": 8,
+        "mean": 0.546875,
+        "sd": 0.0,
+        "median": 0.546875,
+        "ci95": [
+          0.546875,
+          0.546875
+        ]
+      }
+    },
+    "first_tested_delay_mean_at_or_below_chance": null,
+    "first_tested_delay_ci_lower_at_or_below_chance": null,
+    "interpretation": "Discrete tested-delay crossing only; absence is right-censoring, not infinite memory."
+  },
+  "gru64": {
+    "curve": {
+      "8": {
+        "n_seeds": 8,
+        "mean": 0.0,
+        "sd": 0.0,
+        "median": 0.0,
+        "ci95": [
+          0.0,
+          0.0
+        ]
+      },
+      "16": {
+        "n_seeds": 8,
+        "mean": 0.0,
+        "sd": 0.0,
+        "median": 0.0,
+        "ci95": [
+          0.0,
+          0.0
+        ]
+      },
+      "24": {
+        "n_seeds": 8,
+        "mean": 0.0,
+        "sd": 0.0,
+        "median": 0.0,
+        "ci95": [
+          0.0,
+          0.0
+        ]
+      },
+      "40": {
+        "n_seeds": 8,
+        "mean": 0.13671875,
+        "sd": 0.21008840348002483,
+        "median": 0.0,
+        "ci95": [
+          0.025390625,
+          0.291015625
+        ]
+      },
+      "80": {
+        "n_seeds": 8,
+        "mean": 0.580078125,
+        "sd": 0.1748798814480038,
+        "median": 0.546875,
+        "ci95": [
+          0.5,
+          0.705078125
+        ]
+      },
+      "160": {
+        "n_seeds": 8,
+        "mean": 0.580078125,
+        "sd": 0.1748798814480038,
+        "median": 0.546875,
+        "ci95": [
+          0.5,
+          0.705078125
+        ]
+      },
+      "320": {
+        "n_seeds": 8,
+        "mean": 0.580078125,
+        "sd": 0.1748798814480038,
+        "median": 0.546875,
+        "ci95": [
+          0.5,
+          0.705078125
+        ]
+      },
+      "640": {
+        "n_seeds": 8,
+        "mean": 0.580078125,
+        "sd": 0.1748798814480038,
+        "median": 0.546875,
+        "ci95": [
+          0.5,
+          0.705078125
+        ]
+      }
+    },
+    "first_tested_delay_mean_at_or_below_chance": 8,
+    "first_tested_delay_ci_lower_at_or_below_chance": 8,
+    "interpretation": "Discrete tested-delay crossing only; absence is right-censoring, not infinite memory."
+  },
+  "gru128": {
+    "curve": {
+      "8": {
+        "n_seeds": 8,
+        "mean": 0.0,
+        "sd": 0.0,
+        "median": 0.0,
+        "ci95": [
+          0.0,
+          0.0
+        ]
+      },
+      "16": {
+        "n_seeds": 8,
+        "mean": 0.0,
+        "sd": 0.0,
+        "median": 0.0,
+        "ci95": [
+          0.0,
+          0.0
+        ]
+      },
+      "24": {
+        "n_seeds": 8,
+        "mean": 0.0,
+        "sd": 0.0,
+        "median": 0.0,
+        "ci95": [
+          0.0,
+          0.0
+        ]
+      },
+      "40": {
+        "n_seeds": 8,
+        "mean": 0.34765625,
+        "sd": 0.4423164406907764,
+        "median": 0.1328125,
+        "ci95": [
+          0.06640625,
+          0.630859375
+        ]
+      },
+      "80": {
+        "n_seeds": 8,
+        "mean": 0.763671875,
+        "sd": 0.26151461255181324,
+        "median": 0.8359375,
+        "ci95": [
+          0.595556640625,
+          0.931640625
+        ]
+      },
+      "160": {
+        "n_seeds": 8,
+        "mean": 0.73828125,
+        "sd": 0.2814669302289347,
+        "median": 0.7734375,
+        "ci95": [
+          0.544921875,
+          0.931640625
+        ]
+      },
+      "320": {
+        "n_seeds": 8,
+        "mean": 0.669921875,
+        "sd": 0.27516197289619254,
+        "median": 0.5,
+        "ci95": [
+          0.521484375,
+          0.86328125
+        ]
+      },
+      "640": {
+        "n_seeds": 8,
+        "mean": 0.669921875,
+        "sd": 0.27516197289619254,
+        "median": 0.5,
+        "ci95": [
+          0.521484375,
+          0.86328125
+        ]
+      }
+    },
+    "first_tested_delay_mean_at_or_below_chance": 8,
+    "first_tested_delay_ci_lower_at_or_below_chance": 8,
+    "interpretation": "Discrete tested-delay crossing only; absence is right-censoring, not infinite memory."
+  }
+}

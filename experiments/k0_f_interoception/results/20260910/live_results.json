@@ -1,0 +1,957 @@
+{
+  "schema_version": "k0-f-live-v1",
+  "rows": [
+    {
+      "seed": 0,
+      "mode": "BODY",
+      "n_jobs": 32,
+      "utility": 0.5382995552737763,
+      "latency_seconds": 0.0072450287805168045,
+      "deadline_success_rate": 0.9375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 0,
+      "mode": "BLIND",
+      "n_jobs": 32,
+      "utility": 0.4110676990875011,
+      "latency_seconds": 0.007647687750250043,
+      "deadline_success_rate": 0.84375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 0,
+      "mode": "SHUFFLED",
+      "n_jobs": 32,
+      "utility": 0.5264665264524713,
+      "latency_seconds": 0.006669180156222865,
+      "deadline_success_rate": 0.90625,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 0,
+      "mode": "STALE",
+      "n_jobs": 32,
+      "utility": 0.5148040140846508,
+      "latency_seconds": 0.007279827874981493,
+      "deadline_success_rate": 0.9375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 0,
+      "mode": "TRAINED_BLIND",
+      "n_jobs": 32,
+      "utility": 0.5361659031876418,
+      "latency_seconds": 0.007141214094644965,
+      "deadline_success_rate": 0.9375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 1,
+      "mode": "BODY",
+      "n_jobs": 32,
+      "utility": 0.5449524517395427,
+      "latency_seconds": 0.007314839843502341,
+      "deadline_success_rate": 0.96875,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 1,
+      "mode": "BLIND",
+      "n_jobs": 32,
+      "utility": 0.4617337371831429,
+      "latency_seconds": 0.007730288311677214,
+      "deadline_success_rate": 0.875,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 1,
+      "mode": "SHUFFLED",
+      "n_jobs": 32,
+      "utility": 0.4766394611732115,
+      "latency_seconds": 0.007658191873815667,
+      "deadline_success_rate": 0.9375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 1,
+      "mode": "STALE",
+      "n_jobs": 32,
+      "utility": 0.3424924436835681,
+      "latency_seconds": 0.024029161656699216,
+      "deadline_success_rate": 0.84375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 1,
+      "mode": "TRAINED_BLIND",
+      "n_jobs": 32,
+      "utility": 0.5340449909175125,
+      "latency_seconds": 0.00806622731238349,
+      "deadline_success_rate": 0.9375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 2,
+      "mode": "BODY",
+      "n_jobs": 32,
+      "utility": 0.5312957153479753,
+      "latency_seconds": 0.007365084750517781,
+      "deadline_success_rate": 0.96875,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 2,
+      "mode": "BLIND",
+      "n_jobs": 32,
+      "utility": 0.526680279700334,
+      "latency_seconds": 0.0070859385307358025,
+      "deadline_success_rate": 0.96875,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 2,
+      "mode": "SHUFFLED",
+      "n_jobs": 32,
+      "utility": 0.5215580884572166,
+      "latency_seconds": 0.0077965881878299115,
+      "deadline_success_rate": 0.9375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 2,
+      "mode": "STALE",
+      "n_jobs": 32,
+      "utility": 0.49670974304657034,
+      "latency_seconds": 0.007802731844094524,
+      "deadline_success_rate": 0.9375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 2,
+      "mode": "TRAINED_BLIND",
+      "n_jobs": 32,
+      "utility": 0.5231583439507024,
+      "latency_seconds": 0.0077738401869282825,
+      "deadline_success_rate": 0.96875,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 3,
+      "mode": "BODY",
+      "n_jobs": 32,
+      "utility": 0.5898180449019794,
+      "latency_seconds": 0.00684762031369246,
+      "deadline_success_rate": 1.0,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 3,
+      "mode": "BLIND",
+      "n_jobs": 32,
+      "utility": 0.4234630017138746,
+      "latency_seconds": 0.007472364470231696,
+      "deadline_success_rate": 0.90625,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 3,
+      "mode": "SHUFFLED",
+      "n_jobs": 32,
+      "utility": 0.5476200308712578,
+      "latency_seconds": 0.00777090643646261,
+      "deadline_success_rate": 1.0,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 3,
+      "mode": "STALE",
+      "n_jobs": 32,
+      "utility": 0.48796760333380007,
+      "latency_seconds": 0.008063064064117498,
+      "deadline_success_rate": 0.9375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 3,
+      "mode": "TRAINED_BLIND",
+      "n_jobs": 32,
+      "utility": 0.5067575888886797,
+      "latency_seconds": 0.00749978799967721,
+      "deadline_success_rate": 0.96875,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 4,
+      "mode": "BODY",
+      "n_jobs": 32,
+      "utility": 0.5056352675874223,
+      "latency_seconds": 0.00783229337503144,
+      "deadline_success_rate": 0.9375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 4,
+      "mode": "BLIND",
+      "n_jobs": 32,
+      "utility": 0.45610478844840446,
+      "latency_seconds": 0.00719327940578296,
+      "deadline_success_rate": 0.90625,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 4,
+      "mode": "SHUFFLED",
+      "n_jobs": 32,
+      "utility": 0.5143328858201432,
+      "latency_seconds": 0.007839207406050264,
+      "deadline_success_rate": 0.90625,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 4,
+      "mode": "STALE",
+      "n_jobs": 32,
+      "utility": 0.5265529544834255,
+      "latency_seconds": 0.007547144281943474,
+      "deadline_success_rate": 0.9375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 4,
+      "mode": "TRAINED_BLIND",
+      "n_jobs": 32,
+      "utility": 0.5542733660295198,
+      "latency_seconds": 0.007283313624839138,
+      "deadline_success_rate": 0.96875,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 5,
+      "mode": "BODY",
+      "n_jobs": 32,
+      "utility": 0.5909926587766373,
+      "latency_seconds": 0.006697835531213059,
+      "deadline_success_rate": 1.0,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 5,
+      "mode": "BLIND",
+      "n_jobs": 32,
+      "utility": 0.38435068646003856,
+      "latency_seconds": 0.0076039343125557934,
+      "deadline_success_rate": 0.875,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 5,
+      "mode": "SHUFFLED",
+      "n_jobs": 32,
+      "utility": 0.5466981472903474,
+      "latency_seconds": 0.0068934567807446,
+      "deadline_success_rate": 0.96875,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 5,
+      "mode": "STALE",
+      "n_jobs": 32,
+      "utility": 0.47633753829829095,
+      "latency_seconds": 0.00906639634399653,
+      "deadline_success_rate": 0.9375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 5,
+      "mode": "TRAINED_BLIND",
+      "n_jobs": 32,
+      "utility": 0.5274668609666453,
+      "latency_seconds": 0.007332991031489655,
+      "deadline_success_rate": 0.9375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 6,
+      "mode": "BODY",
+      "n_jobs": 32,
+      "utility": 0.45120350416103366,
+      "latency_seconds": 0.007859562405428733,
+      "deadline_success_rate": 0.875,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 6,
+      "mode": "BLIND",
+      "n_jobs": 32,
+      "utility": 0.44580194284602226,
+      "latency_seconds": 0.00714907818814936,
+      "deadline_success_rate": 0.84375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 6,
+      "mode": "SHUFFLED",
+      "n_jobs": 32,
+      "utility": 0.3889280533517194,
+      "latency_seconds": 0.007249191624850937,
+      "deadline_success_rate": 0.78125,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 6,
+      "mode": "STALE",
+      "n_jobs": 32,
+      "utility": 0.24945841515833914,
+      "latency_seconds": 0.010996075125376592,
+      "deadline_success_rate": 0.75,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 6,
+      "mode": "TRAINED_BLIND",
+      "n_jobs": 32,
+      "utility": 0.4526314719178117,
+      "latency_seconds": 0.006908288906288362,
+      "deadline_success_rate": 0.8125,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 7,
+      "mode": "BODY",
+      "n_jobs": 32,
+      "utility": 0.5066601081506026,
+      "latency_seconds": 0.007052414968711673,
+      "deadline_success_rate": 0.90625,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 7,
+      "mode": "BLIND",
+      "n_jobs": 32,
+      "utility": 0.41064170155323154,
+      "latency_seconds": 0.008022309468515232,
+      "deadline_success_rate": 0.84375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 7,
+      "mode": "SHUFFLED",
+      "n_jobs": 32,
+      "utility": 0.5540550420279639,
+      "latency_seconds": 0.007116706999795497,
+      "deadline_success_rate": 0.96875,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 7,
+      "mode": "STALE",
+      "n_jobs": 32,
+      "utility": 0.5331386043547657,
+      "latency_seconds": 0.006980152063079004,
+      "deadline_success_rate": 0.9375,
+      "failure_rate": 0.0
+    },
+    {
+      "seed": 7,
+      "mode": "TRAINED_BLIND",
+      "n_jobs": 32,
+      "utility": 0.44434189327300067,
+      "latency_seconds": 0.007525433874434384,
+      "deadline_success_rate": 0.84375,
+      "failure_rate": 0.0
+    }
+  ],
+  "comparisons": {
+    "BODY_vs_BLIND": {
+      "n_seeds": 8,
+      "mean": 0.0923766836183025,
+      "sd": 0.07264775413656066,
+      "median": 0.08961856057688539,
+      "ci95": [
+        0.04570124406435623,
+        0.14082603042078287
+      ],
+      "unit": "training_seed",
+      "bootstrap_resamples": 20000,
+      "bootstrap_seed": 1847,
+      "values": [
+        0.12723185618627514,
+        0.08321871455639973,
+        0.0046154356476412195,
+        0.16635504318810485,
+        0.04953047913901781,
+        0.20664197231659875,
+        0.005401561315011405,
+        0.09601840659737104
+      ],
+      "mean_difference": 0.0923766836183025,
+      "exact_sign_p": 0.0078125,
+      "non_tied_seeds": 8,
+      "pass": true,
+      "multiplicity": "unadjusted; prespecified primary comparisons require conjunction"
+    },
+    "BODY_vs_SHUFFLED": {
+      "n_seeds": 8,
+      "mean": 0.022819883811829797,
+      "sd": 0.03905740478686064,
+      "median": 0.027015521426013323,
+      "ci95": [
+        -0.0038748845218113323,
+        0.04707372777772888
+      ],
+      "unit": "training_seed",
+      "bootstrap_resamples": 20000,
+      "bootstrap_seed": 1847,
+      "values": [
+        0.011833028821304992,
+        0.06831299056633117,
+        0.009737626890758633,
+        0.04219801403072165,
+        -0.008697618232720972,
+        0.044294511486289934,
+        0.06227545080931424,
+        -0.04739493387736127
+      ],
+      "mean_difference": 0.022819883811829797,
+      "exact_sign_p": 0.2890625,
+      "non_tied_seeds": 8,
+      "pass": false,
+      "multiplicity": "unadjusted; prespecified primary comparisons require conjunction"
+    },
+    "BODY_vs_STALE": {
+      "n_seeds": 8,
+      "mean": 0.07892449868694484,
+      "sd": 0.09123339244291433,
+      "median": 0.06821820693479214,
+      "ci95": [
+        0.021779237503570442,
+        0.13983164871827586
+      ],
+      "unit": "training_seed",
+      "bootstrap_resamples": 20000,
+      "bootstrap_seed": 1847,
+      "values": [
+        0.023495541189125446,
+        0.20246000805597453,
+        0.03458597230140492,
+        0.10185044156817935,
+        -0.020917686896003262,
+        0.11465512047834636,
+        0.20174508900269453,
+        -0.026478496204163093
+      ],
+      "mean_difference": 0.07892449868694484,
+      "exact_sign_p": 0.2890625,
+      "non_tied_seeds": 8,
+      "pass": false,
+      "multiplicity": "unadjusted; prespecified primary comparisons require conjunction"
+    },
+    "BODY_vs_TRAINED_BLIND": {
+      "n_seeds": 8,
+      "mean": 0.02250211085093195,
+      "sd": 0.04362962951633201,
+      "median": 0.009522416109651544,
+      "ci95": [
+        -0.006733021528968174,
+        0.05047201248832304
+      ],
+      "unit": "training_seed",
+      "bootstrap_resamples": 20000,
+      "bootstrap_seed": 1847,
+      "values": [
+        0.0021336520861344743,
+        0.010907460822030202,
+        0.008137371397272886,
+        0.0830604560132997,
+        -0.048638098442097544,
+        0.06352579780999201,
+        -0.001427967756778059,
+        0.06231821487760192
+      ],
+      "mean_difference": 0.02250211085093195,
+      "exact_sign_p": 0.2890625,
+      "non_tied_seeds": 8,
+      "pass": false,
+      "multiplicity": "unadjusted; prespecified primary comparisons require conjunction"
+    }
+  },
+  "statistics": {
+    "BODY": {
+      "utility": {
+        "n_seeds": 8,
+        "mean": 0.5323571632423711,
+        "sd": 0.04612911843748429,
+        "median": 0.5347976353108758,
+        "ci95": [
+          0.5015116322131992,
+          0.5613325615677927
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.5382995552737763,
+          0.5449524517395427,
+          0.5312957153479753,
+          0.5898180449019794,
+          0.5056352675874223,
+          0.5909926587766373,
+          0.45120350416103366,
+          0.5066601081506026
+        ]
+      },
+      "latency_seconds": {
+        "n_seeds": 8,
+        "mean": 0.007276834996076786,
+        "sd": 0.0004188725070037534,
+        "median": 0.007279934312009573,
+        "ci95": [
+          0.007012251105692258,
+          0.007556741939155386
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.0072450287805168045,
+          0.007314839843502341,
+          0.007365084750517781,
+          0.00684762031369246,
+          0.00783229337503144,
+          0.006697835531213059,
+          0.007859562405428733,
+          0.007052414968711673
+        ]
+      },
+      "deadline_success_rate": {
+        "n_seeds": 8,
+        "mean": 0.94921875,
+        "sd": 0.04399643603666747,
+        "median": 0.953125,
+        "ci95": [
+          0.921875,
+          0.9765625
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.9375,
+          0.96875,
+          0.96875,
+          1.0,
+          0.9375,
+          1.0,
+          0.875,
+          0.90625
+        ]
+      },
+      "failure_rate": {
+        "n_seeds": 8,
+        "mean": 0.0,
+        "sd": 0.0,
+        "median": 0.0,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "BLIND": {
+      "utility": {
+        "n_seeds": 8,
+        "mean": 0.43998047962406867,
+        "sd": 0.04366783068614206,
+        "median": 0.4346324722799484,
+        "ci95": [
+          0.41406581195694037,
+          0.47067383852741307
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.4110676990875011,
+          0.4617337371831429,
+          0.526680279700334,
+          0.4234630017138746,
+          0.45610478844840446,
+          0.38435068646003856,
+          0.44580194284602226,
+          0.41064170155323154
+        ]
+      },
+      "latency_seconds": {
+        "n_seeds": 8,
+        "mean": 0.0074881100547372625,
+        "sd": 0.000326618431308626,
+        "median": 0.007538149391393745,
+        "ci95": [
+          0.007279597288853523,
+          0.00770428103123777
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.007647687750250043,
+          0.007730288311677214,
+          0.0070859385307358025,
+          0.007472364470231696,
+          0.00719327940578296,
+          0.0076039343125557934,
+          0.00714907818814936,
+          0.008022309468515232
+        ]
+      },
+      "deadline_success_rate": {
+        "n_seeds": 8,
+        "mean": 0.8828125,
+        "sd": 0.04339781717683835,
+        "median": 0.875,
+        "ci95": [
+          0.859375,
+          0.9140625
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.84375,
+          0.875,
+          0.96875,
+          0.90625,
+          0.90625,
+          0.875,
+          0.84375,
+          0.84375
+        ]
+      },
+      "failure_rate": {
+        "n_seeds": 8,
+        "mean": 0.0,
+        "sd": 0.0,
+        "median": 0.0,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "SHUFFLED": {
+      "utility": {
+        "n_seeds": 8,
+        "mean": 0.5095372794305414,
+        "sd": 0.05463646898301513,
+        "median": 0.524012307454844,
+        "ci95": [
+          0.46909963828712614,
+          0.5391494981623737
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.5264665264524713,
+          0.4766394611732115,
+          0.5215580884572166,
+          0.5476200308712578,
+          0.5143328858201432,
+          0.5466981472903474,
+          0.3889280533517194,
+          0.5540550420279639
+        ]
+      },
+      "latency_seconds": {
+        "n_seeds": 8,
+        "mean": 0.007374178683221544,
+        "sd": 0.0004539930472060581,
+        "median": 0.007453691749333302,
+        "ci95": [
+          0.007075507913086909,
+          0.007656766565929729
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.006669180156222865,
+          0.007658191873815667,
+          0.0077965881878299115,
+          0.00777090643646261,
+          0.007839207406050264,
+          0.0068934567807446,
+          0.007249191624850937,
+          0.007116706999795497
+        ]
+      },
+      "deadline_success_rate": {
+        "n_seeds": 8,
+        "mean": 0.92578125,
+        "sd": 0.06668468413522168,
+        "median": 0.9375,
+        "ci95": [
+          0.87890625,
+          0.96484375
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.90625,
+          0.9375,
+          0.9375,
+          1.0,
+          0.90625,
+          0.96875,
+          0.78125,
+          0.96875
+        ]
+      },
+      "failure_rate": {
+        "n_seeds": 8,
+        "mean": 0.0,
+        "sd": 0.0,
+        "median": 0.0,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "STALE": {
+      "utility": {
+        "n_seeds": 8,
+        "mean": 0.45343266455542636,
+        "sd": 0.10209903033401434,
+        "median": 0.4923386731901852,
+        "ci95": [
+          0.3790725058833762,
+          0.5110770458210443
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.5148040140846508,
+          0.3424924436835681,
+          0.49670974304657034,
+          0.48796760333380007,
+          0.5265529544834255,
+          0.47633753829829095,
+          0.24945841515833914,
+          0.5331386043547657
+        ]
+      },
+      "latency_seconds": {
+        "n_seeds": 8,
+        "mean": 0.010220569156786041,
+        "sd": 0.005724720573373238,
+        "median": 0.00793289795410601,
+        "ci95": [
+          0.007624039027916751,
+          0.014445362078703283
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.007279827874981493,
+          0.024029161656699216,
+          0.007802731844094524,
+          0.008063064064117498,
+          0.007547144281943474,
+          0.00906639634399653,
+          0.010996075125376592,
+          0.006980152063079004
+        ]
+      },
+      "deadline_success_rate": {
+        "n_seeds": 8,
+        "mean": 0.90234375,
+        "sd": 0.06975223210714171,
+        "median": 0.9375,
+        "ci95": [
+          0.85546875,
+          0.9375
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.9375,
+          0.84375,
+          0.9375,
+          0.9375,
+          0.9375,
+          0.9375,
+          0.75,
+          0.9375
+        ]
+      },
+      "failure_rate": {
+        "n_seeds": 8,
+        "mean": 0.0,
+        "sd": 0.0,
+        "median": 0.0,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "TRAINED_BLIND": {
+      "utility": {
+        "n_seeds": 8,
+        "mean": 0.5098550523914392,
+        "sd": 0.040202452678585056,
+        "median": 0.5253126024586738,
+        "ci95": [
+          0.4822568628996464,
+          0.5337731763609668
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.5361659031876418,
+          0.5340449909175125,
+          0.5231583439507024,
+          0.5067575888886797,
+          0.5542733660295198,
+          0.5274668609666453,
+          0.4526314719178117,
+          0.44434189327300067
+        ]
+      },
+      "latency_seconds": {
+        "n_seeds": 8,
+        "mean": 0.007441387128835686,
+        "sd": 0.00036301501737844884,
+        "median": 0.0074163895155834325,
+        "ci95": [
+          0.0072164977655688745,
+          0.007683993640540621
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.007141214094644965,
+          0.00806622731238349,
+          0.0077738401869282825,
+          0.00749978799967721,
+          0.007283313624839138,
+          0.007332991031489655,
+          0.006908288906288362,
+          0.007525433874434384
+        ]
+      },
+      "deadline_success_rate": {
+        "n_seeds": 8,
+        "mean": 0.921875,
+        "sd": 0.06022650697871447,
+        "median": 0.9375,
+        "ci95": [
+          0.87890625,
+          0.95703125
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.9375,
+          0.9375,
+          0.96875,
+          0.96875,
+          0.96875,
+          0.9375,
+          0.8125,
+          0.84375
+        ]
+      },
+      "failure_rate": {
+        "n_seeds": 8,
+        "mean": 0.0,
+        "sd": 0.0,
+        "median": 0.0,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "unit": "training_seed",
+        "bootstrap_resamples": 20000,
+        "bootstrap_seed": 1847,
+        "values": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    }
+  },
+  "outcome_provenance": "new_real_jobs_executed_after_frozen_policy_choice",
+  "independent_unit": "training_seed",
+  "limitations": "Sequential randomized mode execution within workload blocks; shared physical environment and fixed workload cohort, no claim of population uncertainty from telemetry points.",
+  "experiment_scope": "exploratory_after_failed_probe",
+  "confirmatory_eligible": false,
+  "decision_sha256": "9c23956d66a5604efe19d17743624adc3745942bce8969d42954ebc5f329d657"
+}
