@@ -29,12 +29,13 @@ use crate::dialogue_setup::{
     language_provider_auth_available, language_provider_kind, public_endpoint_origin,
 };
 use crate::llm_jev::{
-    ConversationCoreState, ConversationError, ConversationTrace, Decision, DecisionEvidence,
-    DecisionKind, DecisionProvider, DecisionRequest, GeneratedLanguageCandidate, LanguageProvider,
-    LanguageProviderCandidate, LanguageProviderTelemetry, LanguageProviderTelemetrySnapshot,
-    LanguageResponseCandidate, LanguageResponseSelectionRequest, LanguageResult,
-    MAX_JEV_CANDIDATE_RESPONSE_BYTES, ObservationNeed, PRIMARY_LANGUAGE_PROVIDER_ID,
-    PersonaLanguageProvider, ResponseAssessment, ResponseAssessmentRequest, TurnPreparationRequest,
+    CancellationToken, ConversationCoreState, ConversationError, ConversationTrace, Decision,
+    DecisionEvidence, DecisionKind, DecisionProvider, DecisionRequest, GeneratedLanguageCandidate,
+    LanguageProvider, LanguageProviderCandidate, LanguageProviderTelemetry,
+    LanguageProviderTelemetrySnapshot, LanguageResponseCandidate, LanguageResponseSelectionRequest,
+    LanguageResult, MAX_JEV_CANDIDATE_RESPONSE_BYTES, ObservationNeed,
+    PRIMARY_LANGUAGE_PROVIDER_ID, PersonaLanguageProvider, ResponseAssessment,
+    ResponseAssessmentRequest, RuleBasedDecisionProvider, TurnPreparationRequest,
     configured_decision_provider, configured_language_provider,
 };
 use crate::research::ResearchCatalog;
@@ -98,6 +99,22 @@ fn observation_guidance(
     })
 }
 
+/// The degraded response gate: the deterministic local provider selects the
+/// earliest ready structurally valid candidate and marks both halves of the
+/// verdict `fallback` with the code that made Jev unreachable. The result
+/// still goes through the session's content-binding validation afterwards.
+fn local_assessment(
+    request: &ResponseAssessmentRequest,
+    reason: &str,
+) -> Result<ResponseAssessment, ConversationError> {
+    let mut assessment = RuleBasedDecisionProvider.assess_responses(request)?;
+    assessment.selection.fallback = true;
+    assessment.selection.fallback_reason = Some(reason.to_owned());
+    assessment.gate.fallback = true;
+    assessment.gate.fallback_reason = Some(reason.to_owned());
+    Ok(assessment)
+}
+
 fn required_information(state: &ConversationCoreState) -> Vec<String> {
     match state.speech_act.as_str() {
         "report_problem" => vec![
@@ -153,6 +170,57 @@ struct LanguageAttempt {
     provider_id: String,
     elapsed_ms: u64,
     result: Result<crate::llm_jev::LanguageResult, crate::llm_jev::ConversationError>,
+}
+
+/// Cancels the shared race token when it drops — on acceptance, pool
+/// exhaustion, or any early error return out of the race loop.
+struct CancelOnDrop(CancellationToken);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
+/// Per-turn fail-soft state. Once the configured decision provider proves
+/// unavailable the rest of the turn decides locally instead of paying the
+/// same dead-endpoint timeout for every remaining call, and every
+/// degradation is recorded for the trace.
+#[derive(Default)]
+struct DecisionFallback {
+    /// First unavailability code this turn, while any.
+    code: Option<String>,
+    /// `stage:CODE` entries, one per degraded stage.
+    events: Vec<String>,
+}
+
+impl DecisionFallback {
+    /// The provider itself failed as unavailable: adopt the governing code
+    /// and mark the stage that observed it.
+    fn record(&mut self, stage: &str, code: &str) {
+        if self.code.is_none() {
+            self.code = Some(code.to_owned());
+        }
+        self.push(stage);
+    }
+
+    /// `stage` was served locally under an outage another stage already
+    /// proved — the provider is not re-probed once degraded.
+    fn degraded(&mut self, stage: &str) {
+        self.push(stage);
+    }
+
+    fn push(&mut self, stage: &str) {
+        if self
+            .events
+            .iter()
+            .any(|event| event.split(':').next() == Some(stage))
+        {
+            return;
+        }
+        let code = self.code.clone().unwrap_or_default();
+        self.events.push(format!("{stage}:{code}"));
+    }
 }
 
 impl LanguageAttempt {
@@ -281,7 +349,7 @@ impl DialogueSession {
             std::env::var(crate::llm_jev::LLM_PROVIDER_ENV)
                 .unwrap_or_else(|_| "in-process".to_owned())
         };
-        let mut language_providers = BTreeMap::new();
+        let mut language_providers: BTreeMap<String, Arc<dyn LanguageProvider>> = BTreeMap::new();
         language_providers.insert(
             PRIMARY_LANGUAGE_PROVIDER_ID.to_owned(),
             Arc::from(language_provider),
@@ -318,7 +386,7 @@ impl DialogueSession {
                     provider_kind,
                     model.clone(),
                 );
-                language_providers.insert(id.clone(), Box::new(provider));
+                language_providers.insert(id.clone(), Arc::new(provider));
                 language_candidates.push(LanguageProviderCandidate {
                     id: id.clone(),
                     provider: provider_kind.to_owned(),
@@ -474,6 +542,36 @@ impl DialogueSession {
         Ok(())
     }
 
+    /// Register an in-process language organ directly, bypassing the
+    /// operator-config path used by `set_language_provider`. Tests and
+    /// offline harnesses use this to attach scripted organs; the provider
+    /// joins the same anonymous race, telemetry accounting and evidence
+    /// binding as configured endpoints.
+    pub fn add_language_provider(
+        &mut self,
+        id: &str,
+        provider: Arc<dyn LanguageProvider>,
+    ) -> Result<(), RuntimeError> {
+        validate_language_provider_id(id)?;
+        if id == PRIMARY_LANGUAGE_PROVIDER_ID {
+            return Err(RuntimeError::PersonaConfig {
+                message: "language provider id 'primary' is reserved".to_owned(),
+            });
+        }
+        let descriptor = provider.descriptor();
+        self.language_providers.insert(id.to_owned(), provider);
+        self.language_candidates
+            .retain(|candidate| candidate.id != id);
+        self.language_candidates.push(LanguageProviderCandidate {
+            id: id.to_owned(),
+            provider: descriptor.kind,
+            model: descriptor.name,
+            endpoint: "in-process".to_owned(),
+            telemetry: LanguageProviderTelemetry::default().snapshot(),
+        });
+        Ok(())
+    }
+
     /// Remove an operator-registered language organ from subsequent turns.
     pub fn remove_language_provider(&mut self, id: &str) -> Result<(), RuntimeError> {
         if id == PRIMARY_LANGUAGE_PROVIDER_ID {
@@ -498,12 +596,14 @@ impl DialogueSession {
     }
 
     /// Start every admitted language organ concurrently and return results in
-    /// completion order. The caller may accept an early candidate without
-    /// waiting for slower organs; late sends are simply dropped once the turn
-    /// no longer needs them. Provider calls themselves are not force-cancelled.
+    /// completion order. Each per-organ request clone carries the shared
+    /// cancellation token so organs that can abort early observe the race
+    /// closing; the caller drains whatever finished after acceptance as
+    /// `late_candidates` rather than dropping it unobserved.
     fn start_language_race(
         &self,
         request: &crate::llm_jev::LanguageRequest,
+        cancellation: &CancellationToken,
     ) -> (mpsc::Receiver<LanguageAttempt>, usize) {
         let (tx, rx) = mpsc::channel();
         let count = self.language_providers.len();
@@ -511,7 +611,8 @@ impl DialogueSession {
             let tx = tx.clone();
             let provider_id = provider_id.clone();
             let provider = Arc::clone(provider);
-            let request = request.clone();
+            let mut request = request.clone();
+            request.cancellation = Some(cancellation.clone());
             std::thread::spawn(move || {
                 let attempt = LanguageAttempt::generate(&provider_id, provider.as_ref(), &request);
                 let _ = tx.send(attempt);
@@ -521,7 +622,14 @@ impl DialogueSession {
         (rx, count)
     }
 
-    fn record_language_attempt(&mut self, attempt: &LanguageAttempt, attempt_index: u8) {
+    /// Telemetry plus a secret-free record for one attempt. Late attempts are
+    /// kept out of `last_generated_candidates` so the assessed pool and the
+    /// observable stragglers stay distinct.
+    fn attempt_record(
+        &mut self,
+        attempt: &LanguageAttempt,
+        attempt_index: u8,
+    ) -> GeneratedLanguageCandidate {
         let (response_bytes, response_digest, error_code) = match &attempt.result {
             Ok(result) => {
                 self.record_provider_success(&attempt.provider_id, attempt.elapsed_ms);
@@ -533,11 +641,16 @@ impl DialogueSession {
                 )
             }
             Err(error) => {
-                self.record_provider_failure(
-                    &attempt.provider_id,
-                    attempt.elapsed_ms,
-                    error.code(),
-                );
+                // A race-cancelled attempt is not a provider fault: record the
+                // attempt for observability but keep the advisory telemetry —
+                // the success rate Jev sees — free of our own aborts.
+                if !matches!(error, ConversationError::Cancelled) {
+                    self.record_provider_failure(
+                        &attempt.provider_id,
+                        attempt.elapsed_ms,
+                        error.code(),
+                    );
+                }
                 (None, None, Some(error.code().to_owned()))
             }
         };
@@ -546,21 +659,25 @@ impl DialogueSession {
             .iter()
             .find(|candidate| candidate.id == attempt.provider_id)
             .expect("generated provider is registered");
-        self.last_generated_candidates
-            .push(GeneratedLanguageCandidate {
-                id: attempt.provider_id.clone(),
-                attempt: attempt_index,
-                provider: attempt.result.as_ref().map_or_else(
-                    |_| metadata.provider.clone(),
-                    |result| result.provider.clone(),
-                ),
-                model: metadata.model.clone(),
-                latency_ms: attempt.elapsed_ms,
-                response_bytes,
-                response_digest,
-                error_code,
-                telemetry: metadata.telemetry.clone(),
-            });
+        GeneratedLanguageCandidate {
+            id: attempt.provider_id.clone(),
+            attempt: attempt_index,
+            provider: attempt.result.as_ref().map_or_else(
+                |_| metadata.provider.clone(),
+                |result| result.provider.clone(),
+            ),
+            model: metadata.model.clone(),
+            latency_ms: attempt.elapsed_ms,
+            response_bytes,
+            response_digest,
+            error_code,
+            telemetry: metadata.telemetry.clone(),
+        }
+    }
+
+    fn record_language_attempt(&mut self, attempt: &LanguageAttempt, attempt_index: u8) {
+        let record = self.attempt_record(attempt, attempt_index);
+        self.last_generated_candidates.push(record);
     }
 
     fn record_provider_success(&mut self, provider_id: &str, latency_ms: u64) {
@@ -616,11 +733,19 @@ impl DialogueSession {
         attempt.result.map_err(RuntimeError::Conversation)
     }
 
+    /// Assess a ready batch through the configured decision provider. When
+    /// the provider cannot answer at all (`ConversationError::is_unavailable`)
+    /// the turn degrades to the local rule-based gate — marked `fallback` on
+    /// the result and recorded in the trace. Once one call has degraded this
+    /// turn, later calls go straight to the local gate rather than paying the
+    /// same dead-endpoint timeout again. An answer that arrived but failed
+    /// validation still fails closed.
     fn assess_language_responses(
         &self,
         request: &crate::llm_jev::LanguageRequest,
         results: &[LanguageResult],
         evidence: &DecisionEvidence,
+        fallback: &mut DecisionFallback,
     ) -> Result<(ResponseAssessment, usize), RuntimeError> {
         let telemetry = self.language_provider_telemetry();
         let candidate_ids = results
@@ -673,24 +798,43 @@ impl DialogueSession {
                 Ok((candidate_ids[index].clone(), attempt.attempt))
             })
             .collect::<Result<_, ConversationError>>()?;
-        let assessment = self
-            .decision_provider
-            .assess_responses(&ResponseAssessmentRequest {
-                selection: LanguageResponseSelectionRequest {
-                    user_text: request.user_text.clone(),
-                    speech_act: request.speech_act.clone(),
-                    state: request.core_state.clone(),
-                    candidates,
-                },
-                evidence: evidence.clone(),
-                attempts: attempts.clone(),
-            })?;
-        if assessment.selection.fallback || assessment.gate.fallback {
-            return Err(ConversationError::DecisionUnavailable(
-                "Jev fallback is not allowed for response assessment".to_owned(),
-            )
-            .into());
-        }
+        let assessment_request = ResponseAssessmentRequest {
+            selection: LanguageResponseSelectionRequest {
+                user_text: request.user_text.clone(),
+                speech_act: request.speech_act.clone(),
+                state: request.core_state.clone(),
+                candidates,
+            },
+            evidence: evidence.clone(),
+            attempts: attempts.clone(),
+        };
+        let assessment = match fallback.code.clone() {
+            Some(code) => {
+                fallback.degraded("assess_responses");
+                local_assessment(&assessment_request, &code)?
+            }
+            None => match self.decision_provider.assess_responses(&assessment_request) {
+                Ok(assessment) => {
+                    // A provider-claimed fallback is still refused: the remote
+                    // must not lower its own authority. Session-built
+                    // degradation is the only marked fallback that binds here.
+                    if assessment.selection.fallback || assessment.gate.fallback {
+                        return Err(ConversationError::DecisionUnavailable(
+                            "Jev fallback is not allowed for response assessment".to_owned(),
+                        )
+                        .into());
+                    }
+                    assessment
+                }
+                Err(error) if error.is_unavailable() => {
+                    let code = error.code().to_owned();
+                    let assessment = local_assessment(&assessment_request, &code)?;
+                    fallback.record("assess_responses", &code);
+                    assessment
+                }
+                Err(error) => return Err(error.into()),
+            },
+        };
         let selected_index = candidate_ids
             .iter()
             .position(|id| id == &assessment.selection.provider_id)
@@ -727,6 +871,7 @@ impl DialogueSession {
         text: &str,
         emit: impl FnOnce(&DialogueReply) -> std::io::Result<()>,
     ) -> Result<DialogueReply, RuntimeError> {
+        let turn_started = Instant::now();
         self.last_generated_candidates.clear();
         self.last_generation_latency_ms = 0;
         if runtime.individual_id() != self.individual_id {
@@ -908,21 +1053,37 @@ impl DialogueSession {
                 ))
             })?);
         let preparation_evidence = decision_evidence(&input)?;
-        let preparation = self
-            .decision_provider
-            .prepare_turn(&TurnPreparationRequest {
-                invocation: DecisionRequest {
-                    kind: DecisionKind::InvocationGate,
-                    user_text: text.to_owned(),
-                    speech_act: core_state.speech_act.clone(),
-                    required_information: required_information(&core_state),
-                    candidate_response: None,
-                    candidate_digest: None,
-                    state: core_state.clone(),
-                },
-                evidence: preparation_evidence.clone(),
-                recall_candidates: recall_pool.candidates(),
-            })?;
+        let preparation_request = TurnPreparationRequest {
+            invocation: DecisionRequest {
+                kind: DecisionKind::InvocationGate,
+                user_text: text.to_owned(),
+                speech_act: core_state.speech_act.clone(),
+                required_information: required_information(&core_state),
+                candidate_response: None,
+                candidate_digest: None,
+                state: core_state.clone(),
+            },
+            evidence: preparation_evidence.clone(),
+            recall_candidates: recall_pool.candidates(),
+        };
+        let mut decision_fallback = DecisionFallback::default();
+        // Fail-soft: a decision provider that cannot answer at all degrades
+        // the turn to the local rule-based gate — the same mode an
+        // unconfigured deployment runs — rather than hanging or dropping the
+        // turn. The degraded result is marked `fallback` and traced. A
+        // provider that answered with an invalid contract stays fail-closed.
+        let preparation = match self.decision_provider.prepare_turn(&preparation_request) {
+            Ok(preparation) => preparation,
+            Err(error) if error.is_unavailable() => {
+                let code = error.code().to_owned();
+                let mut degraded = RuleBasedDecisionProvider.prepare_turn(&preparation_request)?;
+                degraded.invocation.fallback = true;
+                degraded.invocation.fallback_reason = Some(code.clone());
+                decision_fallback.record("prepare_turn", &code);
+                degraded
+            }
+            Err(error) => return Err(error.into()),
+        };
         if preparation.evidence_digest != preparation_evidence.snapshot_digest {
             return Err(ConversationError::InvalidDecision(
                 "preparation does not match the current evidence".to_owned(),
@@ -930,7 +1091,7 @@ impl DialogueSession {
             .into());
         }
         let invocation_gate = preparation.invocation.clone();
-        if invocation_gate.fallback {
+        if invocation_gate.fallback && decision_fallback.code.is_none() {
             return Err(ConversationError::DecisionUnavailable(
                 "Jev fallback is not allowed for turn preparation".to_owned(),
             )
@@ -1031,13 +1192,24 @@ impl DialogueSession {
             ],
             recent_turns: history.clone(),
             persona_input: input,
+            cancellation: None,
         };
         let generation_started = Instant::now();
-        let (attempt_rx, provider_count) = self.start_language_race(&language_request);
+        // One shared token per race: cancelled when the loop exits for any
+        // reason — acceptance, exhaustion, or an early error — so cooperative
+        // organs stop instead of running to their own timeout unnoticed.
+        let cancellation = CancellationToken::new();
+        let cancel_guard = CancelOnDrop(cancellation);
+        let (attempt_rx, provider_count) =
+            self.start_language_race(&language_request, &cancel_guard.0);
         let mut first_error = None;
-        let mut accepted = None;
-        let mut retry_fallback = None;
-        let mut rejected_fallback = None;
+        // Every valid generated candidate stays in the pool so a repair
+        // re-assessment can reselect among all of them, not only the one the
+        // race happened to pick first.
+        let mut language_results: Vec<LanguageResult> = Vec::new();
+        let mut accepted: Option<(usize, ResponseAssessment)> = None;
+        let mut retry_fallback: Option<(usize, ResponseAssessment)> = None;
+        let mut rejected_fallback: Option<(usize, ResponseAssessment)> = None;
         let mut race_assessments = Vec::new();
         let mut received = 0_usize;
 
@@ -1093,22 +1265,25 @@ impl DialogueSession {
                 &language_request,
                 &ready_results,
                 &assessment_evidence,
+                &mut decision_fallback,
             )?;
-            let selected_result = ready_results.swap_remove(selected_ready);
+            let base_index = language_results.len();
+            language_results.extend(ready_results);
+            let selected_index = base_index + selected_ready;
             let gate = candidate_assessment.gate.decision;
             race_assessments.push(candidate_assessment.clone());
             match gate {
                 Decision::Accept => {
-                    accepted = Some((selected_result, candidate_assessment));
+                    accepted = Some((selected_index, candidate_assessment));
                     break 'race;
                 }
                 Decision::Retry => {
                     if retry_fallback.is_none() {
-                        retry_fallback = Some((selected_result, candidate_assessment));
+                        retry_fallback = Some((selected_index, candidate_assessment));
                     }
                 }
                 Decision::Reject => {
-                    rejected_fallback = Some((selected_result, candidate_assessment));
+                    rejected_fallback = Some((selected_index, candidate_assessment));
                 }
                 Decision::Speak | Decision::Wait | Decision::ObserveMore => {
                     return Err(RuntimeError::Conversation(
@@ -1119,24 +1294,22 @@ impl DialogueSession {
                 }
             }
         }
-        // Stop accepting late race results immediately. In-flight HTTP calls
-        // may still finish, but their send fails instead of growing a queue.
-        drop(attempt_rx);
+        // The race is over: cancel cooperative organs now, then keep the
+        // receiver alive a little longer so whatever was already finishing —
+        // cancelled organs and slow stragglers — is recorded rather than
+        // silently dropped.
+        cancel_guard.0.cancel();
+        drop(cancel_guard);
         self.last_generation_latency_ms =
             u64::try_from(generation_started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let (final_result, mut assessment) = if let Some(accepted) = accepted {
-            accepted
-        } else if let Some(retry) = retry_fallback {
-            retry
-        } else if let Some(rejected) = rejected_fallback {
-            rejected
-        } else {
-            return Err(RuntimeError::Conversation(first_error.unwrap_or(
-                ConversationError::InvalidDecision("NO_VALID_CANDIDATES".to_owned()),
-            )));
-        };
-        let mut language_results = vec![final_result];
-        let mut selected_index = 0_usize;
+        let (mut selected_index, mut assessment) = accepted
+            .or(retry_fallback)
+            .or(rejected_fallback)
+            .ok_or_else(|| {
+                RuntimeError::Conversation(first_error.unwrap_or(
+                    ConversationError::InvalidDecision("NO_VALID_CANDIDATES".to_owned()),
+                ))
+            })?;
         let mut assessments = race_assessments;
         let mut repaired_context = None;
         let mut response_gate = None;
@@ -1183,6 +1356,7 @@ impl DialogueSession {
                     &language_request,
                     &language_results,
                     &assessment_evidence,
+                    &mut decision_fallback,
                 )?;
             }
             if attempt > 0 || assessments.is_empty() {
@@ -1237,6 +1411,24 @@ impl DialogueSession {
             workspace_context["response_guidance"] = serde_json::json!(guidance);
         }
         self.last_context = Some(workspace_context.clone());
+        // Organs that finished after the race closed — cancelled or simply
+        // slow. Bounded: the channel disconnects once every spawned organ
+        // thread has finished, so the drain ends as soon as nothing is left
+        // in flight, and a 10ms cap keeps non-cancellable stragglers cheap.
+        let mut late_candidates = Vec::new();
+        let drain_deadline = Instant::now() + Duration::from_millis(10);
+        loop {
+            let remaining = drain_deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match attempt_rx.recv_timeout(remaining.min(Duration::from_millis(5))) {
+                Ok(attempt) => late_candidates.push(self.attempt_record(&attempt, 0)),
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            }
+        }
+        drop(attempt_rx);
         let language_result = language_results.swap_remove(selected_index);
         let generated_candidates = self.last_generated_candidates.clone();
         let provider_selection_trace = provider_selection.clone();
@@ -1254,7 +1446,11 @@ impl DialogueSession {
             provider_selection: Some(provider_selection),
             provider_telemetry: self.language_provider_telemetry(),
             generation_latency_ms: self.last_generation_latency_ms,
+            total_turn_latency_ms: u64::try_from(turn_started.elapsed().as_millis())
+                .unwrap_or(u64::MAX),
             generated_candidates: generated_candidates.clone(),
+            late_candidates,
+            decision_fallbacks: decision_fallback.events.clone(),
             language_provider_id: selected_provider_id,
             language_provider: language_result.provider.clone(),
             language_model: language_result.model.clone(),
@@ -1293,7 +1489,10 @@ impl DialogueSession {
                 "provider_candidates": conversation_trace.provider_candidates.clone(),
                 "provider_telemetry": conversation_trace.provider_telemetry.clone(),
                 "generated_candidates": generated_candidates,
+                "late_candidates": conversation_trace.late_candidates.clone(),
                 "generation_latency_ms": self.last_generation_latency_ms,
+                "total_turn_latency_ms": conversation_trace.total_turn_latency_ms,
+                "decision_fallbacks": decision_fallback.events,
                 "response_gate": response_gate,
                 "assessments": assessments,
                 "language_provider": language_provider_name,

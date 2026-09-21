@@ -6,6 +6,8 @@
 //! the language organ, not the cognitive authority.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use kamimusuhi_core::ids::PersonaBackendId;
@@ -18,6 +20,11 @@ use kamimusuhi_resource_http::{Endpoint, Header, HttpError, TrustAnchors};
 use serde::{Deserialize, Serialize};
 
 mod assessment;
+// Public so integration tests, soak runs and offline harnesses can build
+// scripted organs, but excluded from the documented API surface — these
+// helpers are internal test infrastructure, not a stability contract.
+#[doc(hidden)]
+pub mod testing;
 
 pub use assessment::{
     AttributionAssessment, DecisionEvidence, GroundingAssessment, ObservationNeed, RecallCandidate,
@@ -147,6 +154,37 @@ fn derive_attention(text: &str) -> Vec<String> {
     attention
 }
 
+/// Cooperative cancellation for an in-flight generation.
+///
+/// The dialogue race cancels the shared token as soon as a turn no longer
+/// needs pending organs — an accepted candidate, an exhausted pool, or a
+/// failed turn. Organs that can abort cheaply poll
+/// [`CancellationToken::is_cancelled`] between blocking steps; blocking HTTP
+/// transports are still bounded by their own timeout and simply deliver too
+/// late to be used. Cancellation is a hint, not a guarantee that a thread
+/// has already stopped.
+#[derive(Debug, Clone, Default)]
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl CancellationToken {
+    /// A fresh, un-cancelled token.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Signal that pending work for this request is no longer needed.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether [`CancellationToken::cancel`] has run.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
+}
+
 /// Structured request handed to a language provider.
 #[derive(Debug, Clone, Serialize)]
 pub struct LanguageRequest {
@@ -160,6 +198,11 @@ pub struct LanguageRequest {
     pub recent_turns: Vec<ConversationMessage>,
     #[serde(skip_serializing)]
     pub persona_input: PersonaTurnInput,
+    /// Cooperative cancellation for this request. The race injects one shared
+    /// token into every per-organ clone; providers that can abort early poll
+    /// it. Never serialized or sent to any endpoint.
+    #[serde(skip_serializing)]
+    pub cancellation: Option<CancellationToken>,
 }
 
 #[derive(Debug, Clone)]
@@ -361,6 +404,13 @@ impl PersonaLanguageProvider {
 
 impl LanguageProvider for PersonaLanguageProvider {
     fn generate(&self, request: &LanguageRequest) -> Result<LanguageResult, ConversationError> {
+        if request
+            .cancellation
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
+        {
+            return Err(ConversationError::Cancelled);
+        }
         let started = Instant::now();
         let persona = self
             .persona
@@ -1373,8 +1423,22 @@ pub struct ConversationTrace {
     /// Race-to-quality wall time: generation plus interim assessments until
     /// acceptance or provider exhaustion, excluding explicit repair generation.
     pub generation_latency_ms: u64,
-    /// Secret-free result metadata for every language-organ attempt.
+    /// Whole-turn wall time measured at response-gate acceptance: validation,
+    /// preparation, the race, repairs and interim assessments.
+    pub total_turn_latency_ms: u64,
+    /// Secret-free result metadata for every language-organ attempt that
+    /// arrived before the race closed.
     pub generated_candidates: Vec<GeneratedLanguageCandidate>,
+    /// Attempts that finished after the race closed — cancelled organs or
+    /// simply slow ones. They were never assessable or deliverable; they are
+    /// recorded so cancellation and stragglers stay observable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub late_candidates: Vec<GeneratedLanguageCandidate>,
+    /// `stage:CODE` entries, one per stage the local rule-based gate served
+    /// because the configured decision provider could not produce an answer
+    /// this turn. Empty means every Jev call answered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decision_fallbacks: Vec<String>,
     pub language_provider_id: String,
     pub language_provider: String,
     pub language_model: String,
@@ -1563,6 +1627,8 @@ pub enum ConversationError {
     Malformed(String),
     #[error("conversation provider returned an invalid decision: {0}")]
     InvalidDecision(String),
+    #[error("conversation generation was cancelled before the organ answered")]
+    Cancelled,
     #[error("conversation decision provider unavailable: {0}")]
     DecisionUnavailable(String),
     #[error("conversation candidate excluded: {0}")]
@@ -1585,10 +1651,27 @@ impl ConversationError {
             Self::HttpStatus(_) => "HTTP_STATUS",
             Self::Malformed(_) => "MALFORMED",
             Self::InvalidDecision(_) => "INVALID_DECISION",
+            Self::Cancelled => "CANCELLED",
             Self::DecisionUnavailable(_) => "DECISION_UNAVAILABLE",
             Self::InvalidCandidate(code) => code,
             Self::Serialization(_) => "SERIALIZATION",
             Self::GateRefused(_) => "GATE_REFUSED",
+        }
+    }
+
+    /// Whether this failure means the provider produced no usable answer at
+    /// all — timeout, transport, TLS, throttling (429) or a server-side HTTP
+    /// error (5xx). The dialogue loop degrades to its local gate only for
+    /// these classes. An answer that arrived but failed validation (malformed
+    /// body, out-of-vocabulary choice, broken content binding), a client-side
+    /// rejection our request caused, or a local misconfiguration (missing
+    /// credential, unusable endpoint) is a correctness or operator violation,
+    /// not an outage — degrading would mask it, so it stays fail-closed.
+    pub const fn is_unavailable(&self) -> bool {
+        match self {
+            Self::Timeout | Self::Transport | Self::Tls(_) => true,
+            Self::HttpStatus(code) => *code == 429 || *code >= 500,
+            _ => false,
         }
     }
 }
@@ -1684,8 +1767,8 @@ mod tests {
         assert_eq!(state["candidates"][0]["response"], response);
         assert!(state["candidates"][0].get("provider").is_none());
         assert!(state["candidates"][0].get("model").is_none());
-        assert!(!body.to_string().contains(""fixture""));
-        assert!(!body.to_string().contains(""mock""));
+        assert!(!body.to_string().contains("\"fixture\""));
+        assert!(!body.to_string().contains("\"mock\""));
         let valid = serde_json::json!({"answers": {"response_candidate": {
             "type": "choice", "choice": "primary", "confidence": 0.81,
             "probabilities": {"primary": 1.0},

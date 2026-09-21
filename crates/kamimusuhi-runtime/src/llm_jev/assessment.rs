@@ -546,28 +546,39 @@ impl JevDecisionProvider {
             .iter()
             .find(|candidate| candidate.id == choice.choice)
             .ok_or_else(|| invalid("selected response candidate is not available"))?;
-        let grounding = match answers[&format!("grounding_{}", candidate.id)].choice.as_str() {
+        let grounding = match answers[&format!("grounding_{}", candidate.id)]
+            .choice
+            .as_str()
+        {
             "SUPPORTED" => GroundingAssessment::Supported,
             "CONTRADICTED" => GroundingAssessment::Contradicted,
             "INSUFFICIENT" => GroundingAssessment::Insufficient,
             "NOT_APPLICABLE" => GroundingAssessment::NotApplicable,
             _ => return Err(invalid("unknown grounding choice")),
         };
-        let attribution = match answers[&format!("attribution_{}", candidate.id)].choice.as_str() {
+        let attribution = match answers[&format!("attribution_{}", candidate.id)]
+            .choice
+            .as_str()
+        {
             "CONSISTENT" => AttributionAssessment::Consistent,
             "CONFLICT" => AttributionAssessment::Conflict,
             "UNCLEAR" => AttributionAssessment::Unclear,
             "NOT_APPLICABLE" => AttributionAssessment::NotApplicable,
             _ => return Err(invalid("unknown attribution choice")),
         };
-        let task_fit = match answers[&format!("task_fit_{}", candidate.id)].choice.as_str() {
+        let task_fit = match answers[&format!("task_fit_{}", candidate.id)]
+            .choice
+            .as_str()
+        {
             "MET" => TaskFitAssessment::Met,
             "UNMET" => TaskFitAssessment::Unmet,
             "UNCLEAR" => TaskFitAssessment::Unclear,
             _ => return Err(invalid("unknown task fit choice")),
         };
-        let mut repair_reason =
-            match answers[&format!("repair_reason_{}", candidate.id)].choice.as_str() {
+        let mut repair_reason = match answers[&format!("repair_reason_{}", candidate.id)]
+            .choice
+            .as_str()
+        {
             "NONE" => RepairReason::None,
             "GROUNDING" => RepairReason::Grounding,
             "ATTRIBUTION" => RepairReason::Attribution,

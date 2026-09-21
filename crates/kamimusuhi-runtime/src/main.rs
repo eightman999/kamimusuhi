@@ -649,6 +649,7 @@ impl Options {
         RuntimeOptions {
             id_seed: self.id_seed,
             clock: self.clock.unwrap_or_default(),
+            trace_max_bytes: None,
         }
     }
 }

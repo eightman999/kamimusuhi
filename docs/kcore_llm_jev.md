@@ -164,7 +164,9 @@ HAI_API_KEY=
 実運用のスループット、tokens/s、継続的なサービス性能を証明する値ではない。
 `generation_latency_ms` は言語器官race開始から、初回の採用候補が決まるか全候補を
 使い切るまでのwall timeである。途中のJev品質判定を含むが、採用後も走り続ける遅い器官や
-理由付きretry生成は含めない。器官ごとの遅延の合計ではない。preparationと各assessmentの
+理由付きretry生成は含めない。器官ごとの遅延の合計ではない。
+`total_turn_latency_ms` は `turn()` 開始から応答gate受理までのwall timeで、検証・
+preparation・race・修復・各assessmentをすべて含む。preparationと各assessmentの
 遅延はbatch単位で記録する。
 互換フィールドのselectionとresponse gateには同じbatch時間が入るため、合算しない。
 各判定の時間にはJevの形式修復を含む。`assessments`に再生成前後の評価を残し、
@@ -207,8 +209,12 @@ race中の `RETRY` はただちに再生成せず、まだ未完了の器官が�
 
 `generated_candidates` はraceが採用/終了するまでに受信した初回試行と、明示的なretryの
 ID、provider、model、`attempt`（初回0・retry 1）、遅延、response bytes、digest、
-エラー分類、観測値を保持する。採用後もHTTP呼出し自体は強制cancelしないため、遅れて完了した
-器官はこのターンの候補記録・telemetryへ入らない。
+エラー分類、観測値を保持する。race終了時に共有cancellation tokenを発火し、
+協調cancelに対応した器官は次のblocking境界で中断する。token発火後に完了した試行は
+`late_candidates` へ記録する。評価・配信の対象にはならないが、cancelとstragglerを
+観測可能にするためID・遅延・エラー分類を残す。内部cancelした試行はprovider障害として
+telemetryの成功率を下げない。drainは10msで打ち切るため、cancel不能な通信器官は
+自身のtimeoutまで走り続けるが、その結果は破棄される。
 候補の本文はこのメタデータに保存しない。既存の `provider_selection` フィールドは
 生成後の `response_candidate` 選択結果を格納する。GUIの採用マークは成功トレースの
 最終IDとdigestに一致する最新の成功試行だけに付く。
@@ -245,11 +251,24 @@ Jevのnormalized decision、生成候補メタデータ、provider/model、laten
 
 Jevのキーが未設定ならrule-based decision providerを使い、外部API不要のMock対話を
 継続できる。このローカル経路と、設定済みJevの障害時の処理は区別する。
-設定済みJevで通信・TLS・credential・形式検証に失敗した場合、障害をエラーとして
-扱い、primaryの自動選択や自動ACCEPTには置き換えない。normalized resultが
-`fallback` / `fallback_reason` を持っても、失敗したJev判定を承認の根拠にはしない。
-ローカル互換経路の根拠・帰属・依頼適合性は`NOT_EVALUATED`とし、Jev評価済みとは扱わない。
-`WAIT`と観測先のない`OBSERVE_MORE`は生成前に停止し、`REJECT`は生成済み応答を採用しない。
+
+設定済みJevの障害は fail-soft / fail-closed の2種に分ける。
+
+- **fail-soft（可用性障害）**: timeout、transport、TLS、HTTP 5xx、429 —
+  応答そのものが得られない一過性の障害。そのターンは当該stage以降を
+  rule-based gateで処理し、結果を `fallback=true` と障害code付きで記録する。
+  一度degradeしたターン内では残りのJev呼出しもlocal gateで処理し、同じdead endpointへ
+  繰り返しtimeoutを払わない。degradeしたstageごとに `decision_fallbacks` へ
+  `stage:CODE` を残す。次ターンは再び設定済みJevを試す（per-turnで回復する）。
+- **fail-closed（契約違反・設定不備）**: 応答が届いたが形式不正（修復1回後も）、無効なchoice、
+  未知候補、確率分布の破綻、不適格候補の選択、providerが自ら申告した
+  `fallback=true`、明示的な`REJECT`、発話前の`WAIT`／観測先のない`OBSERVE_MORE`、
+  429以外のHTTP 4xx、credential未設定、無効な設定。
+  これらはエラーとして扱い、primaryの自動選択や自動ACCEPTには置き換えない。
+  設定不備やrequest起因の拒否をlocal gateへのdegradeで隠蔽しない。
+
+ローカル経路・degrade経路いずれも根拠・帰属・依頼適合性は`NOT_EVALUATED`であり、
+Jev評価済みとは扱わない。degrade後の候補選択もホスト側のcontent-binding検証を通る。
 `RETRY` は上述のrace継続を優先し、provider枯渇後のみ最初のRETRY候補を1回再生成する。
 
 ## 検証範囲と制限
@@ -258,6 +277,14 @@ Jevのキーが未設定ならrule-based decision providerを使い、外部API�
   recallの出典・subject・サイズ境界、設定済みJev失敗時の非承認、Mock互換。
 - ローカルfixture: Jevの `/v1/systemone`、LLMの`/v1/chat/completions`、2ターンの
   preparation→race生成→匿名assessmentの順序、最速ACCEPT、品質NG後の次候補再判定、理由付きretry、state伝播、state update。
+- `tests/dialogue_arbitration.rs`: in-process scripted器官による決定論race。
+  単一器官ACCEPT、fast-bad/slow-good仲裁、12器官、最速timeout→failover、全器官失敗、
+  Jev outage→local degrade、malformed Jev fail-closed、cancel後のthread/call leakなし、
+  late candidate観測、Jev payloadへのmodel/provider名非漏洩、連続turnの状態整合。
+- `tests/dialogue_soak.rs`: seed固定の1,000 turn soak（`KAMIMUSUHI_SOAK_TURNS`で変更可、
+  10,000対応）。crash/deadlock/thread leak/starvationなし、RSS bounded、
+  trace完備（rotationを無効化し、全eventが1fileに残ることを検査）、
+  replyごとのemit 1回を検証する。
 - Mock closed-loop: 外部APIなしのK-CORE state → Mock language → state update。
 - GUIの検証はdesktopの静的検査・ローカルテストと、アプリの実表示確認を区別する。
   実APIのsmokeは対象への明示的な実行承認がある場合だけ行う。credentialの値は

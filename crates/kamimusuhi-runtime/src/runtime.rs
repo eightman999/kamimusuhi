@@ -89,6 +89,11 @@ impl std::str::FromStr for ClockMode {
 pub struct RuntimeOptions {
     pub id_seed: Option<u64>,
     pub clock: ClockMode,
+    /// Trace file rotation limit. `None` keeps
+    /// [`JsonlTraceSink::DEFAULT_MAX_BYTES`]; `Some(0)` disables rotation —
+    /// tests that assert trace completeness over very long runs use it so
+    /// retained generations cannot silently drop early events.
+    pub trace_max_bytes: Option<u64>,
 }
 
 impl RuntimeOptions {
@@ -97,6 +102,7 @@ impl RuntimeOptions {
         Self {
             id_seed: Some(seed),
             clock: ClockMode::Fixed,
+            trace_max_bytes: None,
         }
     }
 
@@ -106,6 +112,7 @@ impl RuntimeOptions {
         Self {
             id_seed: Some(seed),
             clock: ClockMode::System,
+            trace_max_bytes: None,
         }
     }
 
@@ -207,6 +214,7 @@ impl Runtime {
             });
         }
 
+        let trace_max_bytes = options.trace_max_bytes;
         let clocks = options.clocks();
         let ids = options.ids();
         let store = open_store(&paths, Arc::clone(&clocks.wall), Arc::clone(&ids))?;
@@ -241,7 +249,16 @@ impl Runtime {
         let config = RuntimeConfig::new(node_id, general);
         config.save(&paths.config())?;
 
-        Self::assemble(paths, config, store, clocks, ids, boot_id, individual)
+        Self::assemble(
+            paths,
+            config,
+            store,
+            clocks,
+            ids,
+            boot_id,
+            individual,
+            trace_max_bytes,
+        )
     }
 
     /// Open an initialized runtime and restore its individual from disk.
@@ -257,6 +274,7 @@ impl Runtime {
             });
         }
         let config = RuntimeConfig::load(&paths.config())?;
+        let trace_max_bytes = options.trace_max_bytes;
         let clocks = options.clocks();
         let ids = options.ids();
         let store = open_store(&paths, Arc::clone(&clocks.wall), Arc::clone(&ids))?;
@@ -283,9 +301,19 @@ impl Runtime {
             .map_err(|_| RuntimeError::UnrestorableIndividual(individual.individual_id))?;
 
         let boot_id = BootId::generate(ids.as_ref());
-        Self::assemble(paths, config, store, clocks, ids, boot_id, individual)
+        Self::assemble(
+            paths,
+            config,
+            store,
+            clocks,
+            ids,
+            boot_id,
+            individual,
+            trace_max_bytes,
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn assemble(
         paths: RuntimePaths,
         config: RuntimeConfig,
@@ -294,12 +322,16 @@ impl Runtime {
         ids: Arc<dyn IdGenerator>,
         boot_id: BootId,
         individual: Individual,
+        trace_max_bytes: Option<u64>,
     ) -> Result<Self, RuntimeError> {
-        let sink = JsonlTraceSink::open(paths.trace(), ids.as_ref()).map_err(|source| {
-            RuntimeError::DirectoryIo {
-                path: paths.trace().display().to_string(),
-                message: source.to_string(),
-            }
+        let sink = JsonlTraceSink::open_with_limit(
+            paths.trace(),
+            ids.as_ref(),
+            trace_max_bytes.unwrap_or(JsonlTraceSink::DEFAULT_MAX_BYTES),
+        )
+        .map_err(|source| RuntimeError::DirectoryIo {
+            path: paths.trace().display().to_string(),
+            message: source.to_string(),
         })?;
         let trace = TraceRecorder::new(
             sink,
