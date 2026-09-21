@@ -69,10 +69,12 @@ rather than rewriting that historical baseline:
 2. **Hosted Ubuntu Rust CI** — while validating PR #60, the GitHub-hosted
    runner exposed an independent pre-existing platform-feature defect:
    `eframe` disabled default features but selected neither X11 nor Wayland,
-   so `winit 0.30.13` failed before repository tests. The one-line X11
-   backend fix is isolated in PR #61 (`fix/linux-winit-ci`). This hosted-CI
-   issue was not present in the macOS local baseline above and is not caused
-   by the hygiene changes.
+   so `winit 0.30.13` failed before repository tests. PR #61 enabled the X11
+   backend and raised the unchanged hosted full-gate budget from 15 to 30
+   minutes after the repaired job outlived the old budget. PR #61 was merged
+   into master as `5598d36` and synchronized into this hygiene branch by
+   merge commit `28cc023`. This hosted-CI issue was not present in the macOS
+   local baseline above and is not caused by the hygiene changes.
 
 The two former `llm_jev_loop` failures remained passing throughout these
 later changes.
