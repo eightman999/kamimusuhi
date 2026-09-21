@@ -7,7 +7,6 @@ import json
 import math
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 from PyQt5 import QtCore, QtGui, QtWidgets
