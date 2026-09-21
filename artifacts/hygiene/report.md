@@ -6,14 +6,14 @@ The repository-hygiene work is complete. The branch contains no intentional runt
 
 The only repository-test failure present at the original rebased baseline, `research_catalog::bundled_catalog_has_valid_source_hashes_and_line_ranges`, was repaired separately in PR #60 and merged into `master` as `a8f1a60`. That upstream fix has been synchronized into this branch.
 
-A separate hosted-Linux CI defect was discovered while validating PR #60: `eframe` had `default-features = false` without an X11/Wayland backend, causing `winit 0.30.13` to fail before tests. That issue is isolated in PR #61 (`fix/linux-winit-ci`) and is not caused by this hygiene diff.
+A separate hosted-Linux CI defect was discovered while validating PR #60: `eframe` had `default-features = false` without an X11/Wayland backend, causing `winit 0.30.13` to fail before tests. PR #61 fixed that independently by enabling X11 and increasing the unchanged hosted full-gate budget from 15 to 30 minutes. PR #61 was merged into master as `5598d36` and synchronized into this branch by merge commit `28cc023`.
 
 ## Scope
 
 This branch ports the pure repository-hygiene changes from `chore/repo-hygiene-overnight` (base `76ff540`, preserved unchanged as an audit trail) onto the post-K-Core master line.
 
 Initial rebased base: `a83e711`.
-After PR #60, master `a8f1a60` was merged into this branch without force-push; the synchronization commit is `5d5dc3b`.
+After PR #60, master `a8f1a60` was merged into this branch without force-push; the synchronization commit is `5d5dc3b`. After the independent hosted-CI repair in PR #61, master `5598d36` was synchronized the same way via `28cc023`.
 
 Deliberately not ported from the overnight branch:
 
@@ -141,7 +141,7 @@ The U0 provenance branch then ran `cargo test --workspace --no-fail-fast` with *
 
 The seven follow-up removals are import-only edits. Each removed binding was rechecked as unreferenced; no `.rs` source file was changed.
 
-Hosted CI note: the repository's Ubuntu Rust CI was already red on `master` because the desktop `eframe` dependency disabled all Linux `winit` backends. PR #61 isolates the minimal X11 feature fix. K-CORE CI passes with that fix; the full Rust CI no longer fails at the former `winit` compile point but is currently long-running in the monolithic local-CI step. This is tracked separately from the hygiene diff.
+Hosted CI note: the repository's Ubuntu Rust CI was already red on the pre-PR-61 `master` because the desktop `eframe` dependency disabled all Linux `winit` backends. PR #61 added the minimal X11 feature and raised only the hosted job budget; it did not change `scripts/ci-local.sh`. K-CORE CI passed on the repaired branch, including workspace/all-targets/all-features clippy and focused runtime tests. The first full Rust runs progressed beyond the former `winit` failure but exhausted the previous hosted-job budget; PR #61 therefore raised that budget from 15 to 30 minutes before merge. The CI repair is now upstream and included here.
 
 ## Integrity
 
@@ -149,10 +149,11 @@ Hosted CI note: the repository's Ubuntu Rust CI was already red on `master` beca
 - No force-push was used while synchronizing the branch.
 - PR #60 / master was merged into the hygiene branch rather than replaying stale runtime changes.
 - No Rust source file is modified by the hygiene diff, so K-Core/Jev runtime hardening is not rolled back.
-- Before the later independent PR #61, the hygiene branch compared as **38 ahead / 0 behind** against master `a8f1a60`.
+- Master PR #60 and PR #61 were synchronized by ordinary merge commits; no force-push or stale runtime replay was used.
+- After the final PR #61 synchronization, the hygiene branch is based on the current master line and contains the Linux CI repair before final PR validation.
 
 ## Recommended follow-up
 
 1. Decide whether the 11-file root `scratch/` snapshot should remain, move under its experiment, or be removed.
 2. Add a Python linter such as ruff/pyflakes to prevent unused imports from accumulating again.
-3. Finish the independent hosted-Linux CI repair in PR #61; keep that CI concern separate from this mechanical hygiene PR.
+3. If hosted full-workspace CI remains slow, consider caching or splitting diagnostics while keeping `scripts/ci-local.sh` as the source-of-truth gate.
