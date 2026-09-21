@@ -49,3 +49,30 @@ PyQt5 is not installed in the available venv; `test_gui.py` in
 `k0_e2_active_info`, `k0_f_interoception`, and
 `k0_f2_interoception_confirmatory` cannot be collected. Same limitation as
 the previous run; tests were excluded, not modified.
+
+
+## Post-baseline upstream resolutions
+
+This file preserves the state of `a83e711` at the moment the rebased hygiene
+audit began. Two later upstream developments are intentionally recorded here
+rather than rewriting that historical baseline:
+
+1. **U0 catalog provenance** — PR #60 (`fix/u0-catalog-provenance`) was
+   merged into master as `a8f1a60`. It replaces the clean-clone-invalid
+   reference to an ignored `summary.csv` with tracked
+   `experiments/u0/reports/U0_COMPACT_RESULTS.md`. The source digest and
+   catalog values were recomputed, catalog tests pass 8/8 without ignored
+   artifacts, and the workspace test suite was green on the repair branch.
+   Master `a8f1a60` was subsequently synchronized into the hygiene branch
+   by merge commit `5d5dc3b`.
+
+2. **Hosted Ubuntu Rust CI** — while validating PR #60, the GitHub-hosted
+   runner exposed an independent pre-existing platform-feature defect:
+   `eframe` disabled default features but selected neither X11 nor Wayland,
+   so `winit 0.30.13` failed before repository tests. The one-line X11
+   backend fix is isolated in PR #61 (`fix/linux-winit-ci`). This hosted-CI
+   issue was not present in the macOS local baseline above and is not caused
+   by the hygiene changes.
+
+The two former `llm_jev_loop` failures remained passing throughout these
+later changes.
