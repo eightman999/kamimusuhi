@@ -134,7 +134,7 @@ const fn default_nas_timeout() -> u64 {
 pub struct PeerConfig {
     pub id: String,
     pub role: NodeRole,
-    /// Base URL of the peer resident, e.g. `http://100.74.160.53:7860`.
+    /// Base URL of the peer resident, e.g. `http://llm-master.example:7860`.
     pub url: String,
 }
 
@@ -426,7 +426,10 @@ mod tests {
     #[test]
     fn deploy_examples_parse() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/resident");
-        for name in ["pi.resident.json", "llm_master.resident.json"] {
+        for name in [
+            "pi.resident.example.json",
+            "llm_master.resident.example.json",
+        ] {
             let config = Config::load(&root.join(name)).expect(name);
             assert!(!config.tiers.is_empty(), "{name} has tiers");
         }

@@ -39,8 +39,10 @@ install -d "$ROOT/runtime/deploy"
 cp -f deploy/resident/README.md "$ROOT/runtime/deploy/README.md" 2>/dev/null || true
 
 echo "==> config"
+SITE_CONFIG="deploy/resident/local/$NODE.resident.json"
 if [[ ! -f "$ROOT/config/resident.json" || "$FORCE_CONFIG" == --force-config ]]; then
-  install -m 644 "deploy/resident/$NODE.resident.json" "$ROOT/config/resident.json"
+  [[ -f "$SITE_CONFIG" ]] || { echo "missing $SITE_CONFIG (copy deploy/resident/$NODE.resident.example.json and fill in hosts)" >&2; exit 1; }
+  install -m 644 "$SITE_CONFIG" "$ROOT/config/resident.json"
 fi
 "$ROOT/runtime/bin/kamimusuhi" check-config --config "$ROOT/config/resident.json"
 if [[ ! -f "$ROOT/config/secrets.env" ]]; then

@@ -8,9 +8,12 @@ use serde_json::{Value, json};
 
 use crate::probes::{describe, get_json};
 
-/// Tried in order when neither `--url` nor `$KAMIMUSUHI_URL` is given:
-/// the Pi on the home LAN, then over Tailscale.
-pub const DEFAULT_NODES: [&str; 2] = ["http://192.168.40.147:7860", "http://100.111.150.4:7860"];
+/// Site-local list of resident URLs, one per line, tried in order when
+/// neither `--url` nor `$KAMIMUSUHI_URL` is given. Kept outside the
+/// repository so host addresses are never committed.
+pub fn nodes_file() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|h| std::path::Path::new(&h).join(".config/kamimusuhi/nodes"))
+}
 
 /// `$KAMIMUSUHI_NODE_TOKEN`, else `~/.config/kamimusuhi/node_token`.
 pub fn token() -> Option<String> {
@@ -162,6 +165,12 @@ pub fn auth(token: Option<&str>) -> Vec<Header> {
 
 /// First candidate whose `/health` answers.
 pub fn discover(candidates: &[String]) -> Result<String, String> {
+    if candidates.is_empty() {
+        return Err(
+            "no resident URL: pass --url, set KAMIMUSUHI_URL or list URLs in ~/.config/kamimusuhi/nodes"
+                .to_owned(),
+        );
+    }
     let mut errors = Vec::new();
     for url in candidates {
         match get_json(url, "/health", &[], Duration::from_secs(3)) {
@@ -187,7 +196,16 @@ pub fn candidates(explicit: Option<&str>) -> Vec<String> {
             return urls;
         }
     }
-    DEFAULT_NODES.iter().map(|s| (*s).to_owned()).collect()
+    nodes_file()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|text| {
+            text.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub fn talk(url: &str, token: Option<&str>, subject: &str, message: &str) -> Result<Value, String> {

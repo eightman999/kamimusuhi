@@ -15,11 +15,14 @@
 set -euo pipefail
 
 NODE="${1:?usage: sudo $0 <pi|llm_master> [share-export] [kamimusuhi-export]}"
-NAS_EXPORT="${2:-192.168.40.124:/mnt/Share}"
+SITE_ENV="$(cd "$(dirname "$0")" && pwd)/local/site.env"
+# shellcheck disable=SC1090
+[[ -f "$SITE_ENV" ]] && source "$SITE_ENV"
+NAS_EXPORT="${2:-${NAS_SHARE_EXPORT:?set NAS_SHARE_EXPORT in deploy/resident/local/site.env or pass it}}"
 SERVICE_USER="${SERVICE_USER:-eightman}"
 ROOT=/srv/kamimusuhi
 MOUNTPOINT=/mnt/nas-share
-KAMI_EXPORT="${3:-192.168.40.124:/mnt/Share/kamimusuhi}"
+KAMI_EXPORT="${3:-${NAS_KAMIMUSUHI_EXPORT:?set NAS_KAMIMUSUHI_EXPORT in deploy/resident/local/site.env or pass it}}"
 KAMI_MOUNTPOINT=/mnt/kamimusuhi
 HERE="$(cd "$(dirname "$0")" && pwd)"
 

@@ -14,7 +14,8 @@ use serde_json::Value;
 
 #[derive(Debug, Clone)]
 pub struct RemoteConfig {
-    /// Explicit resident URL; `None` discovers (LAN, then Tailscale).
+    /// Explicit resident URL; `None` uses `$KAMIMUSUHI_URL` or
+    /// `~/.config/kamimusuhi/nodes`.
     pub url: Option<String>,
     pub subject: String,
 }

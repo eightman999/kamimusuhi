@@ -21,7 +21,7 @@ kamimusuhi check-config [--config <path>]
 
 Default config: /srv/kamimusuhi/config/resident.json (or $KAMIMUSUHI_CONFIG).
 Remote --url needs the node token ($KAMIMUSUHI_NODE_TOKEN or ~/.config/kamimusuhi/node_token).
-chat without --url tries $KAMIMUSUHI_URL (comma list), else the Pi on LAN then Tailscale.
+chat without --url tries $KAMIMUSUHI_URL (comma list), else ~/.config/kamimusuhi/nodes.
 status exits 0 when healthy, 1 when degraded, 2 when the node is unreachable.";
 
 struct Args {
