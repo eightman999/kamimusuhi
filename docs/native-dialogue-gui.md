@@ -6,10 +6,10 @@ and does not start a local HTTP server. It has two modes.
 ## Resident mode (default): talk to the always-on individual (澪 / Mio)
 
     ./run_kamimusuhi_gui.command          # or: cargo run --release -p kamimusuhi-desktop
-    cargo run --release -p kamimusuhi-desktop -- --url http://100.111.150.4:7860 --subject eightman
+    cargo run --release -p kamimusuhi-desktop -- --url http://PI_HOST:7860 --subject <id>
 
-The window connects to the Pi resident (LAN `192.168.40.147`, then Tailscale;
-`--url` or `$KAMIMUSUHI_URL` override) with the node token from
+The window connects to the Pi resident (`--url`, `$KAMIMUSUHI_URL`, or the
+URLs listed in `~/.config/kamimusuhi/nodes`, tried in order) with the node token from
 `$KAMIMUSUHI_NODE_TOKEN` or `~/.config/kamimusuhi/node_token`. Turns go to
 `POST /v1/kamimusuhi/talk`, i.e. the canonical individual on the Pi with its
 memory, reference material and tool calling; the GUI holds no state of its own.

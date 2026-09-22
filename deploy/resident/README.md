@@ -4,7 +4,7 @@ Raspberry Pi と llm_master の両方で `kamimusuhi-resident`（バイナリ名
 自己改善・自動実験はこの構成が安定してから追加する。
 
 ```text
-             NAS (192.168.40.124:/mnt/Share/kamimusuhi → /mnt/kamimusuhi, Share全体は /mnt/nas-share)
+             NAS (NFS export → /mnt/kamimusuhi, 共有全体は /mnt/nas-share)
           ↗       ↖
         Pi ←────→ llm_master            peer: Tailscale IP :7860 (/health)
         │            │
@@ -51,7 +51,7 @@ curl http://127.0.0.1:7860/v1/chat/completions -d '{"model":"kamimusuhi","messag
 /srv/kamimusuhi/            (ローカルSSD)
   runtime/bin/              kamimusuhi, k-core, kamimusuhi-runtime
   runtime/individual/       個体の正本 (Piのみ)
-  config/resident.json      構成 (Git管理の deploy/resident/*.resident.json から)
+  config/resident.json      構成 (deploy/resident/local/<node>.resident.json から, git 管理外)
   config/secrets.env        mode 600, Git外
   current_state/            state.json, boot_epoch
   cache/
@@ -69,7 +69,9 @@ curl http://127.0.0.1:7860/v1/chat/completions -d '{"model":"kamimusuhi","messag
 
 ## 導入手順
 
-前提: 両ノードとも eightman (uid 1000)。TrueNAS で `/mnt/Share` を NFS export（Maproot=uid/gid 1000, 許可: 192.168.40.0/24）済み。`Share/kamimusuhi` データセットも別 NFS 共有として export（Maproot 同じ）。NFSv3 は親 export から子データセットの中身が見えないため、resident は `/mnt/Share/kamimusuhi` を `/mnt/kamimusuhi` に直接マウントする。
+前提: 両ノードとも同じサービスユーザー（uid 1000）。NAS 側で共有全体と kamimusuhi 用ディレクトリをそれぞれ NFS export し（Maproot=uid/gid 1000）、resident 用は `/mnt/kamimusuhi` に直接マウントする（子データセットは親 export から見えないため）。ホスト・export パスは `deploy/resident/local/site.env`（`site.env.example` 参照, git 管理外）に書く。
+
+**サイト固有の設定（ホスト/IP・NAS・private リポジトリ名）は `deploy/resident/local/`（git 管理外）に置く。** 追跡されるのは `*.example.json` と `site.env.example` のテンプレートのみ。Mac などのクライアントは `~/.config/kamimusuhi/nodes` に resident の URL を 1 行ずつ書く。
 
 ```bash
 # 1) ソースをノードへ (Mac から)
@@ -96,8 +98,8 @@ Mac などから:
 
 ```bash
 cargo build --release -p kamimusuhi-resident && install -m 755 target/release/kamimusuhi ~/.local/bin/
-kamimusuhi chat                  # Pi(LAN 192.168.40.147) → Tailscale の順に自動接続。/status, /quit
-kamimusuhi chat --subject eightman --url http://100.111.150.4:7860
+kamimusuhi chat                  # ~/.config/kamimusuhi/nodes の URL を順に試す。/status, /quit
+kamimusuhi chat --subject <id> --url http://PI_HOST:7860
 ```
 
 token は `$KAMIMUSUHI_NODE_TOKEN` または `~/.config/kamimusuhi/node_token`（`push-secrets.sh` が生成）。`--subject` は会話履歴の区別であって認証ではない。
@@ -108,7 +110,7 @@ token は `$KAMIMUSUHI_NODE_TOKEN` または `~/.config/kamimusuhi/node_token`�
 
 | name | 実体 | 内容 |
 |---|---|---|
-| `jp_market_vis` | llm_master `/mnt/sda1/kamimusuhi/library/JP_Market_Vis`（git clone） | 日本の上場企業間の資本・取引・提携・役員兼任・グループ関係 |
+| `jp_market_vis` | llm_master 上の library ディレクトリ（git clone, パスはローカル設定） | 日本の上場企業間の資本・取引・提携・役員兼任・グループ関係 |
 
 ```bash
 kamimusuhi library list
@@ -119,7 +121,7 @@ kamimusuhi library search jp_market_vis トヨタ自動車 [dir]
 ```
 
 `.git` と library 外のパスは返さない。file は最大 2MiB ずつ（`offset` で続き）、search は 64MiB 以下のテキストファイルから最大100件。
-更新は llm_master で `git -C /mnt/sda1/kamimusuhi/library/JP_Market_Vis pull`。
+更新は llm_master で該当 clone を `git pull`。
 
 ## Tools（MCP 的な tool surface）と個体からの参照
 
@@ -150,7 +152,7 @@ npm パッケージは `/srv/kamimusuhi/mcp` にバージョン固定で入れ�
 | `nas` (filesystem) | 両方 | `/mnt/kamimusuhi` 全体を**読み取り専用**（readOnlyHint の tool のみ） |
 | `fs` (filesystem) | 両方 | `workspace/ artifacts/ experiments/ datasets/` のみ読み書き。ログ・記憶・snapshot は不可 |
 | `context7` | 両方 | 外部サービス context7.com でライブラリ文書検索 |
-| `obsidian` (mcpvault) | 両方 | `/mnt/kamimusuhi/knowledge/obsidian`（GitHub `eightman999/Obsidian` の clone）。読み取りは自由。Pi のみ `write_note`/`patch_note`/`update_frontmatter` を**承認制**で提供 |
+| `obsidian` (mcpvault) | 両方 | `/mnt/kamimusuhi/knowledge/obsidian`（操作者の private vault リポジトリの clone）。読み取りは自由。Pi のみ `write_note`/`patch_note`/`update_frontmatter` を**承認制**で提供 |
 | `netdata` (nd-mcp) | 両方（各ノード自身） | 読み取り専用。Netdata は localhost bind、キーは secrets.env の `NETDATA_MCP_KEY` |
 | `playwright` | llm_master | headless Chromium・隔離プロファイル。`browser_run_code_unsafe` / `browser_evaluate` / `browser_file_upload` は除外 |
 | `github` (github-mcp-server v1.12.2) | 両方 | `--read-only --lockdown-mode`、toolsets=context,repos,issues,pull_requests,actions。token は secrets.env の `GITHUB_PERSONAL_ACCESS_TOKEN` |
@@ -208,7 +210,7 @@ resident（Pi）は並列に進む作業をタスクとして記録する（`cur
 kamimusuhi status            # ノード上。0=正常 1=劣化 2=resident不達
 kamimusuhi status --json
 KAMIMUSUHI_NODE_TOKEN=$(cat ~/.config/kamimusuhi/node_token) \
-  kamimusuhi status --url http://100.111.150.4:7860     # Mac など別ホストから
+  kamimusuhi status --url http://PI_HOST:7860     # Mac など別ホストから
 kamimusuhi ask "テスト"      # 実際にルーティングして応答と経路を表示
 journalctl -u kamimusuhi-resident -f
 ```

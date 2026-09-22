@@ -1,12 +1,12 @@
 {
   "node": {
-    "id": "pi",
-    "role": "continuity",
+    "id": "llm_master",
+    "role": "cognition",
     "listen": "0.0.0.0:7860"
   },
   "paths": {
     "root": "/srv/kamimusuhi",
-    "spool_warn_bytes": 8589934592
+    "spool_warn_bytes": 53687091200
   },
   "nas": {
     "root": "/mnt/kamimusuhi",
@@ -14,18 +14,17 @@
   },
   "peers": [
     {
-      "id": "llm_master",
-      "role": "cognition",
-      "url": "http://100.74.160.53:7860"
+      "id": "pi",
+      "role": "continuity",
+      "url": "http://PI_HOST:7860"
     }
   ],
   "tiers": [
     {
-      "name": "llm_master",
-      "base_url": "http://100.74.160.53:7860/v1",
-      "model": "local",
-      "auth_env": "KAMIMUSUHI_NODE_TOKEN",
-      "peer_local_only": true,
+      "name": "local",
+      "base_url": "http://LLM_MASTER_HOST:8080/v1",
+      "model": "qwen3.8-27b-q4_K_M",
+      "node_local": true,
       "timeout_secs": 300,
       "probe_interval_secs": 15
     },
@@ -48,22 +47,14 @@
     "interval_secs": 900,
     "low_balance_jpy": 0
   },
-  "kcore": {
-    "binary": "/srv/kamimusuhi/runtime/bin/k-core",
-    "dir": "/srv/kamimusuhi/runtime/individual",
-    "interval_ms": 60000
-  },
-  "snapshot": {
-    "database": "/srv/kamimusuhi/runtime/individual/kamimusuhi.sqlite",
-    "interval_secs": 3600,
-    "spool_keep": 3
-  },
-  "dialogue": {
-    "runtime_binary": "/srv/kamimusuhi/runtime/bin/kamimusuhi-runtime",
-    "dir": "/srv/kamimusuhi/runtime/individual",
-    "privacy": "unconstrained",
-    "timeout_secs": 600
-  },
+  "libraries": [
+    {
+      "name": "jp_market_vis",
+      "path": "/srv/library/JP_Market_Vis",
+      "description": "日本の上場企業間の資本・取引・提携・役員兼任・グループ関係（EDINET等由来、3,812社・約9万関係、2026-09時点。現在の株主構成を保証しない）。使い方: 企業は json_get path=public/M4_companies.json pointer=/companies/<証券コード>（名前から探すなら json_find pointer=/companies match=[{field:/name,op:contains,value:社名}]）。関係は json_find path=public/M5_company_relations.json pointer=/relations match=[{field:/source/key,value:<コード>},{field:/target/key,value:<コード>}]（source→target, relation_type, attributes.ownership_ratio）。key が ENT で始まるものは非上場主体で json_get path=public/M5_company_relations.json pointer=/entities/<ENT…> で名前を引く（M4 ではない）。関係タイプの説明は pointer=/relation_types。",
+      "source": "https://github.com/mattyamonaca/JP_Market_Vis"
+    }
+  ],
   "mcp_servers": [
     {
       "name": "nas",
@@ -106,22 +97,9 @@
         "get_frontmatter",
         "get_note_outline",
         "get_vault_stats",
-        "list_all_tags",
-        "write_note",
-        "patch_note",
-        "update_frontmatter"
+        "list_all_tags"
       ],
-      "description": "操作者の Obsidian vault（GitHub から Pi が定期 pull する NAS 上の clone）。読み取りは自由、書き換えは操作者の承認後に実行し commit/push",
-      "approval_required": [
-        "write_note",
-        "patch_note",
-        "update_frontmatter"
-      ],
-      "after_approved": [
-        "/srv/kamimusuhi/runtime/bin/obsidian-git.sh",
-        "commit",
-        "kamimusuhi: {tool} (approval {id})"
-      ]
+      "description": "操作者の Obsidian vault（NAS 上の clone, 読み取り専用。書き換えは Pi 経由で承認制）"
     },
     {
       "name": "netdata",
@@ -132,7 +110,7 @@
       "env": {
         "ND_MCP_BEARER_TOKEN": "$NETDATA_MCP_KEY"
       },
-      "description": "Pi の Netdata（メトリクス・アラート・異常検知, 読み取り専用）"
+      "description": "llm_master の Netdata（メトリクス・アラート・異常検知, 読み取り専用）"
     },
     {
       "name": "github",
@@ -147,19 +125,26 @@
         "GITHUB_PERSONAL_ACCESS_TOKEN": "$GITHUB_PERSONAL_ACCESS_TOKEN"
       },
       "read_only": true,
-      "description": "GitHub（eightman999 のリポジトリ等）の読み取り専用参照。書き込み系 tool は出さない"
-    }
-  ],
-  "jobs": [
+      "description": "GitHubの読み取り専用参照。書き込み系 tool は出さない"
+    },
     {
-      "name": "obsidian-pull",
-      "command": "/srv/kamimusuhi/runtime/bin/obsidian-git.sh",
+      "name": "playwright",
+      "command": "/srv/kamimusuhi/mcp/node_modules/.bin/playwright-mcp",
       "args": [
-        "pull"
+        "--headless",
+        "--isolated",
+        "--browser",
+        "chromium",
+        "--image-responses",
+        "omit"
       ],
-      "interval_secs": 900,
-      "timeout_secs": 600,
-      "run_at_start": true
+      "deny": [
+        "browser_run_code_unsafe",
+        "browser_evaluate",
+        "browser_file_upload"
+      ],
+      "call_timeout_secs": 180,
+      "description": "ヘッドレス Chromium による Web 閲覧（llm_master のみ, 隔離プロファイル）"
     }
   ]
 }

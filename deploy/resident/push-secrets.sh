@@ -10,7 +10,7 @@
 # the same value is pushed to every node.
 set -euo pipefail
 HOST="${1:?usage: $0 <ssh-host> [hai-key-file]}"
-HAI_KEY_FILE="${2:-$HOME/dev/OISINT-wt/kamimusuhi_key}"
+HAI_KEY_FILE="${2:-$HOME/.config/kamimusuhi/hai_api_key}"
 TOKEN_FILE="$HOME/.config/kamimusuhi/node_token"
 shift || true; shift || true
 SSH_OPTS=("$@")
