@@ -1,0 +1,72 @@
+{
+  "_comment": "Merge into <individual>/runtime.json (top level). tools: model-initiated read-only tool calls. reference: host-run per-turn consultation.",
+  "tools": {
+    "base_url": "http://127.0.0.1:7860",
+    "max_rounds": 8,
+    "timeout_ms": 30000,
+    "allowed": [
+      "task_update",
+      "task_create",
+      "task_list",
+      "library_list",
+      "library_search",
+      "library_read",
+      "json_get",
+      "json_find",
+      "mcp__context7__*",
+      "mcp__obsidian__search_notes",
+      "mcp__obsidian__read_note",
+      "mcp__obsidian__read_note_lines",
+      "mcp__obsidian__list_directory",
+      "mcp__obsidian__get_note_outline",
+      "mcp__netdata__list_raised_alerts",
+      "mcp__netdata__query_metrics",
+      "mcp__netdata__list_metrics",
+      "mcp__netdata__find_anomalous_metrics",
+      "mcp__netdata__list_nodes",
+      "mcp__nas__read_text_file",
+      "mcp__nas__list_directory",
+      "mcp__nas__search_files",
+      "mcp__fs__read_text_file",
+      "mcp__fs__write_file",
+      "mcp__fs__edit_file",
+      "mcp__fs__list_directory",
+      "mcp__fs__create_directory",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_snapshot",
+      "mcp__playwright__browser_click",
+      "mcp__playwright__browser_type",
+      "mcp__playwright__browser_navigate_back",
+      "mcp__playwright__browser_wait_for",
+      "mcp__playwright__browser_close",
+      "mcp__github__*",
+      "mcp__obsidian__write_note",
+      "mcp__obsidian__patch_note",
+      "mcp__obsidian__update_frontmatter"
+    ]
+  },
+  "reference": {
+    "base_url": "http://127.0.0.1:7860",
+    "timeout_ms": 5000,
+    "catalog": true,
+    "key_lookups": [
+      {
+        "pattern": "jp_securities_code",
+        "library": "jp_market_vis",
+        "path": "public/M4_companies.json",
+        "pointer_prefix": "/companies/",
+        "fields": [
+          "/name",
+          "/name_en",
+          "/securities_code",
+          "/industry_33",
+          "/market_segment",
+          "/edinet_code"
+        ],
+        "max_keys": 3
+      }
+    ]
+  },
+  "_persona_timeout_note": "With tools, set persona.provider.timeout_ms >= 180000 (tool results lengthen each model call).",
+  "avatar_name": "澪"
+}

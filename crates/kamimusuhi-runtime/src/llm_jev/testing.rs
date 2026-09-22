@@ -67,6 +67,7 @@ fn language_result(request: &LanguageRequest, id: &str, response: String) -> Lan
             backend: descriptor(id),
             response_intent: response,
             proposals: Vec::new(),
+            tool_calls: Vec::new(),
         },
         provider: "scripted-language".to_owned(),
         provider_id: id.to_owned(),
