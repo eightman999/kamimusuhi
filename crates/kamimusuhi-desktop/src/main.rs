@@ -1,7 +1,8 @@
 mod app;
-mod remote;
 mod remote_app;
 mod worker;
+
+use kamimusuhi_resident::remote;
 
 use std::path::PathBuf;
 

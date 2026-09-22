@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::app::{
     AMBER, BG, BLUE, BORDER, GREEN, MUTED, PANEL, PANEL_RAISED, TEXT, card, configure_theme,
 };
-use crate::remote::{RemoteCommand, RemoteEvent};
+use kamimusuhi_resident::remote::{RemoteCommand, RemoteEvent};
 
 const RED: Color32 = Color32::from_rgb(235, 96, 110);
 const VIOLET: Color32 = Color32::from_rgb(166, 138, 255);

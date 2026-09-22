@@ -1,7 +1,9 @@
-//! Resident mode worker: talks to the always-on Kamimusuhi individual on the
-//! Pi through its resident HTTP API. The UI thread never blocks on the
-//! network: a turn runs on one thread, decisions on short-lived threads and
+//! Resident-mode client worker: talks to the always-on Kamimusuhi individual
+//! through its resident HTTP API. The UI thread never blocks on the network:
+//! a turn runs on one thread, decisions on short-lived threads and
 //! status/approval polling on a background refresher.
+//!
+//! Shared by the desktop (egui) and terminal (ratatui) frontends.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,8 +11,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
-use kamimusuhi_resident::client;
 use serde_json::Value;
+
+use crate::client;
 
 #[derive(Debug, Clone)]
 pub struct RemoteConfig {
@@ -57,7 +60,7 @@ pub fn spawn(config: RemoteConfig) -> (Sender<RemoteCommand>, Receiver<RemoteEve
 }
 
 fn refresh(url: &str, token: Option<&str>, events: &Sender<RemoteEvent>) -> bool {
-    match kamimusuhi_resident::status::fetch(url, token) {
+    match crate::status::fetch(url, token) {
         Ok(status) => {
             if events.send(RemoteEvent::Status(status)).is_err() {
                 return false;

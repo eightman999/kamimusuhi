@@ -17,6 +17,7 @@ pub mod kcore;
 pub mod library;
 pub mod mcp;
 pub mod probes;
+pub mod remote;
 pub mod router;
 pub mod server;
 pub mod spool;

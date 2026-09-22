@@ -1,0 +1,24 @@
+[package]
+name = "kamimusuhi-tui"
+description = "Terminal Kamimusuhi dialogue surface (澪 TUI)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "kami"
+path = "src/main.rs"
+
+[dependencies]
+crossterm = { workspace = true }
+kamimusuhi-resident = { path = "../kamimusuhi-resident" }
+kamimusuhi-runtime = { path = "../kamimusuhi-runtime" }
+ratatui = { workspace = true }
+serde_json = { workspace = true }
+unicode-width = { workspace = true }
+
+[lints]
+workspace = true
