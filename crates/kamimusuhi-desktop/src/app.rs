@@ -10,15 +10,15 @@ use kamimusuhi_runtime::llm_jev::{
 
 use crate::worker::{ConnectionSummary, ReadyState, WorkerCommand, WorkerEvent};
 
-const BG: Color32 = Color32::from_rgb(8, 15, 24);
-const PANEL: Color32 = Color32::from_rgb(13, 24, 36);
-const PANEL_RAISED: Color32 = Color32::from_rgb(19, 32, 47);
-const BORDER: Color32 = Color32::from_rgb(37, 57, 78);
-const TEXT: Color32 = Color32::from_rgb(224, 233, 244);
-const MUTED: Color32 = Color32::from_rgb(139, 160, 185);
-const BLUE: Color32 = Color32::from_rgb(49, 129, 235);
-const GREEN: Color32 = Color32::from_rgb(47, 206, 132);
-const AMBER: Color32 = Color32::from_rgb(243, 181, 62);
+pub(crate) const BG: Color32 = Color32::from_rgb(8, 15, 24);
+pub(crate) const PANEL: Color32 = Color32::from_rgb(13, 24, 36);
+pub(crate) const PANEL_RAISED: Color32 = Color32::from_rgb(19, 32, 47);
+pub(crate) const BORDER: Color32 = Color32::from_rgb(37, 57, 78);
+pub(crate) const TEXT: Color32 = Color32::from_rgb(224, 233, 244);
+pub(crate) const MUTED: Color32 = Color32::from_rgb(139, 160, 185);
+pub(crate) const BLUE: Color32 = Color32::from_rgb(49, 129, 235);
+pub(crate) const GREEN: Color32 = Color32::from_rgb(47, 206, 132);
+pub(crate) const AMBER: Color32 = Color32::from_rgb(243, 181, 62);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
@@ -44,7 +44,7 @@ pub fn run(commands: Sender<WorkerCommand>, events: Receiver<WorkerEvent>) -> Re
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([980.0, 640.0])
-            .with_title("Kamimusuhi / かみむすび"),
+            .with_title("Kamimusuhi / 澪 (Mio)"),
         ..Default::default()
     };
     eframe::run_native(
@@ -264,12 +264,7 @@ impl NativeApp {
 
     fn top_bar(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("◈ かみむすび")
-                    .strong()
-                    .size(19.0)
-                    .color(TEXT),
-            );
+            ui.label(RichText::new("澪").strong().size(19.0).color(TEXT));
             ui.label(RichText::new("会話側 K-CORE").small().color(MUTED));
             ui.add_space(16.0);
             ui.label(
@@ -760,7 +755,7 @@ impl Drop for NativeApp {
     }
 }
 
-fn configure_theme(ctx: &egui::Context) {
+pub(crate) fn configure_theme(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
     visuals.panel_fill = PANEL;
     visuals.window_fill = PANEL;
@@ -1015,7 +1010,7 @@ fn message_bubble(ui: &mut egui::Ui, message: &UiMessage) {
                 .show(ui, |ui| {
                     ui.set_max_width(ui.available_width().min(720.0));
                     ui.label(
-                        RichText::new(if user { "あなた" } else { "かみむすび" })
+                        RichText::new(if user { "あなた" } else { "澪" })
                             .small()
                             .strong()
                             .color(if user {
@@ -1045,7 +1040,7 @@ fn stat_card(ui: &mut egui::Ui, label: &str, value: &str, note: &str, color: Col
         });
 }
 
-fn card(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
+pub(crate) fn card(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(PANEL)
         .stroke(Stroke::new(1.0, BORDER))
