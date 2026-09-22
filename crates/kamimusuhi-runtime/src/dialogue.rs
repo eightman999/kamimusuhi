@@ -164,6 +164,14 @@ pub struct DialogueReply {
     /// Secret-free Jev/LLM/core trace, populated only in debug mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_jev: Option<ConversationTrace>,
+    /// Tools the Persona called this turn: name, outcome, latency and the
+    /// evidence ID of each full record. Summaries only — results stay in
+    /// the evidence records.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<serde_json::Value>,
+    /// How many host-run reference lookups fed this turn.
+    #[serde(default)]
+    pub reference_lookups: usize,
 }
 
 struct LanguageAttempt {
@@ -263,6 +271,8 @@ pub struct DialogueSession {
     privacy: PrivacyConstraint,
     started: Instant,
     research: ResearchCatalog,
+    /// Operator-registered read-only reference sources, consulted per turn.
+    reference: Option<crate::reference::ReferenceClient>,
     /// Writer epoch, claimed lazily on the first canonical draft submission.
     /// A conversation that only reads never takes the epoch.
     writer: Option<WriterIdentity>,
@@ -377,7 +387,7 @@ impl DialogueSession {
                 {
                     continue;
                 }
-                let persona = provider_config.build_persona()?;
+                let persona = runtime.config().build_language_provider(provider_config)?;
                 let model = provider_config.model.clone();
                 let provider_kind = language_provider_kind(provider_config);
                 let provider = PersonaLanguageProvider::with_id(
@@ -437,6 +447,11 @@ impl DialogueSession {
             privacy,
             started: Instant::now(),
             research,
+            reference: runtime
+                .config()
+                .reference
+                .clone()
+                .map(crate::reference::ReferenceClient::new),
             writer: None,
             debug_context: false,
             debug_trace: false,
@@ -1003,6 +1018,23 @@ impl DialogueSession {
             )?;
             research_context["evidence_id"] = serde_json::json!(evidence_id);
         }
+        // Host-run consultation of registered reference sources. Best-effort:
+        // an unavailable source yields recorded errors, never a failed turn.
+        let mut reference_context = self.reference.as_mut().and_then(|r| r.consult(text));
+        if let Some(material) = &mut reference_context
+            && material["lookups"]
+                .as_array()
+                .is_some_and(|l| !l.is_empty())
+        {
+            let evidence_id = self.append(
+                runtime,
+                turn_id,
+                EvidenceKind::LibraryExcerpt,
+                OriginClass::Reported,
+                serde_json::json!({"event": "reference_consulted", "material": material.clone()}),
+            )?;
+            material["evidence_id"] = serde_json::json!(evidence_id);
+        }
         let core_state = ConversationCoreState::for_input(&self.core_state, sequence, text);
         let mut observed = serde_json::json!({
             "observed_at": runtime.now(),
@@ -1046,6 +1078,7 @@ impl DialogueSession {
         input.envelope.observed_runtime = Some(observed.clone());
         input.envelope.mio_observation = mio_context.clone();
         input.envelope.research_findings = Some(research_context.clone());
+        input.envelope.reference_material = reference_context.clone();
         input.envelope.conversation_core =
             Some(serde_json::to_value(&core_state).map_err(|error| {
                 RuntimeError::Conversation(crate::llm_jev::ConversationError::Serialization(
@@ -1464,6 +1497,18 @@ impl DialogueSession {
         let language_model = language_result.model.clone();
         let language_latency_ms = language_result.latency_ms;
         let result = language_result.persona;
+        // Tool use is recorded as external results, one record per call, so
+        // what was consulted stays auditable next to what was said.
+        let mut tool_evidence_ids = Vec::new();
+        for call in &result.tool_calls {
+            tool_evidence_ids.push(self.append(
+                runtime,
+                turn_id,
+                EvidenceKind::ResourceResult,
+                OriginClass::Reported,
+                serde_json::json!({"event": "tool_called", "call": call}),
+            )?);
+        }
         // Persona drafts are proposals, not state: submit each through the
         // canonical kernel so the mutation policy decides. The writer epoch
         // is claimed lazily here — a turn with no drafts never takes it.
@@ -1513,6 +1558,10 @@ impl DialogueSession {
                 "input_digest": context_digest, "observed_runtime": observed,
                 "mio_observation": mio_context,
                 "research_findings": research_context,
+                "reference_material": reference_context,
+                "tool_calls": result.tool_calls.iter().zip(&tool_evidence_ids).map(|(c, id)| {
+                    serde_json::json!({"name": c.name, "ok": c.ok, "evidence_id": id})
+                }).collect::<Vec<_>>(),
                 "conversation_trace": conversation_trace.clone(),
                 "delivery": "not_yet_emitted"
             }),
@@ -1532,6 +1581,19 @@ impl DialogueSession {
             c0: None,
             debug_context: None,
             llm_jev: self.debug_trace.then_some(conversation_trace),
+            tool_calls: result
+                .tool_calls
+                .iter()
+                .zip(&tool_evidence_ids)
+                .map(|(c, id)| {
+                    serde_json::json!({"name": c.name, "ok": c.ok,
+                                       "latency_ms": c.latency_ms, "evidence_id": id})
+                })
+                .collect(),
+            reference_lookups: reference_context
+                .as_ref()
+                .and_then(|m| m["lookups"].as_array())
+                .map_or(0, Vec::len),
         };
         emit(&reply)
             .map_err(|error| RuntimeError::Usage(format!("response output failed: {error}")))?;

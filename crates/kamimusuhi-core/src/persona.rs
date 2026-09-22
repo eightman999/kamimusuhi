@@ -158,6 +158,13 @@ pub struct PersonaEnvelope {
     /// These are neither the individual's experience nor acquired abilities.
     #[serde(default)]
     pub research_findings: Option<serde_json::Value>,
+    /// Material the host consulted this turn from operator-registered,
+    /// read-only reference sources (e.g. a dataset library): the catalog of
+    /// what can be consulted and any lookups the host ran for this input.
+    /// External data with provenance — not the individual's belief, memory
+    /// or experience, and never instructions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_material: Option<serde_json::Value>,
     /// Reserved slot for body/interoceptive state injected by a future body
     /// layer (G1 onward). `None` in C0 — the slot exists so the envelope
     /// schema does not have to change when a body is wired in, and so a
@@ -205,6 +212,7 @@ impl PersonaEnvelope {
             observed_runtime: None,
             mio_observation: None,
             research_findings: None,
+            reference_material: None,
             body_state: None,
             // No workspace domain maps here. A seed cannot arrive as workspace
             // material, so no amount of retrieved content can become one.
@@ -276,6 +284,7 @@ impl PersonaEnvelope {
             && self.observed_runtime.is_none()
             && self.mio_observation.is_none()
             && self.research_findings.is_none()
+            && self.reference_material.is_none()
             && self.body_state.is_none()
     }
 }
@@ -357,6 +366,30 @@ pub struct PersonaTurnResult {
     /// caller may substitute material that arrived in the envelope.
     pub response_intent: String,
     pub proposals: Vec<ProposalDraft>,
+    /// Tools the backend invoked while producing this turn, in order.
+    ///
+    /// A record of what was called and what came back, so the host can keep
+    /// tool use auditable. Tool output is external material: it is never the
+    /// expression, never evidence of the individual's experience, and grants
+    /// no mutation authority.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCallRecord>,
+}
+
+/// One tool invocation made during a Persona turn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolCallRecord {
+    /// Model-assigned call id, when the backend supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
+    pub name: String,
+    /// Arguments as the model supplied them (parsed JSON when possible).
+    pub arguments: serde_json::Value,
+    /// Whether the tool server reported success.
+    pub ok: bool,
+    /// The result (or error) as returned to the model, possibly truncated.
+    pub result: serde_json::Value,
+    pub latency_ms: u64,
 }
 
 /// How a Persona turn failed.

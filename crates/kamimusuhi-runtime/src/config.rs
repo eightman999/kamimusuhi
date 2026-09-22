@@ -238,6 +238,25 @@ impl PersonaProviderConfig {
     /// configured primary Persona setting. Additional GUI-registered organs
     /// use this same adapter and the same secret boundary.
     pub fn build_persona(&self) -> Result<Box<dyn PersonaCore>, RuntimeError> {
+        self.build_persona_with_tools(None)
+    }
+
+    /// As [`Self::build_persona`], offering the model an operator-configured
+    /// read-only tool server (see [`ToolServerSetting`]).
+    pub fn build_persona_with_tools(
+        &self,
+        tools: Option<&ToolServerSetting>,
+    ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
+        self.build_persona_with(tools, None)
+    }
+
+    /// As [`Self::build_persona_with_tools`], also naming the individual's
+    /// avatar in dialogue.
+    pub fn build_persona_with(
+        &self,
+        tools: Option<&ToolServerSetting>,
+        avatar_name: Option<&str>,
+    ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
         if self.locality == LocalityClass::InProcess {
             return Err(RuntimeError::PersonaConfig {
                 message: "HTTP Persona cannot declare in_process locality".to_owned(),
@@ -254,6 +273,9 @@ impl PersonaProviderConfig {
         if let Some(instruction) = &self.system_instruction {
             config = config.with_system_instruction(instruction.clone());
         }
+        config = config
+            .with_tools(tools.map(ToolServerSetting::to_backend))
+            .with_display_name(avatar_name);
         config
             .validate()
             .map_err(|message| RuntimeError::PersonaConfig { message })?;
@@ -376,6 +398,21 @@ impl PersonaSetting {
 
     /// Build the Persona Core this setting describes.
     pub fn build(&self) -> Result<Box<dyn PersonaCore>, RuntimeError> {
+        self.build_with_tools(None)
+    }
+
+    pub fn build_with_tools(
+        &self,
+        tools: Option<&ToolServerSetting>,
+    ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
+        self.build_with(tools, None)
+    }
+
+    pub fn build_with(
+        &self,
+        tools: Option<&ToolServerSetting>,
+        avatar_name: Option<&str>,
+    ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
         self.check_privacy(PrivacyConstraint::Unconstrained)?;
         match self.backend {
             PersonaBackendKind::Fake => Ok(Box::new(FakePersonaCore)),
@@ -386,7 +423,7 @@ impl PersonaSetting {
                         .ok_or_else(|| RuntimeError::PersonaConfig {
                             message: "openai-compatible needs a persona provider entry".to_owned(),
                         })?;
-                provider.build_persona()
+                provider.build_persona_with(tools, avatar_name)
             }
         }
     }
@@ -512,6 +549,53 @@ pub struct RuntimeConfig {
     /// slot → how to reach its provider, when the implementation is networked.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub providers: BTreeMap<String, ProviderConfig>,
+    /// Read-only tool server offered to model-backed Persona/language organs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<ToolServerSetting>,
+    /// Reference material the host consults on every dialogue turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<crate::reference::ReferenceSetting>,
+    /// The name the individual answers to in dialogue (avatar name). A
+    /// presentation setting: it does not change the individual's identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_name: Option<String>,
+}
+
+/// An MCP-like tool server (the resident's `/v1/tools`). Every tool it
+/// exposes is read-only; results are external material recorded per turn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolServerSetting {
+    /// e.g. `http://127.0.0.1:7860`.
+    pub base_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_env: Option<String>,
+    #[serde(default = "default_tool_rounds")]
+    pub max_rounds: u32,
+    #[serde(default = "default_tool_timeout_ms")]
+    pub timeout_ms: u64,
+    /// Tool names offered. Empty offers every tool the server lists.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<String>,
+}
+
+const fn default_tool_rounds() -> u32 {
+    4
+}
+
+const fn default_tool_timeout_ms() -> u64 {
+    30_000
+}
+
+impl ToolServerSetting {
+    pub fn to_backend(&self) -> kamimusuhi_persona_http::ToolServerConfig {
+        let mut config = kamimusuhi_persona_http::ToolServerConfig::new(self.base_url.clone());
+        config.auth_env = self.auth_env.clone();
+        config.max_rounds = self.max_rounds;
+        config.timeout_ms = self.timeout_ms;
+        config.allowed = self.allowed.clone();
+        config
+    }
 }
 
 impl RuntimeConfig {
@@ -530,13 +614,26 @@ impl RuntimeConfig {
             mio: None,
             resources,
             providers: BTreeMap::new(),
+            tools: None,
+            reference: None,
+            avatar_name: None,
         }
     }
 
     /// Build the Persona Core. Deliberately separate from
     /// [`Self::build_registry`]: the two namespaces never mix.
     pub fn build_persona(&self) -> Result<Box<dyn PersonaCore>, RuntimeError> {
-        self.persona.build()
+        self.persona
+            .build_with(self.tools.as_ref(), self.avatar_name.as_deref())
+    }
+
+    /// Build an additional language organ with the same tool access as the
+    /// primary Persona.
+    pub fn build_language_provider(
+        &self,
+        provider: &PersonaProviderConfig,
+    ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
+        provider.build_persona_with(self.tools.as_ref(), self.avatar_name.as_deref())
     }
 
     /// Build the reflector this config selects. `Mirror` resolves against the
