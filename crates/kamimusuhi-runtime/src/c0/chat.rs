@@ -126,6 +126,22 @@ commands:
   /help      this list
 anything else is a turn of conversation";
 
+/// The automatic reflection cadence in force, in turns. Genome connection:
+/// `cognition.reflection_depth` scales the configured interval. 0 (manual
+/// only) stays 0; the operator's off switch wins.
+pub fn effective_reflection_interval(runtime: &Runtime) -> u32 {
+    runtime
+        .phenotype()
+        .reflection_interval(runtime.config().c0.reflection_interval_turns)
+}
+
+/// Whether the cadence says a reflection cycle is due after the session's
+/// most recent turn.
+pub fn reflection_due(runtime: &Runtime, session: &DialogueSession) -> bool {
+    let interval = effective_reflection_interval(runtime);
+    interval > 0 && session.turn_count().is_multiple_of(u64::from(interval))
+}
+
 /// The interactive loop. `input`/`output` are the operator's terminal — or a
 /// pipe, in which case prompts are suppressed and only responses/commands
 /// print.
@@ -138,7 +154,6 @@ pub fn run_repl(
     debug_context: bool,
     debug_trace: bool,
 ) -> Result<(), RuntimeError> {
-    let reflection_interval = runtime.config().c0.reflection_interval_turns;
     if terminal {
         eprintln!("かみむすび — テキスト対話。終了: /quit、コマンド一覧: /help");
     }
@@ -232,11 +247,7 @@ pub fn run_repl(
         }
         // Interval-driven reflection: the same cycle `/reflect` runs, on a
         // configured cadence.
-        if reflection_interval > 0
-            && session
-                .turn_count()
-                .is_multiple_of(u64::from(reflection_interval))
-        {
+        if reflection_due(runtime, session) {
             let subject = session.subject().to_owned();
             let report = reflection::run(
                 runtime,

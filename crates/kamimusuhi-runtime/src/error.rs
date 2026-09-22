@@ -8,6 +8,7 @@
 
 use kamimusuhi_core::continuity::ContinuityError;
 use kamimusuhi_core::evidence::EvidenceError;
+use kamimusuhi_core::genome::GenomeError;
 use kamimusuhi_core::ids::IndividualId;
 use kamimusuhi_core::library::LibraryError;
 use kamimusuhi_core::memory::MemoryError;
@@ -90,6 +91,10 @@ pub enum RuntimeError {
     Conversation(#[from] crate::llm_jev::ConversationError),
     #[error("mutation was not activated: {reason}")]
     MutationNotActivated { reason: String },
+    /// The genome file is present but unusable. Fails closed: a runtime
+    /// does not fall back to a default disposition when its own is corrupt.
+    #[error("genome: {0}")]
+    Genome(#[from] GenomeError),
     #[error("{0}")]
     Usage(String),
 }

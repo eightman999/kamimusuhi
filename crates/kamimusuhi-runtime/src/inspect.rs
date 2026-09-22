@@ -53,7 +53,7 @@ pub struct ResourceCallSummary {
 }
 
 /// What `inspect` reports.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InspectReport {
     pub individual_id: IndividualId,
     pub root_commit_id: kamimusuhi_core::ids::CommitId,
@@ -71,6 +71,19 @@ pub struct InspectReport {
     /// has a movable head and is the only part of this report rollback can
     /// change.
     pub c0: C0Summary,
+    /// The heritable disposition beside the config. Not canonical state and
+    /// not memory: only its identity and derived settings are reported.
+    #[serde(default)]
+    pub genome: Option<GenomeSummary>,
+}
+
+/// Genome identity plus the runtime settings it currently derives to.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GenomeSummary {
+    pub genome_id: String,
+    pub version: u32,
+    pub hash: String,
+    pub phenotype: kamimusuhi_core::genome::Phenotype,
 }
 
 /// Derived-lane position and lifecycle counts. All `SELECT`s.
@@ -190,6 +203,12 @@ pub fn inspect(runtime: &Runtime) -> Result<InspectReport, RuntimeError> {
         library,
         resource_calls,
         c0,
+        genome: Some(GenomeSummary {
+            genome_id: runtime.genome().genome_id.clone(),
+            version: runtime.genome().version,
+            hash: runtime.genome().hash.clone(),
+            phenotype: runtime.phenotype(),
+        }),
     };
 
     // Operational only. Inspection is not a canonical event and gets no audit

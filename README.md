@@ -449,6 +449,8 @@ Persona Core は「個体として喋るもの」、cognitive resource は「一
 
 seed は memory でも durable self でも外部 material でもなく、専用の `PERSONA_SEED` section として渡されます。workspace からは生成できないので、Library や resource の出力が人格になることはありません。**モデルが「私はこういう人格だ」と言っても seed は変わりません** — seed の変更は operator による設定編集であって、canonical mutation ではありません。v0 の内容と根拠は [`docs/implementation/persona-seed-v0.md`](./docs/implementation/persona-seed-v0.md) を参照してください。経歴・年齢・好物のような作り話は意図的に入れていません。
 
+seed とは別に、行動・認知・学習傾向を決める数値パラメータ群 **Genome** を `genome.json` に持ちます。記憶や会話履歴は含まず、`kamimusuhi-genome` CLI で inspect / clone / mutate / diff できます。現状の接続は curiosity → 想起幅、reflection_depth → 内省頻度の 2 点です。詳細は [`docs/implementation/genome-v0.md`](./docs/implementation/genome-v0.md) を参照してください。
+
 token が必要な endpoint では、runtime.json の `persona.provider.auth_env` に**環境変数名**を書きます（値は書きません）。Persona の外部送信にも `--privacy` が適用されます。locality 未指定の既存設定は `external` とみなし、`local-only` での暗黙の許可はしません。
 
 ```bash

@@ -21,6 +21,7 @@ use std::sync::Arc;
 use kamimusuhi_core::continuity::{
     ContinuityHead, ContinuityKernel, ContinuityStore, Individual, NewIndividual, WriterIdentity,
 };
+use kamimusuhi_core::genome::{Genome, Phenotype};
 use kamimusuhi_core::ids::{
     BootId, CommitId, IdGenerator, IndividualId, NodeId, RandomIdGenerator, SchemaVersion,
 };
@@ -162,6 +163,12 @@ impl RuntimePaths {
         self.dir.join(JsonlTraceSink::FILE_NAME)
     }
 
+    /// The genome file. Absent on directories initialized before the genome
+    /// layer existed; `open` then uses the default genome without writing.
+    pub fn genome(&self) -> PathBuf {
+        self.dir.join(Genome::FILE_NAME)
+    }
+
     fn display(&self) -> String {
         self.dir.display().to_string()
     }
@@ -172,6 +179,7 @@ impl RuntimePaths {
 pub struct Runtime {
     paths: RuntimePaths,
     config: RuntimeConfig,
+    genome: Genome,
     kernel: RuntimeKernel,
     clocks: Clocks,
     ids: Arc<dyn IdGenerator>,
@@ -248,10 +256,15 @@ impl Runtime {
 
         let config = RuntimeConfig::new(node_id, general);
         config.save(&paths.config())?;
+        // A fresh individual gets a neutral genome. It is infrastructure beside
+        // the config, not canonical state: nothing in the store refers to it.
+        let genome = Genome::new_default();
+        genome.save(&paths.genome())?;
 
         Self::assemble(
             paths,
             config,
+            genome,
             store,
             clocks,
             ids,
@@ -274,6 +287,11 @@ impl Runtime {
             });
         }
         let config = RuntimeConfig::load(&paths.config())?;
+        let genome = if paths.genome().exists() {
+            Genome::load(&paths.genome())?
+        } else {
+            Genome::new_default()
+        };
         let trace_max_bytes = options.trace_max_bytes;
         let clocks = options.clocks();
         let ids = options.ids();
@@ -304,6 +322,7 @@ impl Runtime {
         Self::assemble(
             paths,
             config,
+            genome,
             store,
             clocks,
             ids,
@@ -317,6 +336,7 @@ impl Runtime {
     fn assemble(
         paths: RuntimePaths,
         config: RuntimeConfig,
+        genome: Genome,
         store: SqliteStore,
         clocks: Clocks,
         ids: Arc<dyn IdGenerator>,
@@ -349,6 +369,7 @@ impl Runtime {
         let runtime = Self {
             paths,
             config,
+            genome,
             kernel,
             clocks,
             ids,
@@ -362,6 +383,8 @@ impl Runtime {
             serde_json::json!({
                 "schema_version": runtime.schema_version(),
                 "resources": runtime.config.resources,
+                "genome_id": runtime.genome.genome_id,
+                "genome_hash": runtime.genome.hash,
             }),
         );
         Ok(runtime)
@@ -394,6 +417,18 @@ impl Runtime {
 
     pub const fn config(&self) -> &RuntimeConfig {
         &self.config
+    }
+
+    /// The heritable disposition this runtime runs with. Read-only here:
+    /// a genome changes only through the `kamimusuhi-genome` CLI, never
+    /// from inside a dialogue.
+    pub const fn genome(&self) -> &Genome {
+        &self.genome
+    }
+
+    /// Runtime settings derived from the genome.
+    pub fn phenotype(&self) -> Phenotype {
+        self.genome.phenotype()
     }
 
     /// Rewrite the configuration, e.g. to point a slot at another fake.

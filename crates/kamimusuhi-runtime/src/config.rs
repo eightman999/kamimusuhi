@@ -559,6 +559,14 @@ pub struct RuntimeConfig {
     /// presentation setting: it does not change the individual's identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_name: Option<String>,
+    /// Whether the genome's `exploration_probability` may admit uncertain,
+    /// non-baseline recall candidates into the workspace. Off by default:
+    /// the legacy behaviour (uncertain candidates are dropped) is unchanged
+    /// unless an operator or a harness turns this on. Opportunities and
+    /// draws are still recorded while off, so the branch is observable
+    /// before it is enabled.
+    #[serde(default)]
+    pub genome_exploration: bool,
 }
 
 /// An MCP-like tool server (the resident's `/v1/tools`). Every tool it
@@ -617,6 +625,7 @@ impl RuntimeConfig {
             tools: None,
             reference: None,
             avatar_name: None,
+            genome_exploration: false,
         }
     }
 

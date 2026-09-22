@@ -20,6 +20,7 @@ pub mod continuity;
 pub mod digest;
 pub mod domain_separation;
 pub mod evidence;
+pub mod genome;
 pub mod ids;
 pub mod library;
 pub mod memory;

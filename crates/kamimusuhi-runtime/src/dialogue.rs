@@ -20,7 +20,7 @@ use kamimusuhi_core::persona::{
 use kamimusuhi_core::routing::{LocalityClass, PrivacyConstraint};
 use kamimusuhi_core::trace::{TraceCorrelation, TraceEventKind};
 use kamimusuhi_core::workspace::WorkspaceBuilder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::c0::{self, eval};
 use crate::config::validate_language_provider_id;
@@ -172,6 +172,92 @@ pub struct DialogueReply {
     /// How many host-run reference lookups fed this turn.
     #[serde(default)]
     pub reference_lookups: usize,
+    /// Retained memory records that reached the workspace, by domain.
+    /// Counts of what was surfaced, not of what exists.
+    #[serde(default)]
+    pub episodic_recalled: usize,
+    #[serde(default)]
+    pub relationship_recalled: usize,
+    /// Raw evidence records recalled from beyond the history window.
+    #[serde(default)]
+    pub evidence_recalled: usize,
+    /// The exploration branch this turn: whether there was anything to
+    /// explore, the draw, and what it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exploration: Option<ExplorationRecord>,
+}
+
+/// The exploration decision for one turn, as recorded in the reply and the
+/// workspace context.
+///
+/// The opportunity: recall candidates that the deterministic baseline
+/// would not have retained (no lexical overlap) and that the judge left
+/// `Uncertain`. Legacy behaviour drops them. Genome connection:
+/// `exploration_probability` decides, per turn, whether the individual
+/// instead admits them into its workspace — an unfamiliar record that might
+/// answer the question, at the cost of a wider context.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExplorationRecord {
+    /// `genome_exploration` in the runtime config. When false the draw is
+    /// recorded but nothing is promoted.
+    pub enabled: bool,
+    /// Uncertain, non-baseline candidates offered this turn. 0 = no
+    /// opportunity, and no draw was made.
+    pub candidates: usize,
+    pub probability: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draw: Option<f64>,
+    pub explored: bool,
+    /// Candidates promoted to `Relevant` by exploring.
+    pub promoted: usize,
+}
+
+/// Apply the exploration branch to a turn's recall judgement in place.
+fn explore_uncertain_recall(
+    enabled: bool,
+    phenotype: &kamimusuhi_core::genome::Phenotype,
+    turn_key: u64,
+    candidates: &[crate::llm_jev::RecallCandidate],
+    recall: &mut std::collections::BTreeMap<String, crate::llm_jev::RecallRelevance>,
+) -> ExplorationRecord {
+    use crate::llm_jev::RecallRelevance;
+    let uncertain_new: Vec<&str> = candidates
+        .iter()
+        .filter(|c| !c.baseline && recall.get(&c.id) == Some(&RecallRelevance::Uncertain))
+        .map(|c| c.id.as_str())
+        .collect();
+    if uncertain_new.is_empty() {
+        return ExplorationRecord {
+            enabled,
+            candidates: 0,
+            probability: phenotype.exploration_probability,
+            draw: None,
+            explored: false,
+            promoted: 0,
+        };
+    }
+    let decision = phenotype.exploration_decision(turn_key);
+    let mut promoted = 0;
+    if enabled && decision.explore {
+        for id in &uncertain_new {
+            recall.insert((*id).to_owned(), RecallRelevance::Relevant);
+            promoted += 1;
+        }
+    }
+    ExplorationRecord {
+        enabled,
+        candidates: uncertain_new.len(),
+        probability: decision.probability,
+        draw: Some(decision.draw),
+        explored: enabled && decision.explore,
+        promoted,
+    }
+}
+
+/// Fold a 128-bit turn ID into the exploration draw key.
+fn exploration_key(turn_id: TurnId) -> u64 {
+    let bits = turn_id.runtime_id().as_u128();
+    (bits as u64) ^ ((bits >> 64) as u64)
 }
 
 struct LanguageAttempt {
@@ -924,7 +1010,13 @@ impl DialogueSession {
         // The operative view in force this turn: retrieval knobs, conversation
         // policy and the self model all come from the derived lane's head.
         let operative = c0::operative(runtime)?;
-        let history = self.history(runtime, operative.view.params.retrieval.history_messages)?;
+        // Genome connection: `cognition.working_memory_span` scales how much
+        // conversation history this turn replays. The lane's parameter is
+        // untouched; only this turn's window is scaled.
+        let history_window = runtime
+            .phenotype()
+            .history_messages(operative.view.params.retrieval.history_messages);
+        let history = self.history(runtime, history_window)?;
         let turn_id = TurnId::generate(runtime.ids().as_ref());
         runtime.store().record_turn(NewTurn {
             turn_id,
@@ -959,13 +1051,17 @@ impl DialogueSession {
         // filtered to this channel's source id.
         let mut exclude: BTreeSet<EvidenceId> = history.iter().map(|m| m.evidence_id).collect();
         exclude.insert(input_evidence_id);
+        // Genome connection: `temperament.curiosity` widens or narrows how
+        // many episodic / evidence candidates this turn recalls. The C0 lane's
+        // params are not rewritten; only this turn's retrieval view is scaled.
+        let recall_params = scale_recall_params(&operative.view.params, &runtime.phenotype());
         let recall_pool = RecallPool::load(
             runtime.store(),
             self.individual_id,
             &self.subject,
             &self.source_id,
             text,
-            &operative.view.params,
+            &recall_params,
             &exclude,
         )?;
         let (mut memories, mut recalled_evidence) = recall_pool.baseline();
@@ -1105,7 +1201,7 @@ impl DialogueSession {
         // unconfigured deployment runs — rather than hanging or dropping the
         // turn. The degraded result is marked `fallback` and traced. A
         // provider that answered with an invalid contract stays fail-closed.
-        let preparation = match self.decision_provider.prepare_turn(&preparation_request) {
+        let mut preparation = match self.decision_provider.prepare_turn(&preparation_request) {
             Ok(preparation) => preparation,
             Err(error) if error.is_unavailable() => {
                 let code = error.code().to_owned();
@@ -1142,6 +1238,16 @@ impl DialogueSession {
             )
             .into());
         }
+        // Genome connection: the exploration branch. Runs after the judge so
+        // an explicit Relevant/Irrelevant verdict is never overridden; only
+        // what the judge could not decide is up to the individual's disposition.
+        let exploration = explore_uncertain_recall(
+            runtime.config().genome_exploration,
+            &runtime.phenotype(),
+            exploration_key(turn_id),
+            &preparation_request.recall_candidates,
+            &mut preparation.recall,
+        );
         (memories, recalled_evidence) = recall_pool.apply(&preparation.recall)?;
         // Rebuild the actual language workspace from the chosen original
         // records, preserving their types and provenance. No memory is written.
@@ -1190,6 +1296,7 @@ impl DialogueSession {
             "decision_evidence_digest": assessment_evidence.snapshot_digest,
             "generation_input_digest": context_digest,
             "workspace_digest": workspace.digest(),
+            "exploration": exploration,
         });
         self.last_context = Some(workspace_context.clone());
         runtime.trace().record_with(
@@ -1594,6 +1701,18 @@ impl DialogueSession {
                 .as_ref()
                 .and_then(|m| m["lookups"].as_array())
                 .map_or(0, Vec::len),
+            episodic_recalled: memories
+                .iter()
+                .filter(|m| m.record.domain == kamimusuhi_core::mutation::MutationDomain::Episodic)
+                .count(),
+            relationship_recalled: memories
+                .iter()
+                .filter(|m| {
+                    m.record.domain == kamimusuhi_core::mutation::MutationDomain::Relationship
+                })
+                .count(),
+            evidence_recalled: recalled_evidence.len(),
+            exploration: Some(exploration),
         };
         emit(&reply)
             .map_err(|error| RuntimeError::Usage(format!("response output failed: {error}")))?;
@@ -1886,5 +2005,43 @@ mod fanout_tests {
                 .iter()
                 .all(|message| !message.text.contains("extra-"))
         );
+    }
+}
+
+/// Apply the phenotype's recall breadth to one turn's retrieval parameters.
+/// A domain the lane switched off (`top_k == 0`) stays off.
+fn scale_recall_params(
+    params: &kamimusuhi_core::c0::OperativeParams,
+    phenotype: &kamimusuhi_core::genome::Phenotype,
+) -> kamimusuhi_core::c0::OperativeParams {
+    let mut scaled = params.clone();
+    scaled.retrieval.episodic_top_k = phenotype.recall_top_k(params.retrieval.episodic_top_k);
+    scaled.retrieval.evidence_top_k = phenotype.recall_top_k(params.retrieval.evidence_top_k);
+    scaled
+}
+
+#[cfg(test)]
+mod genome_connection_tests {
+    use super::scale_recall_params;
+    use kamimusuhi_core::c0::OperativeParams;
+    use kamimusuhi_core::genome::Genome;
+
+    #[test]
+    fn curiosity_scales_recall_top_k_without_touching_other_params() {
+        let mut params = OperativeParams::default();
+        params.retrieval.episodic_top_k = 4;
+        params.retrieval.evidence_top_k = 0;
+        let mut genome = Genome::with_id("gen-t");
+        genome.set_gene("temperament.curiosity", 1.0).unwrap();
+        let scaled = scale_recall_params(&params, &genome.phenotype());
+        assert_eq!(scaled.retrieval.episodic_top_k, 6);
+        assert_eq!(scaled.retrieval.evidence_top_k, 0);
+        assert_eq!(
+            scaled.retrieval.history_messages,
+            params.retrieval.history_messages
+        );
+        assert_eq!(scaled.conversation, params.conversation);
+        let neutral = scale_recall_params(&params, &Genome::with_id("gen-n").phenotype());
+        assert_eq!(neutral, params);
     }
 }
