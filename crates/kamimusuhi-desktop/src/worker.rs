@@ -296,6 +296,8 @@ fn make_language_provider_config(
         timeout_ms: 60_000,
         tls_root_ca_path: None,
         system_instruction: None,
+        reasoning: Default::default(),
+        extra_body: None,
     })
 }
 

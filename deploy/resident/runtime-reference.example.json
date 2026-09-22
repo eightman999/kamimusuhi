@@ -1,9 +1,19 @@
 {
-  "_comment": "Merge into <individual>/runtime.json (top level). tools: model-initiated read-only tool calls. reference: host-run per-turn consultation.",
+  "_comment": "Merge into <individual>/runtime.json (top level). tools: model-initiated read-only tool calls (core = offered every turn; the rest of allowed is discoverable via tool_catalog/tool_enable). reference: host-run per-turn consultation. persona.provider.reasoning: off|on|auto (default off), persona.provider.extra_body: provider-specific request fields.",
   "tools": {
     "base_url": "http://127.0.0.1:7860",
     "max_rounds": 8,
     "timeout_ms": 30000,
+    "core": [
+      "task_update",
+      "task_create",
+      "task_list",
+      "library_list",
+      "library_search",
+      "library_read",
+      "json_get",
+      "json_find"
+    ],
     "allowed": [
       "task_update",
       "task_create",
