@@ -1,0 +1,150 @@
+{
+  "node": {
+    "id": "llm_master",
+    "role": "cognition",
+    "listen": "0.0.0.0:7860"
+  },
+  "paths": {
+    "root": "/srv/kamimusuhi",
+    "spool_warn_bytes": 53687091200
+  },
+  "nas": {
+    "root": "/mnt/kamimusuhi",
+    "probe_timeout_secs": 8
+  },
+  "peers": [
+    {
+      "id": "pi",
+      "role": "continuity",
+      "url": "http://100.111.150.4:7860"
+    }
+  ],
+  "tiers": [
+    {
+      "name": "local",
+      "base_url": "http://100.74.160.53:8080/v1",
+      "model": "qwen3.8-27b-q4_K_M",
+      "node_local": true,
+      "timeout_secs": 300,
+      "probe_interval_secs": 15
+    },
+    {
+      "name": "hai",
+      "base_url": "https://hai-api.hcloud.ltd/v1",
+      "model": "qwen3.8-27b-uncensored",
+      "auth_env": "HAI_API_KEY",
+      "timeout_secs": 300,
+      "probe_interval_secs": 60
+    }
+  ],
+  "routing": {
+    "small_request_chars": 1200,
+    "log_conversations": true
+  },
+  "hai_account": {
+    "base_url": "https://hai-api.hcloud.ltd/api",
+    "auth_env": "HAI_API_KEY",
+    "interval_secs": 900,
+    "low_balance_jpy": 0
+  },
+  "libraries": [
+    {
+      "name": "jp_market_vis",
+      "path": "/mnt/sda1/kamimusuhi/library/JP_Market_Vis",
+      "description": "日本の上場企業間の資本・取引・提携・役員兼任・グループ関係（EDINET等由来、3,812社・約9万関係、2026-09時点。現在の株主構成を保証しない）。使い方: 企業は json_get path=public/M4_companies.json pointer=/companies/<証券コード>（名前から探すなら json_find pointer=/companies match=[{field:/name,op:contains,value:社名}]）。関係は json_find path=public/M5_company_relations.json pointer=/relations match=[{field:/source/key,value:<コード>},{field:/target/key,value:<コード>}]（source→target, relation_type, attributes.ownership_ratio）。key が ENT で始まるものは非上場主体で json_get path=public/M5_company_relations.json pointer=/entities/<ENT…> で名前を引く（M4 ではない）。関係タイプの説明は pointer=/relation_types。",
+      "source": "https://github.com/mattyamonaca/JP_Market_Vis"
+    }
+  ],
+  "mcp_servers": [
+    {
+      "name": "nas",
+      "command": "/srv/kamimusuhi/mcp/node_modules/.bin/mcp-server-filesystem",
+      "args": [
+        "/mnt/kamimusuhi"
+      ],
+      "read_only": true,
+      "description": "NAS /mnt/kamimusuhi 全体の読み取り（memory, conversations, logs, knowledge など）"
+    },
+    {
+      "name": "fs",
+      "command": "/srv/kamimusuhi/mcp/node_modules/.bin/mcp-server-filesystem",
+      "args": [
+        "/mnt/kamimusuhi/workspace",
+        "/mnt/kamimusuhi/artifacts",
+        "/mnt/kamimusuhi/experiments",
+        "/mnt/kamimusuhi/datasets"
+      ],
+      "description": "NAS の作業領域（workspace/artifacts/experiments/datasets）の読み書き。ログ・記憶・snapshot は対象外"
+    },
+    {
+      "name": "context7",
+      "command": "/srv/kamimusuhi/mcp/node_modules/.bin/context7-mcp",
+      "description": "ライブラリ・フレームワークの最新ドキュメント検索（Context7, 外部サービス）"
+    },
+    {
+      "name": "obsidian",
+      "command": "/srv/kamimusuhi/mcp/node_modules/.bin/mcpvault",
+      "args": [
+        "/mnt/kamimusuhi/knowledge/obsidian"
+      ],
+      "allow": [
+        "read_note",
+        "read_multiple_notes",
+        "read_note_lines",
+        "list_directory",
+        "search_notes",
+        "get_notes_info",
+        "get_frontmatter",
+        "get_note_outline",
+        "get_vault_stats",
+        "list_all_tags"
+      ],
+      "description": "操作者の Obsidian vault（NAS 上の clone, 読み取り専用。書き換えは Pi 経由で承認制）"
+    },
+    {
+      "name": "netdata",
+      "command": "/usr/sbin/nd-mcp",
+      "args": [
+        "ws://127.0.0.1:19999/mcp"
+      ],
+      "env": {
+        "ND_MCP_BEARER_TOKEN": "$NETDATA_MCP_KEY"
+      },
+      "description": "llm_master の Netdata（メトリクス・アラート・異常検知, 読み取り専用）"
+    },
+    {
+      "name": "github",
+      "command": "/srv/kamimusuhi/mcp/github/github-mcp-server",
+      "args": [
+        "stdio",
+        "--read-only",
+        "--lockdown-mode",
+        "--toolsets=context,repos,issues,pull_requests,actions"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "$GITHUB_PERSONAL_ACCESS_TOKEN"
+      },
+      "read_only": true,
+      "description": "GitHub（eightman999 のリポジトリ等）の読み取り専用参照。書き込み系 tool は出さない"
+    },
+    {
+      "name": "playwright",
+      "command": "/srv/kamimusuhi/mcp/node_modules/.bin/playwright-mcp",
+      "args": [
+        "--headless",
+        "--isolated",
+        "--browser",
+        "chromium",
+        "--image-responses",
+        "omit"
+      ],
+      "deny": [
+        "browser_run_code_unsafe",
+        "browser_evaluate",
+        "browser_file_upload"
+      ],
+      "call_timeout_secs": 180,
+      "description": "ヘッドレス Chromium による Web 閲覧（llm_master のみ, 隔離プロファイル）"
+    }
+  ]
+}

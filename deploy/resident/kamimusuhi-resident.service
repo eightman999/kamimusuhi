@@ -1,0 +1,28 @@
+[Unit]
+Description=Kamimusuhi resident node (routing, continuity, spool/NAS sync)
+Documentation=file:///srv/kamimusuhi/runtime/deploy/README.md
+Wants=network-online.target
+After=network-online.target tailscaled.service
+# The NAS is optional at runtime: no Requires= on the mount. The daemon
+# spools locally and delivers when the NAS returns.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=eightman
+Group=eightman
+Environment=KAMIMUSUHI_CONFIG=/srv/kamimusuhi/config/resident.json
+EnvironmentFile=-/srv/kamimusuhi/config/secrets.env
+ExecStart=/srv/kamimusuhi/runtime/bin/kamimusuhi serve
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+# Resource hygiene on the Pi; generous enough for llm_master too.
+MemoryMax=1G
+Nice=5
+NoNewPrivileges=yes
+ProtectSystem=full
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

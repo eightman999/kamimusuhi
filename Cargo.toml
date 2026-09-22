@@ -8,6 +8,7 @@ members = [
     "crates/kamimusuhi-testkit",
     "crates/kamimusuhi-runtime",
     "crates/kamimusuhi-desktop",
+    "crates/kamimusuhi-resident",
 ]
 
 [workspace.package]

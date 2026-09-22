@@ -1,0 +1,165 @@
+{
+  "node": {
+    "id": "pi",
+    "role": "continuity",
+    "listen": "0.0.0.0:7860"
+  },
+  "paths": {
+    "root": "/srv/kamimusuhi",
+    "spool_warn_bytes": 8589934592
+  },
+  "nas": {
+    "root": "/mnt/kamimusuhi",
+    "probe_timeout_secs": 8
+  },
+  "peers": [
+    {
+      "id": "llm_master",
+      "role": "cognition",
+      "url": "http://100.74.160.53:7860"
+    }
+  ],
+  "tiers": [
+    {
+      "name": "llm_master",
+      "base_url": "http://100.74.160.53:7860/v1",
+      "model": "local",
+      "auth_env": "KAMIMUSUHI_NODE_TOKEN",
+      "peer_local_only": true,
+      "timeout_secs": 300,
+      "probe_interval_secs": 15
+    },
+    {
+      "name": "hai",
+      "base_url": "https://hai-api.hcloud.ltd/v1",
+      "model": "qwen3.8-27b-uncensored",
+      "auth_env": "HAI_API_KEY",
+      "timeout_secs": 300,
+      "probe_interval_secs": 60
+    }
+  ],
+  "routing": {
+    "small_request_chars": 1200,
+    "log_conversations": true
+  },
+  "hai_account": {
+    "base_url": "https://hai-api.hcloud.ltd/api",
+    "auth_env": "HAI_API_KEY",
+    "interval_secs": 900,
+    "low_balance_jpy": 0
+  },
+  "kcore": {
+    "binary": "/srv/kamimusuhi/runtime/bin/k-core",
+    "dir": "/srv/kamimusuhi/runtime/individual",
+    "interval_ms": 60000
+  },
+  "snapshot": {
+    "database": "/srv/kamimusuhi/runtime/individual/kamimusuhi.sqlite",
+    "interval_secs": 3600,
+    "spool_keep": 3
+  },
+  "dialogue": {
+    "runtime_binary": "/srv/kamimusuhi/runtime/bin/kamimusuhi-runtime",
+    "dir": "/srv/kamimusuhi/runtime/individual",
+    "privacy": "unconstrained",
+    "timeout_secs": 600
+  },
+  "mcp_servers": [
+    {
+      "name": "nas",
+      "command": "/srv/kamimusuhi/mcp/node_modules/.bin/mcp-server-filesystem",
+      "args": [
+        "/mnt/kamimusuhi"
+      ],
+      "read_only": true,
+      "description": "NAS /mnt/kamimusuhi 全体の読み取り（memory, conversations, logs, knowledge など）"
+    },
+    {
+      "name": "fs",
+      "command": "/srv/kamimusuhi/mcp/node_modules/.bin/mcp-server-filesystem",
+      "args": [
+        "/mnt/kamimusuhi/workspace",
+        "/mnt/kamimusuhi/artifacts",
+        "/mnt/kamimusuhi/experiments",
+        "/mnt/kamimusuhi/datasets"
+      ],
+      "description": "NAS の作業領域（workspace/artifacts/experiments/datasets）の読み書き。ログ・記憶・snapshot は対象外"
+    },
+    {
+      "name": "context7",
+      "command": "/srv/kamimusuhi/mcp/node_modules/.bin/context7-mcp",
+      "description": "ライブラリ・フレームワークの最新ドキュメント検索（Context7, 外部サービス）"
+    },
+    {
+      "name": "obsidian",
+      "command": "/srv/kamimusuhi/mcp/node_modules/.bin/mcpvault",
+      "args": [
+        "/mnt/kamimusuhi/knowledge/obsidian"
+      ],
+      "allow": [
+        "read_note",
+        "read_multiple_notes",
+        "read_note_lines",
+        "list_directory",
+        "search_notes",
+        "get_notes_info",
+        "get_frontmatter",
+        "get_note_outline",
+        "get_vault_stats",
+        "list_all_tags",
+        "write_note",
+        "patch_note",
+        "update_frontmatter"
+      ],
+      "description": "操作者の Obsidian vault（GitHub から Pi が定期 pull する NAS 上の clone）。読み取りは自由、書き換えは操作者の承認後に実行し commit/push",
+      "approval_required": [
+        "write_note",
+        "patch_note",
+        "update_frontmatter"
+      ],
+      "after_approved": [
+        "/srv/kamimusuhi/runtime/bin/obsidian-git.sh",
+        "commit",
+        "kamimusuhi: {tool} (approval {id})"
+      ]
+    },
+    {
+      "name": "netdata",
+      "command": "/usr/sbin/nd-mcp",
+      "args": [
+        "ws://127.0.0.1:19999/mcp"
+      ],
+      "env": {
+        "ND_MCP_BEARER_TOKEN": "$NETDATA_MCP_KEY"
+      },
+      "description": "Pi の Netdata（メトリクス・アラート・異常検知, 読み取り専用）"
+    },
+    {
+      "name": "github",
+      "command": "/srv/kamimusuhi/mcp/github/github-mcp-server",
+      "args": [
+        "stdio",
+        "--read-only",
+        "--lockdown-mode",
+        "--toolsets=context,repos,issues,pull_requests,actions"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "$GITHUB_PERSONAL_ACCESS_TOKEN"
+      },
+      "read_only": true,
+      "description": "GitHub（eightman999 のリポジトリ等）の読み取り専用参照。書き込み系 tool は出さない"
+    }
+  ],
+  "jobs": [
+    {
+      "name": "obsidian-pull",
+      "command": "/srv/kamimusuhi/runtime/bin/obsidian-git.sh",
+      "args": [
+        "pull"
+      ],
+      "interval_secs": 900,
+      "timeout_secs": 600,
+      "run_at_start": true
+    }
+  ]
+}
