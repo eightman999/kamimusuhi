@@ -45,3 +45,6 @@ __pycache__/
 # Physiology overlays (regenerable by physio/overlay.py)
 /experiments/mioba/datasets/*/physiology/
 /logs/
+
+# Site-specific resident configuration (hosts, NAS, private repos): local only
+/deploy/resident/local/
