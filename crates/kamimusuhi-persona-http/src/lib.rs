@@ -310,12 +310,13 @@ impl OpenAiCompatiblePersona {
             out.push_str(&format!("\n[{label}]\n"));
             for item in items {
                 // JSON strings escape embedded newlines/section headings.
-                // Serialize the full item: domain, authority, freshness and
-                // evidence references must survive this boundary too.
+                // Domain, authority, source time and evidence references
+                // survive this boundary; the assembly time is stated once
+                // for the whole workspace, below.
                 out.push_str(
                     &serde_json::json!({
                         "source": source_label(&item.source_ref),
-                        "item": item,
+                        "item": Self::prompt_item(item),
                     })
                     .to_string(),
                 );
@@ -402,6 +403,11 @@ impl OpenAiCompatiblePersona {
             rendered.push_str(&observed_runtime.to_string());
             rendered.push('\n');
         }
+        if let Some(freshness) = Self::workspace_freshness(envelope) {
+            rendered.push_str("\n[WORKSPACE_FRESHNESS]\n");
+            rendered.push_str(&freshness.to_string());
+            rendered.push('\n');
+        }
         if let Some(guidance) = &envelope.response_guidance {
             rendered.push_str("\n[RESPONSE_GUIDANCE]\n");
             rendered.push_str(&serde_json::json!(guidance).to_string());
@@ -411,6 +417,56 @@ impl OpenAiCompatiblePersona {
         rendered.push_str(&serde_json::json!(envelope.session).to_string());
         rendered.push('\n');
         rendered
+    }
+
+    /// The complete item: every field, exactly as the workspace holds it.
+    pub fn complete_item(item: &WorkspaceItem) -> serde_json::Value {
+        serde_json::json!(item)
+    }
+
+    /// The item as the prompt shows it: the complete item minus
+    /// `freshness.assembled_at`, which is the turn's own timestamp and is
+    /// rendered once under WORKSPACE_FRESHNESS. Everything the item says
+    /// about itself, including `freshness.source_time`, is kept, and the
+    /// text stays identical between turns that show the same state.
+    pub fn prompt_item(item: &WorkspaceItem) -> serde_json::Value {
+        let mut value = Self::complete_item(item);
+        if let Some(freshness) = value
+            .get_mut("freshness")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            freshness.remove("assembled_at");
+        }
+        value
+    }
+
+    fn workspace_items(envelope: &PersonaEnvelope) -> impl Iterator<Item = &WorkspaceItem> {
+        envelope
+            .continuity
+            .iter()
+            .chain(&envelope.durable_self)
+            .chain(&envelope.active_policy)
+            .chain(&envelope.relationship)
+            .chain(&envelope.episodic)
+            .chain(&envelope.recalled_evidence)
+            .chain(&envelope.library)
+            .chain(&envelope.external_results)
+    }
+
+    /// When the shown items were assembled: one value for the turn, or the
+    /// distinct values in order of appearance if a caller mixed assemblies.
+    fn workspace_freshness(envelope: &PersonaEnvelope) -> Option<serde_json::Value> {
+        let mut assembled: Vec<kamimusuhi_core::time::UtcTimestamp> = Vec::new();
+        for item in Self::workspace_items(envelope) {
+            if !assembled.contains(&item.freshness.assembled_at) {
+                assembled.push(item.freshness.assembled_at);
+            }
+        }
+        match assembled.as_slice() {
+            [] => None,
+            [one] => Some(serde_json::json!({"assembled_at": one})),
+            many => Some(serde_json::json!({"assembled_at": many})),
+        }
     }
 
     /// Everything the model is shown about this turn, the turn identity and
@@ -1694,7 +1750,7 @@ mod tests {
             serde_json::from_str(section_payload(&rendered, "CONTINUITY_STATE")).unwrap();
         assert_eq!(
             continuity["item"],
-            serde_json::json!(envelope.continuity[0])
+            OpenAiCompatiblePersona::prompt_item(&envelope.continuity[0])
         );
         let session: serde_json::Value =
             serde_json::from_str(section_payload(&rendered, "SESSION_WORKING_STATE")).unwrap();
@@ -1712,8 +1768,56 @@ mod tests {
         ] {
             let record: serde_json::Value =
                 serde_json::from_str(section_payload(&rendered, label)).unwrap();
-            assert_eq!(record["item"], serde_json::json!(expected));
+            // The prompt form is the complete form minus the turn's own
+            // assembly timestamp; nothing else is dropped or rewritten.
+            let mut complete = OpenAiCompatiblePersona::complete_item(expected);
+            let assembled_at = complete["freshness"]["assembled_at"].take();
+            complete["freshness"]
+                .as_object_mut()
+                .unwrap()
+                .remove("assembled_at");
+            assert_eq!(record["item"], complete);
+            assert_eq!(
+                record["item"]["freshness"]["source_time"],
+                complete["freshness"]["source_time"]
+            );
+            assert_eq!(
+                record["item"]["authority"],
+                serde_json::json!(expected.authority)
+            );
+            // ... and the assembly time is still shown, once, for the turn.
+            let freshness: serde_json::Value =
+                serde_json::from_str(section_payload(&rendered, "WORKSPACE_FRESHNESS")).unwrap();
+            assert_eq!(freshness["assembled_at"], assembled_at);
         }
+    }
+
+    #[test]
+    fn the_assembly_time_stays_out_of_the_static_prefix() {
+        let first = envelope();
+        let mut second = envelope();
+        for item in second
+            .continuity
+            .iter_mut()
+            .chain(&mut second.relationship)
+            .chain(&mut second.library)
+            .chain(&mut second.external_results)
+        {
+            item.freshness.assembled_at = UtcTimestamp::from_unix_millis(60_000);
+        }
+        let a = OpenAiCompatiblePersona::render_sections(&first);
+        let b = OpenAiCompatiblePersona::render_sections(&second);
+        let prefix = |text: &str| text[..text.find("\n[WORKSPACE_FRESHNESS]").unwrap()].to_owned();
+        assert_eq!(
+            prefix(&a),
+            prefix(&b),
+            "static prefix changed with the assembly time"
+        );
+        assert_ne!(a, b, "the assembly time is still rendered");
+        assert!(a.find("[OBSERVED_RUNTIME]").unwrap() < a.find("[WORKSPACE_FRESHNESS]").unwrap());
+        assert!(
+            a.find("[WORKSPACE_FRESHNESS]").unwrap() < a.find("[SESSION_WORKING_STATE]").unwrap()
+        );
     }
 
     #[test]
@@ -1732,7 +1836,10 @@ mod tests {
         assert_eq!(input, hostile);
         let library: serde_json::Value =
             serde_json::from_str(section_payload(&rendered, "LIBRARY_EVIDENCE")).unwrap();
-        assert_eq!(library["item"], serde_json::json!(envelope.library[0]));
+        assert_eq!(
+            library["item"],
+            OpenAiCompatiblePersona::prompt_item(&envelope.library[0])
+        );
         let history: Vec<ConversationMessage> =
             serde_json::from_str(section_payload(&rendered, "CONVERSATION_HISTORY")).unwrap();
         assert_eq!(history, envelope.conversation_history);
