@@ -30,6 +30,7 @@ pub mod kcore;
 pub mod llm_jev;
 pub mod mio;
 pub mod organs;
+pub mod reference;
 pub mod research;
 pub mod runtime;
 pub mod scenario;

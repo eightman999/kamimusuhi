@@ -116,6 +116,7 @@ impl PersonaCore for FakePersonaCore {
             backend: self.descriptor(),
             response_intent,
             proposals,
+            tool_calls: Vec::new(),
         })
     }
 }

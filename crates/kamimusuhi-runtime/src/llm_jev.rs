@@ -503,6 +503,7 @@ impl LanguageProvider for MockLanguageProvider {
                 backend,
                 response_intent: response.to_owned(),
                 proposals: Vec::new(),
+                tool_calls: Vec::new(),
             },
             provider: "mock".to_owned(),
             provider_id: "primary".to_owned(),
