@@ -1,4 +1,6 @@
 mod app;
+mod remote;
+mod remote_app;
 mod worker;
 
 use std::path::PathBuf;
@@ -14,6 +16,18 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let options = DesktopOptions::parse(std::env::args().skip(1))?;
+    if !options.local {
+        // Default: talk to the always-on individual through its resident.
+        let subject = options
+            .subject_explicit
+            .clone()
+            .unwrap_or_else(|| std::env::var("USER").unwrap_or_else(|_| "local-user".to_owned()));
+        let (commands, events) = remote::spawn(remote::RemoteConfig {
+            url: options.url.clone(),
+            subject: subject.clone(),
+        });
+        return remote_app::run(commands, events, subject, options.view.as_deref());
+    }
     let (commands, events) = worker::spawn(worker::WorkerConfig {
         runtime_dir: options.runtime_dir,
         subject: options.subject,
@@ -26,7 +40,14 @@ fn run() -> Result<(), String> {
 struct DesktopOptions {
     runtime_dir: PathBuf,
     subject: String,
+    subject_explicit: Option<String>,
     privacy: PrivacyConstraint,
+    /// `--local`: run the Jev test surface against a local runtime directory.
+    local: bool,
+    /// Resident URL for the default (resident) mode.
+    url: Option<String>,
+    /// Initial view in resident mode: chat | tasks | approvals | status | tools.
+    view: Option<String>,
 }
 
 impl DesktopOptions {
@@ -34,6 +55,10 @@ impl DesktopOptions {
         let mut runtime_dir = PathBuf::from(".local/desktop");
         let mut subject = "local-user".to_owned();
         let mut privacy = PrivacyConstraint::LocalOnly;
+        let mut subject_explicit = None;
+        let mut local = false;
+        let mut url = None;
+        let mut view = None;
         let mut args = args.peekable();
         while let Some(flag) = args.next() {
             let mut value = || {
@@ -41,7 +66,13 @@ impl DesktopOptions {
                     .ok_or_else(|| format!("{flag} requires a value"))
             };
             match flag.as_str() {
-                "--dir" => runtime_dir = PathBuf::from(value()?),
+                "--dir" => {
+                    runtime_dir = PathBuf::from(value()?);
+                    local = true;
+                }
+                "--local" => local = true,
+                "--url" => url = Some(value()?),
+                "--view" => view = Some(value()?),
                 "--subject" => {
                     subject = value()?;
                     if subject.is_empty()
@@ -55,6 +86,7 @@ impl DesktopOptions {
                                 .to_owned(),
                         );
                     }
+                    subject_explicit = Some(subject.clone());
                 }
                 "--privacy" => {
                     let raw = value()?;
@@ -65,17 +97,24 @@ impl DesktopOptions {
                 }
                 "--help" | "-h" => {
                     println!(
-                        "kamimusuhi-desktop [--dir <path>] [--subject <id>] [--privacy <scope>]\n\nNative dialogue GUI. The default privacy scope is local-only; use --privacy unconstrained explicitly for Jev/Grokbot external calls."
+                        "kamimusuhi-desktop [--url <resident-url>] [--subject <id>] [--view chat|tasks|approvals|status|tools]\n       kamimusuhi-desktop --local [--dir <path>] [--subject <id>] [--privacy <scope>]\n\nDefault: dialogue with the always-on individual through its resident (--url, $KAMIMUSUHI_URL or ~/.config/kamimusuhi/nodes; token from ~/.config/kamimusuhi/node_token).\n--local: the Jev test surface against a local runtime. Its default privacy scope is local-only; use --privacy unconstrained explicitly for Jev/Grokbot external calls."
                     );
                     std::process::exit(0);
                 }
                 other => return Err(format!("unknown option {other:?}")),
             }
         }
+        if privacy != PrivacyConstraint::LocalOnly {
+            local = true;
+        }
         Ok(Self {
             runtime_dir,
             subject,
+            subject_explicit,
             privacy,
+            local,
+            url,
+            view,
         })
     }
 }

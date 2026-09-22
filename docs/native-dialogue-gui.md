@@ -1,10 +1,43 @@
 # Native dialogue GUI
 
-kamimusuhi-desktop is a native Rust/eframe surface for the conversation-side
-K-CORE path. It is not a web frontend and does not start a local HTTP server.
+kamimusuhi-desktop is a native Rust/eframe surface. It is not a web frontend
+and does not start a local HTTP server. It has two modes.
+
+## Resident mode (default): talk to the always-on individual (澪 / Mio)
+
+    ./run_kamimusuhi_gui.command          # or: cargo run --release -p kamimusuhi-desktop
+    cargo run --release -p kamimusuhi-desktop -- --url http://PI_HOST:7860 --subject <id>
+
+The window connects to the Pi resident (`--url`, `$KAMIMUSUHI_URL`, or the
+URLs listed in `~/.config/kamimusuhi/nodes`, tried in order) with the node token from
+`$KAMIMUSUHI_NODE_TOKEN` or `~/.config/kamimusuhi/node_token`. Turns go to
+`POST /v1/kamimusuhi/talk`, i.e. the canonical individual on the Pi with its
+memory, reference material and tool calling; the GUI holds no state of its own.
+
+- **対話**: recent turns for the subject are loaded from the resident journal;
+  each reply shows its route (llm_master / HAI), latency, reference lookups
+  and the tools it called. Pending approvals appear inline with
+  承認して実行 / 却下 buttons.
+- **タスク**: the resident task board as lanes (進行中 / あなたの判断待ち /
+  待機 / 保留 / 完了). Cards show kind, node, owner and age; curves connect
+  predecessor → successor (`depends_on`). Selecting a card highlights its
+  neighbours and opens a detail panel with 前タスク / 次タスク links, notes,
+  status changes (manual/agent tasks) and approve/reject for approval tasks.
+  The **マップ** toggle draws the whole graph mind-map style: prerequisites to
+  the left, successors to the right, one block per connected group, approval
+  waits glowing amber. `--view tasks|map` opens the window on that view.
+- **承認**: the approval queue (`/v1/approvals`) with the full requested
+  content and arguments, plus recent decisions and their commit/push result.
+- **状態**: nodes, routing tiers, NAS, HAI, MCP servers, jobs and snapshots
+  (`/status`, refreshed every 10 s).
+- **ツール**: libraries, MCP servers on both nodes and a filterable tool list.
+
+The subject defaults to `$USER`; `--subject` selects another history.
+
+## Local mode (`--local`): the Jev test surface
 
     # Mock / local-only smoke
-    ./scripts/run-desktop.sh
+    ./scripts/run-desktop.sh --local
 
     # Jev -> all admitted organs -> Jev selection/gate. External transfer is explicit.
     /Users/eightman/dev/sandbox/kamimusuhi/scripts/run-desktop.sh \
