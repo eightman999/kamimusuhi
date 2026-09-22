@@ -131,6 +131,8 @@ pub fn hai_language_providers() -> BTreeMap<String, PersonaProviderConfig> {
                 timeout_ms: 60_000,
                 tls_root_ca_path: None,
                 system_instruction: None,
+                reasoning: Default::default(),
+                extra_body: None,
             },
         )
     })
@@ -204,6 +206,8 @@ pub fn persona_setting_from_environment(
             timeout_ms: existing.map_or(60_000, |provider| provider.timeout_ms),
             tls_root_ca_path: existing.and_then(|provider| provider.tls_root_ca_path.clone()),
             system_instruction: existing.and_then(|provider| provider.system_instruction.clone()),
+            reasoning: existing.map_or_else(Default::default, |provider| provider.reasoning),
+            extra_body: existing.and_then(|provider| provider.extra_body.clone()),
         }),
         seed: config.persona.seed.clone(),
     }))

@@ -227,6 +227,35 @@ pub struct PersonaProviderConfig {
     /// the individual's own and which are borrowed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<String>,
+    /// Whether the model thinks before answering. Off by default: ordinary
+    /// dialogue and tool calls do not need reasoning tokens.
+    #[serde(default)]
+    pub reasoning: ReasoningSetting,
+    /// Provider-specific fields merged into every chat request (for example
+    /// sampling parameters). The turn's own keys cannot be replaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_body: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// See [`kamimusuhi_persona_http::ReasoningMode`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningSetting {
+    #[default]
+    Off,
+    On,
+    /// Off, except for host-requested repair or clarification turns.
+    Auto,
+}
+
+impl ReasoningSetting {
+    pub const fn to_backend(self) -> kamimusuhi_persona_http::ReasoningMode {
+        match self {
+            Self::Off => kamimusuhi_persona_http::ReasoningMode::Off,
+            Self::On => kamimusuhi_persona_http::ReasoningMode::On,
+            Self::Auto => kamimusuhi_persona_http::ReasoningMode::Auto,
+        }
+    }
 }
 
 fn default_persona_locality() -> LocalityClass {
@@ -275,7 +304,9 @@ impl PersonaProviderConfig {
         }
         config = config
             .with_tools(tools.map(ToolServerSetting::to_backend))
-            .with_display_name(avatar_name);
+            .with_display_name(avatar_name)
+            .with_reasoning(self.reasoning.to_backend())
+            .with_extra_body(self.extra_body.clone());
         config
             .validate()
             .map_err(|message| RuntimeError::PersonaConfig { message })?;
@@ -577,6 +608,11 @@ pub struct ToolServerSetting {
     /// Tool names offered. Empty offers every tool the server lists.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed: Vec<String>,
+    /// Tools offered from the first round; the other allowed tools are
+    /// discoverable via `tool_catalog` / `tool_enable`. Absent: built-in
+    /// tools upfront, MCP tools (`mcp__*`) discoverable. `["*"]` offers all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core: Option<Vec<String>>,
 }
 
 const fn default_tool_rounds() -> u32 {
@@ -594,6 +630,7 @@ impl ToolServerSetting {
         config.max_rounds = self.max_rounds;
         config.timeout_ms = self.timeout_ms;
         config.allowed = self.allowed.clone();
+        config.core = self.core.clone();
         config
     }
 }
@@ -928,5 +965,50 @@ mod tests {
         assert!("gpt-4".parse::<ResourceImplementation>().is_err());
         assert!(ResourceImplementation::OpenaiCompatible.is_networked());
         assert!(!ResourceImplementation::FakeA.is_networked());
+    }
+
+    #[test]
+    fn persona_provider_reasoning_defaults_off_and_round_trips() {
+        let provider: PersonaProviderConfig = serde_json::from_value(serde_json::json!({
+            "backend_id": "7230930b8007a073bc04b25b8f2016d5",
+            "base_url": "http://127.0.0.1:7860/v1", "model": "kamimusuhi", "timeout_ms": 1000
+        }))
+        .unwrap();
+        assert_eq!(provider.reasoning, ReasoningSetting::Off);
+        assert!(provider.extra_body.is_none());
+        let serialized = serde_json::to_value(&provider).unwrap();
+        assert_eq!(serialized["reasoning"], "off");
+        assert!(serialized.get("extra_body").is_none());
+
+        let provider: PersonaProviderConfig = serde_json::from_value(serde_json::json!({
+            "backend_id": "7230930b8007a073bc04b25b8f2016d5",
+            "base_url": "http://127.0.0.1:7860/v1", "model": "kamimusuhi", "timeout_ms": 1000,
+            "reasoning": "auto", "extra_body": {"temperature": 0.2}
+        }))
+        .unwrap();
+        assert_eq!(
+            provider.reasoning.to_backend(),
+            kamimusuhi_persona_http::ReasoningMode::Auto
+        );
+        assert_eq!(provider.extra_body.unwrap()["temperature"], 0.2);
+    }
+
+    #[test]
+    fn tool_server_core_reaches_the_backend() {
+        let setting: ToolServerSetting = serde_json::from_value(serde_json::json!({
+            "base_url": "http://127.0.0.1:7860", "allowed": ["json_get", "mcp__context7__*"],
+            "core": ["json_*"]
+        }))
+        .unwrap();
+        let backend = setting.to_backend();
+        assert_eq!(backend.core.as_deref(), Some(&["json_*".to_owned()][..]));
+        assert!(backend.is_core("json_get"));
+        assert!(!backend.is_core("mcp__context7__query"));
+        let default: ToolServerSetting =
+            serde_json::from_value(serde_json::json!({"base_url": "http://127.0.0.1:7860"}))
+                .unwrap();
+        assert!(default.core.is_none());
+        assert!(default.to_backend().is_core("task_list"));
+        assert!(!default.to_backend().is_core("mcp__nas__read_text_file"));
     }
 }

@@ -639,6 +639,10 @@ impl Options {
                         system_instruction: existing
                             .as_ref()
                             .and_then(|p| p.system_instruction.clone()),
+                        reasoning: existing
+                            .as_ref()
+                            .map_or_else(Default::default, |p| p.reasoning),
+                        extra_body: existing.as_ref().and_then(|p| p.extra_body.clone()),
                     }),
                 })
             }

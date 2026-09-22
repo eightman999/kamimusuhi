@@ -162,6 +162,8 @@ npm パッケージは `/srv/kamimusuhi/mcp` にバージョン固定で入れ�
 | `github` (github-mcp-server v1.12.2) | 両方 | `--read-only --lockdown-mode`、toolsets=context,repos,issues,pull_requests,actions。token は secrets.env の `GITHUB_PERSONAL_ACCESS_TOKEN` |
 
 個体へ見せる tool は `runtime.json` の `tools.allowed`（`*` で前方一致）で絞る（例: `runtime-reference.example.json`, 32 個）。
+`tools.core`（同じ構文, 省略時は `mcp__` 以外の組み込み tool）だけが毎ターン最初から提示され、残りの allowed は `tool_catalog`（一覧）→ `tool_enable`（有効化）で必要時に取り出す。定義は送信前に圧縮する（description 200 字・引数 description 120 字・`title`/`examples`/`additionalProperties` 除去、名前順で固定）。
+`persona.provider.reasoning` は `off`（既定）/`on`/`auto`（修正・確認指示のあるターンだけ思考）。`persona.provider.extra_body` は provider 固有の要求フィールド（`messages`/`tools`/`model` 等は上書き不可）。プロンプトは静的部分（system, tool 定義, seed, 自己状態, 記憶）→ 動的部分（観測, TURN_CONTEXT, 入力）の順で並び、llama.cpp の prompt cache が効く。
 
 ```bash
 # 導入（各ノード）
