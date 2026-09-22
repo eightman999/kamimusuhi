@@ -21,21 +21,21 @@
   ],
   "tiers": [
     {
+      "name": "hai",
+      "base_url": "https://hai-api.hcloud.ltd/v1",
+      "model": "qwen3.8-27b-uncensored",
+      "auth_env": "HAI_API_KEY",
+      "timeout_secs": 30,
+      "probe_interval_secs": 60
+    },
+    {
       "name": "llm_master",
       "base_url": "http://LLM_MASTER_HOST:7860/v1",
       "model": "local",
       "auth_env": "KAMIMUSUHI_NODE_TOKEN",
       "peer_local_only": true,
-      "timeout_secs": 300,
+      "timeout_secs": 120,
       "probe_interval_secs": 15
-    },
-    {
-      "name": "hai",
-      "base_url": "https://hai-api.hcloud.ltd/v1",
-      "model": "qwen3.8-27b-uncensored",
-      "auth_env": "HAI_API_KEY",
-      "timeout_secs": 300,
-      "probe_interval_secs": 60
     }
   ],
   "routing": {
@@ -148,6 +148,17 @@
       },
       "read_only": true,
       "description": "GitHubの読み取り専用参照。書き込み系 tool は出さない"
+    },
+    {
+      "name": "chrome_web",
+      "command": "/srv/kamimusuhi/mcp/chrome-web/bin/chrome-web-mcp",
+      "allow": [
+        "google_search",
+        "fetch_url",
+        "health_check"
+      ],
+      "call_timeout_secs": 25,
+      "description": "公開Webの検索と本文取得。Googleはこの環境でCAPTCHAを確認したため、公開情報の調べ物にはfetch_urlでhttps://www.bing.com/search?q=<検索語をURLエンコード>をformat=markdown,char_limit=4000で取得する。検索ページのAI要約は根拠にせず、本文またはfollow_up_linksの公式候補URLをfetch_url(format=markdown,char_limit=6000)で開き、確認した出典URLを添える。GoogleのCAPTCHAを繰り返し再試行しない。非公開資料・会話履歴・認証情報を検索語に含めない。"
     }
   ],
   "jobs": [

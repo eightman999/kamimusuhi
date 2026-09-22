@@ -54,7 +54,7 @@ pub struct McpServerConfig {
     pub deny: Vec<String>,
     #[serde(default = "default_call_timeout")]
     pub call_timeout_secs: u64,
-    /// Operator note shown in the tool catalog.
+    /// Operator note shown in the tool catalog and each function definition.
     #[serde(default)]
     pub description: Option<String>,
     /// Tools offered to the model but executed only after the operator
@@ -321,7 +321,7 @@ impl McpServer {
                 }
                 let exposed = exposed_name(&self.config.name, original);
                 let gated = self.config.approval_required.iter().any(|a| a == original);
-                let description = format!(
+                let mut description = format!(
                     "[MCP {}]{} {}",
                     self.config.name,
                     if gated {
@@ -331,6 +331,15 @@ impl McpServer {
                     },
                     tool["description"].as_str().unwrap_or("")
                 );
+                if let Some(note) = self
+                    .config
+                    .description
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                {
+                    description.push_str("\n[Operator note] ");
+                    description.push_str(note);
+                }
                 let parameters = tool
                     .get("inputSchema")
                     .cloned()
@@ -469,6 +478,156 @@ pub fn normalize(result: &Value) -> (bool, Value) {
     (!is_error, out)
 }
 
+/// Decode only observed Bing href targets; omit navigation and policy links.
+fn bing_follow_up_url(url: &str) -> Option<String> {
+    use base64::Engine as _;
+    let target = if url.starts_with("https://www.bing.com/ck/a?") {
+        let encoded = url
+            .split_once('?')?
+            .1
+            .split('&')
+            .find_map(|part| part.strip_prefix("u="))?
+            .strip_prefix("a1")?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded.trim_end_matches('='))
+            .ok()?;
+        String::from_utf8(bytes).ok()?
+    } else {
+        url.to_owned()
+    };
+    if !(target.starts_with("https://") || target.starts_with("http://"))
+        || target.starts_with("https://www.bing.com/")
+        || target.starts_with("https://bing.com/")
+        || target.starts_with("https://go.microsoft.com/fwlink/")
+        || target.starts_with("https://aka.ms/3rdpartycookies")
+    {
+        return None;
+    }
+    Some(target)
+}
+
+/// Interpret the pinned chrome-web-mcp envelope only for its registered
+/// server. A filesystem tool may legitimately read a file containing
+/// {"success": false}; file contents never decide whether that read succeeded.
+pub fn normalize_for_server(server: &str, result: &Value) -> (bool, Value) {
+    let (mut ok, mut out) = normalize(result);
+    if server == "chrome_web" {
+        if result
+            .get("structuredContent")
+            .and_then(|v| v.get("success"))
+            .and_then(Value::as_bool)
+            == Some(false)
+        {
+            ok = false;
+        }
+        if let Some(content) = result["content"].as_array()
+            && content.len() == 1
+            && content[0]["type"] == "text"
+            && let Some(text) = content[0]["text"].as_str()
+            && let Ok(mut payload) = serde_json::from_str::<Value>(text)
+        {
+            if payload.get("success").and_then(Value::as_bool) == Some(false) {
+                ok = false;
+            }
+            // The pinned server includes up to 200 links even for a bounded
+            // markdown fetch. Markdown already carries inline links; avoid
+            // re-expanding the prompt with an unbounded duplicate link index.
+            // Explicit format=links responses have `text`, and keep their index.
+            if let Some(data) = payload.get_mut("data").and_then(Value::as_object_mut)
+                && let Some(markdown) = data.get("markdown").and_then(Value::as_str)
+            {
+                let bounded: String = markdown.chars().take(6000).collect();
+                if bounded.len() < markdown.len() {
+                    data.insert("markdown".into(), json!(bounded));
+                    data.insert("truncated".into(), json!(true));
+                    data.insert("resident_char_limit".into(), json!(6000));
+                }
+                if let Some(Value::Array(links)) = data.remove("links") {
+                    // Some search pages lose every href during extraction.
+                    // Retain a small set of follow-up targets absent from the
+                    // markdown, rather than discarding the only source URLs.
+                    let markdown = data["markdown"].as_str().unwrap_or("");
+                    let is_bing = data
+                        .get("final_url")
+                        .and_then(Value::as_str)
+                        .is_some_and(|url| url.starts_with("https://www.bing.com/search?"));
+                    let mut follow_up = Vec::new();
+                    let mut seen = std::collections::HashSet::new();
+                    let mut chars = 0;
+                    for link in &links {
+                        let Some(url) = link["url"].as_str() else {
+                            continue;
+                        };
+                        let url = if is_bing {
+                            let Some(target) = bing_follow_up_url(url) else {
+                                continue;
+                            };
+                            target
+                        } else {
+                            url.to_owned()
+                        };
+                        if !(url.starts_with("https://") || url.starts_with("http://"))
+                            || markdown.contains(&url)
+                            || !seen.insert(url.clone())
+                        {
+                            continue;
+                        }
+                        let entry = json!({"url": url, "text": link["text"].as_str().unwrap_or("")
+                            .chars().take(160).collect::<String>()});
+                        let size = entry.to_string().chars().count();
+                        if chars + size > 3000 {
+                            continue;
+                        }
+                        chars += size;
+                        follow_up.push(entry);
+                        if follow_up.len() == 8 {
+                            break;
+                        }
+                    }
+                    data.insert(
+                        "omitted_link_index_count".into(),
+                        json!(links.len() - follow_up.len()),
+                    );
+                    if !follow_up.is_empty() {
+                        data.insert("follow_up_links".into(), json!(follow_up));
+                    }
+                }
+            }
+            // Keep the known JSON envelope as JSON, rather than re-escaping
+            // it inside a text string and cutting off its source metadata.
+            out.as_object_mut()
+                .expect("normalized object")
+                .remove("text");
+            out["structured"] = payload;
+            // JSON escaping also consumes the persona's 12,000-char budget.
+            // Shorten only markdown so source metadata stays valid JSON.
+            if out.to_string().chars().count() > 11_000
+                && let Some(markdown) = out
+                    .pointer("/structured/data/markdown")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            {
+                out["structured"]["data"]["truncated"] = json!(true);
+                out["structured"]["data"]["resident_json_limit"] = json!(11_000);
+                let mut boundaries: Vec<usize> = markdown.char_indices().map(|(i, _)| i).collect();
+                boundaries.push(markdown.len());
+                let (mut low, mut high) = (0, boundaries.len() - 1);
+                while low < high {
+                    let mid = (low + high).div_ceil(2);
+                    out["structured"]["data"]["markdown"] = json!(&markdown[..boundaries[mid]]);
+                    if out.to_string().chars().count() <= 11_000 {
+                        low = mid;
+                    } else {
+                        high = mid - 1;
+                    }
+                }
+                out["structured"]["data"]["markdown"] = json!(&markdown[..boundaries[low]]);
+            }
+        }
+    }
+    (ok, out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,6 +653,137 @@ mod tests {
         assert_eq!(out["non_text_content"][0]["type"], "image");
         let (ok, _) = normalize(&json!({"content": [], "isError": true}));
         assert!(!ok);
+    }
+
+    #[test]
+    fn application_failure_in_json_text_is_not_successful_evidence() {
+        let payload = json!({"success": false, "captcha_required": true, "error": "challenge"});
+        let (ok, out) = normalize_for_server(
+            "chrome_web",
+            &json!({"content": [{"type": "text", "text": payload.to_string()}]}),
+        );
+        assert!(!ok);
+        let file = json!({"content": [{"type": "text", "text": payload.to_string()}]});
+        assert!(normalize_for_server("fs", &file).0);
+        assert!(normalize_for_server("nas", &file).0);
+        assert_eq!(out["structured"], payload);
+        let (ok, _) = normalize_for_server(
+            "chrome_web",
+            &json!({"structuredContent": {"success": false}, "content": []}),
+        );
+        assert!(!ok);
+        let payload = json!({"success": true, "data": {"web": [{"url": "https://example.org"}]}});
+        let (ok, out) = normalize_for_server(
+            "chrome_web",
+            &json!({"content": [{"type": "text", "text": payload.to_string()}]}),
+        );
+        assert!(ok);
+        assert_eq!(
+            out["structured"]["data"]["web"][0]["url"],
+            "https://example.org"
+        );
+    }
+
+    #[test]
+    fn chrome_markdown_keeps_sources_without_duplicate_link_index() {
+        let url = "https://doc.rust-lang.org/";
+        let payload = json!({"success": true, "data": {
+            "final_url": url, "markdown": format!("[Rust documentation]({url})"),
+            "links": vec![json!({"url": url}); 200]
+        }});
+        let raw = json!({"content": [{"type": "text", "text": payload.to_string()}]});
+        let (ok, out) = normalize_for_server("chrome_web", &raw);
+        assert!(ok);
+        let parsed = &out["structured"];
+        assert_eq!(parsed["data"]["final_url"], url);
+        assert!(parsed["data"]["markdown"].as_str().unwrap().contains(url));
+        assert_eq!(parsed["data"]["omitted_link_index_count"], 200);
+        assert!(parsed["data"].get("links").is_none());
+        assert_eq!(
+            normalize_for_server("fs", &raw).1["text"],
+            payload.to_string()
+        );
+        let payload =
+            json!({"success": true, "data": {"text": "links mode", "links": [{"url": url}]}});
+        let (_, out) = normalize_for_server(
+            "chrome_web",
+            &json!({"content": [{"type": "text", "text": payload.to_string()}]}),
+        );
+        assert_eq!(out["structured"], payload);
+    }
+
+    #[test]
+    fn chrome_long_markdown_is_bounded_with_source_metadata_intact() {
+        let url = "https://doc.rust-lang.org/book/";
+        let raw = json!({"content": [{"type": "text", "text": json!({
+            "success": true, "data": {"markdown": "あ".repeat(12000), "final_url": url,
+            "title": "The Rust Book", "truncated": false}
+        }).to_string()}]});
+        let (ok, out) = normalize_for_server("chrome_web", &raw);
+        assert!(ok);
+        let data = &out["structured"]["data"];
+        assert_eq!(data["markdown"].as_str().unwrap().chars().count(), 6000);
+        assert_eq!(data["final_url"], url);
+        assert_eq!(data["title"], "The Rust Book");
+        assert_eq!(data["truncated"], true);
+        assert!(out.get("text").is_none());
+        assert!(out.to_string().chars().count() < 12000);
+    }
+
+    #[test]
+    fn chrome_markdown_budget_accounts_for_json_escaping() {
+        let url = "https://example.org/docs";
+        let raw = json!({"content": [{"type": "text", "text": json!({
+            "success": true, "data": {"markdown": "\"\n\\\u{0001}あ".repeat(1200),
+            "final_url": url, "title": "A quoted document", "truncated": false}
+        }).to_string()}]});
+        let (ok, out) = normalize_for_server("chrome_web", &raw);
+        assert!(ok);
+        assert!(out.to_string().chars().count() <= 11000);
+        let data = &out["structured"]["data"];
+        assert_eq!(data["final_url"], url);
+        assert_eq!(data["title"], "A quoted document");
+        assert_eq!(data["truncated"], true);
+        assert_eq!(out["structured"]["success"], true);
+        assert!(!data["markdown"].as_str().unwrap().is_empty());
+    }
+
+    #[test]
+    fn chrome_search_without_inline_urls_keeps_bounded_follow_up_targets() {
+        use base64::Engine as _;
+        let mut links = vec![json!({"url": "https://www.bing.com/images", "text": "Images"})];
+        links.extend((0..100).map(|i| json!({
+            "url": format!("https://www.bing.com/ck/a?u=a1{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!("https://example.org/result{i}"))), "text": format!("Result {i}")
+        })));
+        let raw = json!({"content": [{"type": "text", "text": json!({
+            "success": true, "data": {"markdown": "Search snippets without links",
+            "final_url": "https://www.bing.com/search?q=test", "links": links}
+        }).to_string()}]});
+        let (ok, out) = normalize_for_server("chrome_web", &raw);
+        assert!(ok);
+        let data = &out["structured"]["data"];
+        assert_eq!(data["follow_up_links"].as_array().unwrap().len(), 8);
+        assert_eq!(
+            data["follow_up_links"][0]["url"],
+            "https://example.org/result0"
+        );
+        assert_eq!(data["omitted_link_index_count"], 93);
+        assert!(out.to_string().chars().count() < 11000);
+        for target in [
+            "/images/search?q=test",
+            "https://aka.ms/3rdpartycookies",
+            "https://go.microsoft.com/fwlink/?linkid=521839",
+        ] {
+            let url = format!(
+                "https://www.bing.com/ck/a?u=a1{}",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(target)
+            );
+            assert_eq!(bing_follow_up_url(&url), None);
+        }
+        assert_eq!(
+            bing_follow_up_url("https://www.bing.com/ck/a?u=a1!invalid"),
+            None
+        );
     }
 
     /// A tiny MCP server in Python: initialize, tools/list, tools/call(echo).
@@ -524,7 +814,7 @@ for line in sys.stdin:
             allow: Vec::new(),
             deny: Vec::new(),
             call_timeout_secs: 10,
-            description: None,
+            description: Some("Use the documented public search fallback.".to_owned()),
             approval_required: Vec::new(),
             after_approved: None,
         };
@@ -533,6 +823,12 @@ for line in sys.stdin:
         let tools = server.tools();
         assert_eq!(tools.len(), 1, "read_only hides the unannotated tool");
         assert_eq!(tools[0].exposed, "mcp__t__echo");
+        assert!(
+            tools[0].definition["function"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("Use the documented public search fallback.")
+        );
         let result = server.call("echo", &json!({"x": 1})).expect("call");
         let (ok, out) = normalize(&result);
         assert!(ok);

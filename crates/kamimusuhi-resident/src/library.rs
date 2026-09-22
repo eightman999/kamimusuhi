@@ -9,7 +9,7 @@
 //! * `{"action":"list"}` — libraries on this node and, via peers, elsewhere
 //! * `{"action":"tree","library":"<name>","path":"<dir>"}` — one listing
 //! * `{"action":"file","library":"<name>","path":"<file>","offset":0,"limit":262144}`
-//! * `{"action":"search","library":"<name>","q":"<text>","path":"<dir>"}`
+//! * `{"action":"search","library":"<name>","q":"<text>","path":"<dir>","limit":100}`
 //! * `{"action":"json_get","library":"<name>","path":"<file>","pointer":"/a/b"}`
 //! * `{"action":"json_find","library":"<name>","path":"<file>","pointer":"/items",
 //!   "match":[{"field":"/k","op":"eq|contains","value":"x"}],"mode":"any|all","limit":20}`
@@ -106,19 +106,18 @@ fn file(lib: &LibraryConfig, path: &str, offset: u64, limit: u64) -> Result<Valu
     }))
 }
 
-fn search(lib: &LibraryConfig, needle: &str, path: &str) -> Result<Value, String> {
+fn search(lib: &LibraryConfig, needle: &str, path: &str, limit: u64) -> Result<Value, String> {
     if needle.chars().count() < 2 {
         return Err("q must be at least 2 characters".to_owned());
     }
     let start = resolve(&lib.path, path)?;
     let root = lib.path.canonicalize().map_err(|e| e.to_string())?;
+    let limit = usize::try_from(limit.clamp(1, MAX_HITS as u64)).unwrap_or(MAX_HITS);
     let mut hits = Vec::new();
     let mut stack = vec![start];
     let mut scanned = 0u64;
-    while let Some(dir) = stack.pop() {
-        if hits.len() >= MAX_HITS {
-            break;
-        }
+    let mut truncated = false;
+    'search: while let Some(dir) = stack.pop() {
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
@@ -148,8 +147,13 @@ fn search(lib: &LibraryConfig, needle: &str, path: &str) -> Result<Value, String
                 .to_string();
             // Every occurrence, not just the first per line: data files are
             // often a single minified line.
-            'lines: for (lineno, line) in text.lines().enumerate() {
+            for (lineno, line) in text.lines().enumerate() {
                 for (pos, _) in line.match_indices(needle) {
+                    // Only report truncation when a real additional hit exists.
+                    if hits.len() == limit {
+                        truncated = true;
+                        break 'search;
+                    }
                     let from = line[..pos]
                         .char_indices()
                         .rev()
@@ -159,19 +163,13 @@ fn search(lib: &LibraryConfig, needle: &str, path: &str) -> Result<Value, String
                     hits.push(
                         json!({"path": rel, "line": lineno + 1, "byte": pos, "snippet": snippet}),
                     );
-                    if hits.len() >= MAX_HITS {
-                        break 'lines;
-                    }
                 }
-            }
-            if hits.len() >= MAX_HITS {
-                break;
             }
         }
     }
     Ok(
         json!({"library": lib.name, "q": needle, "files_scanned": scanned,
-              "truncated": hits.len() >= MAX_HITS, "hits": hits}),
+              "truncated": truncated, "hits": hits}),
     )
 }
 
@@ -375,7 +373,12 @@ pub fn handle(shared: &Shared, request: &Value) -> (u16, Value) {
             request["offset"].as_u64().unwrap_or(0),
             request["limit"].as_u64().unwrap_or(DEFAULT_SLICE),
         ),
-        "search" => search(lib, &text("q"), &sub),
+        "search" => search(
+            lib,
+            &text("q"),
+            &sub,
+            request["limit"].as_u64().unwrap_or(MAX_HITS as u64),
+        ),
         "json_get" => json_get(
             lib,
             &sub,
@@ -428,7 +431,7 @@ mod tests {
         assert_eq!(f["size"], "トヨタ自動車 7203\nother\n".len());
         assert_eq!(f["next_offset"], 10);
 
-        let s = search(&l, "7203", "").expect("search");
+        let s = search(&l, "7203", "", MAX_HITS as u64).expect("search");
         assert_eq!(s["hits"][0]["path"], "sub/a.txt");
         assert_eq!(s["hits"][0]["line"], 1);
 
@@ -438,6 +441,46 @@ mod tests {
             "absolute is re-rooted, then missing"
         );
         assert!(tree(&l, ".git").is_err());
+    }
+
+    #[test]
+    fn search_marks_truncated_only_when_more_hits_exist() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("data.json");
+        let l = lib(dir.path());
+
+        // Multiple matches on one minified line must each count toward the cap.
+        fs::write(&path, r#"["トヨタ", "トヨタ"]"#).expect("write");
+        for limit in [2, 8] {
+            let found = search(&l, "トヨタ", "", limit).expect("search");
+            assert_eq!(found["hits"].as_array().expect("hits").len(), 2);
+            assert_eq!(found["truncated"], false);
+            assert_eq!(found["hits"][0]["path"], "data.json");
+            assert_eq!(found["hits"][0]["line"], 1);
+            assert!(
+                found["hits"][0]["snippet"]
+                    .as_str()
+                    .expect("snippet")
+                    .contains("トヨタ")
+            );
+            let decoded: Value = serde_json::from_str(&found.to_string()).expect("valid JSON");
+            assert_eq!(decoded, found);
+        }
+
+        let found = search(&l, "トヨタ", "", 1).expect("search");
+        assert_eq!(found["hits"].as_array().expect("hits").len(), 1);
+        assert_eq!(found["truncated"], true);
+
+        // An additional match in a different directory also signals truncation.
+        fs::create_dir(dir.path().join("sub")).expect("mkdir");
+        fs::write(dir.path().join("sub/more.txt"), "トヨタ").expect("write");
+        let found = search(&l, "トヨタ", "", 2).expect("search");
+        assert_eq!(found["hits"].as_array().expect("hits").len(), 2);
+        assert_eq!(found["truncated"], true);
+
+        let found = search(&l, "該当なし", "", 1).expect("search");
+        assert!(found["hits"].as_array().expect("hits").is_empty());
+        assert_eq!(found["truncated"], false);
     }
 
     #[test]

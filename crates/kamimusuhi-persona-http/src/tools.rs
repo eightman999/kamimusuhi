@@ -5,7 +5,8 @@
 //! results as `tool` messages. What a tool returns is external material: it
 //! is recorded in [`ToolCallRecord`]s for the host to audit and is never the
 //! expression itself, never evidence of the individual's experience, and
-//! never mutation authority. Every tool on the server is read-only.
+//! never mutation authority. Tool permissions and approvals belong to the
+//! resident; the client additionally applies its configured allowlist.
 
 use std::time::{Duration, Instant};
 
@@ -96,8 +97,7 @@ impl ToolServerConfig {
             .iter()
             .filter(|t| {
                 let name = t["function"]["name"].as_str().unwrap_or("");
-                !name.is_empty()
-                    && (self.allowed.is_empty() || self.allowed.iter().any(|a| a == name))
+                !name.is_empty() && is_allowed(&self.allowed, name)
             })
             .cloned()
             .collect();
@@ -235,6 +235,40 @@ mod tests {
         assert!(is_allowed(&allowed, "mcp__context7__query-docs"));
         assert!(!is_allowed(&allowed, "mcp__github__create_issue"));
         assert!(is_allowed(&[], "anything"));
+    }
+
+    #[test]
+    fn offered_definitions_use_the_same_prefix_allowlist_as_calls() {
+        use kamimusuhi_testkit::{FixtureResponse, FixtureServer};
+        let body = json!({"tools": [
+            {"type": "function", "function": {"name": "json_get"}},
+            {"type": "function", "function": {"name": "mcp__chrome_web__google_search"}},
+            {"type": "function", "function": {"name": "mcp__chrome_web__fetch_url"}},
+            {"type": "function", "function": {"name": "mcp__other__write"}},
+            {"type": "function", "function": {"name": ""}}
+        ]})
+        .to_string();
+        let server = FixtureServer::always(FixtureResponse::RawHttp {
+            response: format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()),
+        }).expect("fixture");
+        let mut config = ToolServerConfig::new(server.base_url().trim_end_matches("/v1"));
+        config.allowed = vec!["json_get".into(), "mcp__chrome_web__*".into()];
+        let definitions = config
+            .definitions(&TrustAnchors::Webpki)
+            .expect("definitions");
+        let names: Vec<_> = definitions
+            .iter()
+            .map(|d| d["function"]["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "json_get",
+                "mcp__chrome_web__google_search",
+                "mcp__chrome_web__fetch_url"
+            ]
+        );
+        assert_eq!(server.requests()[0].path, "/v1/tools");
     }
 
     #[test]

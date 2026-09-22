@@ -14,6 +14,9 @@ use serde_json::{Value, json};
 
 use crate::state::Shared;
 
+const DEFAULT_SEARCH_HITS: u64 = 8;
+const MAX_SEARCH_HITS: u64 = 20;
+
 fn function(name: &str, description: &str, parameters: Value) -> Value {
     json!({"type": "function", "function": {
         "name": name, "description": description, "parameters": parameters}})
@@ -69,10 +72,12 @@ pub fn definitions() -> Vec<Value> {
         ),
         function(
             "library_search",
-            "Substring search over text files in a library. Returns path, line and a snippet per hit (max 100).",
+            "Substring search over text files in a library. Returns path, line and a snippet per hit (default 8, max 20). Refine q or path when truncated is true.",
             json!({"type": "object", "properties": {
                 "library": lib, "q": {"type": "string", "minLength": 2},
-                "path": {"type": "string", "description": "limit to this directory"}},
+                "path": {"type": "string", "description": "limit to this directory"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": MAX_SEARCH_HITS,
+                          "default": DEFAULT_SEARCH_HITS}},
                 "required": ["library", "q"]}),
         ),
         function(
@@ -402,6 +407,15 @@ fn call_inner(shared: &Shared, request: &Value) -> (u16, Value) {
             .unwrap_or(16_384)
             .min(65_536);
         body.insert("limit".into(), json!(limit));
+    } else if action == "search" {
+        // Apply the dialogue budget before local execution or peer forwarding.
+        // Missing/non-integer limits use the default; zero still returns one hit.
+        let limit = body
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(DEFAULT_SEARCH_HITS)
+            .clamp(1, MAX_SEARCH_HITS);
+        body.insert("limit".into(), json!(limit));
     }
     let (status, result) = crate::library::handle(shared, &Value::Object(body));
     if status == 200 {
@@ -445,17 +459,18 @@ fn call_mcp(shared: &Shared, name: &str, request: &Value) -> (u16, Value) {
                 };
             }
             let started = std::time::Instant::now();
-            let outcome = server.call(&tool.original, &arguments);
+            let outcome = server
+                .call(&tool.original, &arguments)
+                .map(|raw| crate::mcp::normalize_for_server(&server.config.name, &raw));
             let _ = shared.spool.append(
                 "logs/mcp",
                 json!({"server": server.config.name, "tool": tool.original,
-                       "ok": outcome.as_ref().is_ok_and(|r| !r["isError"].as_bool().unwrap_or(false)),
+                       "ok": outcome.as_ref().is_ok_and(|(ok, _)| *ok),
                        "latency_ms": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                        "arguments": arguments}),
             );
             return match outcome {
-                Ok(result) => {
-                    let (ok, out) = crate::mcp::normalize(&result);
+                Ok((ok, out)) => {
                     if ok {
                         (200, json!({"ok": true, "result": out}))
                     } else {
@@ -491,6 +506,21 @@ fn call_mcp(shared: &Shared, name: &str, request: &Value) -> (u16, Value) {
 mod tests {
     use super::*;
 
+    fn search_fixture() -> (Shared, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let library = dir.path().join("library");
+        std::fs::create_dir(&library).expect("library directory");
+        std::fs::write(library.join("data.txt"), "トヨタ \"7203\"\n".repeat(101)).expect("write");
+        let config = serde_json::from_value(json!({
+            "node": {"id": "test", "role": "continuity", "listen": "127.0.0.1:0"},
+            "paths": {"root": dir.path()},
+            "libraries": [{"name": "demo", "path": library}]
+        }))
+        .expect("config");
+        let spool = crate::spool::Spool::new(dir.path().join("spool"), "test").expect("spool");
+        (Shared::new(config, spool, 1, None), dir)
+    }
+
     #[test]
     fn every_definition_maps_to_an_action() {
         for def in definitions() {
@@ -501,5 +531,67 @@ mod tests {
             );
         }
         assert!(action_for("rm_rf").is_none());
+    }
+
+    #[test]
+    fn library_search_schema_advertises_the_dialogue_budget() {
+        let definition = definitions()
+            .into_iter()
+            .find(|def| def["function"]["name"] == "library_search")
+            .expect("search definition");
+        let limit = &definition["function"]["parameters"]["properties"]["limit"];
+        assert_eq!(limit["type"], "integer");
+        assert_eq!(limit["minimum"], 1);
+        assert_eq!(limit["maximum"], 20);
+        assert_eq!(limit["default"], 8);
+    }
+
+    #[test]
+    fn library_search_caps_tool_results_and_preserves_direct_default() {
+        let (shared, _dir) = search_fixture();
+        for (limit, expected) in [
+            (None, 8),
+            (Some(json!(3)), 3),
+            (Some(json!(0)), 1),
+            (Some(json!(20)), 20),
+            (Some(json!(100)), 20),
+            (Some(json!(u64::MAX)), 20),
+            (Some(json!(-1)), 8),
+            (Some(json!(1.5)), 8),
+            (Some(json!("3")), 8),
+            (Some(Value::Null), 8),
+        ] {
+            let mut arguments = json!({"library": "demo", "q": "トヨタ"});
+            if let Some(limit) = limit {
+                arguments["limit"] = limit;
+            }
+            // Exercise both OpenAI's string arguments and direct object calls.
+            for args in [arguments.clone(), json!(arguments.to_string())] {
+                let (status, reply) = call_inner(
+                    &shared,
+                    &json!({"name": "library_search", "arguments": args}),
+                );
+                assert_eq!(status, 200);
+                assert_eq!(reply["ok"], true);
+                let result = &reply["result"];
+                assert_eq!(result["hits"].as_array().expect("hits").len(), expected);
+                assert_eq!(result["truncated"], true);
+                assert_eq!(result["hits"][0]["path"], "data.txt");
+                assert_eq!(result["hits"][0]["line"], 1);
+                assert!(
+                    result["hits"][0]["snippet"]
+                        .as_str()
+                        .expect("snippet")
+                        .contains("トヨタ")
+                );
+            }
+        }
+
+        // The direct HTTP/CLI entry point retains its existing 100-hit budget.
+        let request = json!({"action": "search", "library": "demo", "q": "トヨタ"});
+        let (status, result) = crate::library::handle(&shared, &request);
+        assert_eq!(status, 200);
+        assert_eq!(result["hits"].as_array().expect("hits").len(), 100);
+        assert_eq!(result["truncated"], true);
     }
 }

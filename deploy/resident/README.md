@@ -29,9 +29,10 @@ Raspberry Pi と llm_master の両方で `kamimusuhi-resident`（バイナリ名
 ## Routing
 
 各ノードの `tiers` を上から順に試す。probe（`/v1/models`）で healthy なものだけを使い、全滅時のみ unhealthy も試す。
-リクエスト失敗したtierは即 unhealthy になり、probe が成功した時点で自動的に元の優先順へ戻る（llm_master 復旧で自動復帰）。
+リクエスト失敗したtierは即 unhealthy になり、probe が成功した時点で自動的に設定された優先順へ戻る。
 
-- Pi: `llm_master`（peer resident 経由、`X-Kamimusuhi-Route: local` で llm_master 側の HAI fallback を抑止）→ `hai`
+- Pi: `hai`（`qwen3.8-27b-uncensored`）→ `llm_master`（peer resident 経由、`X-Kamimusuhi-Route: local` で llm_master 側の HAI fallback を抑止）
+- Piのtier待機期限はHAI 30秒／llm_master 120秒。model呼出しごとのprovider期限180秒内でfallbackできるようにする。空本文・tool callなし・拒否なしの応答も失敗として次tierを試す。
 - llm_master: `local`（llama-master :8080）→ `hai`
 - `condition: small_request` の tier は短い要求（既定1200文字以下）か `model: "k0"` のときのみ使う（K0/local 枠）。
 - model 名: `kamimusuhi` / `auto` / `k0` は自動、`hai` や `hai/glm-5.3` はtier強制。
@@ -92,7 +93,7 @@ llm_master の local LLM は既存の user unit `llama-master.service`（linger 
 ## 対話（個体と話す）
 
 `POST /v1/kamimusuhi/talk`（Pi のみ, `dialogue` 設定）は Pi の個体ディレクトリに対して `kamimusuhi-runtime talk` を1ターンずつ実行する。
-Persona Core・記憶・連続性を持つ個体として応答し、ターンは runtime 自身が記録する（同時実行は直列化）。LLM は resident の routing（llm_master → HAI）を使う。
+Persona Core・記憶・連続性を持つ個体として応答し、ターンは runtime 自身が記録する（同時実行は直列化）。LLM は resident の routing（HAI → llm_master）を使う。
 
 Mac などから:
 
@@ -142,6 +143,9 @@ resident は読み取り専用の tool を OpenAI function-calling 形式で公�
 GUI の `set_language_provider` で追加した言語器官には tools は付かない（CLI/resident 経路の primary と `language_providers` のみ）。
 
 ## MCP サーバー
+
+公開情報のDB検索が空振りした場合は [chrome-web-mcp](chrome-web-mcp.md) を利用できる。
+対話用 `library_search` は既定8件・最大20件に絞り、出典を保持してモデルへ返す。
 
 resident は stdio の MCP サーバーを子プロセスとして常駐・監視し（落ちたら backoff で再起動）、tool を `mcp__<server>__<tool>` として `/v1/tools` に載せる。
 自ノードに無い tool は peer へ転送されるので、Pi からも llm_master の Playwright を呼べる。呼び出しは `logs/mcp/<node>/` に記録。

@@ -139,7 +139,58 @@ fn call_tier(tier: &TierConfig, model: &str, body: &Value) -> Result<Value, Stri
     if !has_choice {
         return Err("reply has no choices".to_owned());
     }
+    if response_kind(&value).is_none() {
+        // Reasoning is not a final expression or an executable tool call.
+        // Do not accept a reasoning-only 200 and prevent a usable fallback.
+        // Only a closed metadata vocabulary can enter diagnostic records.
+        return Err(format!(
+            "reply has no usable content, tool calls or refusal (finish_reason={})",
+            completion_finish_reason(&value)
+        ));
+    }
     Ok(value)
+}
+
+fn nonblank_string(value: &Value) -> bool {
+    value.as_str().is_some_and(|text| !text.trim().is_empty())
+}
+
+/// The first choice is the one consumed by Persona and the SSE adapter.
+/// Preserve refusals and standard function calls without promoting reasoning.
+fn response_kind(value: &Value) -> Option<&'static str> {
+    let message = value.pointer("/choices/0/message")?;
+    if nonblank_string(&message["refusal"]) {
+        return Some("refusal");
+    }
+    if nonblank_string(&message["content"]) {
+        return Some("content");
+    }
+    let calls = message["tool_calls"].as_array()?;
+    (!calls.is_empty()
+        && calls.iter().all(|call| {
+            call["type"] == "function"
+                && nonblank_string(&call["id"])
+                && nonblank_string(&call["function"]["name"])
+                && call["function"]["arguments"].is_string()
+        }))
+    .then_some("tool_calls")
+}
+
+/// Upstream metadata is untrusted too; never copy arbitrary provider text
+/// into failure diagnostics or the metadata-only completion fields.
+fn completion_finish_reason(value: &Value) -> &'static str {
+    match value
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+    {
+        Some("stop") => "stop",
+        Some("length") => "length",
+        Some("tool_calls") => "tool_calls",
+        Some("function_call") => "function_call",
+        Some("content_filter") => "content_filter",
+        Some(_) => "unknown",
+        None => "missing",
+    }
 }
 
 pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
@@ -202,6 +253,8 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
                         "latency_ms": latency_ms,
                         "request": {"model": request.body.get("model"), "messages": request.body.get("messages")},
                         "response": body.pointer("/choices/0/message"),
+                        "response_kind": response_kind(&body),
+                        "finish_reason": completion_finish_reason(&body),
                         "usage": body.get("usage"),
                     }),
                 );
@@ -250,7 +303,7 @@ pub fn to_sse(body: &Value) -> String {
         .unwrap_or_else(|| json!("stop"));
     let mut delta = Map::new();
     delta.insert("role".into(), json!("assistant"));
-    for key in ["content", "reasoning_content", "tool_calls"] {
+    for key in ["content", "refusal", "reasoning_content", "tool_calls"] {
         if let Some(v) = message.get(key).filter(|v| !v.is_null()) {
             delta.insert(key.into(), v.clone());
         }
@@ -297,6 +350,148 @@ mod tests {
 
     fn names(plan: &[(&TierConfig, String)]) -> Vec<String> {
         plan.iter().map(|(t, _)| t.name.clone()).collect()
+    }
+
+    fn completion_server(reply: Value) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture");
+        let url = format!("http://{}/v1", listener.local_addr().expect("address"));
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept fixture");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("timeout");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                assert!(reader.read_line(&mut line).expect("request header") > 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    length = value.trim().parse::<usize>().expect("length");
+                }
+            }
+            reader
+                .read_exact(&mut vec![0; length])
+                .expect("request body");
+            let body = reply.to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(), body
+            )
+            .expect("reply");
+        });
+        (url, handle)
+    }
+
+    #[test]
+    fn response_shapes_keep_content_refusals_and_standard_tool_calls() {
+        let completion = |message| json!({"choices": [{"message": message}]});
+        assert_eq!(
+            response_kind(&completion(json!({"content": "こんにちは"}))),
+            Some("content")
+        );
+        assert_eq!(
+            response_kind(&completion(
+                json!({"content": null, "refusal": "対応できません"})
+            )),
+            Some("refusal")
+        );
+        assert_eq!(
+            response_kind(&completion(json!({"content": null, "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {
+                    "name": "library_search", "arguments": "{\"query\":\"Rust\"}"
+                }}
+            ]}))),
+            Some("tool_calls")
+        );
+        for message in [
+            json!({"content": "", "reasoning_content": "internal reasoning"}),
+            json!({"content": " \n\t", "refusal": " ", "tool_calls": []}),
+            json!({"content": null, "tool_calls": [{}]}),
+            json!({"tool_calls": [{"id": "c", "type": "function", "function": {
+                "name": " ", "arguments": "{}"
+            }}]}),
+        ] {
+            assert_eq!(response_kind(&completion(message)), None);
+        }
+    }
+
+    #[test]
+    fn reasoning_only_http_200_falls_back_without_leaking_provider_text() {
+        let (bad_url, bad_server) = completion_server(json!({"choices": [{
+            "message": {"role": "assistant", "content": " \n",
+                        "reasoning_content": "PRIVATE_REASONING"},
+            "finish_reason": "PRIVATE_PROVIDER_METADATA"
+        }]}));
+        let (good_url, good_server) = completion_server(json!({"choices": [{
+            "message": {"role": "assistant", "content": "確認できました"},
+            "finish_reason": "stop"
+        }]}));
+        let (mut s, _dir) = shared();
+        let mut bad = s.config.tiers[2].clone();
+        bad.base_url = bad_url;
+        let mut good = s.config.tiers[1].clone();
+        good.base_url = good_url;
+        s.config.tiers = vec![bad, good];
+        let req = RouteRequest {
+            body: json!({"model": "kamimusuhi", "messages": [{"role": "user", "content": "hi"}]}),
+            local_only: false,
+        };
+        let routed = route(&s, &req);
+        assert_eq!(routed.status, 200);
+        assert_eq!(routed.tier.as_deref(), Some("llm_master"));
+        assert_eq!(
+            routed.body["choices"][0]["message"]["content"],
+            "確認できました"
+        );
+        assert_eq!(routed.attempts.len(), 2);
+        assert!(routed.attempts[0].contains("finish_reason=unknown"));
+        assert!(!routed.attempts.join(" ").contains("PRIVATE_"));
+        assert!(!s.tier_healthy("hai"));
+        bad_server.join().expect("bad fixture finished");
+        good_server.join().expect("good fixture finished");
+
+        let directory = s.spool.root().join("conversations/pi");
+        let log = std::fs::read_dir(directory)
+            .expect("conversation log directory")
+            .next()
+            .expect("conversation log")
+            .expect("entry")
+            .path();
+        let record: Value =
+            serde_json::from_str(std::fs::read_to_string(log).expect("read log").trim())
+                .expect("record");
+        assert_eq!(record["finish_reason"], "stop");
+        assert_eq!(record["response_kind"], "content");
+    }
+
+    #[test]
+    fn finish_reason_metadata_uses_only_known_values() {
+        for reason in [
+            "stop",
+            "length",
+            "tool_calls",
+            "function_call",
+            "content_filter",
+        ] {
+            assert_eq!(
+                completion_finish_reason(&json!({"choices": [{"finish_reason": reason}]})),
+                reason
+            );
+        }
+        assert_eq!(completion_finish_reason(&json!({})), "missing");
+        assert_eq!(
+            completion_finish_reason(&json!({"choices": [{"finish_reason": "private text"}]})),
+            "unknown"
+        );
     }
 
     #[test]
@@ -383,5 +578,23 @@ mod tests {
         );
         assert!(sse.contains("やあ"));
         assert!(sse.ends_with("data: [DONE]\n\n"));
+    }
+
+    #[test]
+    fn sse_preserves_refusal_without_promoting_reasoning() {
+        let sse = to_sse(&json!({"choices": [{"message": {
+            "role": "assistant", "content": null, "refusal": "対応できません",
+            "reasoning_content": "internal reasoning"
+        }, "finish_reason": "stop"}]}));
+        let chunk: Value = serde_json::from_str(
+            sse.lines()
+                .next()
+                .expect("chunk")
+                .strip_prefix("data: ")
+                .expect("SSE data"),
+        )
+        .expect("JSON chunk");
+        assert_eq!(chunk["choices"][0]["delta"]["refusal"], "対応できません");
+        assert!(chunk["choices"][0]["delta"].get("content").is_none());
     }
 }
