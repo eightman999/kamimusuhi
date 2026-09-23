@@ -699,6 +699,10 @@ mod tests {
             billing: Some(crate::config::TierBilling::Metered),
             input_usd_per_mtok: Some(1.0),
             output_usd_per_mtok: Some(2.0),
+            privacy_ok_for_private_memory: Some(true),
+            context_limit_tokens: None,
+            approx_tpm_limit: None,
+            reasoning_suppression: Some(true),
         };
         let (cost, kind) = cost_of(&tier, &usage);
         assert_eq!(cost, Some(0.007));
