@@ -974,7 +974,12 @@ mod tests {
         };
         let routed = route(&s, &req);
         assert_eq!(routed.status, 503);
-        assert!(routed.attempts.iter().any(|attempt| attempt.contains("cost guard:")));
+        assert!(
+            routed
+                .attempts
+                .iter()
+                .any(|attempt| attempt.contains("cost guard:"))
+        );
         assert!(
             s.tier_healthy("paid"),
             "budget rejection is policy, not provider health failure"
