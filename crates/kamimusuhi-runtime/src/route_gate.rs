@@ -312,7 +312,7 @@ impl RouteGate {
             // Context ceiling: a provider that cannot hold the prompt is
             // not a candidate at all.
             if let Some(limit) = spec.context_limit_tokens()
-                && prompt_tokens_est > u64::from(limit)
+                && prompt_tokens_est > limit
             {
                 skipped_for_context = true;
                 continue;
