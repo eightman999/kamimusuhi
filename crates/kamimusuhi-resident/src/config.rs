@@ -214,6 +214,19 @@ pub struct TierConfig {
     /// USD per million completion tokens, for metered tiers.
     #[serde(default)]
     pub output_usd_per_mtok: Option<f64>,
+    /// Explicit privacy declaration. When omitted, only local/subscription
+    /// tiers are trusted with persona memory; free/metered tiers fail closed.
+    #[serde(default)]
+    pub privacy_ok_for_private_memory: Option<bool>,
+    /// Maximum prompt tokens accepted by this tier, when known.
+    #[serde(default)]
+    pub context_limit_tokens: Option<u64>,
+    /// Approximate per-minute token budget used to avoid predictable 429s.
+    #[serde(default)]
+    pub approx_tpm_limit: Option<u64>,
+    /// Whether the tier can suppress reasoning for latency-sensitive chat.
+    #[serde(default)]
+    pub reasoning_suppression: Option<bool>,
 }
 
 const fn default_tier_timeout() -> u64 {
@@ -234,6 +247,26 @@ pub struct RoutingConfig {
     /// Record request/response pairs under `conversations/`.
     #[serde(default = "default_true")]
     pub log_conversations: bool,
+    /// User-facing latency ceiling for FAST_CHAT. The production resident
+    /// uses this as the RouteGate health cutoff; default is the 4s SLA.
+    #[serde(default = "default_fast_chat_latency_ceiling_ms")]
+    pub fast_chat_latency_ceiling_ms: u64,
+    /// Persona requests are private unless an internal caller explicitly
+    /// marks a request public.
+    #[serde(default = "default_true")]
+    pub private_by_default: bool,
+    /// Completion-token assumption used for metered pre-flight estimates
+    /// when the request does not carry an explicit limit.
+    #[serde(default = "default_max_completion_tokens_for_cost")]
+    pub max_completion_tokens_for_cost: u32,
+    #[serde(default = "default_max_request_cost_usd")]
+    pub max_request_cost_usd: f64,
+    #[serde(default = "default_max_session_cost_usd")]
+    pub max_session_cost_usd: f64,
+    #[serde(default = "default_max_daily_cost_usd")]
+    pub max_daily_cost_usd: Option<f64>,
+    #[serde(default = "default_max_monthly_cost_usd")]
+    pub max_monthly_cost_usd: Option<f64>,
 }
 
 impl Default for RoutingConfig {
@@ -241,12 +274,43 @@ impl Default for RoutingConfig {
         Self {
             small_request_chars: default_small_chars(),
             log_conversations: true,
+            fast_chat_latency_ceiling_ms: default_fast_chat_latency_ceiling_ms(),
+            private_by_default: true,
+            max_completion_tokens_for_cost: default_max_completion_tokens_for_cost(),
+            max_request_cost_usd: default_max_request_cost_usd(),
+            max_session_cost_usd: default_max_session_cost_usd(),
+            max_daily_cost_usd: default_max_daily_cost_usd(),
+            max_monthly_cost_usd: default_max_monthly_cost_usd(),
         }
     }
 }
 
 const fn default_small_chars() -> usize {
     1200
+}
+
+const fn default_fast_chat_latency_ceiling_ms() -> u64 {
+    4_000
+}
+
+const fn default_max_completion_tokens_for_cost() -> u32 {
+    768
+}
+
+const fn default_max_request_cost_usd() -> f64 {
+    0.02
+}
+
+const fn default_max_session_cost_usd() -> f64 {
+    0.50
+}
+
+fn default_max_daily_cost_usd() -> Option<f64> {
+    Some(0.10)
+}
+
+fn default_max_monthly_cost_usd() -> Option<f64> {
+    Some(2.00)
 }
 
 const fn default_true() -> bool {
@@ -425,6 +489,49 @@ impl Config {
             if tier.timeout_secs == 0 || tier.probe_interval_secs == 0 {
                 return Err(format!("tier {}: intervals must be positive", tier.name));
             }
+            let billing = tier.billing.ok_or_else(|| {
+                format!("tier {}: billing must be declared", tier.name)
+            })?;
+            let valid_price = |value: Option<f64>| {
+                value.is_none_or(|v| v.is_finite() && v >= 0.0)
+            };
+            if !valid_price(tier.input_usd_per_mtok) || !valid_price(tier.output_usd_per_mtok) {
+                return Err(format!("tier {}: prices must be finite and non-negative", tier.name));
+            }
+            if billing == TierBilling::Metered
+                && (tier.input_usd_per_mtok.is_none() || tier.output_usd_per_mtok.is_none())
+            {
+                return Err(format!(
+                    "tier {}: metered tiers require input/output prices for pre-flight cost control",
+                    tier.name
+                ));
+            }
+            if billing == TierBilling::FreeTier
+                && (tier.input_usd_per_mtok.unwrap_or(0.0) > 0.0
+                    || tier.output_usd_per_mtok.unwrap_or(0.0) > 0.0)
+            {
+                return Err(format!(
+                    "tier {}: free_tier must not declare non-zero token prices",
+                    tier.name
+                ));
+            }
+        }
+        let finite_non_negative = |v: f64| v.is_finite() && v >= 0.0;
+        if self.routing.fast_chat_latency_ceiling_ms == 0
+            || self.routing.max_completion_tokens_for_cost == 0
+            || !finite_non_negative(self.routing.max_request_cost_usd)
+            || !finite_non_negative(self.routing.max_session_cost_usd)
+            || self.routing.max_request_cost_usd > self.routing.max_session_cost_usd
+            || self
+                .routing
+                .max_daily_cost_usd
+                .is_some_and(|v| !finite_non_negative(v))
+            || self
+                .routing
+                .max_monthly_cost_usd
+                .is_some_and(|v| !finite_non_negative(v))
+        {
+            return Err("routing latency/cost limits are invalid".to_owned());
         }
         for peer in &self.peers {
             if !id_ok(&peer.id) {
