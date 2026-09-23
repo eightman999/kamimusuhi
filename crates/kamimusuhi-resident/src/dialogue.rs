@@ -122,6 +122,28 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
                 crate::tasks::TaskStatus::Done,
                 &format!("応答 {latency_ms}ms: {preview}"),
             );
+            // The routing event the router recorded while serving this
+            // turn's upstream call(s): tier, model, tokens, and the cost
+            // basis. `cost_usd` is absent when the plan's price is unknown —
+            // never rendered as zero.
+            let route = shared
+                .last_route
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .as_ref()
+                .map(|r| {
+                    json!({
+                        "tier": r.tier,
+                        "model": r.model,
+                        "billing": r.billing,
+                        "latency_ms": r.latency_ms,
+                        "prompt_tokens": r.prompt_tokens,
+                        "completion_tokens": r.completion_tokens,
+                        "cached_tokens": r.cached_tokens,
+                        "cost_usd": r.cost_usd,
+                        "cost_kind": r.cost_kind,
+                    })
+                });
             let _ = shared.spool.append(
                 "conversations/dialogue",
                 json!({
@@ -133,14 +155,9 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
                     "session_id": reply.get("session_id"),
                     "individual_id": reply.get("individual_id"),
                     "tool_calls": reply.get("tool_calls"),
+                    "route": route,
                 }),
             );
-            let route = shared
-                .last_route
-                .read()
-                .unwrap_or_else(|p| p.into_inner())
-                .as_ref()
-                .and_then(|r| r.tier.clone());
             (
                 200,
                 json!({
@@ -149,7 +166,8 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
                     "turn_id": reply.get("turn_id"),
                     "subject": subject,
                     "latency_ms": latency_ms,
-                    "tier": route,
+                    "tier": route.as_ref().and_then(|r| r["tier"].as_str().map(str::to_owned)),
+                    "route": route,
                     "tool_calls": reply.get("tool_calls").cloned().unwrap_or_else(|| json!([])),
                     "reference_lookups": reply.get("reference_lookups"),
                 }),
@@ -222,7 +240,8 @@ pub fn history(shared: &Shared, request: &Value) -> (u16, Value) {
         .iter()
         .map(|t| {
             json!({"ts": t["ts"], "message": t["message"], "response": t["response"],
-                   "latency_ms": t["latency_ms"], "tool_calls": t["tool_calls"]})
+                   "latency_ms": t["latency_ms"], "tool_calls": t["tool_calls"],
+                   "route": t["route"]})
         })
         .collect();
     (200, json!({"subject": subject, "turns": turns}))

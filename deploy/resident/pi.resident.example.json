@@ -22,6 +22,7 @@
   "tiers": [
     {
       "name": "hai",
+      "billing": "subscription",
       "base_url": "https://hai-api.hcloud.ltd/v1",
       "model": "qwen3.8-27b-uncensored",
       "auth_env": "HAI_API_KEY",
@@ -30,6 +31,7 @@
     },
     {
       "name": "llm_master",
+      "billing": "local",
       "base_url": "http://LLM_MASTER_HOST:7860/v1",
       "model": "local",
       "auth_env": "KAMIMUSUHI_NODE_TOKEN",

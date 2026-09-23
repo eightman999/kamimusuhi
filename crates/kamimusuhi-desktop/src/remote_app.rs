@@ -676,11 +676,16 @@ impl RemoteApp {
                             );
                         }
                         if let Some(last) = r.get("last_route").filter(|v| !v.is_null()) {
+                            let cost = kamimusuhi_resident::status::route_cost_label(last)
+                                .map(|c| format!(" · {c}"))
+                                .unwrap_or_default();
                             ui.label(
                                 RichText::new(format!(
-                                    "直近: {} {}ms",
+                                    "直近: {} {} {}ms{}",
                                     last["tier"].as_str().unwrap_or("-"),
-                                    last["latency_ms"]
+                                    last["model"].as_str().unwrap_or(""),
+                                    last["latency_ms"],
+                                    cost
                                 ))
                                 .small()
                                 .color(MUTED),
@@ -962,16 +967,46 @@ fn bubble(ui: &mut egui::Ui, user: bool, text: &str, meta: Option<&Value>, at: O
                         if let Some(meta) = meta {
                             let tools = meta["tool_calls"].as_array().cloned().unwrap_or_default();
                             let tier = meta["tier"].as_str();
+                            let route = meta.get("route").filter(|r| !r.is_null());
                             let latency = meta["latency_ms"].as_u64();
                             let lookups = meta["reference_lookups"].as_u64().unwrap_or(0);
                             if tier.is_some()
+                                || route.is_some()
                                 || latency.is_some()
                                 || !tools.is_empty()
                                 || lookups > 0
                             {
                                 ui.add_space(6.0);
                                 ui.horizontal_wrapped(|ui| {
-                                    if let Some(tier) = tier {
+                                    if let Some(route) = route {
+                                        if let Some(target) =
+                                            kamimusuhi_resident::status::route_target_label(route)
+                                        {
+                                            chip(
+                                                ui,
+                                                &target,
+                                                if route["tier"].as_str() == Some("hai") {
+                                                    AMBER
+                                                } else {
+                                                    GREEN
+                                                },
+                                            );
+                                        }
+                                        if let Some(cost) =
+                                            kamimusuhi_resident::status::route_cost_label(route)
+                                        {
+                                            let color = match route["billing"].as_str() {
+                                                Some("metered") => AMBER,
+                                                _ => GREEN,
+                                            };
+                                            chip(ui, &cost, color);
+                                        }
+                                        if let Some(cached) =
+                                            route["cached_tokens"].as_u64().filter(|c| *c > 0)
+                                        {
+                                            chip(ui, &format!("cache {cached}"), MUTED);
+                                        }
+                                    } else if let Some(tier) = tier {
                                         chip(
                                             ui,
                                             &format!("via {tier}"),

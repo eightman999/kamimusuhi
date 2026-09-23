@@ -148,6 +148,33 @@ pub enum TierCondition {
     SmallRequest,
 }
 
+/// How a tier is paid for — display and policy metadata, mirroring
+/// `BillingClass` in the runtime's route gate. `None` means the plan is
+/// undeclared; an undeclared tier's cost is shown as unknown, never as free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TierBilling {
+    /// Self-hosted or peer node; marginal cost is zero.
+    Local,
+    /// Flat subscription already paid for (e.g. HAI).
+    Subscription,
+    /// Provider free tier.
+    FreeTier,
+    /// Per-token billing.
+    Metered,
+}
+
+impl TierBilling {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Subscription => "subscription",
+            Self::FreeTier => "free_tier",
+            Self::Metered => "metered",
+        }
+    }
+}
+
 /// One OpenAI-compatible backend in the routing order.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -177,6 +204,16 @@ pub struct TierConfig {
     /// Seconds between health probes for this tier.
     #[serde(default = "default_probe_interval")]
     pub probe_interval_secs: u64,
+    /// How this tier is billed. Drives the per-turn cost display; when the
+    /// prices below are set, metered turns also get an estimate.
+    #[serde(default)]
+    pub billing: Option<TierBilling>,
+    /// USD per million prompt tokens, for metered tiers.
+    #[serde(default)]
+    pub input_usd_per_mtok: Option<f64>,
+    /// USD per million completion tokens, for metered tiers.
+    #[serde(default)]
+    pub output_usd_per_mtok: Option<f64>,
 }
 
 const fn default_tier_timeout() -> u64 {

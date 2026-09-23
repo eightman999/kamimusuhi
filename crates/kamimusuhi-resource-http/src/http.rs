@@ -237,6 +237,50 @@ pub fn get_json(
     request_json("GET", endpoint, "", headers, timeout, anchors)
 }
 
+/// A streaming POST response: the decoded body arrives in `on_chunk` pieces
+/// while it is being read, and the assembled body is still returned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamedResponse {
+    pub status: u16,
+    /// Wall time until the response head (status line + headers) completed.
+    /// For SSE endpoints this is the server's time to first byte.
+    pub headers_ms: u64,
+    /// Wall time until the first decoded body byte, if any body arrived.
+    pub first_body_ms: Option<u64>,
+    /// Wall time until the response finished or the consumer aborted it.
+    pub total_ms: u64,
+    /// The complete decoded body. Framing bytes (chunk sizes, SSE structure
+    /// untouched but transfer coding removed) are not included.
+    pub body: String,
+}
+
+impl StreamedResponse {
+    pub const fn is_success(&self) -> bool {
+        self.status >= 200 && self.status < 300
+    }
+}
+
+/// POST a JSON body and deliver the *decoded* response body to `on_chunk` as
+/// it arrives, for SSE consumers measuring time-to-first-token.
+///
+/// Same connection setup, deadline, header rules and wire limits as
+/// [`post_json`]. The callback runs between reads; returning `false` aborts
+/// the response early — the body returned is whatever arrived before the
+/// abort, and no completeness check is applied to an aborted stream.
+/// Incremental `chunked` transfer decoding happens here, so the callback
+/// only ever sees body bytes, never chunk framing.
+pub fn post_json_stream(
+    endpoint: &Endpoint,
+    body: &str,
+    headers: &[Header],
+    timeout: Duration,
+    anchors: &TrustAnchors,
+    on_chunk: &mut dyn FnMut(&[u8]) -> bool,
+) -> Result<StreamedResponse, HttpError> {
+    let (mut stream, started) = open_request("POST", endpoint, body, headers, timeout, anchors)?;
+    read_streaming(&mut stream, started, timeout, on_chunk)
+}
+
 fn request_json(
     method: &str,
     endpoint: &Endpoint,
@@ -245,6 +289,80 @@ fn request_json(
     timeout: Duration,
     anchors: &TrustAnchors,
 ) -> Result<HttpResponse, HttpError> {
+    let (mut stream, started) = open_request(method, endpoint, body, headers, timeout, anchors)?;
+
+    let remaining = |phase: &'static str| -> Result<Duration, HttpError> {
+        remaining_time(started, timeout, phase)
+    };
+    // Connection: close is requested. EOF ends transport reading, but only
+    // framing validation below can establish that the message is complete.
+    let mut raw = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    let mut headers_complete = false;
+    loop {
+        stream
+            .socket()
+            .set_read_timeout(Some(remaining("read")?))
+            .map_err(|source| HttpError::Transport(format!("set_read_timeout: {source}")))?;
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => {
+                if read > MAX_RESPONSE_BYTES.saturating_sub(raw.len()) {
+                    return Err(malformed("response exceeds wire byte limit"));
+                }
+                raw.extend_from_slice(&chunk[..read]);
+                if !headers_complete {
+                    match raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                        Some(end) if end + 4 <= MAX_HEADER_BYTES => headers_complete = true,
+                        Some(_) => return Err(malformed("response headers exceed byte limit")),
+                        None if raw.len() >= MAX_HEADER_BYTES => {
+                            return Err(malformed("response headers exceed byte limit"));
+                        }
+                        None => {}
+                    }
+                }
+            }
+            // Tolerate missing TLS close_notify only when HTTP framing proves
+            // the response is complete. parse_response requires exact length
+            // or a complete chunked terminator; valid JSON alone is not enough.
+            Err(ref source) if source.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(source) => return Err(classify_io(&source, started, "read")),
+        }
+    }
+
+    parse_response(&raw)
+}
+
+fn remaining_time(
+    started: Instant,
+    timeout: Duration,
+    phase: &'static str,
+) -> Result<Duration, HttpError> {
+    let left = timeout
+        .checked_sub(started.elapsed())
+        .unwrap_or(Duration::ZERO);
+    if left < MIN_SOCKET_TIMEOUT {
+        return Err(HttpError::Timeout {
+            elapsed_ms: elapsed_ms(started),
+            phase,
+        });
+    }
+    Ok(left)
+}
+
+/// Validate the request, resolve, connect, hand the socket to TLS when the
+/// scheme requires it and write the request head and body. Returns the open
+/// stream and the instant the attempt started, so the caller decides how the
+/// response is read (buffered by [`request_json`], or streamed by
+/// [`read_streaming`]).
+fn open_request(
+    method: &str,
+    endpoint: &Endpoint,
+    body: &str,
+    headers: &[Header],
+    timeout: Duration,
+    anchors: &TrustAnchors,
+) -> Result<(Transport, Instant), HttpError> {
     endpoint.validate().map_err(HttpError::InvalidRequest)?;
     for header in headers {
         if !token_name(&header.name)
@@ -265,18 +383,7 @@ fn request_json(
         }
     }
     let started = Instant::now();
-    let remaining = |phase: &'static str| -> Result<Duration, HttpError> {
-        let left = timeout
-            .checked_sub(started.elapsed())
-            .unwrap_or(Duration::ZERO);
-        if left < MIN_SOCKET_TIMEOUT {
-            return Err(HttpError::Timeout {
-                elapsed_ms: elapsed_ms(started),
-                phase,
-            });
-        }
-        Ok(left)
-    };
+    let remaining = |phase: &'static str| remaining_time(started, timeout, phase);
 
     remaining("resolve")?;
     let addresses: Vec<_> = endpoint
@@ -369,83 +476,29 @@ fn request_json(
     stream
         .flush()
         .map_err(|source| classify_io(&source, started, "write"))?;
-
-    // Connection: close is requested. EOF ends transport reading, but only
-    // framing validation below can establish that the message is complete.
-    let mut raw = Vec::new();
-    let mut chunk = [0_u8; 4096];
-    let mut headers_complete = false;
-    loop {
-        stream
-            .socket()
-            .set_read_timeout(Some(remaining("read")?))
-            .map_err(|source| HttpError::Transport(format!("set_read_timeout: {source}")))?;
-        match stream.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(read) => {
-                if read > MAX_RESPONSE_BYTES.saturating_sub(raw.len()) {
-                    return Err(malformed("response exceeds wire byte limit"));
-                }
-                raw.extend_from_slice(&chunk[..read]);
-                if !headers_complete {
-                    match raw.windows(4).position(|w| w == b"\r\n\r\n") {
-                        Some(end) if end + 4 <= MAX_HEADER_BYTES => headers_complete = true,
-                        Some(_) => return Err(malformed("response headers exceed byte limit")),
-                        None if raw.len() >= MAX_HEADER_BYTES => {
-                            return Err(malformed("response headers exceed byte limit"));
-                        }
-                        None => {}
-                    }
-                }
-            }
-            // Tolerate missing TLS close_notify only when HTTP framing proves
-            // the response is complete. parse_response requires exact length
-            // or a complete chunked terminator; valid JSON alone is not enough.
-            Err(ref source) if source.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(source) => return Err(classify_io(&source, started, "read")),
-        }
-    }
-
-    parse_response(&raw)
+    Ok((stream, started))
 }
 
-fn elapsed_ms(started: Instant) -> u64 {
-    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+/// How the response body is delimited, decided once the head is complete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyFraming {
+    Length(usize),
+    Chunked,
 }
 
-/// A read/write that expired is a timeout; a wrapped `rustls` error is a TLS
-/// failure; anything else is transport.
-fn classify_io(source: &std::io::Error, started: Instant, phase: &'static str) -> HttpError {
-    match source.kind() {
-        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => HttpError::Timeout {
-            elapsed_ms: elapsed_ms(started),
-            phase,
-        },
-        _ => match crate::tls::classify_io(source) {
-            Some((kind, detail)) => HttpError::Tls { kind, detail },
-            None => HttpError::Transport(format!("{phase}: {source}")),
-        },
-    }
+/// A response head parsed far enough to dispatch the body reader.
+struct ResponseHead {
+    status: u16,
+    framing: BodyFraming,
 }
 
-fn malformed(detail: &str) -> HttpError {
-    HttpError::Malformed(detail.to_owned())
-}
-
-fn parse_response(raw: &[u8]) -> Result<HttpResponse, HttpError> {
-    if raw.len() > MAX_RESPONSE_BYTES {
-        return Err(malformed("response exceeds wire byte limit"));
-    }
-    let split = raw
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .ok_or_else(|| malformed("no header terminator in response"))?;
-    if split + 4 > MAX_HEADER_BYTES {
-        return Err(malformed("response headers exceed byte limit"));
-    }
-    let head = std::str::from_utf8(&raw[..split])
-        .map_err(|_| malformed("response headers are not UTF-8"))?;
-    let body_bytes = &raw[split + 4..];
+/// Parse the status line and the framing headers of a complete response head
+/// (`head` excludes the `\r\n\r\n` terminator). The same rules as
+/// [`parse_response`], so the streaming path cannot accept a head the
+/// buffered path would reject.
+fn parse_head(head_bytes: &[u8]) -> Result<ResponseHead, HttpError> {
+    let head =
+        std::str::from_utf8(head_bytes).map_err(|_| malformed("response headers are not UTF-8"))?;
     let mut lines = head.split("\r\n");
     let status_line = lines.next().ok_or_else(|| malformed("empty response"))?;
     let mut parts = status_line.splitn(3, ' ');
@@ -487,23 +540,298 @@ fn parse_response(raw: &[u8]) -> Result<HttpResponse, HttpError> {
             chunked = true;
         }
     }
-    let body = match (length, chunked) {
+    let framing = match (length, chunked) {
         (Some(_), true) => return Err(malformed("ambiguous response framing")),
-        (Some(length), false) => {
-            if body_bytes.len() != length {
-                return Err(malformed("response length does not match content length"));
-            }
-            String::from_utf8(body_bytes.to_vec())
-                .map_err(|_| malformed("response body is not UTF-8"))?
-        }
-        (None, true) => decode_chunked(body_bytes)?,
+        (Some(length), false) => BodyFraming::Length(length),
+        (None, true) => BodyFraming::Chunked,
         (None, false) => {
             return Err(malformed(
                 "response needs explicit content length or chunked framing",
             ));
         }
     };
-    Ok(HttpResponse { status, body })
+    Ok(ResponseHead { status, framing })
+}
+
+/// What the chunked decoder is waiting for at the wire cursor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChunkState {
+    /// A `hex-size\r\n` line.
+    Size,
+    /// `remaining` payload bytes of the current chunk.
+    Data(usize),
+    /// The `\r\n` closing a data section.
+    DataEnd,
+    /// The trailer section after the zero chunk: ends at the first empty
+    /// line (`\r\n` alone when there are no trailers).
+    Trailers,
+    Done,
+}
+
+/// Read a response incrementally: the head is parsed as soon as its
+/// terminator arrives, then decoded body bytes go to `on_chunk` as they are
+/// read. The decoded body is also accumulated (bounded by
+/// `MAX_RESPONSE_BYTES`) and returned, so the caller can still classify the
+/// complete reply.
+fn read_streaming(
+    stream: &mut Transport,
+    started: Instant,
+    timeout: Duration,
+    on_chunk: &mut dyn FnMut(&[u8]) -> bool,
+) -> Result<StreamedResponse, HttpError> {
+    let remaining = |phase: &'static str| remaining_time(started, timeout, phase);
+    let mut raw = Vec::new();
+    let mut decoded = Vec::new();
+    let mut buf = [0_u8; 4096];
+    let mut head: Option<(ResponseHead, usize)> = None;
+    let mut cursor = 0_usize;
+    let mut length_delivered = 0_usize;
+    let mut chunk_state = ChunkState::Size;
+    let mut headers_ms = None;
+    let mut first_body_ms = None;
+    let mut aborted = false;
+
+    let deliver = |bytes: &[u8],
+                   decoded: &mut Vec<u8>,
+                   first_body_ms: &mut Option<u64>,
+                   on_chunk: &mut dyn FnMut(&[u8]) -> bool|
+     -> Result<bool, HttpError> {
+        if bytes.is_empty() {
+            return Ok(true);
+        }
+        if bytes.len() > MAX_RESPONSE_BYTES.saturating_sub(decoded.len()) {
+            return Err(malformed("response exceeds wire byte limit"));
+        }
+        if first_body_ms.is_none() {
+            *first_body_ms = Some(elapsed_ms(started));
+        }
+        decoded.extend_from_slice(bytes);
+        Ok(on_chunk(bytes))
+    };
+
+    loop {
+        if let Some((head, _)) = &head {
+            // Feed the decoder whatever the wire has buffered so far. A
+            // `false` from the callback is the consumer's early abort, not
+            // a framing failure.
+            let mut progress = true;
+            while progress && !aborted {
+                progress = false;
+                match head.framing {
+                    BodyFraming::Length(total) => {
+                        let available = raw.len().saturating_sub(cursor);
+                        let missing = total.saturating_sub(length_delivered);
+                        let take = available.min(missing);
+                        if take > 0 {
+                            let cont = deliver(
+                                &raw[cursor..cursor + take],
+                                &mut decoded,
+                                &mut first_body_ms,
+                                on_chunk,
+                            )?;
+                            cursor += take;
+                            length_delivered += take;
+                            aborted = !cont;
+                            progress = !aborted;
+                        }
+                    }
+                    BodyFraming::Chunked => match chunk_state {
+                        ChunkState::Size => {
+                            if let Some(end) = raw[cursor..]
+                                .windows(2)
+                                .position(|w| w == b"\r\n")
+                                .map(|i| cursor + i)
+                            {
+                                if end - cursor > MAX_HEADER_BYTES {
+                                    return Err(malformed("chunk header exceeds byte limit"));
+                                }
+                                let line = std::str::from_utf8(&raw[cursor..end])
+                                    .map_err(|_| malformed("chunk header is not UTF-8"))?;
+                                let size_text = line.split(';').next().unwrap_or("");
+                                if size_text.is_empty()
+                                    || !size_text.bytes().all(|b| b.is_ascii_hexdigit())
+                                {
+                                    return Err(malformed("invalid chunk size"));
+                                }
+                                let size = usize::from_str_radix(size_text, 16)
+                                    .map_err(|_| malformed("invalid chunk size"))?;
+                                cursor = end + 2;
+                                chunk_state = if size == 0 {
+                                    ChunkState::Trailers
+                                } else {
+                                    ChunkState::Data(size)
+                                };
+                                progress = true;
+                            }
+                        }
+                        ChunkState::Data(remaining_bytes) => {
+                            let available = raw.len().saturating_sub(cursor);
+                            let take = available.min(remaining_bytes);
+                            if take > 0 {
+                                let cont = deliver(
+                                    &raw[cursor..cursor + take],
+                                    &mut decoded,
+                                    &mut first_body_ms,
+                                    on_chunk,
+                                )?;
+                                cursor += take;
+                                let left = remaining_bytes - take;
+                                chunk_state = if left == 0 {
+                                    ChunkState::DataEnd
+                                } else {
+                                    ChunkState::Data(left)
+                                };
+                                aborted = !cont;
+                                progress = !aborted;
+                            }
+                        }
+                        ChunkState::DataEnd => {
+                            if raw.len() - cursor >= 2 {
+                                if &raw[cursor..cursor + 2] != b"\r\n" {
+                                    return Err(malformed("missing chunk terminator"));
+                                }
+                                cursor += 2;
+                                chunk_state = ChunkState::Size;
+                                progress = true;
+                            }
+                        }
+                        ChunkState::Trailers => {
+                            // `0\r\n` was the last chunk. What remains is a
+                            // trailer section ending at a blank line — most
+                            // servers send just the empty line.
+                            let tail = &raw[cursor..];
+                            let trailer_end = if tail.starts_with(b"\r\n") {
+                                Some(2)
+                            } else {
+                                tail.windows(4)
+                                    .position(|w| w == b"\r\n\r\n")
+                                    .map(|i| i + 4)
+                            };
+                            if let Some(end) = trailer_end {
+                                if end > MAX_HEADER_BYTES {
+                                    return Err(malformed("chunked trailers exceed byte limit"));
+                                }
+                                cursor += end;
+                                chunk_state = ChunkState::Done;
+                                progress = true;
+                            }
+                        }
+                        ChunkState::Done => {}
+                    },
+                }
+            }
+            let finished = match head.framing {
+                BodyFraming::Length(total) => length_delivered >= total,
+                BodyFraming::Chunked => chunk_state == ChunkState::Done,
+            };
+            if aborted || finished {
+                break;
+            }
+        }
+
+        stream
+            .socket()
+            .set_read_timeout(Some(remaining("read")?))
+            .map_err(|source| HttpError::Transport(format!("set_read_timeout: {source}")))?;
+        match stream.read(&mut buf) {
+            Ok(0) => break,
+            Ok(read) => {
+                if read > MAX_RESPONSE_BYTES.saturating_sub(raw.len()) {
+                    return Err(malformed("response exceeds wire byte limit"));
+                }
+                raw.extend_from_slice(&buf[..read]);
+                if head.is_none() {
+                    match raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                        Some(end) if end + 4 <= MAX_HEADER_BYTES => {
+                            headers_ms = Some(elapsed_ms(started));
+                            head = Some((parse_head(&raw[..end])?, end + 4));
+                            cursor = end + 4;
+                        }
+                        Some(_) => return Err(malformed("response headers exceed byte limit")),
+                        None if raw.len() >= MAX_HEADER_BYTES => {
+                            return Err(malformed("response headers exceed byte limit"));
+                        }
+                        None => {}
+                    }
+                }
+            }
+            // The same tolerance as the buffered reader: a missing TLS
+            // close_notify ends transport reading, framing decides whether
+            // the message was complete.
+            Err(ref source) if source.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(source) => return Err(classify_io(&source, started, "read")),
+        }
+    }
+
+    let (head, _) = head.ok_or_else(|| malformed("no header terminator in response"))?;
+    if !aborted {
+        let complete = match head.framing {
+            BodyFraming::Length(total) => length_delivered == total,
+            BodyFraming::Chunked => chunk_state == ChunkState::Done,
+        };
+        if !complete {
+            return Err(malformed("response body ended before framing completed"));
+        }
+    }
+    Ok(StreamedResponse {
+        status: head.status,
+        headers_ms: headers_ms.unwrap_or_else(|| elapsed_ms(started)),
+        first_body_ms,
+        total_ms: elapsed_ms(started),
+        body: String::from_utf8(decoded).map_err(|_| malformed("response body is not UTF-8"))?,
+    })
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// A read/write that expired is a timeout; a wrapped `rustls` error is a TLS
+/// failure; anything else is transport.
+fn classify_io(source: &std::io::Error, started: Instant, phase: &'static str) -> HttpError {
+    match source.kind() {
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => HttpError::Timeout {
+            elapsed_ms: elapsed_ms(started),
+            phase,
+        },
+        _ => match crate::tls::classify_io(source) {
+            Some((kind, detail)) => HttpError::Tls { kind, detail },
+            None => HttpError::Transport(format!("{phase}: {source}")),
+        },
+    }
+}
+
+fn malformed(detail: &str) -> HttpError {
+    HttpError::Malformed(detail.to_owned())
+}
+
+fn parse_response(raw: &[u8]) -> Result<HttpResponse, HttpError> {
+    if raw.len() > MAX_RESPONSE_BYTES {
+        return Err(malformed("response exceeds wire byte limit"));
+    }
+    let split = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or_else(|| malformed("no header terminator in response"))?;
+    if split + 4 > MAX_HEADER_BYTES {
+        return Err(malformed("response headers exceed byte limit"));
+    }
+    let head = parse_head(&raw[..split])?;
+    let body_bytes = &raw[split + 4..];
+    let body = match head.framing {
+        BodyFraming::Length(length) => {
+            if body_bytes.len() != length {
+                return Err(malformed("response length does not match content length"));
+            }
+            String::from_utf8(body_bytes.to_vec())
+                .map_err(|_| malformed("response body is not UTF-8"))?
+        }
+        BodyFraming::Chunked => decode_chunked(body_bytes)?,
+    };
+    Ok(HttpResponse {
+        status: head.status,
+        body,
+    })
 }
 
 fn response_header(line: &str) -> Result<(&str, &str), HttpError> {
@@ -858,5 +1186,178 @@ mod tests {
         };
         assert!(!format!("{header:?}").contains("PRIVATE_TOKEN"));
         assert!(format!("{header:?}").contains("<redacted>"));
+    }
+
+    /// A plain-HTTP fixture that answers one POST with `response_bytes`,
+    /// optionally split into several TCP writes so the streaming reader sees
+    /// partial chunks. Returns the base URL and the server handle.
+    fn streaming_fixture(writes: Vec<Vec<u8>>) -> (Endpoint, std::thread::JoinHandle<()>) {
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture");
+        let endpoint = Endpoint::parse(
+            &format!("http://{}", listener.local_addr().expect("addr")),
+            "/v1/chat/completions",
+        )
+        .expect("endpoint");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("timeout");
+            // Consume the request head and body without inspecting it.
+            let mut saw_blank = false;
+            let mut buf = [0_u8; 1024];
+            let mut raw = Vec::new();
+            let mut length = 0_usize;
+            while !saw_blank {
+                let read = stream.read(&mut buf).expect("request read");
+                raw.extend_from_slice(&buf[..read]);
+                if let Some(pos) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&raw[..pos]);
+                    for line in head.split("\r\n") {
+                        if let Some((name, value)) = line.split_once(':')
+                            && name.eq_ignore_ascii_case("content-length")
+                        {
+                            length = value.trim().parse().expect("length");
+                        }
+                    }
+                    raw.drain(..pos + 4);
+                    saw_blank = true;
+                }
+            }
+            while raw.len() < length {
+                let read = stream.read(&mut buf).expect("request body read");
+                raw.extend_from_slice(&buf[..read]);
+            }
+            for write in writes {
+                stream.write_all(&write).expect("fixture write");
+                stream.flush().expect("fixture flush");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        (endpoint, handle)
+    }
+
+    type CollectResult = (
+        Result<StreamedResponse, HttpError>,
+        Vec<Vec<u8>>,
+        Vec<Vec<u8>>,
+    );
+
+    fn collect_stream(endpoint: &Endpoint) -> CollectResult {
+        let mut chunks = Vec::new();
+        let mut delivery_sizes = Vec::new();
+        let result = post_json_stream(
+            endpoint,
+            "{}",
+            &[],
+            Duration::from_secs(10),
+            &TrustAnchors::default(),
+            &mut |bytes| {
+                delivery_sizes.push(bytes.to_vec());
+                chunks.push(bytes.to_vec());
+                true
+            },
+        );
+        (result, chunks, delivery_sizes)
+    }
+
+    #[test]
+    fn streaming_decodes_chunked_body_as_it_arrives() {
+        let body =
+            "data: {\"delta\":\"he\"}\r\n\r\ndata: {\"delta\":\"llo\"}\r\n\r\ndata: [DONE]\r\n\r\n";
+        let mut writes = vec![
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
+                .to_vec(),
+        ];
+        for part in body.as_bytes().chunks(11) {
+            writes.push(format!("{:x}\r\n", part.len()).into_bytes());
+            writes.push(part.to_vec());
+            writes.push(b"\r\n".to_vec());
+        }
+        writes.push(b"0\r\n\r\n".to_vec());
+        let (endpoint, server) = streaming_fixture(writes);
+
+        let (result, deliveries, _) = collect_stream(&endpoint);
+        let response = result.expect("stream");
+        assert_eq!(response.status, 200);
+        assert!(response.is_success());
+        assert_eq!(response.body, body);
+        assert!(response.first_body_ms.is_some());
+        assert!(response.first_body_ms.unwrap() >= response.headers_ms);
+        assert!(response.total_ms >= response.headers_ms);
+        // The body arrived over several deliveries, not one buffered blob.
+        assert!(deliveries.len() > 1);
+        assert_eq!(deliveries.concat(), body.as_bytes());
+        server.join().expect("fixture finished");
+    }
+
+    #[test]
+    fn streaming_handles_content_length_bodies() {
+        let writes = vec![
+            b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\n{\"a\"".to_vec(),
+            b":1}".to_vec(),
+        ];
+        let (endpoint, server) = streaming_fixture(writes);
+        let (result, deliveries, _) = collect_stream(&endpoint);
+        let response = result.expect("stream");
+        assert_eq!(response.body, "{\"a\":1}");
+        assert_eq!(deliveries.concat(), b"{\"a\":1}");
+        server.join().expect("fixture finished");
+    }
+
+    #[test]
+    fn streaming_rejects_an_incomplete_body() {
+        let (endpoint, server) = streaming_fixture(vec![
+            b"HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n{}".to_vec(),
+        ]);
+        let (result, _, _) = collect_stream(&endpoint);
+        assert!(matches!(result, Err(HttpError::Malformed(_))));
+        server.join().expect("fixture finished");
+    }
+
+    #[test]
+    fn streaming_rejects_framing_the_buffered_path_rejects() {
+        for head in [
+            &b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n"[..],
+            &b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\n\r\n"[..],
+            &b"HTTP/1.1 200 OK\r\n\r\n"[..],
+        ] {
+            let (endpoint, server) = streaming_fixture(vec![head.to_vec()]);
+            let (result, _, _) = collect_stream(&endpoint);
+            assert!(
+                matches!(result, Err(HttpError::Malformed(_))),
+                "head {head:?} must be refused"
+            );
+            server.join().expect("fixture finished");
+        }
+    }
+
+    #[test]
+    fn consumer_abort_returns_the_partial_body() {
+        let writes = vec![
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec(),
+            b"5\r\ndata:\r\n".to_vec(),
+            b"5\r\n rest\r\n".to_vec(),
+        ];
+        let (endpoint, server) = streaming_fixture(writes);
+        let mut chunks = 0;
+        let response = post_json_stream(
+            &endpoint,
+            "{}",
+            &[],
+            Duration::from_secs(10),
+            &TrustAnchors::default(),
+            &mut |_| {
+                chunks += 1;
+                false
+            },
+        )
+        .expect("aborted stream still reports");
+        assert_eq!(chunks, 1);
+        assert_eq!(response.body, "data:");
+        server.join().expect("fixture finished");
     }
 }

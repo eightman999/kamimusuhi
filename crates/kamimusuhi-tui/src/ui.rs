@@ -145,7 +145,20 @@ fn meta_text(meta: &Value) -> String {
     if let Some(ms) = meta["latency_ms"].as_u64() {
         parts.push(format!("{:.1}s", ms as f64 / 1000.0));
     }
-    if let Some(tier) = meta["tier"].as_str() {
+    // Route + cost basis of this turn (tier/model, billing class, USD).
+    // Older history entries only carry `tier`; the flat field stays as a
+    // fallback so those rows still show where they went.
+    if let Some(route) = meta.get("route").filter(|r| !r.is_null()) {
+        if let Some(target) = kamimusuhi_resident::status::route_target_label(route) {
+            parts.push(target);
+        }
+        if let Some(cost) = kamimusuhi_resident::status::route_cost_label(route) {
+            parts.push(cost);
+        }
+        if let Some(cached) = route["cached_tokens"].as_u64().filter(|c| *c > 0) {
+            parts.push(format!("cache {cached}tok"));
+        }
+    } else if let Some(tier) = meta["tier"].as_str() {
         parts.push(format!("via {tier}"));
     }
     let lookups = meta["reference_lookups"].as_u64().unwrap_or(0);

@@ -212,14 +212,26 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
         let tier_started = Instant::now();
         match call_tier(tier, &model, &request.body) {
             Ok(mut body) => {
+                let usage = usage_of(&body);
+                let (cost_usd, cost_kind) = cost_of(tier, &usage);
                 if let Value::Object(map) = &mut body {
                     map.insert(
                         "kamimusuhi_route".into(),
-                        json!({"tier": tier.name, "model": model, "attempts": attempts.clone()}),
+                        json!({
+                            "tier": tier.name,
+                            "model": model,
+                            "billing": tier.billing.map(|b| b.as_str()),
+                            "cost_usd": cost_usd,
+                            "cost_kind": cost_kind,
+                            "prompt_tokens": usage.prompt_tokens,
+                            "completion_tokens": usage.completion_tokens,
+                            "cached_tokens": usage.cached_tokens,
+                            "attempts": attempts.clone(),
+                        }),
                     );
                 }
                 attempts.push(format!("{}:ok", tier.name));
-                result = Some((tier.name.clone(), body));
+                result = Some((tier, body, model, usage, cost_usd, cost_kind));
                 break;
             }
             Err(e) => {
@@ -232,10 +244,21 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let event = RouteEvent {
         at: unix_now(),
-        tier: result.as_ref().map(|(t, _)| t.clone()),
+        tier: result.as_ref().map(|(t, ..)| t.name.clone()),
+        model: result.as_ref().map(|(_, _, m, ..)| m.clone()),
+        billing: result
+            .as_ref()
+            .and_then(|(t, ..)| t.billing.map(|b| b.as_str().to_owned())),
         attempts: attempts.clone(),
         latency_ms,
         ok: result.is_some(),
+        prompt_tokens: result.as_ref().and_then(|(.., u, _, _)| u.prompt_tokens),
+        completion_tokens: result
+            .as_ref()
+            .and_then(|(.., u, _, _)| u.completion_tokens),
+        cached_tokens: result.as_ref().and_then(|(.., u, _, _)| u.cached_tokens),
+        cost_usd: result.as_ref().and_then(|(.., c, _)| *c),
+        cost_kind: result.as_ref().and_then(|(.., k)| k.map(str::to_owned)),
     };
     let _ = shared.spool.append(
         "logs/routing",
@@ -244,12 +267,12 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
     *shared.last_route.write().unwrap_or_else(|p| p.into_inner()) = Some(event);
 
     match result {
-        Some((tier, body)) => {
+        Some((tier, body, _model, ..)) => {
             if shared.config.routing.log_conversations && !request.local_only {
                 let _ = shared.spool.append(
                     "conversations",
                     json!({
-                        "tier": tier,
+                        "tier": tier.name,
                         "latency_ms": latency_ms,
                         "request": {"model": request.body.get("model"), "messages": request.body.get("messages")},
                         "response": body.pointer("/choices/0/message"),
@@ -262,7 +285,7 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
             Routed {
                 status: 200,
                 body,
-                tier: Some(tier),
+                tier: Some(tier.name.clone()),
                 attempts,
             }
         }
@@ -276,6 +299,53 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
             attempts,
         },
     }
+}
+
+/// Token accounting from a completion's `usage` block — the same shapes
+/// the provider bench records, plus upstream-reported billed cost
+/// (`usage.cost_usd`, OrcaRouter's `X-OrcaRouter-Include-Cost` field, or
+/// OpenRouter's `usage.cost`).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TurnUsage {
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+    /// Prompt tokens served from the provider's prefix cache.
+    pub cached_tokens: Option<u64>,
+    /// Billed cost the upstream reported on the response, when present.
+    pub actual_cost_usd: Option<f64>,
+}
+
+fn usage_of(body: &Value) -> TurnUsage {
+    let usage = &body["usage"];
+    let num = |key: &str| usage.get(key).and_then(Value::as_u64);
+    let cost = usage
+        .get("cost_usd")
+        .or_else(|| usage.get("cost"))
+        .and_then(Value::as_f64);
+    TurnUsage {
+        prompt_tokens: num("prompt_tokens"),
+        completion_tokens: num("completion_tokens"),
+        cached_tokens: usage
+            .pointer("/prompt_tokens_details/cached_tokens")
+            .and_then(Value::as_u64)
+            .or_else(|| num("prompt_cache_hit_tokens")),
+        actual_cost_usd: cost,
+    }
+}
+
+/// Cost basis for one served request. Actual billed cost wins; a tier with
+/// configured prices yields an estimate; otherwise `None` — an undeclared
+/// plan's cost is unknown, not free.
+fn cost_of(tier: &TierConfig, usage: &TurnUsage) -> (Option<f64>, Option<&'static str>) {
+    if let Some(cost) = usage.actual_cost_usd {
+        return (Some(cost), Some("actual"));
+    }
+    if let (Some(input), Some(output)) = (tier.input_usd_per_mtok, tier.output_usd_per_mtok) {
+        let tokens = usage.prompt_tokens.unwrap_or(0) as f64 * input
+            + usage.completion_tokens.unwrap_or(0) as f64 * output;
+        return (Some(tokens / 1e6), Some("estimate"));
+    }
+    (None, None)
 }
 
 fn error_body(message: &str, kind: &str) -> Value {
@@ -389,6 +459,92 @@ mod tests {
             .expect("reply");
         });
         (url, handle)
+    }
+
+    #[test]
+    fn usage_and_cost_are_extracted_for_the_route_event() {
+        let body = json!({
+            "usage": {
+                "prompt_tokens": 1200,
+                "completion_tokens": 40,
+                "prompt_tokens_details": {"cached_tokens": 512}
+            }
+        });
+        let usage = usage_of(&body);
+        assert_eq!(usage.prompt_tokens, Some(1200));
+        assert_eq!(usage.completion_tokens, Some(40));
+        assert_eq!(usage.cached_tokens, Some(512));
+        assert_eq!(usage.actual_cost_usd, None);
+
+        // Upstream-reported billed cost wins over the configured estimate.
+        let billed = json!({"usage": {"prompt_tokens": 1, "cost_usd": 0.007}});
+        let usage = usage_of(&billed);
+        let mut tier = TierConfig {
+            name: "t".into(),
+            base_url: "http://x/v1".into(),
+            model: "m".into(),
+            auth_env: None,
+            timeout_secs: 1,
+            condition: TierCondition::Always,
+            node_local: false,
+            peer_local_only: false,
+            probe_interval_secs: 1,
+            billing: Some(crate::config::TierBilling::Metered),
+            input_usd_per_mtok: Some(1.0),
+            output_usd_per_mtok: Some(2.0),
+        };
+        let (cost, kind) = cost_of(&tier, &usage);
+        assert_eq!(cost, Some(0.007));
+        assert_eq!(kind, Some("actual"));
+
+        // No actual cost → estimate from configured prices.
+        let usage = usage_of(&json!({"usage": {"prompt_tokens": 1_000_000,
+                                              "completion_tokens": 500_000}}));
+        let (cost, kind) = cost_of(&tier, &usage);
+        assert_eq!(cost, Some(2.0));
+        assert_eq!(kind, Some("estimate"));
+
+        // An undeclared plan reports no cost — never zero.
+        tier.input_usd_per_mtok = None;
+        let (cost, kind) = cost_of(&tier, &usage);
+        assert_eq!(cost, None);
+        assert_eq!(kind, None);
+    }
+
+    #[test]
+    fn route_metadata_reaches_the_response_body() {
+        let (url, server) = completion_server(json!({
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 5, "cost_usd": 0.001}
+        }));
+        let (mut s, _dir) = shared();
+        let mut tier = s.config.tiers[2].clone();
+        tier.base_url = url;
+        tier.billing = Some(crate::config::TierBilling::Metered);
+        s.config.tiers = vec![tier];
+        let req = RouteRequest {
+            body: json!({"model": "kamimusuhi",
+                         "messages": [{"role": "user", "content": "hi"}]}),
+            local_only: false,
+        };
+        let routed = route(&s, &req);
+        assert_eq!(routed.status, 200);
+        let meta = &routed.body["kamimusuhi_route"];
+        assert_eq!(meta["tier"], "hai");
+        assert_eq!(meta["billing"], "metered");
+        assert_eq!(meta["cost_usd"], 0.001);
+        assert_eq!(meta["cost_kind"], "actual");
+        assert_eq!(meta["prompt_tokens"], 100);
+        let event = s
+            .last_route
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+            .expect("route event");
+        assert_eq!(event.model.as_deref(), Some("q"));
+        assert_eq!(event.billing.as_deref(), Some("metered"));
+        assert_eq!(event.cost_usd, Some(0.001));
+        server.join().expect("fixture finished");
     }
 
     #[test]

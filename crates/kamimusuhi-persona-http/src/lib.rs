@@ -513,7 +513,13 @@ impl OpenAiCompatiblePersona {
         kwargs["enable_thinking"] = serde_json::Value::Bool(enable_thinking);
     }
 
-    fn request_body(&self, input: &PersonaTurnInput) -> String {
+    /// The serialized `/chat/completions` body for one turn, tools excluded.
+    ///
+    /// Public so latency probes and provider comparisons can measure real
+    /// prompt assembly — this is the exact text the production path sends —
+    /// without standing up a full runtime. Callers that add fields such as
+    /// `stream` or `max_tokens` do so on their own copy; nothing here sends.
+    pub fn request_body(&self, input: &PersonaTurnInput) -> String {
         self.request_value(input, ToolOffering::None).to_string()
     }
 

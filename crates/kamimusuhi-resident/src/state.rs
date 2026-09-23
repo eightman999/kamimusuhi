@@ -74,13 +74,30 @@ pub struct SyncState {
     pub total_delivered_files: u64,
 }
 
+/// What one routed request did: which tier answered, at what cost basis.
+/// Token/cost fields are `None` when the upstream did not report them —
+/// an unknown cost is never rendered as zero.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct RouteEvent {
     pub at: u64,
     pub tier: Option<String>,
+    /// Upstream model that served the request.
+    pub model: Option<String>,
+    /// The tier's declared billing class (`local`/`subscription`/
+    /// `free_tier`/`metered`); `None` = undeclared.
+    pub billing: Option<String>,
     pub attempts: Vec<String>,
     pub latency_ms: u64,
     pub ok: bool,
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+    /// Prompt tokens served from an upstream prefix cache, when reported.
+    pub cached_tokens: Option<u64>,
+    /// USD this request cost — actual when the provider billed and said
+    /// so, estimate when computed from configured prices.
+    pub cost_usd: Option<f64>,
+    /// `actual` | `estimate`; absent when `cost_usd` is.
+    pub cost_kind: Option<String>,
 }
 
 pub struct Shared {

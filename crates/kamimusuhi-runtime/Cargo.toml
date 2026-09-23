@@ -21,6 +21,10 @@ path = "src/main.rs"
 name = "k-core"
 path = "src/bin/k-core.rs"
 
+[[bin]]
+name = "provider-bench"
+path = "src/bin/provider-bench.rs"
+
 [dependencies]
 kamimusuhi-core = { workspace = true }
 kamimusuhi-persona-http = { workspace = true }
