@@ -354,7 +354,7 @@ impl RouteGate {
                 spec,
                 reason: RouteReason::Primary,
                 est_ttft_ms: health
-                    .get(spec.id)
+                    .get(spec.route_id())
                     .and_then(|s| s.ewma_ttft_ms)
                     .map(|v| v as u64),
             });
@@ -428,7 +428,7 @@ impl RouteGate {
         for (index, candidate) in candidates.iter_mut().enumerate() {
             candidate.reason = if index == 0 {
                 RouteReason::Primary
-            } else if class_rank(candidate.spec.billing) > primary_rank {
+            } else if class_rank(candidate.spec.billing()) > primary_rank {
                 RouteReason::BillingFallback
             } else {
                 fallback_reason.clone()
