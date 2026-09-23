@@ -1,6 +1,7 @@
 //! `kami` — terminal front-end for the always-on Kamimusuhi individual (澪).
 //! Talks to the resident HTTP API; the terminal UI never blocks on the network.
 
+mod agents;
 mod app;
 mod ui;
 
@@ -54,7 +55,7 @@ impl Options {
                 }
                 "--help" | "-h" => {
                     println!(
-                        "kami [--url <resident-url>] [--subject <id>] [--view chat|tasks|approvals|status|tools]\n\nTerminal dialogue with the always-on Kamimusuhi individual (澪).\nResident URL: --url, $KAMIMUSUHI_URL or ~/.config/kamimusuhi/nodes.\nToken: $KAMIMUSUHI_NODE_TOKEN or ~/.config/kamimusuhi/node_token.\n\nKeys: Tab/Shift+Tab or F1-F5 switch views, Enter sends, Alt+Enter or\nCtrl+N inserts a newline, Ctrl+C quits. Per-view keys are in the footer."
+                        "kami [--url <resident-url>] [--subject <id>] [--view chat|tasks|approvals|status|tools|agents]\n\nTerminal dialogue with the always-on Kamimusuhi individual (澪).\nResident URL: --url, $KAMIMUSUHI_URL or ~/.config/kamimusuhi/nodes.\nToken: $KAMIMUSUHI_NODE_TOKEN or ~/.config/kamimusuhi/node_token.\n\nKeys: Tab/Shift+Tab or F1-F6 switch views, Enter sends, Alt+Enter or\nCtrl+N inserts a newline, Ctrl+C quits. Per-view keys are in the footer."
                     );
                     std::process::exit(0);
                 }
@@ -64,10 +65,12 @@ impl Options {
         if let Some(v) = &view
             && !matches!(
                 v.as_str(),
-                "chat" | "tasks" | "approvals" | "status" | "tools"
+                "chat" | "tasks" | "approvals" | "status" | "tools" | "agents"
             )
         {
-            return Err("--view must be chat, tasks, approvals, status or tools".to_owned());
+            return Err(
+                "--view must be chat, tasks, approvals, status, tools or agents".to_owned(),
+            );
         }
         Ok(Self { url, subject, view })
     }

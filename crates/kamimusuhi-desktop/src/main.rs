@@ -1,5 +1,6 @@
 mod app;
 mod remote_app;
+mod task_panel;
 mod worker;
 
 use kamimusuhi_resident::remote;

@@ -1,0 +1,57 @@
+{
+  "_comment": "Task plane executors. Copy to /srv/kamimusuhi/config/agent-executors.json (task_plane.executors_file). The resident re-reads this file when it changes: add, remove or disable (enabled:false) a harness without restarting. adapter = devin_cli | opencode | command_code | generic (generic needs command/run/permission_args; see docs/implementation/task-plane.md). Billing is per model: rules first, then a price the harness lists (>0 = metered), else default_billing (unknown unless declared). Only local/free_tier/subscription/included_credit are picked automatically; metered needs allow_metered and an explicit request. protocol: cli (process per task) | acp (long-lived Agent Client Protocol server; needed to continue Devin sessions). serve: true keeps `opencode serve` running and attaches runs to it. quota: max_tasks_per_day/month, max_usd_per_day/month, max_tokens_per_day (metered models need a usd limit).",
+  "executors": [
+    {
+      "name": "opencode",
+      "adapter": "opencode",
+      "description": "OpenCode（repo 探索・調査・レビュー向け）",
+      "default_model": "opencode/big-pickle",
+      "billing": [
+        {
+          "models": "opencode/big-pickle",
+          "billing": "free_tier"
+        },
+        {
+          "models": "opencode/*-free",
+          "billing": "free_tier"
+        },
+        {
+          "models": "lmstudio/*",
+          "billing": "local"
+        },
+        {
+          "models": "llm-machine/*",
+          "billing": "local"
+        },
+        {
+          "models": "zai-coding-plan/*",
+          "billing": "subscription"
+        }
+      ],
+      "timeout_secs": 1800,
+      "serve": true
+    },
+    {
+      "name": "commandcode",
+      "adapter": "command_code",
+      "description": "Command Code（コード編集・デバッグ向け、プラン内クレジット）",
+      "default_billing": "included_credit",
+      "default_model": "deepseek/deepseek-v4-flash",
+      "timeout_secs": 1800,
+      "quota": {
+        "max_tasks_per_day": 20
+      }
+    },
+    {
+      "name": "devin",
+      "adapter": "devin_cli",
+      "description": "Devin CLI（大きめのコーディング・レビュー、契約枠内）",
+      "default_billing": "subscription",
+      "timeout_secs": 3600,
+      "protocol": "acp",
+      "quota": {
+        "max_tasks_per_day": 30
+      }
+    }
+  ]
+}

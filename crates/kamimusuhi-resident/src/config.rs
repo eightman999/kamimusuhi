@@ -59,6 +59,95 @@ pub struct Config {
     pub jobs: Vec<crate::jobs::JobConfig>,
     #[serde(default)]
     pub intervals: Intervals,
+    /// External agent harnesses this node runs tasks on (task plane).
+    #[serde(default)]
+    pub task_plane: Option<TaskPlaneConfig>,
+}
+
+/// Task plane: agent harnesses (Devin, OpenCode, Command Code, …) the
+/// individual can delegate work to. Harnesses are listed in `executors`
+/// and/or in `executors_file`; the file is re-read whenever it changes, so
+/// a harness can be added or removed without restarting the resident
+/// (which would interrupt running tasks).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskPlaneConfig {
+    #[serde(default)]
+    pub executors: Vec<kamimusuhi_runtime::agent_exec::ExecutorConfig>,
+    /// `{"executors": [...]}`, merged after `executors` (same names are an
+    /// error).
+    #[serde(default)]
+    pub executors_file: Option<PathBuf>,
+    /// Directories tasks may run in. Delegation names one of these; no
+    /// other path is ever handed to a harness.
+    pub workspaces: Vec<WorkspaceConfig>,
+    /// Tasks running at once on this node, over all executors.
+    #[serde(default = "default_task_concurrency")]
+    pub max_concurrent: usize,
+    /// How often catalog freshness, `executors_file` and helper servers
+    /// are checked.
+    #[serde(default = "default_catalog_check")]
+    pub check_interval_secs: u64,
+    /// Limits over every executor together (each executor may also set
+    /// its own `quota`).
+    #[serde(default)]
+    pub quota: Option<kamimusuhi_runtime::agent_exec::Quota>,
+    /// How `executor: auto` chooses: `static` rules, `shadow` (static,
+    /// with the history-based choice recorded for comparison) or `history`
+    /// (measured outcomes once `history_min_samples` exist).
+    #[serde(default)]
+    pub routing_mode: RoutingMode,
+    #[serde(default = "default_min_samples")]
+    pub history_min_samples: usize,
+    /// Evaluation battery (`task-battery.example.json` format); the
+    /// built-in Q1–Q7 battery otherwise.
+    #[serde(default)]
+    pub battery_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingMode {
+    Static,
+    #[default]
+    Shadow,
+    History,
+}
+
+impl RoutingMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Static => "static",
+            Self::Shadow => "shadow",
+            Self::History => "history",
+        }
+    }
+}
+
+const fn default_min_samples() -> usize {
+    3
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceConfig {
+    pub name: String,
+    pub path: PathBuf,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Permit write tasks. They still never touch this directory: each
+    /// runs in its own git worktree and branch, merged only by an
+    /// explicit operator `apply`.
+    #[serde(default)]
+    pub allow_write: bool,
+}
+
+const fn default_task_concurrency() -> usize {
+    2
+}
+
+const fn default_catalog_check() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,6 +225,17 @@ pub struct PeerConfig {
     pub role: NodeRole,
     /// Base URL of the peer resident, e.g. `http://llm-master.example:7860`.
     pub url: String,
+    /// Other addresses of the same peer (e.g. LAN and tailnet). The health
+    /// probe tries them in order and requests go to whichever answered.
+    #[serde(default)]
+    pub alt_urls: Vec<String>,
+}
+
+impl PeerConfig {
+    /// `url` first, then `alt_urls`.
+    pub fn urls(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.url.as_str()).chain(self.alt_urls.iter().map(String::as_str))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -538,8 +638,10 @@ impl Config {
             if !id_ok(&peer.id) {
                 return Err(format!("peer id {:?} is invalid", peer.id));
             }
-            kamimusuhi_resource_http::Endpoint::parse(&peer.url, "/health")
-                .map_err(|e| format!("peer {}: {e}", peer.id))?;
+            for url in peer.urls() {
+                kamimusuhi_resource_http::Endpoint::parse(url, "/health")
+                    .map_err(|e| format!("peer {}: {e}", peer.id))?;
+            }
         }
         let mut mcp_names = std::collections::HashSet::new();
         for server in &self.mcp_servers {
@@ -553,6 +655,39 @@ impl Config {
         for lib in &self.libraries {
             if !id_ok(&lib.name) || !lib.path.is_absolute() {
                 return Err(format!("library {:?}: name or path invalid", lib.name));
+            }
+        }
+        if let Some(plane) = &self.task_plane {
+            kamimusuhi_runtime::agent_exec::resolve_all(&plane.executors)
+                .map_err(|e| format!("task_plane: {e}"))?;
+            if plane
+                .executors_file
+                .iter()
+                .chain(&plane.battery_file)
+                .any(|p| !p.is_absolute())
+            {
+                return Err("task_plane.executors_file/battery_file must be absolute".to_owned());
+            }
+            if let Some(q) = &plane.quota {
+                q.validate().map_err(|e| format!("task_plane.quota: {e}"))?;
+            }
+            if plane.workspaces.is_empty()
+                || plane.max_concurrent == 0
+                || plane.check_interval_secs == 0
+            {
+                return Err(
+                    "task_plane needs workspaces and positive max_concurrent/check_interval_secs"
+                        .to_owned(),
+                );
+            }
+            let mut names = std::collections::HashSet::new();
+            for ws in &plane.workspaces {
+                if !id_ok(&ws.name) || !names.insert(ws.name.as_str()) || !ws.path.is_absolute() {
+                    return Err(format!(
+                        "task_plane workspace {:?}: name invalid/duplicated or path not absolute",
+                        ws.name
+                    ));
+                }
             }
         }
         if let Some(nas) = &self.nas
@@ -578,6 +713,32 @@ mod tests {
             let config = Config::load(&root.join(name)).expect(name);
             assert!(!config.tiers.is_empty(), "{name} has tiers");
         }
+    }
+
+    #[test]
+    fn mac_example_parses_after_substitution() {
+        let text = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../deploy/resident/mac.resident.example.json"),
+        )
+        .expect("read")
+        .replace("@ROOT@", "/tmp/kamimusuhi-node")
+        .replace("@HOME@", "/Users/example");
+        let config: Config = serde_json::from_str(&text).expect("parses");
+        config.validate().expect("valid");
+        let plane = config.task_plane.expect("task plane");
+        assert!(plane.workspaces[0].allow_write);
+    }
+
+    #[test]
+    fn agent_executors_example_resolves() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../deploy/resident/agent-executors.example.json");
+        let executors =
+            crate::task_orchestrator::parse_executors_file(&std::fs::read(&path).expect("read"))
+                .expect("executors");
+        let specs = kamimusuhi_runtime::agent_exec::resolve_all(&executors).expect("resolves");
+        assert_eq!(specs.len(), 3);
     }
 
     #[test]

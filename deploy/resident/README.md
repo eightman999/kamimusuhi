@@ -173,7 +173,7 @@ npm パッケージは `/srv/kamimusuhi/mcp` にバージョン固定で入れ�
 | `playwright` | llm_master | headless Chromium・隔離プロファイル。`browser_run_code_unsafe` / `browser_evaluate` / `browser_file_upload` は除外 |
 | `github` (github-mcp-server v1.12.2) | 両方 | `--read-only --lockdown-mode`、toolsets=context,repos,issues,pull_requests,actions。token は secrets.env の `GITHUB_PERSONAL_ACCESS_TOKEN` |
 
-個体へ見せる tool は `runtime.json` の `tools.allowed`（`*` で前方一致）で絞る（例: `runtime-reference.example.json`, 32 個）。
+個体へ見せる tool は `runtime.json` の `tools.allowed`（`*` で前方一致）で絞る（例: `runtime-reference.example.json`, 47 個）。
 `tools.core`（同じ構文, 省略時は `mcp__` 以外の組み込み tool）だけが毎ターン最初から提示され、残りの allowed は `tool_catalog`（一覧）→ `tool_enable`（有効化）で必要時に取り出す。定義は送信前に圧縮する（description 200 字・引数 description 120 字・`title`/`examples`/`additionalProperties` 除去、名前順で固定）。
 `persona.provider.reasoning` は `off`（既定）/`on`/`auto`（修正・確認指示のあるターンだけ思考）。`persona.provider.extra_body` は provider 固有の要求フィールド（`messages`/`tools`/`model` 等は上書き不可）。プロンプトは静的部分（system, tool 定義, seed, 自己状態, 記憶）→ 動的部分（観測, TURN_CONTEXT, 入力）の順で並び、llama.cpp の prompt cache が効く。
 
@@ -213,10 +213,34 @@ resident（Pi）は並列に進む作業をタスクとして記録する（`cur
 | 承認待ち（`approval`, 状態=あなたの判断待ち） | 要求した tool 呼び出し |
 | 承認後の反映 commit/push（`commit`） | 承認 |
 | 定期ジョブ（`job`, ジョブごとに 1 枚を更新） | — |
+| 外部エージェントへの委譲（`delegated`, Task Plane） | 委譲した対話ターン |
 
 - 操作者: `GET /v1/tasks`, `POST /v1/tasks {"action":"create"|"update",...}`（GUI のタスク画面）。
 - 澪（個体）: tool `task_list` / `task_create` / `task_update` で自分の計画を載せる。自動記録タスクは澪からは変更不可。
 - 再起動時に進行中だった自動記録タスクは「失敗（中断）」になる。完了は 3 日表示、400 件を保持。
+
+## Task Plane（外部エージェント）
+
+llm_master は Devin / OpenCode / Command Code などの agent harness に作業を委譲できる（`task_plane`）。澪は `task_delegate` で task id を受け取ってすぐ会話に戻り、結果は `task_status` で Evidence として読む。
+harness は `task_plane.executors_file`（例: `agent-executors.example.json`）で増減でき、ファイル変更は再起動なしで反映される。詳細は [docs/implementation/task-plane.md](../../docs/implementation/task-plane.md)。
+
+### Mac ノード（Task Plane 用）
+
+開発 Mac にも cognition ノード `mac` を LaunchAgent で常駐させられる（Devin / OpenCode / Command Code がそこに入っているため）。個体の正本は持たず、NAS も使わない（spool はローカルに残る）。
+
+```bash
+deploy/resident/install-mac.sh             # release build → ~/Library/Application Support/Kamimusuhi/node に配置、LaunchAgent 起動（再実行で更新）
+deploy/resident/install-mac.sh --uninstall # LaunchAgent を外す（データは残す）
+```
+
+- 構成は `deploy/resident/local/mac.resident.json`（git 管理外、実際のホスト/IP）があればそれを、なければ `mac.resident.example.json` から初回だけ生成（`config/resident.json`、以後は保持）。`0.0.0.0:7860` で待ち受け、`/health` 以外は node token 必須。token は起動時に `~/.config/kamimusuhi/node_token` から読む。
+- workspace `kamimusuhi` は `~/dev/sandbox/kamimusuhi`（`allow_write: true`）。書き込みタスクは `node/worktrees/` の worktree とブランチで行い、本体へは `kamimusuhi agents apply` でだけ入る。
+- peer は `alt_urls` で複数の到達先（LAN と tailnet など）を持てる。health probe は前回応答した先から順に試し、転送・library・tool 呼び出しは最後に応答した先を使う。Mac ノードは Pi を LAN と tailnet の両方で持つ（`mac.resident.example.json` の `PI_HOST` / `PI_TAILNET_HOST`）。
+- Pi から澪の task tool をこのノードへ転送するには、この版の resident を Pi に入れたうえで、Pi の `resident.json` の `peers` に次を足して再起動する（転送先は Task Plane を持つ最初の peer）。launchd 配下の resident は macOS の「ローカルネットワーク」許可がないと LAN 宛てに出られないため、tailnet を `alt_urls` に入れておく。
+
+  ```json
+  {"id": "mac", "role": "cognition", "url": "http://MAC_LAN_HOST:7860", "alt_urls": ["http://MAC_TAILNET_HOST:7860"]}
+  ```
 
 ## アバター名
 

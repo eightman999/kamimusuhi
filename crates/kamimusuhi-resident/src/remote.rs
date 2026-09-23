@@ -33,19 +33,33 @@ pub enum RemoteCommand {
     },
     /// `POST /v1/tasks` body (create / update).
     Task(Value),
+    /// `POST /v1/agents` body (task plane: cancel / feedback / continue /
+    /// refresh). The reply arrives as [`RemoteEvent::AgentsReply`].
+    Agents(Value),
     Refresh,
     Shutdown,
 }
 
 #[derive(Debug)]
 pub enum RemoteEvent {
-    Connected { url: String, history: Vec<Value> },
+    Connected {
+        url: String,
+        history: Vec<Value>,
+    },
     Reply(Value),
     Status(Value),
     Approvals(Vec<Value>),
     Tools(Value),
     Tasks(Vec<Value>),
-    Decision { id: String, reply: Value },
+    /// Task-plane panel document (`{"action":"panel"}`); `Value::Null` when
+    /// the node has no task plane (the endpoint answered 404).
+    Agents(Value),
+    /// Reply to a [`RemoteCommand::Agents`] action.
+    AgentsReply(Value),
+    Decision {
+        id: String,
+        reply: Value,
+    },
     Error(String),
 }
 
@@ -72,6 +86,18 @@ fn refresh(url: &str, token: Option<&str>, events: &Sender<RemoteEvent>) -> bool
     }
     if let Ok(tasks) = client::tasks(url, token)
         && events.send(RemoteEvent::Tasks(tasks)).is_err()
+    {
+        return false;
+    }
+    // Task plane: a 404 means this node has none; other failures are
+    // transient and keep the last panel (status errors already surface).
+    let panel = match client::agents(url, token, &serde_json::json!({"action": "panel"})) {
+        Ok(panel) => Some(panel),
+        Err(e) if e.starts_with("HTTP 404") => Some(Value::Null),
+        Err(_) => None,
+    };
+    if let Some(panel) = panel
+        && events.send(RemoteEvent::Agents(panel)).is_err()
     {
         return false;
     }
@@ -183,6 +209,19 @@ fn run(config: RemoteConfig, commands: Receiver<RemoteCommand>, events: Sender<R
                         let _ = events
                             .send(RemoteEvent::Error(format!("タスク操作に失敗しました: {e}")));
                     }
+                    refresh(&url, token.as_deref(), &events);
+                });
+            }
+            RemoteCommand::Agents(body) => {
+                let (url, token, events) = (url.clone(), token.clone(), events.clone());
+                thread::spawn(move || {
+                    let event = match client::agents(&url, token.as_deref(), &body) {
+                        Ok(reply) => RemoteEvent::AgentsReply(reply),
+                        Err(e) => {
+                            RemoteEvent::Error(format!("外部エージェント操作に失敗しました: {e}"))
+                        }
+                    };
+                    let _ = events.send(event);
                     refresh(&url, token.as_deref(), &events);
                 });
             }

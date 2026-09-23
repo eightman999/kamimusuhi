@@ -245,6 +245,25 @@ pub fn library(url: &str, token: Option<&str>, body: &Value) -> Result<Value, St
     }
 }
 
+/// `POST /v1/agents` (task plane).
+pub fn agents(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/v1/agents")?;
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        Duration::from_secs(60),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
+}
+
 /// Interactive loop: one line in, one reply out. `/quit` or EOF ends it.
 pub fn repl(url: &str, token: Option<&str>, subject: &str) -> Result<(), String> {
     let stdin = std::io::stdin();

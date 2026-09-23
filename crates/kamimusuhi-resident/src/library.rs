@@ -338,7 +338,7 @@ pub fn handle(shared: &Shared, request: &Value) -> (u16, Value) {
         if !local_only {
             let ask = json!({"action": "list", "local_only": true});
             for peer in &shared.config.peers {
-                if let Ok((200, v)) = post(&peer.url, &ask, token)
+                if let Ok((200, v)) = post(&shared.peer_url(peer), &ask, token)
                     && let Some(list) = v["libraries"].as_array()
                 {
                     all.extend(list.iter().cloned());
@@ -355,7 +355,7 @@ pub fn handle(shared: &Shared, request: &Value) -> (u16, Value) {
             forwarded["local_only"] = Value::Bool(true);
             for peer in &shared.config.peers {
                 // The holder's answer (including its errors) is the answer.
-                if let Ok((status, v)) = post(&peer.url, &forwarded, token)
+                if let Ok((status, v)) = post(&shared.peer_url(peer), &forwarded, token)
                     && status != 404
                 {
                     return (status, v);

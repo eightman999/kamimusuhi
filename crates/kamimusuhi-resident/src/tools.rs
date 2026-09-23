@@ -143,6 +143,9 @@ fn local_mcp(shared: &Shared) -> Vec<Value> {
 /// tools of peers, which are called through them.
 pub fn list_with(shared: &Shared, local_only: bool) -> Value {
     let mut tools = definitions();
+    if shared.task_plane.is_some() {
+        tools.extend(crate::task_orchestrator::definitions());
+    }
     tools.extend(local_mcp(shared));
     let mut seen: std::collections::HashSet<String> = tools
         .iter()
@@ -161,14 +164,17 @@ pub fn list_with(shared: &Shared, local_only: bool) -> Value {
     if !local_only {
         for peer in &shared.config.peers {
             if let Some((200, v)) = post_peer(
-                &peer.url,
+                &shared.peer_url(peer),
                 "/v1/tools/list",
                 &json!({"local_only": true}),
                 shared.token.as_deref(),
             ) {
                 for tool in v["tools"].as_array().into_iter().flatten() {
                     let name = tool["function"]["name"].as_str().unwrap_or("").to_owned();
-                    if name.starts_with("mcp__") && seen.insert(name) {
+                    // A peer's task plane is used through that peer.
+                    let remote = name.starts_with("mcp__")
+                        || crate::task_orchestrator::TOOL_NAMES.contains(&name.as_str());
+                    if remote && seen.insert(name) {
                         tools.push(tool.clone());
                     }
                 }
@@ -283,11 +289,44 @@ fn task_tool(shared: &Shared, name: &str, request: &Value) -> (u16, Value) {
     }
 }
 
+/// Task-plane tools: served here when this node has executors, otherwise
+/// by the first peer that does. The delegated task is recorded on the
+/// board of the node that runs it.
+fn task_plane_tool(shared: &Shared, name: &str, request: &Value) -> (u16, Value) {
+    if shared.task_plane.is_some() {
+        let args = match &request["arguments"] {
+            Value::String(text) => serde_json::from_str(text).unwrap_or_else(|_| json!({})),
+            Value::Null => json!({}),
+            other => other.clone(),
+        };
+        return crate::task_orchestrator::tool(shared, name, &args);
+    }
+    if !request["local_only"].as_bool().unwrap_or(false) {
+        let mut forwarded = request.clone();
+        forwarded["local_only"] = Value::Bool(true);
+        for peer in &shared.config.peers {
+            if let Some((200, v)) = post_peer(
+                &shared.peer_url(peer),
+                "/v1/tools/call",
+                &forwarded,
+                shared.token.as_deref(),
+            ) && v["error"] != json!("no task plane")
+            {
+                return (200, v);
+            }
+        }
+    }
+    (200, json!({"ok": false, "error": "no task plane"}))
+}
+
 /// Execute a tool call and record it on the task board as a successor of
 /// the dialogue turn in progress. Forwarded (`local_only`) calls are
 /// recorded by the node that forwarded them, not twice.
 pub fn call(shared: &Shared, request: &Value) -> (u16, Value) {
     let name = request["name"].as_str().unwrap_or("");
+    if crate::task_orchestrator::TOOL_NAMES.contains(&name) {
+        return task_plane_tool(shared, name, request);
+    }
     if name.starts_with("task_") {
         return task_tool(shared, name, request);
     }
@@ -486,7 +525,7 @@ fn call_mcp(shared: &Shared, name: &str, request: &Value) -> (u16, Value) {
         forwarded["local_only"] = Value::Bool(true);
         for peer in &shared.config.peers {
             if let Some((status, v)) = post_peer(
-                &peer.url,
+                &shared.peer_url(peer),
                 "/v1/tools/call",
                 &forwarded,
                 shared.token.as_deref(),

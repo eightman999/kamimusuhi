@@ -17,6 +17,12 @@ kamimusuhi ask    [--config <path>] [--url <node-url>] [--model <m>] <text>
 kamimusuhi chat   [--url <node-url>] [--subject <id>]     talk with the individual (REPL)
 kamimusuhi library list | tree <lib> [dir] | file <lib> <path> [offset] | search <lib> <text> [dir]
 kamimusuhi approvals | approve <id> | reject <id>   [--url <node-url>]
+kamimusuhi agents [health | models [query] | refresh | status <task> | cancel <task>
+                   | delegate <auto|executor|executor:model> <workspace> <objective…>
+                   | delegate-write <executor[:model]|auto> <workspace> <objective…>
+                   | apply <task> | discard <task>
+                   | continue <task> <instruction…> | accept <task> | reject <task>
+                   | stats | eval <workspace> <executor[:model]>… | eval-report <run>]
 kamimusuhi check-config [--config <path>]
 
 Default config: /srv/kamimusuhi/config/resident.json (or $KAMIMUSUHI_CONFIG).
@@ -120,6 +126,7 @@ fn serve(args: &Args) -> Result<(), String> {
         server.supervise();
     }
     kamimusuhi_resident::jobs::spawn_all(&shared);
+    kamimusuhi_resident::task_orchestrator::spawn(&shared);
     if role == NodeRole::Continuity
         && let Some(k) = kcore_config
     {
@@ -232,6 +239,53 @@ fn run() -> Result<ExitCode, String> {
                     serde_json::to_string_pretty(&reply).unwrap_or_default()
                 );
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        "agents" => {
+            use kamimusuhi_resident::client;
+            let url = match &args.url {
+                Some(u) => u.clone(),
+                None if args.config.is_file() => local_url(&args.config)?,
+                None => client::discover(&client::candidates(None))?,
+            };
+            let t = |i: usize| args.text.get(i).cloned().unwrap_or_default();
+            let body = match args.text.first().map_or("health", String::as_str) {
+                "health" => json!({"action": "health"}),
+                "refresh" => json!({"action": "refresh"}),
+                "models" => json!({"action": "models", "query": t(1), "limit": 200}),
+                "status" => json!({"action": "status", "id": t(1)}),
+                "cancel" => json!({"action": "cancel", "id": t(1)}),
+                "continue" => json!({"action": "continue", "id": t(1),
+                                     "instruction": args.text.get(2..).unwrap_or_default().join(" ")}),
+                "accept" | "reject" => json!({"action": "feedback", "id": t(1),
+                                               "verdict": args.text[0]}),
+                "stats" => json!({"action": "stats"}),
+                "eval" => json!({"action": "eval", "workspace": t(1),
+                                 "targets": args.text.get(2..).unwrap_or_default()}),
+                "eval-report" => json!({"action": "eval_report", "run_id": t(1)}),
+                "apply" | "discard" => json!({"action": args.text[0], "id": t(1)}),
+                "delegate" | "delegate-write" => {
+                    let target = t(1);
+                    let (executor, model) = match target.split_once(':') {
+                        Some((e, m)) => (e.to_owned(), m.to_owned()),
+                        None => (target.clone(), String::new()),
+                    };
+                    let permissions = if args.text[0] == "delegate-write" {
+                        "workspace_write"
+                    } else {
+                        "read_only"
+                    };
+                    json!({"action": "delegate", "executor": executor, "model": model,
+                           "permissions": permissions,
+                           "workspace": t(2), "objective": args.text.get(3..).unwrap_or_default().join(" ")})
+                }
+                _ => return Err(USAGE.to_owned()),
+            };
+            let reply = client::agents(&url, token.as_deref(), &body)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&reply).unwrap_or_default()
+            );
             Ok(ExitCode::SUCCESS)
         }
         "ask" => {

@@ -107,10 +107,12 @@ pub struct Shared {
     pub config: Config,
     pub started: u64,
     pub boot_epoch: u64,
-    pub spool: Spool,
+    pub spool: std::sync::Arc<Spool>,
     pub token: Option<String>,
     pub tiers: RwLock<BTreeMap<String, ProbeResult>>,
     pub peers: RwLock<BTreeMap<String, ProbeResult>>,
+    /// Address each peer last answered on (see `PeerConfig::alt_urls`).
+    pub peer_urls: RwLock<BTreeMap<String, String>>,
     pub nas: RwLock<ProbeResult>,
     pub sync: RwLock<SyncState>,
     pub account: RwLock<Option<ProbeResult>>,
@@ -126,11 +128,13 @@ pub struct Shared {
     pub requests: AtomicU64,
     pub mcp: Vec<std::sync::Arc<crate::mcp::McpServer>>,
     pub approvals: crate::approvals::ApprovalQueue,
-    pub tasks: crate::tasks::TaskBoard,
+    pub tasks: std::sync::Arc<crate::tasks::TaskBoard>,
     /// Task id of the dialogue turn in progress, so tool calls made during
     /// it are recorded as its successors.
     pub current_turn: std::sync::Mutex<Option<String>>,
     pub jobs: crate::jobs::JobStatus,
+    /// External agent harnesses (`None` when this node has none).
+    pub task_plane: Option<std::sync::Arc<crate::task_orchestrator::TaskPlane>>,
 }
 
 fn read<T: Clone>(lock: &RwLock<T>) -> T {
@@ -179,16 +183,25 @@ impl Shared {
         Self {
             mcp,
             approvals,
-            tasks: crate::tasks::TaskBoard::load(config.paths.current_state().join("tasks.json")),
+            tasks: std::sync::Arc::new(crate::tasks::TaskBoard::load(
+                config.paths.current_state().join("tasks.json"),
+            )),
+            task_plane: config.task_plane.as_ref().map(|plane| {
+                std::sync::Arc::new(crate::task_orchestrator::TaskPlane::new(
+                    plane.clone(),
+                    &config.paths,
+                ))
+            }),
             current_turn: std::sync::Mutex::new(None),
             jobs: crate::jobs::JobStatus::default(),
             config,
             started: unix_now(),
             boot_epoch,
-            spool,
+            spool: std::sync::Arc::new(spool),
             token,
             tiers: RwLock::new(tiers),
             peers: RwLock::new(peers),
+            peer_urls: RwLock::new(BTreeMap::new()),
             nas: RwLock::new(ProbeResult::default()),
             sync: RwLock::new(SyncState::default()),
             account: RwLock::new(None),
@@ -200,6 +213,17 @@ impl Shared {
             cost_guard: Mutex::new(cost_guard),
             requests: AtomicU64::new(0),
         }
+    }
+
+    /// The address to use for `peer`: the one that last answered its
+    /// health probe, else its primary `url`.
+    pub fn peer_url(&self, peer: &crate::config::PeerConfig) -> String {
+        self.peer_urls
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&peer.id)
+            .cloned()
+            .unwrap_or_else(|| peer.url.clone())
     }
 
     pub fn tier_healthy(&self, name: &str) -> bool {
@@ -313,6 +337,7 @@ impl Shared {
             "snapshot": read(&self.snapshot),
             "mcp": self.mcp.iter().map(|m| m.status()).collect::<Vec<_>>(),
             "jobs": read(&*self.jobs),
+            "task_plane": self.task_plane.as_ref().map(|p| p.status()),
             "approvals_pending": self.approvals.list(true).iter().map(|a| a.view()).collect::<Vec<_>>(),
             "generated_at": iso8601(unix_now()),
         })

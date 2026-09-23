@@ -250,6 +250,16 @@ fn handle(shared: &Shared, stream: TcpStream) {
             let (status, reply) = crate::tools::call(shared, &body);
             json_response(stream, status, &reply, &[]);
         }
+        ("GET", "/v1/agents") => {
+            let (status, reply) =
+                crate::task_orchestrator::handle(shared, &json!({"action": "health"}), "operator");
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/agents") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            let (status, reply) = crate::task_orchestrator::handle(shared, &body, "operator");
+            json_response(stream, status, &reply, &[]);
+        }
         ("POST", "/v1/library") => {
             let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
             let (status, reply) = crate::library::handle(shared, &body);
