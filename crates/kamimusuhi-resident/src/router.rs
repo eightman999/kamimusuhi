@@ -9,9 +9,10 @@
 use std::time::{Duration, Instant};
 
 use kamimusuhi_resource_http::{Endpoint, Header, TrustAnchors, http};
+use kamimusuhi_runtime::route_gate::{BillingClass, RouteGate, RouteLane, RouteProvider};
 use serde_json::{Map, Value, json};
 
-use crate::config::{TierCondition, TierConfig};
+use crate::config::{TierBilling, TierCondition, TierConfig};
 use crate::probes::{ROUTE_HEADER, bearer, describe};
 use crate::state::{RouteEvent, Shared};
 use crate::util::unix_now;
@@ -32,6 +33,89 @@ pub struct Routed {
     pub body: Value,
     pub tier: Option<String>,
     pub attempts: Vec<String>,
+}
+
+impl RouteProvider for TierConfig {
+    fn route_id(&self) -> &str {
+        &self.name
+    }
+
+    fn billing(&self) -> BillingClass {
+        match self.billing.unwrap_or(TierBilling::Metered) {
+            TierBilling::Local => BillingClass::Local,
+            TierBilling::Subscription => BillingClass::Subscription,
+            TierBilling::FreeTier => BillingClass::FreeTier,
+            TierBilling::Metered => BillingClass::Metered,
+        }
+    }
+
+    fn privacy_ok_for_private_memory(&self) -> bool {
+        self.privacy_ok_for_private_memory.unwrap_or_else(|| {
+            matches!(
+                self.billing,
+                Some(TierBilling::Local) | Some(TierBilling::Subscription)
+            )
+        })
+    }
+
+    fn context_limit_tokens(&self) -> Option<u64> {
+        self.context_limit_tokens
+    }
+
+    fn approx_tpm_limit(&self) -> Option<u64> {
+        self.approx_tpm_limit
+    }
+
+    fn reasoning_suppression(&self) -> bool {
+        self.reasoning_suppression.unwrap_or(false)
+    }
+
+    fn route_available(&self) -> bool {
+        self.billing.is_some() && !self.base_url.is_empty()
+    }
+}
+
+fn request_private(shared: &Shared, request: &RouteRequest) -> bool {
+    request
+        .body
+        .get("kamimusuhi_private")
+        .and_then(Value::as_bool)
+        .unwrap_or(shared.config.routing.private_by_default)
+}
+
+fn route_lane(request: &RouteRequest) -> RouteLane {
+    if request.local_only
+        || request.body.get("model").and_then(Value::as_str) == Some("k0")
+    {
+        return RouteLane::LocalChat;
+    }
+    match request
+        .body
+        .get("kamimusuhi_route_lane")
+        .and_then(Value::as_str)
+    {
+        Some("LOCAL_CHAT") => RouteLane::LocalChat,
+        Some("DEEP_REASONING") => RouteLane::DeepReasoning,
+        Some("TOOL_TASK") => RouteLane::ToolTask,
+        Some("MEMORY_HEAVY") => RouteLane::MemoryHeavy,
+        _ => RouteLane::FastChat,
+    }
+}
+
+fn prompt_tokens_est(body: &Value) -> u64 {
+    // Same conservative approximation used by provider-bench.  The resident
+    // sees the fully assembled OpenAI-compatible body, so this includes the
+    // persona prefix/history rather than only the latest user message.
+    let bytes = u64::try_from(body.to_string().len()).unwrap_or(u64::MAX);
+    bytes.saturating_add(2) / 3
+}
+
+fn completion_tokens_for_cost(shared: &Shared, body: &Value) -> u32 {
+    ["max_completion_tokens", "max_tokens"]
+        .into_iter()
+        .find_map(|key| body.get(key).and_then(Value::as_u64))
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(shared.config.routing.max_completion_tokens_for_cost)
 }
 
 fn prompt_chars(body: &Value) -> usize {
@@ -61,8 +145,11 @@ pub fn plan<'a>(
         .get("model")
         .and_then(Value::as_str)
         .unwrap_or("kamimusuhi");
+    let private = request_private(shared, request);
 
-    // Forced tier: `hai` or `hai/glm-5.3`.
+    // Forced tier: `hai` or `hai/glm-5.3`. Explicit routing still obeys
+    // the privacy wall and local-only boundary; cost limits are enforced at
+    // call time below.
     if !AUTO_MODELS.contains(&requested) {
         let (name, model) = requested.split_once('/').unwrap_or((requested, ""));
         let tier = tiers
@@ -71,6 +158,12 @@ pub fn plan<'a>(
             .ok_or_else(|| format!("unknown model or tier {requested:?}"))?;
         if request.local_only && !tier.node_local {
             return Err(format!("tier {name} is not local to this node"));
+        }
+        if tier.billing.is_none() {
+            return Err(format!("tier {name} has no declared billing class"));
+        }
+        if private && !tier.privacy_ok_for_private_memory() {
+            return Err(format!("tier {name} is not eligible for private memory"));
         }
         let model = if model.is_empty() {
             tier.model.clone()
@@ -82,8 +175,26 @@ pub fn plan<'a>(
 
     let small = requested == "k0"
         || prompt_chars(&request.body) <= shared.config.routing.small_request_chars;
-    let eligible: Vec<&TierConfig> = tiers
-        .iter()
+    let lane = route_lane(request);
+    let mut gate = RouteGate::default();
+    gate.fast_chat_ttft_ceiling_ms = Some(shared.config.routing.fast_chat_latency_ceiling_ms);
+    let health = shared
+        .route_health
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let candidates = gate.select(
+        lane,
+        tiers,
+        prompt_tokens_est(&request.body),
+        private,
+        &health,
+        Instant::now(),
+    );
+    drop(health);
+
+    let eligible: Vec<&TierConfig> = candidates
+        .into_iter()
+        .map(|candidate| candidate.spec)
         .filter(|t| !request.local_only || t.node_local)
         .filter(|t| t.condition == TierCondition::Always || small)
         .collect();
@@ -102,14 +213,30 @@ pub fn plan<'a>(
     }
     Ok(chosen.into_iter().map(|t| (t, t.model.clone())).collect())
 }
-
-fn call_tier(tier: &TierConfig, model: &str, body: &Value) -> Result<Value, String> {
+fn call_tier(
+    tier: &TierConfig,
+    model: &str,
+    body: &Value,
+    default_max_tokens: Option<u32>,
+) -> Result<Value, String> {
     let mut upstream = body.clone();
     if let Value::Object(map) = &mut upstream {
         map.insert("model".into(), Value::String(model.to_owned()));
         // Streaming is re-synthesized by the server from the full reply.
         map.insert("stream".into(), Value::Bool(false));
         map.remove("stream_options");
+        // Host-only policy hints must never be forwarded to providers.
+        map.remove("kamimusuhi_private");
+        map.remove("kamimusuhi_route_lane");
+        if let Some(max_tokens) = default_max_tokens
+            && !map.contains_key("max_tokens")
+            && !map.contains_key("max_completion_tokens")
+        {
+            // OpenAI-compatible providers universally used by this router
+            // accept max_tokens; bounding output makes the cost pre-flight
+            // estimate an enforceable upper bound for metered fallbacks.
+            map.insert("max_tokens".into(), Value::from(max_tokens));
+        }
     }
     let mut headers: Vec<Header> = bearer(tier.auth_env.as_deref())?;
     if tier.peer_local_only {
@@ -193,6 +320,42 @@ fn completion_finish_reason(value: &Value) -> &'static str {
     }
 }
 
+fn call_tier_guarded(
+    shared: &Shared,
+    tier: &TierConfig,
+    model: &str,
+    body: &Value,
+) -> Result<Value, String> {
+    if tier.billing != Some(TierBilling::Metered) {
+        return call_tier(tier, model, body, None);
+    }
+    let price = tier
+        .input_usd_per_mtok
+        .zip(tier.output_usd_per_mtok)
+        .ok_or_else(|| "cost guard: metered tier has no declared price".to_owned())?;
+    let prompt_tokens = prompt_tokens_est(body);
+    let max_completion_tokens = completion_tokens_for_cost(shared, body);
+    // Keep the guard locked through the paid call. Metered fallbacks are
+    // rare, and serializing only those calls prevents concurrent requests
+    // from both reserving the same remaining daily/monthly budget.
+    let mut guard = shared.cost_guard.lock().unwrap_or_else(|p| p.into_inner());
+    let estimate = guard.estimate(Some(price), prompt_tokens, max_completion_tokens);
+    guard
+        .permit(estimate)
+        .map_err(|error| format!("cost guard: {error}"))?;
+    let result = call_tier(tier, model, body, Some(max_completion_tokens));
+    if let Ok(reply) = &result {
+        let usage = usage_of(reply);
+        let (cost, _) = cost_of(tier, &usage);
+        if let Some(cost) = cost.or(estimate) {
+            guard.record_cost(cost);
+        } else {
+            guard.record_unpriced();
+        }
+    }
+    result
+}
+
 pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
     let started = Instant::now();
     let plan = match plan(shared, request) {
@@ -210,9 +373,24 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
     let mut result = None;
     for (tier, model) in plan {
         let tier_started = Instant::now();
-        match call_tier(tier, &model, &request.body) {
+        match call_tier_guarded(shared, tier, &model, &request.body) {
             Ok(mut body) => {
+                let ms = u64::try_from(tier_started.elapsed().as_millis()).unwrap_or(u64::MAX);
                 let usage = usage_of(&body);
+                shared.set_tier(&tier.name, Ok(Value::Null), ms);
+                shared
+                    .route_health
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get_mut(&tier.name)
+                    .observe(
+                        true,
+                        Some(ms),
+                        false,
+                        usage.cached_tokens,
+                        Duration::from_secs(60),
+                        Instant::now(),
+                    );
                 let (cost_usd, cost_kind) = cost_of(tier, &usage);
                 if let Value::Object(map) = &mut body {
                     map.insert(
@@ -236,7 +414,22 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
             }
             Err(e) => {
                 let ms = u64::try_from(tier_started.elapsed().as_millis()).unwrap_or(u64::MAX);
-                shared.set_tier(&tier.name, Err(format!("request failed: {e}")), ms);
+                if !e.starts_with("cost guard:") {
+                    shared.set_tier(&tier.name, Err(format!("request failed: {e}")), ms);
+                    shared
+                        .route_health
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .get_mut(&tier.name)
+                        .observe(
+                            false,
+                            None,
+                            e == "HTTP 429",
+                            None,
+                            Duration::from_secs(60),
+                            Instant::now(),
+                        );
+                }
                 attempts.push(format!("{}:{e}", tier.name));
             }
         }
@@ -407,10 +600,13 @@ mod tests {
             "node": {"id": "pi", "role": "continuity", "listen": "127.0.0.1:0"},
             "paths": {"root": dir.path()},
             "tiers": [
-                {"name": "local", "base_url": "http://127.0.0.1:9/v1", "model": "tiny",
-                 "condition": "small_request", "node_local": true},
-                {"name": "llm_master", "base_url": "http://127.0.0.1:9/v1", "model": "big"},
-                {"name": "hai", "base_url": "https://example.invalid/v1", "model": "q"}
+                {"name": "local", "billing": "local", "base_url": "http://127.0.0.1:9/v1", "model": "tiny",
+                 "condition": "small_request", "node_local": true,
+                 "privacy_ok_for_private_memory": true, "reasoning_suppression": true},
+                {"name": "llm_master", "billing": "local", "base_url": "http://127.0.0.1:9/v1", "model": "big",
+                 "privacy_ok_for_private_memory": true, "reasoning_suppression": true},
+                {"name": "hai", "billing": "subscription", "base_url": "https://example.invalid/v1", "model": "q",
+                 "privacy_ok_for_private_memory": true, "reasoning_suppression": true}
             ]
         }))
         .expect("config");
@@ -521,6 +717,9 @@ mod tests {
         let mut tier = s.config.tiers[2].clone();
         tier.base_url = url;
         tier.billing = Some(crate::config::TierBilling::Metered);
+        tier.input_usd_per_mtok = Some(1.0);
+        tier.output_usd_per_mtok = Some(1.0);
+        tier.privacy_ok_for_private_memory = Some(true);
         s.config.tiers = vec![tier];
         let req = RouteRequest {
             body: json!({"model": "kamimusuhi",
