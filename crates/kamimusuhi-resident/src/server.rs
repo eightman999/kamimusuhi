@@ -3,6 +3,8 @@
 //! Endpoints:
 //! * `GET /health` — unauthenticated summary for peers and monitors.
 //! * `GET /status` — full status (token unless loopback).
+//! * `GET /metrics`, `GET /v1/usage`, `GET /v1/usage/history` — model usage
+//!   without conversation bodies (same authentication as status).
 //! * `GET /v1/models`, `POST /v1/chat/completions` — routing proxy
 //!   (token unless loopback). `X-Kamimusuhi-Route: local` restricts routing
 //!   to node-local tiers so the calling peer keeps its own fallback.
@@ -189,6 +191,31 @@ fn handle(shared: &Shared, stream: TcpStream) {
             &[],
         ),
         ("GET", "/status") => json_response(stream, 200, &shared.status(), &[]),
+        ("GET", "/metrics") => {
+            let body = shared.usage.prometheus();
+            let _ = respond(
+                stream,
+                200,
+                "text/plain; version=0.0.4; charset=utf-8",
+                body.as_bytes(),
+                &[("Cache-Control", "no-store".into())],
+            );
+        }
+        ("GET", "/v1/usage") => json_response(
+            stream,
+            200,
+            &shared.usage.snapshot(),
+            &[("Cache-Control", "no-store".into())],
+        ),
+        ("GET", "/v1/usage/history") => match usage_query(&request.path) {
+            Ok((limit, since)) => json_response(
+                stream,
+                200,
+                &shared.usage.history(limit, Some(since)),
+                &[("Cache-Control", "no-store".into())],
+            ),
+            Err(message) => json_response(stream, 400, &json!({"error": message}), &[]),
+        },
         ("GET", "/v1/tasks") => {
             let (status, reply) =
                 crate::tasks::handle(shared, &json!({"action": "list"}), "operator");
@@ -273,6 +300,29 @@ fn local_only(request: &Request) -> bool {
     request
         .header(ROUTE_HEADER)
         .is_some_and(|v| v.eq_ignore_ascii_case("local"))
+}
+
+fn usage_query(path: &str) -> Result<(usize, u64), &'static str> {
+    let mut limit = 100;
+    let mut since = 0;
+    if let Some((_, query)) = path.split_once('?') {
+        for pair in query.split('&').filter(|s| !s.is_empty()) {
+            let (key, value) = pair.split_once('=').ok_or("expected key=value")?;
+            match key {
+                "limit" => {
+                    limit = value
+                        .parse()
+                        .map_err(|_| "limit must be an integer from 1 to 1000")?;
+                    if !(1..=1000).contains(&limit) {
+                        return Err("limit must be an integer from 1 to 1000");
+                    }
+                }
+                "since" => since = value.parse().map_err(|_| "since must be Unix seconds")?,
+                _ => return Err("unknown usage query parameter"),
+            }
+        }
+    }
+    Ok((limit, since))
 }
 
 fn models(shared: &Shared, stream: TcpStream, request: &Request) {
@@ -368,4 +418,89 @@ fn talk(shared: &Shared, stream: TcpStream, request: &Request) {
     let _ = stream.set_write_timeout(Some(Duration::from_secs(60)));
     let (status, reply) = crate::dialogue::talk(shared, config, &body);
     json_response(stream, status, &reply, &[]);
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+
+    #[test]
+    fn history_query_is_bounded_and_rejects_invalid_filters() {
+        assert_eq!(usage_query("/v1/usage/history"), Ok((100, 0)));
+        assert_eq!(
+            usage_query("/v1/usage/history?limit=5&since=123"),
+            Ok((5, 123))
+        );
+        for query in [
+            "limit=0",
+            "limit=1001",
+            "limit=-1",
+            "since=no",
+            "since=-1",
+            "model=x",
+            "limit",
+        ] {
+            assert!(usage_query(&format!("/v1/usage/history?{query}")).is_err());
+        }
+    }
+
+    #[test]
+    fn usage_endpoints_serve_real_http_without_upstream_calls() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = serde_json::from_value(json!({
+            "node": {"id": "test", "role": "cognition", "listen": "127.0.0.1:0"},
+            "paths": {"root": dir.path()},
+        }))
+        .unwrap();
+        let spool = crate::spool::Spool::new(dir.path().join("spool"), "test").unwrap();
+        let shared = Arc::new(Shared::new(config, spool, 1, None));
+        for (path, status, content_type, needle) in [
+            (
+                "/metrics",
+                "200 OK",
+                "text/plain",
+                "kamimusuhi_usage_persistence_healthy",
+            ),
+            (
+                "/v1/usage",
+                "200 OK",
+                "application/json",
+                "persistence_healthy",
+            ),
+            (
+                "/v1/usage/history?limit=5&since=0",
+                "200 OK",
+                "application/json",
+                "records",
+            ),
+            (
+                "/v1/usage/history?limit=1001",
+                "400 Bad Request",
+                "application/json",
+                "limit must",
+            ),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let s = Arc::clone(&shared);
+            let worker = thread::spawn(move || handle(&s, listener.accept().unwrap().0));
+            let mut client = TcpStream::connect(addr).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            write!(client, "GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            worker.join().unwrap();
+            assert!(
+                response.starts_with(&format!("HTTP/1.1 {status}")),
+                "{response}"
+            );
+            assert!(response.contains(content_type));
+            assert!(response.contains(needle));
+            if status == "200 OK" {
+                assert!(response.contains("Cache-Control: no-store"));
+            }
+        }
+    }
 }

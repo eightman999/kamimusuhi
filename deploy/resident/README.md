@@ -58,6 +58,12 @@ curl http://127.0.0.1:7860/v1/chat/completions -d '{"model":"kamimusuhi","messag
 
 既存 runtime の対話も resident 経由にできる: `kamimusuhi-runtime chat --persona openai-compatible --persona-url http://127.0.0.1:7860/v1 --persona-model kamimusuhi ...`
 
+## モデル利用の監視
+
+Grafanaでモデル別の呼び出し、成功率、応答時間、トークン、料金と利用推移を確認できる。
+ダッシュボードとPrometheus収集設定は [monitoring/README.md](monitoring/README.md) を参照。
+個別履歴は認証付き `/v1/usage/history`、監視メトリクスは `/metrics` で取得する。
+
 ## ストレージ
 
 ```text
@@ -116,6 +122,11 @@ kamimusuhi chat --subject <id> --url http://PI_HOST:7860
 ```
 
 token は `$KAMIMUSUHI_NODE_TOKEN` または `~/.config/kamimusuhi/node_token`（`push-secrets.sh` が生成）。`--subject` は会話履歴の区別であって認証ではない。
+
+## Discord Bot
+
+Discordから同じ個体を呼び出すには [Discord Botの導入手順](discord.md) を参照。
+許可したチャンネルで `@澪 こんにちは` と呼び出すと、FIFOキューで1件ずつ対話APIへ渡し、元メッセージへ返信する。
 
 ## Library（参照用データ）
 

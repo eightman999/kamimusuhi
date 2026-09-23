@@ -120,6 +120,8 @@ pub struct Shared {
     pub kcore: RwLock<Value>,
     pub snapshot: RwLock<Value>,
     pub last_route: RwLock<Option<RouteEvent>>,
+    /// Bounded local usage history, independent of the NAS delivery spool.
+    pub usage: crate::usage::UsageStore,
     /// Live request observations consumed by the shared RouteGate.
     pub route_health: Mutex<ProviderStateBook>,
     /// Persistent production spend guard. Metered calls hold this lock for
@@ -181,6 +183,9 @@ impl Shared {
             config.paths.current_state().join("approvals.json"),
         );
         Self {
+            usage: crate::usage::UsageStore::open(
+                config.paths.current_state().join("usage.sqlite"),
+            ),
             mcp,
             approvals,
             tasks: std::sync::Arc::new(crate::tasks::TaskBoard::load(
@@ -314,6 +319,7 @@ impl Shared {
                 "active_primary": active,
                 "tiers": tiers,
                 "last_route": read(&self.last_route),
+                "usage": self.usage.snapshot(),
                 "cost_guard": cost_status,
                 "requests": self.requests.load(Ordering::Relaxed),
             },

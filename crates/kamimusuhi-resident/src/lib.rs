@@ -28,4 +28,5 @@ pub mod task_orchestrator;
 pub mod task_worktree;
 pub mod tasks;
 pub mod tools;
+pub mod usage;
 pub mod util;

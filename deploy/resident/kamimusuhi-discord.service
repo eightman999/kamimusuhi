@@ -1,0 +1,24 @@
+[Unit]
+Description=Discord gateway for the Kamimusuhi individual on Pi
+Wants=network-online.target kamimusuhi-resident.service
+After=network-online.target kamimusuhi-resident.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=eightman
+Group=eightman
+EnvironmentFile=/srv/kamimusuhi/config/discord.env
+ExecStart=/srv/kamimusuhi/runtime/discord-venv/bin/python /srv/kamimusuhi/runtime/bin/discord_bot.py
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=20
+MemoryMax=256M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

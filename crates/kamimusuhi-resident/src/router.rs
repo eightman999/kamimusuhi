@@ -391,6 +391,17 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
     let plan = match plan(shared, request) {
         Ok(plan) => plan,
         Err(e) => {
+            let event = RouteEvent {
+                at: unix_now(),
+                latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                ..RouteEvent::default()
+            };
+            shared.usage.record_request(&event, true);
+            let _ = shared.spool.append(
+                "logs/routing",
+                serde_json::to_value(&event).unwrap_or(Value::Null),
+            );
+            *shared.last_route.write().unwrap_or_else(|p| p.into_inner()) = Some(event);
             return Routed {
                 status: 400,
                 body: error_body(&e, "invalid_request_error"),
@@ -411,6 +422,26 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
             }) => {
                 let ms = u64::try_from(tier_started.elapsed().as_millis()).unwrap_or(u64::MAX);
                 let usage = usage_of(&body);
+                let actual_model = body
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .filter(|model| !model.trim().is_empty())
+                    .unwrap_or(&model)
+                    .to_owned();
+                shared.usage.record_attempt(&RouteEvent {
+                    at: unix_now(),
+                    tier: Some(tier.name.clone()),
+                    model: Some(actual_model.clone()),
+                    billing: tier.billing.map(|b| b.as_str().to_owned()),
+                    latency_ms: ms,
+                    ok: true,
+                    prompt_tokens: usage.prompt_tokens,
+                    completion_tokens: usage.completion_tokens,
+                    cached_tokens: usage.cached_tokens,
+                    cost_usd,
+                    cost_kind: cost_kind.map(str::to_owned),
+                    ..RouteEvent::default()
+                });
                 shared.set_tier(&tier.name, Ok(Value::Null), ms);
                 shared
                     .route_health
@@ -430,7 +461,7 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
                         "kamimusuhi_route".into(),
                         json!({
                             "tier": tier.name,
-                            "model": model,
+                            "model": actual_model,
                             "billing": tier.billing.map(|b| b.as_str()),
                             "cost_usd": cost_usd,
                             "cost_kind": cost_kind,
@@ -442,12 +473,20 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
                     );
                 }
                 attempts.push(format!("{}:ok", tier.name));
-                result = Some((tier, body, model, usage, cost_usd, cost_kind));
+                result = Some((tier, body, actual_model, usage, cost_usd, cost_kind));
                 break;
             }
             Err(e) => {
                 let ms = u64::try_from(tier_started.elapsed().as_millis()).unwrap_or(u64::MAX);
                 if !e.starts_with("cost guard:") {
+                    shared.usage.record_attempt(&RouteEvent {
+                        at: unix_now(),
+                        tier: Some(tier.name.clone()),
+                        model: Some(model.clone()),
+                        billing: tier.billing.map(|b| b.as_str().to_owned()),
+                        latency_ms: ms,
+                        ..RouteEvent::default()
+                    });
                     shared.set_tier(&tier.name, Err(format!("request failed: {e}")), ms);
                     shared
                         .route_health
@@ -490,6 +529,7 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
         "logs/routing",
         serde_json::to_value(&event).unwrap_or(Value::Null),
     );
+    shared.usage.record_request(&event, false);
     *shared.last_route.write().unwrap_or_else(|p| p.into_inner()) = Some(event);
 
     match result {
@@ -758,6 +798,90 @@ mod tests {
     }
 
     #[test]
+    fn usage_records_invalid_routes_without_upstream_attempts_or_request_body() {
+        let (s, _dir) = shared();
+        let routed = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "nonexistent", "messages": [{"role": "user", "content": "private content"}]}),
+                local_only: false,
+            },
+        );
+        assert_eq!(routed.status, 400);
+        let history = s.usage.history(10, None);
+        let records = history["records"].as_array().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["kind"], "request");
+        assert_eq!(records[0]["outcome"], "invalid");
+        assert!(!history.to_string().contains("private content"));
+    }
+
+    #[test]
+    fn usage_records_failed_tier_attempt_and_failed_request_separately() {
+        let (s, _dir) = shared();
+        let routed = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "local", "messages": [{"role": "user", "content": "hi"}]}),
+                local_only: true,
+            },
+        );
+        assert_eq!(routed.status, 503);
+        let history = s.usage.history(10, None);
+        let records = history["records"].as_array().unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["kind"], "request");
+        assert_eq!(records[0]["outcome"], "error");
+        assert_eq!(records[1]["kind"], "attempt");
+        assert_eq!(records[1]["model"], "tiny");
+        assert_eq!(records[1]["outcome"], "error");
+        assert!(records[1]["cost_usd"].is_null());
+        assert!(!history.to_string().contains("127.0.0.1"));
+    }
+
+    #[test]
+    fn usage_records_reported_model_and_excludes_cost_guard_rejections_from_attempts() {
+        let (url, server) = completion_server(json!({
+            "model": "tiny-version-2026",
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]
+        }));
+        let (mut s, _dir) = shared();
+        s.config.tiers[0].base_url = url;
+        let routed = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "local"}),
+                local_only: true,
+            },
+        );
+        assert_eq!(routed.status, 200);
+        assert_eq!(
+            routed.body["kamimusuhi_route"]["model"],
+            "tiny-version-2026"
+        );
+        assert_eq!(
+            s.usage.history(10, None)["records"][0]["model"],
+            "tiny-version-2026"
+        );
+        server.join().expect("fixture finished");
+
+        let (mut s, _dir) = shared();
+        s.config.tiers[0].billing = Some(TierBilling::Metered);
+        let routed = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "local"}),
+                local_only: true,
+            },
+        );
+        assert_eq!(routed.status, 503);
+        let history = s.usage.history(10, None);
+        let records = history["records"].as_array().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["kind"], "request");
+    }
+
+    #[test]
     fn route_metadata_reaches_the_response_body() {
         let (url, server) = completion_server(json!({
             "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
@@ -793,6 +917,12 @@ mod tests {
         assert_eq!(event.model.as_deref(), Some("q"));
         assert_eq!(event.billing.as_deref(), Some("metered"));
         assert_eq!(event.cost_usd, Some(0.001));
+        let history = s.usage.history(10, None);
+        let records = history["records"].as_array().unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["kind"], "request");
+        assert_eq!(records[1]["kind"], "attempt");
+        assert_eq!(records[1]["cost_kind"], "actual");
         server.join().expect("fixture finished");
     }
 
