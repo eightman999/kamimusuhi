@@ -3,7 +3,7 @@
 `provider-latency-bench-2026-09-23.md` の続き。provider 層に料金区分と
 ルーティングポリシーを実装し、本番規模 (16–28k prompt tokens) の
 実測で検証した。人格・memory・conversation core のセマンティクスは
-不変 — 変更は provider/routing 層のみ。コミットなし。
+不変 — 変更は provider/routing 層のみ。後続の production 接続修正では resident も同じ RouteGate / CostGuard を使用する。
 
 ## 実装内容
 
@@ -148,11 +148,26 @@ Cerebras gpt-oss-120b @ ~21k prompt + ~70 completion ≈ **$0.0053/turn**。
   metered は `$x.xxxx` / 未確定は `従量`、subscription=サブスク、
   free_tier=無料枠、local=local。料金不明の plan は何も出さない
 
+## Production 接続（後続修正）
+
+resident router も benchmark と同じ `RouteGate` を使用する。persona request は
+既定 private とし、tier ごとの privacy/context/TPM/billing/health 条件を送信前に適用する。
+FAST_CHAT は production 設定で 4,000ms ceiling。実リクエストの応答時間を保守的な
+latency 観測として常駐 `ProviderStateBook` に戻す。
+
+従量 tier は `CostGuard` を production にも接続し、request/session/daily/monthly の
+各 cap を送信前に確認する。既定値は $0.02/request, $0.50/daemon session,
+$0.10/day, $2.00/month。ledger は `current_state/routing-cost-ledger.json` に永続化する。
+従量 tier は input/output 単価の宣言を必須とし、未宣言なら送信しない。
+
+**注意:** これは宣言された単価に対するローカル上限であり、provider が予告なく価格を
+変更した場合まで請求額を暗号学的に保証するものではない。実費が response に含まれる場合は
+実費で ledger を更新するが、厳密な請求上限は provider 側 spending limit も併用する。
+
 ## 残課題 / 次に試す価値がある変更
 
-1. RouteGate を本番対話パス (resident router) に接続 — bench 外からの
-   `select()` 呼び出しと `ProviderStateBook` の常駐化
-2. Jev 分類結果を曖昧ケース限定で本 routing に使用 (現在 shadow のみ)
+1. 実 Pi / llm_master へ production 接続版をデプロイし 4s SLA と failover を再計測
+2. Jev 分類結果を曖昧ケース限定で本 routing に使用 (現在 shadow / host hint のみ)
 3. Agent lane の公式 headless 実装 (codex exec / claude -p / gemini -p)
 4. Gemini API free tier 実測 (キー未提供のため未検証)
 5. HAI credential 環境での同条件計測 (subscription path の実レイテンシ)
