@@ -19,6 +19,7 @@ path = "src/main.rs"
 [dependencies]
 base64 = "0.23"
 kamimusuhi-resource-http = { workspace = true }
+kamimusuhi-runtime = { path = "../kamimusuhi-runtime" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # Online snapshot of the canonical SQLite store (`VACUUM INTO`).
