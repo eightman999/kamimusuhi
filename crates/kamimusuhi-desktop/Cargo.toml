@@ -12,9 +12,6 @@ publish.workspace = true
 eframe = { workspace = true }
 kamimusuhi-core = { workspace = true }
 kamimusuhi-runtime = { path = "../kamimusuhi-runtime" }
-# Resident mode: HTTP client for the always-on individual (Pi).
-kamimusuhi-resident = { path = "../kamimusuhi-resident" }
-serde = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]

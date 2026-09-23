@@ -37,7 +37,6 @@ from pathlib import Path
 from .analysis.metrics import GATE_THRESHOLDS
 from .config import env_config, load_config
 from .evaluate import evaluate_baseline
-from .policies.baselines import BASELINES
 
 SANITY_BASELINES = ["oracle", "no_memory", "random", "fifo", "lru",
                     "store_all", "heuristic_current_need"]

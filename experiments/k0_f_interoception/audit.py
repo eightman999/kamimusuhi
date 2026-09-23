@@ -1,7 +1,7 @@
 """Audit actual recorded telemetry, reconstructed inputs, checkpoints, and prior artifacts."""
 import argparse,hashlib,json,math,statistics
 from pathlib import Path
-from .normalize import normalize_pair,canonical_identity,DEFAULT_CONFIG
+from .normalize import normalize_pair, canonical_identity
 from .acquire import save
 
 

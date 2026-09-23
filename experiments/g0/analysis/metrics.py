@@ -7,7 +7,7 @@ ctx_id, seg_id, switch, x_a, x_b). No sklearn — everything numpy/torch.
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Tuple
 
 import numpy as np
 

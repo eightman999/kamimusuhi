@@ -16,8 +16,7 @@ from experiments.mioba.anatomy.compartments import EntityReduction
 from experiments.mioba.anatomy.provenance import Provenance
 from experiments.mioba.fba.torch_backend import TorchBackend
 from experiments.mioba.physio.channels import GenericNa, build_channel
-from experiments.mioba.physio.fly_channels import (FLY_CHANNELS,
-                                                   ParaNa, ShabK)
+from experiments.mioba.physio.fly_channels import FLY_CHANNELS
 from experiments.mioba.physio.receptors import (receptor_map_for,
                                                resolve_sign)
 from experiments.mioba.physio.fly_compiler import (

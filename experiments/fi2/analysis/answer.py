@@ -14,7 +14,7 @@ the context architecture, not of any model.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from ..context_builder.bundle import ContextBundle
 from ..context_builder.builders import TRUST

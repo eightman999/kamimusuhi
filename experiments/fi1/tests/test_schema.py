@@ -3,10 +3,7 @@ import json
 
 import pytest
 
-from experiments.fi1.protocol.schema import (DuplicateKeyError, Turn,
-                                             canonical_json, compute_checksum,
-                                             loads_strict, make_turn,
-                                             verify_checksum)
+from experiments.fi1.protocol.schema import DuplicateKeyError, Turn, canonical_json, compute_checksum, loads_strict, verify_checksum
 
 
 def test_checksum_detects_payload_mutation(make):

@@ -6,7 +6,7 @@ dynamics can be unit-tested and replayed deterministically without torch.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Optional
 
 import numpy as np

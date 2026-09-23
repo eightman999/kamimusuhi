@@ -13,10 +13,7 @@ from experiments.fi3.cli.verify import (
     EXIT_REVIEW_REQUIRED,
     verify_runtime,
 )
-from experiments.fi3.identity.manifest import (
-    collect_manifest,
-    runtime_identity_hash,
-)
+from experiments.fi3.identity.manifest import runtime_identity_hash
 from experiments.fi3.policies.compatibility import REVIEW, severity_rank
 from experiments.fi3.tests.conftest import (
     classify_runtime,

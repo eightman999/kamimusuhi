@@ -8,7 +8,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from .dataset import load_evaluation
 from .protocol import PROTOCOL, verify_lock
 from .run import DATA, FULL, LOCK, REFERENCE, ROOT
 

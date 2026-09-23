@@ -32,7 +32,7 @@ from typing import Dict, Optional
 import numpy as np
 
 from .analysis import metrics as metrics_mod
-from .config import Config, load_config
+from .config import load_config
 from .env import dynamics as dyn
 
 # Named OOD / causal condition presets: EnvParams overrides.

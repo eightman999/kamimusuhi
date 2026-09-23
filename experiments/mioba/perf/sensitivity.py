@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import copy
 
-from ..development.phenotype import develop
 from ..genome.schema import (ArtificialOrgan, Attachment, Genome,
                              ParameterMutation, fba0_genome)
 

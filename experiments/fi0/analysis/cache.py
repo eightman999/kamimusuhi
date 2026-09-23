@@ -9,9 +9,8 @@ scattered one.
 
 from __future__ import annotations
 
-import os
 from itertools import combinations
-from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
+from typing import Dict, List, Mapping, Sequence
 
 Row = Mapping[str, object]
 

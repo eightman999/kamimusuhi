@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from experiments.u0.env.u0_env import IGNORE, STORE, U0Config, U0Env
+from experiments.u0.env.u0_env import U0Config, U0Env
 
 
 def rollout(seed, steps=80):

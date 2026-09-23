@@ -1,10 +1,8 @@
-import numpy as np
 import torch
 
-from ..agents.baselines import BASELINES, FIFOGate, OracleGate
 from ..agents.gates import build_policy, factorized_logp
-from ..env.r0_env import R0Config, R0Env, ITEM, QUERY
-from ..evaluate import evaluate_baseline, evaluate_learned
+from ..env.r0_env import R0Config
+from ..evaluate import evaluate_baseline
 
 
 def cfg(**kw):

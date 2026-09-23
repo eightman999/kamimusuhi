@@ -30,8 +30,7 @@ import numpy as np
 import torch
 
 from ..env import dynamics as dyn
-from ..evaluate import (evaluate_heuristic, intervention_steps,
-                        predict_heuristic, predict_model, preset_params)
+from ..evaluate import intervention_steps, predict_heuristic, predict_model, preset_params
 from ..models import make_model
 from ..train import atomic
 from . import metrics as metrics_mod

@@ -5,13 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from experiments.fi0.serializer.canonical import (
-    PromptParseError,
-    canonical_bytes,
-    canonicalize,
-    detect_format,
-    parse_prompt,
-)
+from experiments.fi0.serializer.canonical import PromptParseError, canonical_bytes, detect_format, parse_prompt
 from experiments.fi0.serializer.schema import PromptContext, Tool
 from experiments.fi0.serializer.variants import VariantSpec, render
 

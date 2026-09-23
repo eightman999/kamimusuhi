@@ -30,12 +30,12 @@ object and is used ONLY by evaluation/tests — never by training losses.
 from __future__ import annotations
 
 import itertools
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
-from ..modalities.transforms import ModalityTransform, make_transforms
+from ..modalities.transforms import make_transforms
 
 
 # ----------------------------------------------------------------------

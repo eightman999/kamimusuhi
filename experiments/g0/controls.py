@@ -28,7 +28,7 @@ from .data import train_val_datasets
 from .evaluate import _eval_datasets, eval_representation
 from .models import build_model
 from .representations import TorchRep, build_kmeans_rep
-from .sweep import METRIC_PATHS, _get, mean_std
+from .sweep import METRIC_PATHS, _get
 
 REPORTS = Path(__file__).parent / "reports"
 

@@ -23,8 +23,7 @@ import numpy as np
 import pandas as pd
 
 from experiments.mioba.anatomy.provenance import Provenance
-from experiments.mioba.physio.compiler import (
-    E_EXC_MV, E_INH_MV, _POST_TO_RUNTIME, NT_CLASS)
+from experiments.mioba.physio.compiler import E_EXC_MV, E_INH_MV, _POST_TO_RUNTIME
 from experiments.mioba.physio.geometry import axial_coupling
 from experiments.mioba.physio.receptors import (
     RECEPTOR_MODEL_VERSION, UNKNOWN_SIGN_MODES, resolve_sign)

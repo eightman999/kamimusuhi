@@ -4,7 +4,6 @@ The reward must be `-homeostatic_error - memory_op_costs - survival`;
 nothing may mark an event as relevant or pay for correct storage.
 """
 
-import numpy as np
 
 from experiments.u0.env.u0_env import (IGNORE, RECALL, STORE, U0Config,
                                        U0Env, homeostatic_error)

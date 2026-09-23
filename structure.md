@@ -23,6 +23,7 @@ flowchart TB
     CRATES --> PERSONA["kamimusuhi-persona-http\nPersona model HTTP adapter"]
     CRATES --> RESOURCE["kamimusuhi-resource-http\n外部 resource HTTP adapter"]
     CRATES --> TESTKIT["kamimusuhi-testkit\n検証支援"]
+    CRATES --> DESKTOP["kamimusuhi-desktop\nネイティブ対話 GUI (eframe)"]
 
     ROOT --> EXP["experiments/ — 仮説検証"]
     EXP --> MIOBA["mioba/"]

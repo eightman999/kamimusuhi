@@ -30,11 +30,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import math
 import multiprocessing as mp
-import os
 import random
 import sqlite3
 import sys

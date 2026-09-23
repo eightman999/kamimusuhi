@@ -21,7 +21,7 @@ query-specific) and then averaged, plus bundle-level mutation analysis.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from ..context_builder.bundle import ContextBundle
 from ..datasets.generator import Dataset, QA

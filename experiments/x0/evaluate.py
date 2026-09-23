@@ -19,7 +19,6 @@ Trained models are loaded from run checkpoints (best.pt).
 
 import argparse
 import dataclasses
-import hashlib
 import itertools
 import json
 import time
@@ -41,7 +40,7 @@ from experiments.x0.models.baselines import (CcaMethod, ChanceMethod,
                                              ConcatMethod, PcaMethod,
                                              TimingMethod, cosine_sim)
 from experiments.x0.probes.linear import cross_modal_matrix
-from experiments.x0.train import atomic, collate, make_env
+from experiments.x0.train import atomic
 
 EVAL_SEED = 900001
 
