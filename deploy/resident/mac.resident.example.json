@@ -1,0 +1,37 @@
+{
+  "node": {
+    "id": "mac",
+    "role": "cognition",
+    "listen": "0.0.0.0:7860"
+  },
+  "paths": {
+    "root": "@ROOT@"
+  },
+  "peers": [
+    {
+      "id": "pi",
+      "role": "continuity",
+      "url": "http://PI_HOST:7860",
+      "alt_urls": [
+        "http://PI_TAILNET_HOST:7860"
+      ]
+    }
+  ],
+  "task_plane": {
+    "executors_file": "@ROOT@/config/agent-executors.json",
+    "workspaces": [
+      {
+        "name": "kamimusuhi",
+        "path": "@HOME@/dev/sandbox/kamimusuhi",
+        "description": "Kamimusuhi リポジトリ（Mac の作業 checkout）。書き込みタスクは専用 worktree・ブランチで行い、反映は操作者の apply だけ",
+        "allow_write": true
+      }
+    ],
+    "max_concurrent": 2,
+    "routing_mode": "shadow",
+    "quota": {
+      "max_tasks_per_day": 60,
+      "max_usd_per_day": 1.0
+    }
+  }
+}

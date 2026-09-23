@@ -5,6 +5,8 @@
     "max_rounds": 8,
     "timeout_ms": 30000,
     "core": [
+      "task_delegate",
+      "task_status",
       "task_update",
       "task_create",
       "task_list",
@@ -15,6 +17,12 @@
       "json_find"
     ],
     "allowed": [
+      "task_delegate",
+      "task_status",
+      "task_cancel",
+      "task_continue",
+      "agent_models",
+      "agent_health",
       "task_update",
       "task_create",
       "task_list",

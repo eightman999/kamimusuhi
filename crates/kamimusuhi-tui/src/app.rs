@@ -1,5 +1,6 @@
 //! TUI state and event loop: mirrors the resident mode of the egui desktop
-//! app (chat, task board, approval queue, node status, tool catalog).
+//! app (chat, task board, approval queue, node status, tool catalog,
+//! task-plane agents).
 
 use std::collections::HashSet;
 use std::io;
@@ -20,7 +21,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::style::Color;
 use serde_json::Value;
 
-use crate::ui;
+use crate::{agents, ui};
 
 /// The individual accepts at most this much per turn (runtime contract).
 pub const MAX_INPUT_BYTES: usize = kamimusuhi_runtime::dialogue::MAX_INPUT_BYTES;
@@ -32,15 +33,17 @@ pub enum View {
     Approvals,
     Status,
     Tools,
+    Agents,
 }
 
 impl View {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Chat,
         Self::Tasks,
         Self::Approvals,
         Self::Status,
         Self::Tools,
+        Self::Agents,
     ];
 
     pub fn label(self) -> &'static str {
@@ -50,6 +53,7 @@ impl View {
             Self::Approvals => "承認",
             Self::Status => "状態",
             Self::Tools => "ツール",
+            Self::Agents => "エージェント",
         }
     }
 
@@ -73,7 +77,7 @@ pub enum Entry {
     Notice { text: String, color: Color },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputMode {
     Normal,
     /// Composing a task title; `depends` links it after the selection.
@@ -81,6 +85,10 @@ pub enum InputMode {
         depends: bool,
     },
     ToolFilter,
+    /// Composing a follow-up instruction for a finished task-plane task.
+    AgentContinue {
+        id: String,
+    },
 }
 
 pub struct App {
@@ -116,6 +124,20 @@ pub struct App {
     pub tools_scroll: u16,
     pub tasks_scroll: u16,
     pub detail_scroll: u16,
+    /// Task-plane panel document; `None` until the first fetch.
+    pub agents: Option<Value>,
+    /// The node answered 404: it has no task plane.
+    pub agents_absent: bool,
+    pub agents_running_only: bool,
+    pub agent_sel: usize,
+    /// Id of the selected task, so refreshes keep the same task selected.
+    pub agent_sel_id: Option<String>,
+    pub agent_list_scroll: u16,
+    pub agent_detail_scroll: u16,
+    pub agent_reply: Option<String>,
+    /// Instruction buffer for `continue` (kept apart from the chat draft).
+    pub agent_input: String,
+    pub agent_cursor: usize,
     pub quit: bool,
 }
 
@@ -172,12 +194,17 @@ fn event_loop(
 }
 
 impl App {
-    fn new(commands: Sender<RemoteCommand>, subject: String, initial_view: Option<String>) -> Self {
+    pub(crate) fn new(
+        commands: Sender<RemoteCommand>,
+        subject: String,
+        initial_view: Option<String>,
+    ) -> Self {
         let view = match initial_view.as_deref() {
             Some("tasks") => View::Tasks,
             Some("approvals") => View::Approvals,
             Some("status") => View::Status,
             Some("tools") => View::Tools,
+            Some("agents") => View::Agents,
             _ => View::Chat,
         };
         Self {
@@ -212,6 +239,16 @@ impl App {
             tools_scroll: 0,
             tasks_scroll: 0,
             detail_scroll: 0,
+            agents: None,
+            agents_absent: false,
+            agents_running_only: false,
+            agent_sel: 0,
+            agent_sel_id: None,
+            agent_list_scroll: 0,
+            agent_detail_scroll: 0,
+            agent_reply: None,
+            agent_input: String::new(),
+            agent_cursor: 0,
             quit: false,
         }
     }
@@ -240,7 +277,7 @@ impl App {
                 .tasks
                 .iter()
                 .filter(|t| {
-                    let status = if t["status"] == "failed" {
+                    let status = if t["status"] == "failed" || t["status"] == "cancelled" {
                         "done"
                     } else {
                         t["status"].as_str().unwrap_or("")
@@ -260,6 +297,27 @@ impl App {
 
     pub fn selected_task(&self) -> Option<&Value> {
         self.visible_tasks().get(self.task_sel).copied()
+    }
+
+    /// Store a panel document; `Value::Null` means the node has no task plane.
+    pub(crate) fn set_agents(&mut self, panel: Value) {
+        self.agents_absent = panel.is_null();
+        self.agents = (!panel.is_null()).then_some(panel);
+    }
+
+    /// Task-plane tasks in list order (newest first, filter applied).
+    pub fn agent_tasks(&self) -> Vec<&Value> {
+        agents::filtered_tasks(self.agents.as_ref(), self.agents_running_only)
+    }
+
+    pub fn selected_agent_task(&self) -> Option<&Value> {
+        let tasks = self.agent_tasks();
+        let ids: Vec<&str> = tasks
+            .iter()
+            .map(|t| t["id"].as_str().unwrap_or(""))
+            .collect();
+        agents::resolve_selection(&ids, self.agent_sel_id.as_deref(), self.agent_sel)
+            .map(|i| tasks[i])
     }
 
     fn on_remote(&mut self, event: RemoteEvent) {
@@ -313,6 +371,17 @@ impl App {
             }
             RemoteEvent::Tools(tools) => self.tools = Some(tools),
             RemoteEvent::Tasks(tasks) => self.tasks = tasks,
+            RemoteEvent::Agents(panel) => self.set_agents(panel),
+            RemoteEvent::AgentsReply(reply) => {
+                if self
+                    .error
+                    .as_deref()
+                    .is_some_and(|e| e.starts_with("外部エージェント操作"))
+                {
+                    self.error = None;
+                }
+                self.agent_reply = Some(agents::reply_text(&reply));
+            }
             RemoteEvent::Decision { id, reply } => {
                 self.deciding.remove(&id);
                 let ok = reply["ok"].as_bool().unwrap_or(false);
@@ -352,7 +421,7 @@ impl App {
             return;
         }
         match key.code {
-            KeyCode::F(n @ 1..=5) => return self.set_view(View::ALL[(n - 1) as usize]),
+            KeyCode::F(n @ 1..=6) => return self.set_view(View::ALL[(n - 1) as usize]),
             KeyCode::Tab => return self.set_view(self.view.next()),
             KeyCode::BackTab => return self.set_view(self.view.prev()),
             _ => {}
@@ -360,12 +429,17 @@ impl App {
         match self.mode {
             InputMode::NewTask { depends } => self.new_task_key(key, depends),
             InputMode::ToolFilter => self.tool_filter_key(key),
+            InputMode::AgentContinue { ref id } => {
+                let id = id.clone();
+                self.agent_continue_key(key, id);
+            }
             InputMode::Normal => match self.view {
                 View::Chat => self.chat_key(key),
                 View::Tasks => self.tasks_key(key),
                 View::Approvals => self.approvals_key(key),
                 View::Status => self.status_key(key),
                 View::Tools => self.tools_key(key),
+                View::Agents => self.agents_key(key),
             },
         }
     }
@@ -386,6 +460,11 @@ impl App {
             InputMode::ToolFilter => insert_at(
                 &mut self.tool_filter,
                 &mut self.tool_cursor,
+                &text.replace('\n', " "),
+            ),
+            InputMode::AgentContinue { .. } => insert_at(
+                &mut self.agent_input,
+                &mut self.agent_cursor,
                 &text.replace('\n', " "),
             ),
             _ => {}
@@ -509,6 +588,121 @@ impl App {
             }
             KeyCode::Char('q') => self.quit = true,
             _ => {}
+        }
+    }
+
+    fn agents_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.move_agent_sel(1),
+            KeyCode::Char('k') | KeyCode::Up => self.move_agent_sel(-1),
+            KeyCode::PageDown => {
+                self.agent_detail_scroll = self.agent_detail_scroll.saturating_add(10)
+            }
+            KeyCode::PageUp => {
+                self.agent_detail_scroll = self.agent_detail_scroll.saturating_sub(10)
+            }
+            KeyCode::Char('h') => {
+                self.agents_running_only = !self.agents_running_only;
+                self.agent_list_scroll = 0;
+            }
+            KeyCode::Char('c') => self.agent_action("cancel", agents::is_active, "待機・実行中"),
+            KeyCode::Char('a') => self.agent_feedback("accept"),
+            KeyCode::Char('r') => self.agent_feedback("reject"),
+            KeyCode::Char('A') => {
+                self.agent_action("apply", agents::has_worktree, "worktree 付き完了")
+            }
+            KeyCode::Char('D') => {
+                self.agent_action("discard", agents::has_worktree, "worktree 付き完了")
+            }
+            KeyCode::Char('n') => match self.selected_agent_task() {
+                Some(t) if agents::can_continue(t) => {
+                    let id = t["id"].as_str().unwrap_or("").to_owned();
+                    self.agent_input.clear();
+                    self.agent_cursor = 0;
+                    self.mode = InputMode::AgentContinue { id };
+                }
+                Some(_) => {
+                    self.agent_reply =
+                        Some("続けて依頼できるのはセッションのある完了タスクのみです".to_owned())
+                }
+                None => {}
+            },
+            KeyCode::Char('R') => {
+                let _ = self.commands.send(RemoteCommand::Agents(
+                    serde_json::json!({"action": "refresh"}),
+                ));
+            }
+            KeyCode::Char('q') => self.quit = true,
+            _ => {}
+        }
+    }
+
+    fn move_agent_sel(&mut self, delta: isize) {
+        let tasks = self.agent_tasks();
+        if tasks.is_empty() {
+            return;
+        }
+        let ids: Vec<&str> = tasks
+            .iter()
+            .map(|t| t["id"].as_str().unwrap_or(""))
+            .collect();
+        let current = agents::resolve_selection(&ids, self.agent_sel_id.as_deref(), self.agent_sel)
+            .unwrap_or(0);
+        let next = current.saturating_add_signed(delta).min(ids.len() - 1);
+        let id = ids[next].to_owned();
+        self.agent_sel = next;
+        self.agent_sel_id = Some(id);
+        self.agent_detail_scroll = 0;
+    }
+
+    /// Send `{"action", "id"}` for the selection when `allowed` holds.
+    fn agent_action(&mut self, action: &str, allowed: fn(&Value) -> bool, what: &str) {
+        let Some(t) = self.selected_agent_task() else {
+            return;
+        };
+        if !allowed(t) {
+            self.agent_reply = Some(format!("{action} できるのは{what}のタスクのみです"));
+            return;
+        }
+        let id = t["id"].as_str().unwrap_or("").to_owned();
+        let _ = self.commands.send(RemoteCommand::Agents(
+            serde_json::json!({"action": action, "id": id}),
+        ));
+    }
+
+    fn agent_feedback(&mut self, verdict: &str) {
+        let Some(t) = self.selected_agent_task() else {
+            return;
+        };
+        if !agents::is_finished(t) {
+            self.agent_reply = Some("評価できるのは終了したタスクのみです".to_owned());
+            return;
+        }
+        let id = t["id"].as_str().unwrap_or("").to_owned();
+        let _ = self.commands.send(RemoteCommand::Agents(serde_json::json!({
+            "action": "feedback", "id": id, "verdict": verdict})));
+    }
+
+    fn agent_continue_key(&mut self, key: KeyEvent, id: String) {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = InputMode::Normal;
+                self.agent_input.clear();
+                self.agent_cursor = 0;
+            }
+            KeyCode::Enter => {
+                let instruction = self.agent_input.trim().to_owned();
+                if !instruction.is_empty() {
+                    let _ = self.commands.send(RemoteCommand::Agents(serde_json::json!({
+                        "action": "continue", "id": id, "instruction": instruction})));
+                }
+                self.mode = InputMode::Normal;
+                self.agent_input.clear();
+                self.agent_cursor = 0;
+            }
+            _ => {
+                edit_buffer(&mut self.agent_input, &mut self.agent_cursor, &key);
+            }
         }
     }
 

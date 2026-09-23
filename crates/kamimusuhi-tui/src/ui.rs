@@ -21,13 +21,13 @@ pub const GREEN: Color = Color::Rgb(47, 206, 132);
 pub const AMBER: Color = Color::Rgb(243, 181, 62);
 pub const RED: Color = Color::Rgb(235, 96, 110);
 pub const VIOLET: Color = Color::Rgb(166, 138, 255);
-const SELECT_BG: Color = Color::Rgb(24, 62, 111);
+pub const SELECT_BG: Color = Color::Rgb(24, 62, 111);
 
-fn muted() -> Style {
+pub fn muted() -> Style {
     Style::default().fg(MUTED)
 }
 
-fn bold(color: Color) -> Style {
+pub fn bold(color: Color) -> Style {
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
@@ -40,7 +40,7 @@ fn s(v: Option<&Value>) -> String {
 }
 
 /// Pad a line with spaces so a row background spans the full width.
-fn pad(mut line: Line<'static>, width: usize) -> Line<'static> {
+pub fn pad(mut line: Line<'static>, width: usize) -> Line<'static> {
     let w = line.width();
     if w < width {
         line.spans.push(Span::raw(" ".repeat(width - w)));
@@ -49,7 +49,7 @@ fn pad(mut line: Line<'static>, width: usize) -> Line<'static> {
 }
 
 /// Scroll offset clamped to `lines - viewport`.
-fn clamp_scroll(lines: usize, height: u16, scroll: u16) -> u16 {
+pub fn clamp_scroll(lines: usize, height: u16, scroll: u16) -> u16 {
     let max = u16::try_from(lines)
         .unwrap_or(u16::MAX)
         .saturating_sub(height);
@@ -77,6 +77,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         View::Approvals => approvals(frame, rows[2], app),
         View::Status => status(frame, rows[2], app),
         View::Tools => tools(frame, rows[2], app),
+        View::Agents => crate::agents::draw(frame, rows[2], app),
     }
     footer(frame, rows[3], app);
 }
@@ -116,9 +117,12 @@ fn top_bar(frame: &mut Frame, area: Rect, app: &App) {
 fn tabs(frame: &mut Frame, area: Rect, app: &App) {
     let mut spans = Vec::new();
     let pending = app.pending().len();
+    let agents_running = crate::agents::running_count(app.agents.as_ref());
     for (i, view) in View::ALL.iter().enumerate() {
         let label = if *view == View::Approvals && pending > 0 {
             format!(" {} {}({}) ", i + 1, view.label(), pending)
+        } else if *view == View::Agents && agents_running > 0 {
+            format!(" {} {}({}) ", i + 1, view.label(), agents_running)
         } else {
             format!(" {} {} ", i + 1, view.label())
         };
@@ -134,7 +138,7 @@ fn tabs(frame: &mut Frame, area: Rect, app: &App) {
         ));
         spans.push(Span::raw(" "));
     }
-    spans.push(Span::styled(" Tab / F1-F5 で切替", muted()));
+    spans.push(Span::styled(" Tab / F1-F6 で切替", muted()));
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
@@ -334,7 +338,7 @@ const LANES: [(&str, &str, Color); 5] = [
 
 fn lane_of(task: &Value) -> &str {
     match task["status"].as_str().unwrap_or("") {
-        "failed" => "done",
+        "failed" | "cancelled" => "done",
         other => other,
     }
 }
@@ -781,6 +785,23 @@ fn footer(frame: &mut Frame, area: Rect, app: &App) {
                     )) as u16;
             frame.set_cursor_position((x.min(area.x + area.width.saturating_sub(1)), area.y));
         }
+        InputMode::AgentContinue { ref id } => {
+            let prompt = format!("続けて依頼（{id}）> ");
+            let x = area.x
+                + (UnicodeWidthStr::width(prompt.as_str())
+                    + UnicodeWidthStr::width(
+                        &app.agent_input[..app.agent_cursor.min(app.agent_input.len())],
+                    )) as u16;
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(prompt, bold(BLUE)),
+                    Span::styled(app.agent_input.clone(), Style::default().fg(TEXT)),
+                    Span::styled("   Enter: 送信 / Esc: やめる", muted()),
+                ])),
+                area,
+            );
+            frame.set_cursor_position((x.min(area.x + area.width.saturating_sub(1)), area.y));
+        }
         InputMode::Normal => {
             let hint = match app.view {
                 View::Chat => {
@@ -794,6 +815,9 @@ fn footer(frame: &mut Frame, area: Rect, app: &App) {
                 }
                 View::Status => "j/k/PgUp/PgDn: スクロール · r: 更新 · q: 終了",
                 View::Tools => "/: 絞り込み · c: クリア · j/k: スクロール · r: 更新 · q: 終了",
+                View::Agents => {
+                    "↑↓/j/k: 選択 · PgUp/PgDn: 詳細 · c: 取消 · a/r: 採用/不採用 · n: 続けて依頼 · A/D: worktree 適用/破棄 · h: 実行中のみ · R: 再検査 · q: 終了"
+                }
             };
             frame.render_widget(Paragraph::new(Line::styled(hint, muted())), area);
         }

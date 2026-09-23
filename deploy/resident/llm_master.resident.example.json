@@ -61,6 +61,27 @@
     "interval_secs": 900,
     "low_balance_jpy": 0
   },
+  "task_plane": {
+    "executors_file": "/srv/kamimusuhi/config/agent-executors.json",
+    "workspaces": [
+      {
+        "name": "kamimusuhi",
+        "path": "/srv/work/kamimusuhi",
+        "description": "Kamimusuhi リポジトリの作業用 clone（外部エージェントは読み取り専用で使う）"
+      },
+      {
+        "name": "jp_market_vis",
+        "path": "/srv/library/JP_Market_Vis",
+        "description": "JP_Market_Vis（読み取り専用）"
+      }
+    ],
+    "max_concurrent": 2,
+    "routing_mode": "shadow",
+    "quota": {
+      "max_tasks_per_day": 60,
+      "max_usd_per_day": 1.0
+    }
+  },
   "libraries": [
     {
       "name": "jp_market_vis",

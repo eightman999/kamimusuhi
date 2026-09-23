@@ -36,6 +36,8 @@ pub enum TaskStatus {
     OnHold,
     Done,
     Failed,
+    /// Stopped on request before it finished.
+    Cancelled,
 }
 
 impl TaskStatus {
@@ -47,12 +49,13 @@ impl TaskStatus {
             "on_hold" => Self::OnHold,
             "done" => Self::Done,
             "failed" => Self::Failed,
+            "cancelled" => Self::Cancelled,
             _ => return None,
         })
     }
 
     const fn finished(self) -> bool {
-        matches!(self, Self::Done | Self::Failed)
+        matches!(self, Self::Done | Self::Failed | Self::Cancelled)
     }
 }
 
@@ -130,13 +133,15 @@ impl TaskBoard {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
-        // Anything still "running" after a restart was interrupted.
+        // Anything still "running" after a restart was interrupted; a
+        // delegated task still queued lost its worker too.
         let now = unix_now();
         for task in &mut tasks {
-            if task.status == TaskStatus::InProgress
+            let running = task.status == TaskStatus::InProgress
                 && task.kind != "manual"
-                && task.kind != "agent"
-            {
+                && task.kind != "agent";
+            let orphaned = task.kind == "delegated" && !task.status.finished();
+            if running || orphaned {
                 task.status = TaskStatus::Failed;
                 task.finished_at = Some(now);
                 task.notes.push(TaskNote {

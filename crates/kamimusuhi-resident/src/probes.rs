@@ -108,6 +108,39 @@ pub fn probe_tier(tier: &TierConfig) -> Result<Value, String> {
     Ok(json!({"models": ids.len(), "configured_model_listed": has_model}))
 }
 
+/// Probe one peer: the address that last answered first, then the
+/// configured order; remember which one answered.
+pub fn probe_peer(s: &Shared, peer: &crate::config::PeerConfig) {
+    let preferred = s.peer_url(peer);
+    let mut order: Vec<&str> = vec![preferred.as_str()];
+    order.extend(peer.urls().filter(|u| *u != preferred));
+    let mut answered = None;
+    let (outcome, ms) = timed(|| {
+        let mut last = Err("no address".to_owned());
+        for url in &order {
+            last = get_json(url, "/health", &[], Duration::from_secs(5));
+            if let Ok(v) = &mut last {
+                answered = Some((*url).to_owned());
+                v["reached_via"] = serde_json::json!(url);
+                break;
+            }
+        }
+        last
+    });
+    if let Some(url) = answered {
+        s.peer_urls
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(peer.id.clone(), url);
+    }
+    s.peers
+        .write()
+        .unwrap_or_else(|p| p.into_inner())
+        .entry(peer.id.clone())
+        .or_default()
+        .record(outcome, ms);
+}
+
 pub fn spawn_all(shared: &Arc<Shared>) {
     let config = &shared.config;
 
@@ -128,15 +161,7 @@ pub fn spawn_all(shared: &Arc<Shared>) {
         every(
             &format!("peer-{}", peer.id),
             Duration::from_secs(config.intervals.peer_secs),
-            move || {
-                let (outcome, ms) =
-                    timed(|| get_json(&peer.url, "/health", &[], Duration::from_secs(5)));
-                let mut peers = s.peers.write().unwrap_or_else(|p| p.into_inner());
-                peers
-                    .entry(peer.id.clone())
-                    .or_default()
-                    .record(outcome, ms);
-            },
+            move || probe_peer(&s, &peer),
         );
     }
 
@@ -382,6 +407,53 @@ fn take_snapshot(shared: &Shared, database: &Path, keep: usize) -> Result<String
 
 #[cfg(test)]
 mod tests {
+    /// One-shot HTTP server answering `/health` with a small JSON body.
+    fn health_server() -> (String, thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("addr"));
+        let handle = thread::spawn(move || {
+            use std::io::{Read, Write};
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let body = r#"{"node":"mac"}"#;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        (url, handle)
+    }
+
+    #[test]
+    fn a_peer_is_reached_on_its_alternate_address() {
+        let dead = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let dead_url = format!("http://{}", dead.local_addr().expect("addr"));
+        drop(dead);
+        let (alive_url, server) = health_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config: crate::config::Config = serde_json::from_value(json!({
+            "node": {"id": "pi", "role": "continuity", "listen": "127.0.0.1:0"},
+            "paths": {"root": dir.path()},
+            "peers": [{"id": "mac", "role": "cognition", "url": dead_url,
+                       "alt_urls": [alive_url]}]
+        }))
+        .expect("config");
+        config.validate().expect("valid");
+        let peer = config.peers[0].clone();
+        let spool = crate::spool::Spool::new(dir.path().join("spool"), "pi").expect("spool");
+        let shared = Shared::new(config, spool, 1, None);
+        assert_eq!(shared.peer_url(&peer), dead_url, "primary until probed");
+        probe_peer(&shared, &peer);
+        server.join().expect("server");
+        assert_eq!(shared.peer_url(&peer), alive_url);
+        let peers = shared.peers.read().expect("peers");
+        assert!(peers["mac"].healthy);
+        assert_eq!(peers["mac"].detail["reached_via"], json!(alive_url));
+    }
+
     use super::*;
 
     #[test]

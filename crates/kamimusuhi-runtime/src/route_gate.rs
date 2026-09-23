@@ -113,7 +113,25 @@ pub enum RouteLane {
     BackgroundAgent,
 }
 
+/// The two planes of work. The chat plane talks to people under a latency
+/// budget; the task plane runs agent harnesses for as long as a task needs
+/// (see `agent_exec`). Chat never waits on the task plane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkPlane {
+    Chat,
+    Task,
+}
+
 impl RouteLane {
+    pub const fn plane(self) -> WorkPlane {
+        if self.is_chat() {
+            WorkPlane::Chat
+        } else {
+            WorkPlane::Task
+        }
+    }
+
     /// Lanes that select an OpenAI-compatible chat provider.
     pub const CHAT_LANES: [Self; 5] = [
         Self::FastChat,

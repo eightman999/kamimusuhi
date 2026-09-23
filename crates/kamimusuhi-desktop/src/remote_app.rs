@@ -12,10 +12,11 @@ use serde_json::Value;
 use crate::app::{
     AMBER, BG, BLUE, BORDER, GREEN, MUTED, PANEL, PANEL_RAISED, TEXT, card, configure_theme,
 };
+use crate::task_panel::AgentsPanel;
 use kamimusuhi_resident::remote::{RemoteCommand, RemoteEvent};
 
-const RED: Color32 = Color32::from_rgb(235, 96, 110);
-const VIOLET: Color32 = Color32::from_rgb(166, 138, 255);
+pub(crate) const RED: Color32 = Color32::from_rgb(235, 96, 110);
+pub(crate) const VIOLET: Color32 = Color32::from_rgb(166, 138, 255);
 /// The individual accepts at most this much per turn (runtime contract).
 const MAX_INPUT_BYTES: usize = kamimusuhi_runtime::dialogue::MAX_INPUT_BYTES;
 
@@ -23,6 +24,7 @@ const MAX_INPUT_BYTES: usize = kamimusuhi_runtime::dialogue::MAX_INPUT_BYTES;
 enum View {
     Chat,
     Tasks,
+    Agents,
     Approvals,
     Status,
     Tools,
@@ -43,6 +45,7 @@ pub fn run(
 ) -> Result<(), String> {
     let view = match initial_view {
         Some("tasks" | "map") => View::Tasks,
+        Some("agents") => View::Agents,
         Some("approvals") => View::Approvals,
         Some("status") => View::Status,
         Some("tools") => View::Tools,
@@ -94,6 +97,7 @@ struct RemoteApp {
     new_task_after_selected: bool,
     task_note: String,
     map_mode: bool,
+    agents: AgentsPanel,
 }
 
 impl RemoteApp {
@@ -127,6 +131,7 @@ impl RemoteApp {
             new_task_after_selected: false,
             task_note: String::new(),
             map_mode: false,
+            agents: AgentsPanel::default(),
         }
     }
 
@@ -189,6 +194,8 @@ impl RemoteApp {
                 }
                 RemoteEvent::Tools(tools) => self.tools = Some(tools),
                 RemoteEvent::Tasks(tasks) => self.tasks = tasks,
+                RemoteEvent::Agents(panel) => self.agents.set_panel(panel),
+                RemoteEvent::AgentsReply(reply) => self.agents.set_reply(reply),
                 RemoteEvent::Decision { id, reply } => {
                     self.deciding.remove(&id);
                     let ok = reply["ok"].as_bool().unwrap_or(false);
@@ -313,6 +320,13 @@ impl RemoteApp {
                     }
                 },
                 View::Tasks,
+            ),
+            (
+                match self.agents.running() {
+                    0 => "⇄  外部エージェント".to_owned(),
+                    n => format!("⇄  外部エージェント  ({n})"),
+                },
+                View::Agents,
             ),
             (
                 if pending > 0 {
@@ -871,6 +885,7 @@ impl App for RemoteApp {
             .show(ctx, |ui| match self.view {
                 View::Chat => self.chat(ui, ctx),
                 View::Tasks => self.tasks_view(ui),
+                View::Agents => self.agents.show(ui, &self.commands),
                 View::Approvals => self.approvals_view(ui),
                 View::Status => self.status_view(ui),
                 View::Tools => self.tools_view(ui),
@@ -905,7 +920,7 @@ fn node_row(ui: &mut egui::Ui, name: &str, ok: bool, detail: &str) {
     });
 }
 
-fn chip(ui: &mut egui::Ui, text: &str, color: Color32) {
+pub(crate) fn chip(ui: &mut egui::Ui, text: &str, color: Color32) {
     egui::Frame::new()
         .stroke(Stroke::new(1.0, color))
         .corner_radius(egui::CornerRadius::same(10))
@@ -1161,7 +1176,7 @@ const CARD_H: f32 = 92.0;
 
 fn lane_of(task: &Value) -> &str {
     match task["status"].as_str().unwrap_or("") {
-        "failed" => "done",
+        "failed" | "cancelled" => "done",
         other => other,
     }
 }
@@ -1586,6 +1601,7 @@ impl RemoteApp {
                     "on_hold" => "保留",
                     "done" => "完了",
                     "failed" => "失敗",
+                    "cancelled" => "取消",
                     other => other,
                 };
                 egui::Grid::new(("task-kv", id))
@@ -1760,6 +1776,7 @@ fn status_color(status: &str) -> Color32 {
         "waiting" => VIOLET,
         "on_hold" => MUTED,
         "failed" => RED,
+        "cancelled" => MUTED,
         _ => GREEN,
     }
 }
@@ -1875,7 +1892,10 @@ impl RemoteApp {
         let visible: Vec<&Value> = self
             .tasks
             .iter()
-            .filter(|t| self.show_done || !matches!(t["status"].as_str(), Some("done" | "failed")))
+            .filter(|t| {
+                self.show_done
+                    || !matches!(t["status"].as_str(), Some("done" | "failed" | "cancelled"))
+            })
             .collect();
         if visible.is_empty() {
             ui.label(RichText::new("表示するタスクはありません").color(MUTED));
@@ -1991,6 +2011,7 @@ impl RemoteApp {
                         "waiting" => "待機",
                         "on_hold" => "保留",
                         "failed" => "失敗",
+                        "cancelled" => "取消",
                         _ => "完了",
                     };
                     painter.text(
