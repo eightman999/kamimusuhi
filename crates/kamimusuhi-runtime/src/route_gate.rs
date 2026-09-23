@@ -586,14 +586,7 @@ mod tests {
         // A stale slow sample is retried after the cooldown; otherwise one
         // bad turn would bench a recovered provider until process restart.
         let later = now + gate.latency_retry_after + Duration::from_secs(1);
-        let order = gate.select(
-            RouteLane::FastChat,
-            &specs,
-            2_000,
-            false,
-            &health,
-            later,
-        );
+        let order = gate.select(RouteLane::FastChat, &specs, 2_000, false, &health, later);
         assert_eq!(order.len(), 2);
     }
 
