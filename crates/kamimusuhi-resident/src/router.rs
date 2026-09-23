@@ -342,13 +342,26 @@ fn call_tier_guarded(
         .permit(estimate)
         .map_err(|error| format!("cost guard: {error}"))?;
     let result = call_tier(tier, model, body, Some(max_completion_tokens));
-    if let Ok(reply) = &result {
-        let usage = usage_of(reply);
-        let (cost, _) = cost_of(tier, &usage);
-        if let Some(cost) = cost.or(estimate) {
-            guard.record_cost(cost);
-        } else {
-            guard.record_unpriced();
+    match &result {
+        Ok(reply) => {
+            let usage = usage_of(reply);
+            let (cost, _) = cost_of(tier, &usage);
+            if let Some(cost) = cost.or(estimate) {
+                guard.record_cost(cost);
+            } else {
+                guard.record_unpriced();
+            }
+        }
+        Err(_) => {
+            // A provider may bill work even when the reply times out, is
+            // malformed, or is rejected by our final-response checks. Charge
+            // the pre-flight upper-bound estimate to the local budget rather
+            // than assuming a failed request was free.
+            if let Some(estimate) = estimate {
+                guard.record_cost(estimate);
+            } else {
+                guard.record_unpriced();
+            }
         }
     }
     result
