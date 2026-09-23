@@ -250,12 +250,13 @@ organ SHOULD have:
  core descendant A        core descendant B       core descendant C
 ```
 
-重要なのは、これは distributed replicas とは違うという点である。
+重要なのは、**organ/resource の分散と active individual の複製を区別する**点である。
 
-- laptop と server に同じ individual が走る → **同一個体の分散 embodiment**。
+- laptop が対話 runtime、server が memory/GPU/vision organ を提供する → **一個体が分散資源を使う**。
+- laptop と server の両方に完全な runtime を複製し、双方が独立に発話・commit できる → **copy point 以降は別個体 / fork**。
 - user A と user B がそれぞれ Kamimusuhi を使う → **共通祖先を持つ別個体**。
 
-後者は最初から別 `individual_id` と別 continuity root を持つ。
+独立して活動できる runtime は、activate 前に別 `individual_id` と別 continuity root を持つ。例外は、旧 runtime を停止・fence して authority を移す migration / handoff と、commit 権限を持たない inert standby である。
 
 ---
 
@@ -492,13 +493,15 @@ version string だけでなく **ancestry graph** を持つことで、「どの
 
 ## 13. Fork semantics
 
-### Replication
+### Runtime replication
 
-同一 individual を複数 machine に配置する。continuity head は共通であり、split-brain protection が必要。
+完全な active runtime を複数 machine に複製して同時に動かす場合、**同一 individual とは扱わない**。コピーが独立した発話・判断・canonical commit authority を得る前に、新しい `individual_id` と continuity root を発行し、copy point 以降は別 lineage とする。
+
+同一 individual のまま machine を替える場合は replication ではなく **migration / handoff** とする。旧 runtime を停止または fence してから新 runtime を activate し、同時に二つの active writer を持たせない。warm standby は authority を持たない間だけ同一個体の予備実装として扱える。
 
 ### Individual fork
 
-意図的に一個体から別 individual を作る研究は将来可能だが、fork 時点で新しい `individual_id` を発行し、それ以降は別 lineage とする。
+意図的な fork だけでなく、network partition や運用事故で二つの runtime が独立して活動した場合も、後から histories を統合して「同一個体だった」とは扱わない。分岐点から別 lineage とし、必要ならどちらを元 lineage の後継とするかを明示する。
 
 ### Population birth
 
