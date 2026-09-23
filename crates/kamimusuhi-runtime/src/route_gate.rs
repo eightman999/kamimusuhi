@@ -363,20 +363,28 @@ impl RouteGate {
         // Lane-specific class preference: LocalChat wants Local first;
         // DeepReasoning tolerates cost; everything else is cost-minimal.
         let class_rank = |class: BillingClass| -> usize {
-            let order: &[BillingClass] = match lane {
-                RouteLane::LocalChat => &[BillingClass::Local],
-                RouteLane::DeepReasoning | RouteLane::ToolTask | RouteLane::MemoryHeavy => &[
-                    BillingClass::Subscription,
-                    BillingClass::Local,
-                    BillingClass::Metered,
-                    BillingClass::FreeTier,
-                ],
-                _ => &BILLING_ORDER,
-            };
-            order
-                .iter()
-                .position(|c| *c == class)
-                .unwrap_or(order.len())
+            match lane {
+                RouteLane::FastChat => match class {
+                    BillingClass::FreeTier => 0,
+                    // Both are already paid-for / zero-marginal-cost paths.
+                    // Keep them in one band so observed latency (and, before
+                    // measurements exist, operator config order) decides.
+                    BillingClass::Subscription | BillingClass::Local => 1,
+                    BillingClass::Metered => 2,
+                },
+                RouteLane::LocalChat => usize::from(class != BillingClass::Local),
+                RouteLane::DeepReasoning | RouteLane::ToolTask | RouteLane::MemoryHeavy => {
+                    match class {
+                        BillingClass::Subscription | BillingClass::Local => 0,
+                        BillingClass::Metered => 1,
+                        BillingClass::FreeTier => 2,
+                    }
+                }
+                _ => BILLING_ORDER
+                    .iter()
+                    .position(|c| *c == class)
+                    .unwrap_or(BILLING_ORDER.len()),
+            }
         };
         let lane_allows = |class: BillingClass| -> bool {
             match lane {
