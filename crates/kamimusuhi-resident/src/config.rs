@@ -489,14 +489,15 @@ impl Config {
             if tier.timeout_secs == 0 || tier.probe_interval_secs == 0 {
                 return Err(format!("tier {}: intervals must be positive", tier.name));
             }
-            let billing = tier.billing.ok_or_else(|| {
-                format!("tier {}: billing must be declared", tier.name)
-            })?;
-            let valid_price = |value: Option<f64>| {
-                value.is_none_or(|v| v.is_finite() && v >= 0.0)
-            };
+            let billing = tier
+                .billing
+                .ok_or_else(|| format!("tier {}: billing must be declared", tier.name))?;
+            let valid_price = |value: Option<f64>| value.is_none_or(|v| v.is_finite() && v >= 0.0);
             if !valid_price(tier.input_usd_per_mtok) || !valid_price(tier.output_usd_per_mtok) {
-                return Err(format!("tier {}: prices must be finite and non-negative", tier.name));
+                return Err(format!(
+                    "tier {}: prices must be finite and non-negative",
+                    tier.name
+                ));
             }
             if billing == TierBilling::Metered
                 && (tier.input_usd_per_mtok.is_none() || tier.output_usd_per_mtok.is_none())
