@@ -1449,6 +1449,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "kamimusuhi-resource-http",
+ "kamimusuhi-runtime",
  "rusqlite",
  "serde",
  "serde_json",
