@@ -84,9 +84,7 @@ fn request_private(shared: &Shared, request: &RouteRequest) -> bool {
 }
 
 fn route_lane(request: &RouteRequest) -> RouteLane {
-    if request.local_only
-        || request.body.get("model").and_then(Value::as_str) == Some("k0")
-    {
+    if request.local_only || request.body.get("model").and_then(Value::as_str) == Some("k0") {
         return RouteLane::LocalChat;
     }
     match request
