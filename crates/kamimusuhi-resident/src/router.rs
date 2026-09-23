@@ -50,12 +50,10 @@ impl RouteProvider for TierConfig {
     }
 
     fn privacy_ok_for_private_memory(&self) -> bool {
-        self.privacy_ok_for_private_memory.unwrap_or_else(|| {
-            matches!(
-                self.billing,
-                Some(TierBilling::Local) | Some(TierBilling::Subscription)
-            )
-        })
+        self.privacy_ok_for_private_memory.unwrap_or(matches!(
+            self.billing,
+            Some(TierBilling::Local) | Some(TierBilling::Subscription)
+        ))
     }
 
     fn context_limit_tokens(&self) -> Option<u64> {
@@ -174,8 +172,10 @@ pub fn plan<'a>(
     let small = requested == "k0"
         || prompt_chars(&request.body) <= shared.config.routing.small_request_chars;
     let lane = route_lane(request);
-    let mut gate = RouteGate::default();
-    gate.fast_chat_ttft_ceiling_ms = Some(shared.config.routing.fast_chat_latency_ceiling_ms);
+    let gate = RouteGate {
+        fast_chat_ttft_ceiling_ms: Some(shared.config.routing.fast_chat_latency_ceiling_ms),
+        ..Default::default()
+    };
     let health = shared
         .route_health
         .lock()
