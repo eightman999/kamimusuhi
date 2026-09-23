@@ -1,7 +1,6 @@
 import json
 import math
 import re
-import tempfile
 import shutil
 from pathlib import Path
 import pytest

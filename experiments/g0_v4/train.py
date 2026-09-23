@@ -32,7 +32,6 @@ import numpy as np
 import torch
 
 from experiments.g0.data import train_val_datasets
-from experiments.g0.representations import TorchRep
 
 from .config import Config, load_config, save_config
 from .health import representation_health

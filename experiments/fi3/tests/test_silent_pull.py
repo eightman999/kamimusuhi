@@ -7,7 +7,6 @@ from __future__ import annotations
 import os
 import shutil
 
-import pytest
 
 from experiments.fi3.cli.verify import (
     EXIT_MIGRATION_REQUIRED,

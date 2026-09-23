@@ -1,7 +1,6 @@
 """Reproducible leakage and immutable-baseline checks; no artifact mutation."""
 import hashlib,json
 from pathlib import Path
-import torch
 from .env import ActiveInfoEnv
 from .train import atomic
 

@@ -1428,7 +1428,6 @@ dependencies = [
  "kamimusuhi-core",
  "kamimusuhi-resident",
  "kamimusuhi-runtime",
- "serde",
  "serde_json",
 ]
 

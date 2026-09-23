@@ -20,11 +20,8 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 
-from ..anatomy import schema as A
 from ..anatomy import compartments as C
-from ..anatomy.provenance import Provenance
 from ..physio.compiler import compile_reduced_graph_v3
 from ..physio.overlay import (build_overlay, load_overlay,
                               resolve_entity_params)

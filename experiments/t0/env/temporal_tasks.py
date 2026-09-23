@@ -11,7 +11,7 @@ carries timestep, absolute/remaining time, progress, or position encodings.
 """
 import torch
 
-from .interval_env import (BaseTemporalEnv, OBS_DIM, OBS_NAMES, SEEN_DELAYS)
+from .interval_env import BaseTemporalEnv, OBS_DIM, SEEN_DELAYS
 
 WAIT = 0
 A_FIRST, B_FIRST = 1, 2       # T0-C answers

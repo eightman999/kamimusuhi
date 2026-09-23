@@ -11,11 +11,7 @@ import torch
 from torch import nn
 
 from experiments.k0_f2_interoception_confirmatory import policy
-from experiments.k0_f2_interoception_confirmatory.data import (
-    ACTION_NAMES, PRIMARY_MODES, RESOURCE_OOD, SENSOR_OOD, TEMPORAL_OOD,
-    encode_inputs, load_split, shuffle_mapping, task_features, utilities,
-    validate_disjoint, validate_rows, TASKS,
-)
+from experiments.k0_f2_interoception_confirmatory.data import ACTION_NAMES, RESOURCE_OOD, SENSOR_OOD, TEMPORAL_OOD, encode_inputs, load_split, shuffle_mapping, task_features, utilities, validate_disjoint, validate_rows, TASKS
 from experiments.k0_f2_interoception_confirmatory.policy import BodyPolicy, counterfactual, train_one, load_model
 
 LOCK = 'f' * 64

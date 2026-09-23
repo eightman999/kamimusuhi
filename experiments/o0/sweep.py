@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import dataclasses
 import json
 import time
 from pathlib import Path
@@ -28,7 +27,6 @@ import torch
 
 from .analysis import plots
 from .config import Config, load_config
-from .env import dynamics as dyn
 from .evaluate import (PRESETS, evaluate_heuristic, evaluate_model,
                        preset_params)
 from .models import make_model

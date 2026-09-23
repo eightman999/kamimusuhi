@@ -30,7 +30,6 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 
 from ..anatomy import schema as A
 from ..anatomy import compartments as C

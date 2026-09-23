@@ -8,7 +8,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
 from experiments.fi3.cli.verify import (
     EXIT_MIGRATION_REQUIRED,

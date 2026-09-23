@@ -3,12 +3,7 @@
 import numpy as np
 import pytest
 
-from experiments.u0.env.u0_env import (
-    ACT, CLS_DISTRACTOR, CLS_FUNCTIONAL, CLS_NOISE, CRITICAL_THRESHOLDS,
-    ENERGY, EV_DISTRACTOR, EV_NONE, EV_NOISE, FUNCTION_NAMES, IGNORE,
-    INTERNAL_NAMES, MOVE, N_FUNCTIONS, OBS_DIM, PAYLOAD_DIM,
-    PREFERRED_RANGES, RECALL, STORE, U0Config, U0Env, WAIT,
-    check_death, homeostatic_error, var_deviation)
+from experiments.u0.env.u0_env import ACT, CLS_DISTRACTOR, CLS_FUNCTIONAL, CLS_NOISE, CRITICAL_THRESHOLDS, ENERGY, EV_DISTRACTOR, EV_NONE, EV_NOISE, IGNORE, INTERNAL_NAMES, MOVE, N_FUNCTIONS, OBS_DIM, PAYLOAD_DIM, PREFERRED_RANGES, RECALL, STORE, U0Config, U0Env, WAIT, check_death, homeostatic_error
 
 
 def cfg(**kw):

@@ -8,7 +8,6 @@ fixed pairs and to audit shortcut behavior. All comparison thresholds are fixed
 before pilot execution. Numerical epsilon=1e-12.
 """
 from pathlib import Path
-import json
 import time
 import numpy as np
 
