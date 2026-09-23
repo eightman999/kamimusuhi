@@ -24,6 +24,10 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 
 | Date / time (JST) | Survey | Main blind spots | 反映判断 |
 |---|---|---|---|
+| 2026-09-23 13:00:26 | [2026-09-23-13-00-26.md](./2026-09-23-13-00-26.md) | pre-maintenance operational intent capture / policy-axis factorization / explicit evidence-query modes / path-dependent active-sensing leakage / clone-path & diagnostic-lifetime deltas | 未判定 |
+| 2026-09-23 07:02:38 | [2026-09-23-07-02-38.md](./2026-09-23-07-02-38.md) | module-graph runtime identity / mutation-free validity drift / covert-channel-aware communication / policy interposition coverage / observational work amplification | 未判定 |
+| 2026-09-23 01:09:20 | [2026-09-23-01-09-20.md](./2026-09-23-01-09-20.md) | late-bound dispatch currentness / referential conversation-edge completeness / evidence-completeness-aware collective safety | 未判定 |
+| 2026-09-22 18:57:49 | [2026-09-22-18-57-49.md](./2026-09-22-18-57-49.md) | causal delegation topology persistence / phase-qualified observability authority / perception-contract runtime correction / observer-outcome non-interference delta | 未判定 |
 | 2026-09-22 13:00:36 | [2026-09-22-13-00-36.md](./2026-09-22-13-00-36.md) | channel-aware turn settlement / epistemic verification backpressure / declared-dependency retention closure delta / effective route & capability-view updates | 未判定 |
 | 2026-09-22 06:58:36 | [2026-09-22-06-58-36.md](./2026-09-22-06-58-36.md) | claim-preserving content deduplication / record-atomic bounded sampling / failure-semantic projection preservation / generation-aware diagnostic suppression | 未判定 |
 | 2026-09-22 01:00:00 | [2026-09-22-01-00-00.md](./2026-09-22-01-00-00.md) | failure-origin-typed async outcomes / origin-bound mutable views / explicit context-role provenance / capability-constrained cognitive effort projection / clock-basis-qualified temporal semantics | 未判定 |
