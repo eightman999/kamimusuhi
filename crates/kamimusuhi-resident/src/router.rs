@@ -926,6 +926,70 @@ mod tests {
     }
 
     #[test]
+    fn production_plan_keeps_private_turns_off_untrusted_free_tiers() {
+        let (mut s, _dir) = shared();
+        let mut free = s.config.tiers[2].clone();
+        free.name = "free".to_owned();
+        free.billing = Some(crate::config::TierBilling::FreeTier);
+        free.privacy_ok_for_private_memory = Some(false);
+        free.auth_env = None;
+        s.config.tiers.insert(0, free);
+
+        let long = "x".repeat(5_000);
+        let private = RouteRequest {
+            body: json!({"model": "kamimusuhi",
+                         "messages": [{"role": "user", "content": long.clone()}]}),
+            local_only: false,
+        };
+        let private_names = names(&plan(&s, &private).expect("private plan"));
+        assert!(!private_names.iter().any(|name| name == "free"));
+
+        let public = RouteRequest {
+            body: json!({"model": "kamimusuhi", "kamimusuhi_private": false,
+                         "messages": [{"role": "user", "content": long}]}),
+            local_only: false,
+        };
+        let public_names = names(&plan(&s, &public).expect("public plan"));
+        assert_eq!(public_names.first().map(String::as_str), Some("free"));
+    }
+
+    #[test]
+    fn production_cost_guard_blocks_expensive_metered_call_before_network() {
+        let (mut s, _dir) = shared();
+        let mut paid = s.config.tiers[2].clone();
+        paid.name = "paid".to_owned();
+        paid.base_url = "http://127.0.0.1:9/v1".to_owned();
+        paid.auth_env = None;
+        paid.billing = Some(crate::config::TierBilling::Metered);
+        paid.input_usd_per_mtok = Some(1_000.0);
+        paid.output_usd_per_mtok = Some(1_000.0);
+        paid.privacy_ok_for_private_memory = Some(true);
+        s.config.tiers = vec![paid];
+        s.set_tier("paid", Ok(Value::Null), 1);
+
+        let req = RouteRequest {
+            body: json!({"model": "kamimusuhi",
+                         "messages": [{"role": "user", "content": "hi"}]}),
+            local_only: false,
+        };
+        let routed = route(&s, &req);
+        assert_eq!(routed.status, 503);
+        assert!(routed.attempts.iter().any(|attempt| attempt.contains("cost guard:")));
+        assert!(
+            s.tier_healthy("paid"),
+            "budget rejection is policy, not provider health failure"
+        );
+        assert_eq!(
+            s.cost_guard
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .spent_usd(),
+            0.0,
+            "blocked call never reaches the network and spends nothing"
+        );
+    }
+
+    #[test]
     fn failing_tiers_fall_through_to_503() {
         let (s, _dir) = shared();
         let req = RouteRequest {
