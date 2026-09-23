@@ -20,7 +20,7 @@ Language: **この `spec.md` を日本語主文とし、[`spec.en.md`](./spec.en
 
 ## 1. システム定義
 
-かみむすびは、**単一のモデルコンテキスト、process、machine、UI に依存せず継続する、永続・分散型の人工認知個体**である。
+かみむすびは、**単一のモデルコンテキスト、process、machine、UI に依存せず継続できる、永続・発達型の人工認知個体**である。個体は外部・分散配置された感覚器、認知器官、計算資源を利用してよいが、複数の完全 runtime を同時に一つの個体として扱わない。
 
 システムは長期的に次を可能にすることを意図する。
 
@@ -29,7 +29,7 @@ Language: **この `spec.md` を日本語主文とし、[`spec.en.md`](./spec.en
 - 経験を記録し、再解釈し、統合し、忘却する。
 - 必要性に応じて推論深度と計算量を変化させる。
 - 検索、計算、コード、知覚、専門モデル、frontier model へ認知処理を委譲する。
-- 複数の認証済み device / surface に存在しつつ、一つの authoritative identity lineage を維持する。
+- 複数の認証済み device / surface 上の bounded organ / resource を利用できる。完全 runtime の host 変更は migration / handoff とし、複数 active runtime の同時自律稼働は別個体 / fork とする。
 - request/response 外でも背景認知、default cognition、offline consolidation を行える。
 - 視覚・聴覚・触覚・環境・machine telemetry を人工感覚系として扱える。
 - 発話を単なる TTS ではなく、時間を持つ運動・社会行動として扱える。
@@ -89,11 +89,13 @@ model output、dream output、background cognition、tool output、retrieved tex
 
 durable change は**proposal → validation/policy → activation**の明示的境界を通り、provenance、predecessor state、disposition を保持しなければならない。
 
-### INV-006 — 分散実行は偶発的な複製を意味しない
+### INV-006 — 分散 resource と個体複製を区別する
 
-複数 device/process は同時に perception、reasoning、cache、proposal を行ってよい。
+複数 device/process は bounded organ / resource として同時に perception、reasoning、cache、proposal を行ってよい。
 
-ただし、古い同一 predecessor から複数の branch が無自覚に「同一の authoritative individual」を名乗れない continuity mechanism を持たなければならない。
+ただし、canonical self-state の read/write と独立した発話・判断・commit authority を持つ完全 runtime が複数同時に活動してはならない。同じ state から複数 runtime が独立して活動可能になった場合、それらは同一個体ではなく、別 `individual_id` / continuity root を持つ fork として扱わなければならない。
+
+同一個体として host を替える場合は migration / handoff とし、旧 active writer を停止または fence してから新 runtime を activate しなければならない。
 
 ### INV-007 — External intelligence は self と区別可能である
 
@@ -703,11 +705,11 @@ full-duplex interaction は long-term target とし、少なくとも system は
 
 ---
 
-## 10. Distributed embodiment and continuity
+## 10. Distributed organs, migration, and continuity
 
 ### FR-018 — Execution surfaces
 
-かみむすび MAY は phone、laptop、home server、robot、cloud node 等の複数 surface 上で動作する。
+かみむすび MAY は phone、laptop、home server、robot、cloud node 等の複数 surface 上へ bounded organ / resource を配置する。完全な active runtime の authority は一度に一つの host にのみ属する。
 
 surface SHALL は stable authenticated identity と declared capability を持つ。
 
@@ -739,11 +741,11 @@ model、host、interaction surface の交換は、continuity-bearing state と a
 
 migration は behavioral invariance を保証しない。material cognitive change は別途 evaluation する。
 
-### FR-022 — Split-brain handling
+### FR-022 — Split-brain / fork handling
 
-network partition / concurrent writer が一つの canonical predecessor から複数 authoritative descendant を silently 作ってはならない。
+network partition / concurrent writer が一つの canonical predecessor から複数の independently acting runtime を silently 「同一個体」として継続させてはならない。
 
-conflicting branch は explicit reconciliation、quarantine、または fork/new individual designation を要求する。
+conflicting branch は quarantine しなければならない。片方だけを元 lineage の continuation として選ぶことはできるが、双方が独立して活動した履歴を後から merge して一つの autobiographical continuity とみなしてはならない。もう一方を残す場合は fork/new individual として別 `individual_id` / continuity root を付与する。
 
 ---
 
@@ -986,14 +988,14 @@ W5–W7 の追加監査・回帰テスト・transport 制約は [実装監査結
 - background freshness policy
 - bounded default cognition
 
-### v0.5 — distributed body
+### v0.5 — distributed organs / migration
 
-- K-Edge + K-Core deployment
+- K-Edge + K-Core organ/resource deployment
 - authenticated surfaces
 - Embodiment State
-- canonical activation across nodes
-- migration
-- network partition / split-brain / recovery tests
+- single-active-runtime authority
+- migration / handoff
+- network partition / accidental split-brain / fork tests
 
 ### v1.x — artificial cognitive life research
 
@@ -1017,7 +1019,7 @@ W5–W7 の追加監査・回帰テスト・transport 制約は [実装監査結
 - background cognition が uncontrolled self-reinforcement にならず有用であり続ける条件は何か。
 - digital interoceptive variable をどう calibration/learn するか。
 - canonical evidence をどこまで lossless に残し、privacy/storage cost とどう両立するか。
-- distributed branch が continuation ではなく fork/new individual になる境界は何か。
+- migration / handoff の single-active-runtime 境界を、障害時にも曖昧にせず機械的に強制するには何が必要か。
 - model migration 後の personality drift をどう測るか。
 - long-lived relationship competence を短期 benchmark と独立してどう測るか。
 - speech timing、backchannel、sensory embodiment は identity/relationship formation にどれだけ寄与するか。
