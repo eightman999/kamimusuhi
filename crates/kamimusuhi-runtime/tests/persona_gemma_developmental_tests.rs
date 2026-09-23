@@ -144,9 +144,18 @@ fn test_deterministic_developmental_projection_snapshot() {
         "authority": "external_material"
     });
 
-    assert_eq!(serialized["projection_source"], expected["projection_source"]);
-    assert_eq!(serialized["homeostasis_register"], expected["homeostasis_register"]);
-    assert_eq!(serialized["adaptability_bias"], expected["adaptability_bias"]);
+    assert_eq!(
+        serialized["projection_source"],
+        expected["projection_source"]
+    );
+    assert_eq!(
+        serialized["homeostasis_register"],
+        expected["homeostasis_register"]
+    );
+    assert_eq!(
+        serialized["adaptability_bias"],
+        expected["adaptability_bias"]
+    );
     assert_eq!(serialized["activity_level"], expected["activity_level"]);
     assert_eq!(serialized["authority"], expected["authority"]);
 }
@@ -219,8 +228,7 @@ fn test_language_provider_swap_continuity() {
 
     for (turn_seq, (_name, server, model_name)) in providers.iter().enumerate() {
         let backend_id = persona_backend_id_for(&server.base_url(), model_name);
-        let persona_config =
-            PersonaBackendConfig::new(backend_id, server.base_url(), *model_name);
+        let persona_config = PersonaBackendConfig::new(backend_id, server.base_url(), *model_name);
         let persona_core = Box::new(OpenAiCompatiblePersona::new(persona_config));
 
         let turn_input = PersonaTurnInput {

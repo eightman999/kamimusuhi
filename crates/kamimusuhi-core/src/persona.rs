@@ -95,65 +95,69 @@ impl DevelopmentalDisposition {
             .and_then(|f| f.as_str())
             == Some("recent_record");
 
-        if is_connected && is_fresh {
-            if let Some(snapshot) = raw_obs.and_then(|o| o.get("snapshot")) {
-                let metrics = snapshot.pointer("/evaluation/metrics");
-                let summary = snapshot.pointer("/evaluation/summary");
+        let snapshot = if is_connected && is_fresh {
+            raw_obs.and_then(|o| o.get("snapshot"))
+        } else {
+            None
+        };
 
-                let homeostasis_score = metrics
-                    .and_then(|m| m.get("homeostasis_score"))
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.5);
+        if let Some(snapshot) = snapshot {
+            let metrics = snapshot.pointer("/evaluation/metrics");
+            let summary = snapshot.pointer("/evaluation/summary");
 
-                let recovery_score = metrics
-                    .and_then(|m| m.get("disturbance_recovery_score"))
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.5);
+            let homeostasis_score = metrics
+                .and_then(|m| m.get("homeostasis_score"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.5);
 
-                let active_fraction = summary
-                    .and_then(|s| s.get("active_fraction"))
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.5);
+            let recovery_score = metrics
+                .and_then(|m| m.get("disturbance_recovery_score"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.5);
 
-                let homeostasis_register = if homeostasis_score > 0.7 {
-                    "homeostatic_equilibrium"
-                } else if homeostasis_score < 0.4 {
-                    "homeostatic_strain"
-                } else {
-                    "homeostatic_transient"
-                }
-                .to_owned();
+            let active_fraction = summary
+                .and_then(|s| s.get("active_fraction"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.5);
 
-                let adaptability_bias = if recovery_score > 0.7 {
-                    "high_resilience"
-                } else if recovery_score < 0.4 {
-                    "low_resilience"
-                } else {
-                    "moderate_resilience"
-                }
-                .to_owned();
-
-                let activity_level = if active_fraction > 0.8 {
-                    "elevated_activity"
-                } else if active_fraction < 0.3 {
-                    "subdued_activity"
-                } else {
-                    "steady_activity"
-                }
-                .to_owned();
-
-                return Self {
-                    projection_source: "mio_phenotype_projected".to_owned(),
-                    seed_digest,
-                    homeostasis_register,
-                    adaptability_bias,
-                    activity_level,
-                    register_traits,
-                    stance_traits,
-                    instructions,
-                    authority: AuthorityClass::ExternalMaterial,
-                };
+            let homeostasis_register = if homeostasis_score > 0.7 {
+                "homeostatic_equilibrium"
+            } else if homeostasis_score < 0.4 {
+                "homeostatic_strain"
+            } else {
+                "homeostatic_transient"
             }
+            .to_owned();
+
+            let adaptability_bias = if recovery_score > 0.7 {
+                "high_resilience"
+            } else if recovery_score < 0.4 {
+                "low_resilience"
+            } else {
+                "moderate_resilience"
+            }
+            .to_owned();
+
+            let activity_level = if active_fraction > 0.8 {
+                "elevated_activity"
+            } else if active_fraction < 0.3 {
+                "subdued_activity"
+            } else {
+                "steady_activity"
+            }
+            .to_owned();
+
+            return Self {
+                projection_source: "mio_phenotype_projected".to_owned(),
+                seed_digest,
+                homeostasis_register,
+                adaptability_bias,
+                activity_level,
+                register_traits,
+                stance_traits,
+                instructions,
+                authority: AuthorityClass::ExternalMaterial,
+            };
         }
 
         // Deterministic degradation to baseline when unavailable or stale

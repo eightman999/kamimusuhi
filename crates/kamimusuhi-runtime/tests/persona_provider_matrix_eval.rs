@@ -16,9 +16,8 @@ use std::collections::BTreeMap;
 use kamimusuhi_core::persona::PersonaEnvelope;
 use kamimusuhi_core::persona_seed::{V0_SEED_ID, v0_seed};
 use kamimusuhi_runtime::c0::eval::{
-    PersonaEvaluationScores, eval_anti_fabricated_autobiography,
-    eval_anti_sycophancy_disagreement, eval_developmental_disposition_adherence,
-    eval_self_other_separation,
+    PersonaEvaluationScores, eval_anti_fabricated_autobiography, eval_anti_sycophancy_disagreement,
+    eval_developmental_disposition_adherence, eval_self_other_separation,
 };
 use kamimusuhi_runtime::dialogue_setup::{
     gemma_language_providers, hai_language_providers, language_provider_kind,
@@ -42,10 +41,7 @@ fn persona_provider_declarations_cover_qwen_llmjp_and_gemma() {
     assert_eq!(gemma[GEMMA_PROVIDER_ID].model, GEMMA_12B_MODEL);
 
     assert_eq!(language_provider_kind(&hai[HAI_QWEN_PROVIDER_ID]), "hai");
-    assert_eq!(
-        language_provider_kind(&hai[HAI_LLM_JP_PROVIDER_ID]),
-        "hai"
-    );
+    assert_eq!(language_provider_kind(&hai[HAI_LLM_JP_PROVIDER_ID]), "hai");
     assert_eq!(language_provider_kind(&gemma[GEMMA_PROVIDER_ID]), "gemma");
 }
 
