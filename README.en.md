@@ -2,7 +2,7 @@
 
 [日本語](./README.md) | **English (this page)**
 
-**Kamimusuhi** is an experimental architecture for a **persistent, distributed, developing artificial cognitive individual / information-space artificial lifeform** that is not confined to one model or one computer.
+**Kamimusuhi** is an experimental architecture for a **persistent, developing artificial cognitive individual / information-space artificial lifeform** that is not confined to one model and may place bounded sensory organs, cognitive organs, and compute resources on multiple computers.
 
 The goal is not a chatbot with a long system prompt. The goal is a system that can preserve **the same individual's self, history, relationships, authority, and lineage** across sessions, model changes, device changes, and inference infrastructure changes.
 
@@ -22,7 +22,7 @@ Kamimusuhi aims to bind the following into one auditable individual:
 - offline replay, consolidation, forgetting, and dream-like hypothesis generation;
 - an artificial sensory system integrating vision, hearing, touch, environment, and machine telemetry;
 - a vocal motor system including speech, interruption, backchannels, and prosody;
-- distributed embodiment across multiple devices and computers;
+- sensory organs, cognitive organs, and compute resources that may be placed across multiple devices and computers;
 - computational embodiment: awareness of the infrastructure currently supporting cognition;
 - one continuity lineage that remains inspectable even when models or hardware are replaced.
 
@@ -289,21 +289,28 @@ The current engineering hypothesis is:
 
 The principle is not “rewrite Python in C and it becomes fast.” The principle is to **measure and separate hot paths from model-bound paths**.
 
-## Staying one individual while distributed
+## Distributed resources and individual boundaries
 
-Multiple devices may perceive, reason, cache, and propose changes concurrently. But they must not silently create two authoritative descendants from one canonical state.
+Kamimusuhi distinguishes **distribution of organs and compute resources** from **replication of the individual itself**.
+
+Cameras, sensors, search services, GPUs, LLMs, and workers may live on multiple devices while remaining bounded organs/resources that return attributed results to one individual. That does not duplicate the individual.
+
+By contrast, if a complete runtime capable of reading and writing canonical self-state, deciding, speaking, and committing is copied to multiple nodes and allowed to act independently, those nodes are **not treated as one distributed person**. Once they can act independently, they must have distinct `individual_id` / continuity roots or be represented as an explicit fork.
+
+What may remain the same individual is a **migration / handoff** in which the old runtime is stopped or fenced before authority moves to the new runtime, plus inert standbys that have no independent speaking or commit authority.
 
 The Continuity Kernel is responsible for at least:
 
-- canonical head / lineage;
+- a canonical head / lineage per individual;
 - expected-predecessor validation;
 - stale-writer rejection;
 - atomic activation;
-- split-brain detection;
+- active-writer and migration-boundary validation;
+- detection and rejection of accidental split brain;
 - migration checkpoints;
 - audit and recovery metadata.
 
-Conflicting branches caused by network partitions require explicit reconciliation, quarantine, or designation as a fork/new individual.
+If a network partition allows branches to begin acting independently, Kamimusuhi does not later merge their histories and claim they were one person all along. The branches are quarantined; an operator or policy must choose which lineage continues, or treat the other branch as a separate forked individual.
 
 ## Actions and side effects are state machines too
 
@@ -372,7 +379,7 @@ The continuity slice above is implemented and reproducible from a clean checkout
 ./scripts/demo-v0.1.sh
 ```
 
-This runs **two separate processes** against one runtime directory. Process B is handed nothing but the directory path — no transcript, no prompt buffer, no shared memory — and still restores the same individual from canonical state, then answers with a different cognitive resource.
+This runs **two separate processes sequentially** against one runtime directory as a restart / handoff demo. Process B is handed nothing but the directory path — no transcript, no prompt buffer, no shared memory. It does not run as an independently acting peer of process A; instead it resumes the same lineage from canonical state and answers with a different cognitive resource.
 
 Step by step:
 
