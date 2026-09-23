@@ -318,14 +318,27 @@ fn completion_finish_reason(value: &Value) -> &'static str {
     }
 }
 
+struct GuardedReply {
+    body: Value,
+    cost_usd: Option<f64>,
+    cost_kind: Option<&'static str>,
+}
+
 fn call_tier_guarded(
     shared: &Shared,
     tier: &TierConfig,
     model: &str,
     body: &Value,
-) -> Result<Value, String> {
+) -> Result<GuardedReply, String> {
     if tier.billing != Some(TierBilling::Metered) {
-        return call_tier(tier, model, body, None);
+        let reply = call_tier(tier, model, body, None)?;
+        let usage = usage_of(&reply);
+        let (cost_usd, cost_kind) = cost_of(tier, &usage);
+        return Ok(GuardedReply {
+            body: reply,
+            cost_usd,
+            cost_kind,
+        });
     }
     let price = tier
         .input_usd_per_mtok
@@ -341,18 +354,24 @@ fn call_tier_guarded(
     guard
         .permit(estimate)
         .map_err(|error| format!("cost guard: {error}"))?;
-    let result = call_tier(tier, model, body, Some(max_completion_tokens));
-    match &result {
+    match call_tier(tier, model, body, Some(max_completion_tokens)) {
         Ok(reply) => {
-            let usage = usage_of(reply);
-            let (cost, _) = cost_of(tier, &usage);
-            if let Some(cost) = cost.or(estimate) {
+            let usage = usage_of(&reply);
+            let (reported_cost, reported_kind) = cost_of(tier, &usage);
+            let cost_usd = reported_cost.or(estimate);
+            let cost_kind = reported_kind.or_else(|| estimate.map(|_| "estimate"));
+            if let Some(cost) = cost_usd {
                 guard.record_cost(cost);
             } else {
                 guard.record_unpriced();
             }
+            Ok(GuardedReply {
+                body: reply,
+                cost_usd,
+                cost_kind,
+            })
         }
-        Err(_) => {
+        Err(error) => {
             // A provider may bill work even when the reply times out, is
             // malformed, or is rejected by our final-response checks. Charge
             // the pre-flight upper-bound estimate to the local budget rather
@@ -362,9 +381,9 @@ fn call_tier_guarded(
             } else {
                 guard.record_unpriced();
             }
+            Err(error)
         }
     }
-    result
 }
 
 pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
@@ -385,7 +404,11 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
     for (tier, model) in plan {
         let tier_started = Instant::now();
         match call_tier_guarded(shared, tier, &model, &request.body) {
-            Ok(mut body) => {
+            Ok(GuardedReply {
+                mut body,
+                cost_usd,
+                cost_kind,
+            }) => {
                 let ms = u64::try_from(tier_started.elapsed().as_millis()).unwrap_or(u64::MAX);
                 let usage = usage_of(&body);
                 shared.set_tier(&tier.name, Ok(Value::Null), ms);
@@ -402,7 +425,6 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
                         Duration::from_secs(60),
                         Instant::now(),
                     );
-                let (cost_usd, cost_kind) = cost_of(tier, &usage);
                 if let Value::Object(map) = &mut body {
                     map.insert(
                         "kamimusuhi_route".into(),
@@ -771,6 +793,40 @@ mod tests {
         assert_eq!(event.model.as_deref(), Some("q"));
         assert_eq!(event.billing.as_deref(), Some("metered"));
         assert_eq!(event.cost_usd, Some(0.001));
+        server.join().expect("fixture finished");
+    }
+
+    #[test]
+    fn metered_missing_usage_reports_the_preflight_estimate() {
+        let (url, server) = completion_server(json!({
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]
+        }));
+        let (mut s, _dir) = shared();
+        let mut tier = s.config.tiers[2].clone();
+        tier.base_url = url;
+        tier.auth_env = None;
+        tier.billing = Some(crate::config::TierBilling::Metered);
+        tier.input_usd_per_mtok = Some(1.0);
+        tier.output_usd_per_mtok = Some(1.0);
+        tier.privacy_ok_for_private_memory = Some(true);
+        s.config.tiers = vec![tier];
+        let req = RouteRequest {
+            body: json!({"model": "kamimusuhi",
+                         "messages": [{"role": "user", "content": "hi"}]}),
+            local_only: false,
+        };
+        let routed = route(&s, &req);
+        assert_eq!(routed.status, 200);
+        let meta = &routed.body["kamimusuhi_route"];
+        assert_eq!(meta["cost_kind"], "estimate");
+        assert!(meta["cost_usd"].as_f64().is_some_and(|cost| cost > 0.0));
+        assert!(
+            s.cost_guard
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .spent_usd()
+                > 0.0
+        );
         server.join().expect("fixture finished");
     }
 
