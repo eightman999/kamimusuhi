@@ -24,6 +24,7 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 
 | Date / time (JST) | Survey | Main blind spots | 反映判断 |
 |---|---|---|---|
+| 2026-09-23 13:00:26 | [2026-09-23-13-00-26.md](./2026-09-23-13-00-26.md) | pre-maintenance operational intent capture / policy-axis factorization / explicit evidence-query modes / path-dependent active-sensing leakage / clone-path & diagnostic-lifetime deltas | 未判定 |
 | 2026-09-23 07:02:38 | [2026-09-23-07-02-38.md](./2026-09-23-07-02-38.md) | module-graph runtime identity / mutation-free validity drift / covert-channel-aware communication / policy interposition coverage / observational work amplification | 未判定 |
 | 2026-09-23 01:09:20 | [2026-09-23-01-09-20.md](./2026-09-23-01-09-20.md) | late-bound dispatch currentness / referential conversation-edge completeness / evidence-completeness-aware collective safety | 未判定 |
 | 2026-09-22 18:57:49 | [2026-09-22-18-57-49.md](./2026-09-22-18-57-49.md) | causal delegation topology persistence / phase-qualified observability authority / perception-contract runtime correction / observer-outcome non-interference delta | 未判定 |
