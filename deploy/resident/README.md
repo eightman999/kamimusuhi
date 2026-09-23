@@ -28,15 +28,27 @@ Raspberry Pi と llm_master の両方で `kamimusuhi-resident`（バイナリ名
 
 ## Routing
 
-各ノードの `tiers` を上から順に試す。probe（`/v1/models`）で healthy なものだけを使い、全滅時のみ unhealthy も試す。
-リクエスト失敗したtierは即 unhealthy になり、probe が成功した時点で自動的に設定された優先順へ戻る。
+自動 routing（`kamimusuhi` / `auto`）は、設定順をそのまま試すのではなく
+runtime と共通の `RouteGate` で候補を絞ってから実行する。判定順は
+**privacy → context/TPM → live health → billing class → latency**。
+persona / memory を含む通常の対話は既定で private とし、
+`privacy_ok_for_private_memory=true` を明示した tier だけに送る。
 
-- Pi: `hai`（`qwen3.8-27b-uncensored`）→ `llm_master`（peer resident 経由、`X-Kamimusuhi-Route: local` で llm_master 側の HAI fallback を抑止）
-- Piのtier待機期限はHAI 30秒／llm_master 120秒。model呼出しごとのprovider期限180秒内でfallbackできるようにする。空本文・tool callなし・拒否なしの応答も失敗として次tierを試す。
-- llm_master: `local`（llama-master :8080）→ `hai`
-- `condition: small_request` の tier は短い要求（既定1200文字以下）か `model: "k0"` のときのみ使う（K0/local 枠）。
-- model 名: `kamimusuhi` / `auto` / `k0` は自動、`hai` や `hai/glm-5.3` はtier強制。
+- FAST_CHAT の production latency ceiling は既定 **4,000ms**。resident は非streaming upstreamを使うため、ここでは実リクエストの全応答時間をTTFTの保守的proxyとしてEWMAに戻す。4秒を継続して超えた経路はFAST_CHAT候補から外れる。
+- FreeTier がprivate条件を満たす場合は先行し、Local / Subscription は同じ zero-marginal-cost band で実測 latency（未計測なら設定順）を使う。Metered は最後の fallback。
+- probe（`/v1/models`）の healthy/unhealthy も併用し、known-down tier は healthy 候補がない場合だけ試す。実リクエスト失敗も即 health に反映し、429 は cooldown 対象になる。
+- Pi の既定 zero-marginal 経路: `hai`（`qwen3.8-27b-uncensored`）と `llm_master`（peer resident 経由、`X-Kamimusuhi-Route: local` で peer 側 fallback を抑止）。未計測時は設定順、観測後は同band内で latency が効く。
+- llm_master の既定 zero-marginal 経路: `local`（llama-master :8080）と `hai`。
+- `condition: small_request` の tier は短い要求（既定1200文字以下）か `model: "k0"` のときのみ使う。 `k0` と `X-Kamimusuhi-Route: local` は LocalChat として local tier のみに制限する。
+- model 名で `hai` や `hai/glm-5.3` のようにtierを強制できるが、local-only / privacy wall / production cost guard は迂回できない。
 - `stream: true` は完成応答を SSE として返す（逐次生成ではない）。
+
+従量 tier は送信前に production `CostGuard` を通る。既定上限は
+**$0.02/request / $0.50/daemon session / $0.10/day / $2.00/month**。
+daily/monthly ledger は `current_state/routing-cost-ledger.json` に保存され、
+再起動後も継続する。従量 tier は input/output の単価宣言が必須で、
+未宣言なら起動時設定検証で拒否する。これは設定された単価に基づくローカル上限なので、
+provider側の価格変更まで請求額を保証するものではない。従量provider側の spending limit も併用する。
 
 OpenAI互換で使う例（ノード上では token 不要、他ホストからは `Authorization: Bearer $KAMIMUSUHI_NODE_TOKEN`）:
 

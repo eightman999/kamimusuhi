@@ -4,8 +4,11 @@
 //! in this module performs I/O.
 
 use std::collections::BTreeMap;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, RwLock};
+
+use kamimusuhi_runtime::provider_bench::{CostCaps, CostGuard};
+use kamimusuhi_runtime::route_gate::ProviderStateBook;
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -115,6 +118,11 @@ pub struct Shared {
     pub kcore: RwLock<Value>,
     pub snapshot: RwLock<Value>,
     pub last_route: RwLock<Option<RouteEvent>>,
+    /// Live request observations consumed by the shared RouteGate.
+    pub route_health: Mutex<ProviderStateBook>,
+    /// Persistent production spend guard. Metered calls hold this lock for
+    /// the duration of the call so concurrent fallbacks cannot overbook a cap.
+    pub cost_guard: Mutex<CostGuard>,
     pub requests: AtomicU64,
     pub mcp: Vec<std::sync::Arc<crate::mcp::McpServer>>,
     pub approvals: crate::approvals::ApprovalQueue,
@@ -131,6 +139,20 @@ fn read<T: Clone>(lock: &RwLock<T>) -> T {
 
 impl Shared {
     pub fn new(config: Config, spool: Spool, boot_epoch: u64, token: Option<String>) -> Self {
+        let cost_guard = CostGuard::new(
+            CostCaps {
+                request_usd: config.routing.max_request_cost_usd,
+                session_usd: config.routing.max_session_cost_usd,
+                daily_usd: config.routing.max_daily_cost_usd,
+                monthly_usd: config.routing.max_monthly_cost_usd,
+            },
+            Some(
+                config
+                    .paths
+                    .current_state()
+                    .join("routing-cost-ledger.json"),
+            ),
+        );
         let tiers = config
             .tiers
             .iter()
@@ -174,6 +196,8 @@ impl Shared {
             kcore: RwLock::new(json!({"state": "disabled"})),
             snapshot: RwLock::new(Value::Null),
             last_route: RwLock::new(None),
+            route_health: Mutex::new(ProviderStateBook::default()),
+            cost_guard: Mutex::new(cost_guard),
             requests: AtomicU64::new(0),
         }
     }
@@ -249,6 +273,15 @@ impl Shared {
                 t.condition == crate::config::TierCondition::Always && self.tier_healthy(&t.name)
             })
             .map(|t| t.name.clone());
+        let cost_guard = self.cost_guard.lock().unwrap_or_else(|p| p.into_inner());
+        let cost_status = json!({
+            "session_usd": cost_guard.spent_usd(),
+            "daily_usd": cost_guard.day_spent_usd(),
+            "monthly_usd": cost_guard.month_spent_usd(),
+            "session_remaining_usd": cost_guard.remaining_usd(),
+            "unpriced_requests": cost_guard.unpriced_requests(),
+        });
+        drop(cost_guard);
         json!({
             "node": self.health(),
             "peers": peers,
@@ -257,6 +290,7 @@ impl Shared {
                 "active_primary": active,
                 "tiers": tiers,
                 "last_route": read(&self.last_route),
+                "cost_guard": cost_status,
                 "requests": self.requests.load(Ordering::Relaxed),
             },
             "nas": {
