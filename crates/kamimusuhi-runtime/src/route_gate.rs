@@ -152,6 +152,9 @@ pub struct ProviderHealth {
     pub rate_limited_until: Option<Instant>,
     /// Largest cached_tokens the provider recently reported.
     pub last_cached_tokens: Option<u64>,
+    /// Time of the latest live request observation. A stale slow sample must
+    /// not bench a recovered provider forever.
+    pub last_observed_at: Option<Instant>,
 }
 
 impl ProviderHealth {
@@ -173,6 +176,7 @@ impl ProviderHealth {
         now: Instant,
     ) {
         self.window_requests += 1;
+        self.last_observed_at = Some(now);
         if ok {
             self.consecutive_failures = 0;
             if let Some(ttft) = ttft_ms {
@@ -248,6 +252,9 @@ pub struct RouteGate {
     /// for conversation; beyond this ceiling the turn falls through to the
     /// next class. Other lanes have no ceiling — a background task can wait.
     pub fast_chat_ttft_ceiling_ms: Option<u64>,
+    /// A slow provider is temporarily benched, then retried so recovery does
+    /// not require a resident restart.
+    pub latency_retry_after: Duration,
 }
 
 impl Default for RouteGate {
@@ -260,6 +267,7 @@ impl Default for RouteGate {
             // conversation: measured free-tier reasoning upstreams sit at
             // 12-48s, fast clouds at 0.4-2s, HAI at 4-22s.
             fast_chat_ttft_ceiling_ms: Some(30_000),
+            latency_retry_after: Duration::from_secs(60),
         }
     }
 }
@@ -345,6 +353,9 @@ impl RouteGate {
                 if lane == RouteLane::FastChat
                     && let Some(ceiling) = self.fast_chat_ttft_ceiling_ms
                     && state.ewma_ttft_ms.is_some_and(|ewma| ewma > ceiling as f64)
+                    && state
+                        .last_observed_at
+                        .is_none_or(|at| now < at + self.latency_retry_after)
                 {
                     skipped_for_health = true;
                     continue;
@@ -570,6 +581,19 @@ mod tests {
         assert_eq!(order[0].spec.id, "sub");
         // Other lanes have no latency ceiling — background work can wait.
         let order = gate.select(RouteLane::MemoryHeavy, &specs, 2_000, false, &health, now);
+        assert_eq!(order.len(), 2);
+
+        // A stale slow sample is retried after the cooldown; otherwise one
+        // bad turn would bench a recovered provider until process restart.
+        let later = now + gate.latency_retry_after + Duration::from_secs(1);
+        let order = gate.select(
+            RouteLane::FastChat,
+            &specs,
+            2_000,
+            false,
+            &health,
+            later,
+        );
         assert_eq!(order.len(), 2);
     }
 
