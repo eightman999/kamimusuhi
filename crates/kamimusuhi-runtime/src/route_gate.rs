@@ -37,6 +37,43 @@ use serde::Serialize;
 
 use crate::provider_bench::ProviderSpec;
 
+/// Minimal provider-policy view consumed by the routing gate. Keeping the
+/// gate generic lets the benchmark registry and resident daemon share the
+/// same eligibility/order rules without duplicating provider policy.
+pub trait RouteProvider {
+    fn route_id(&self) -> &str;
+    fn billing(&self) -> BillingClass;
+    fn privacy_ok_for_private_memory(&self) -> bool;
+    fn context_limit_tokens(&self) -> Option<u64>;
+    fn approx_tpm_limit(&self) -> Option<u64>;
+    fn reasoning_suppression(&self) -> bool;
+    fn route_available(&self) -> bool;
+}
+
+impl RouteProvider for ProviderSpec {
+    fn route_id(&self) -> &str {
+        self.id
+    }
+    fn billing(&self) -> BillingClass {
+        self.billing
+    }
+    fn privacy_ok_for_private_memory(&self) -> bool {
+        self.privacy_ok_for_private_memory
+    }
+    fn context_limit_tokens(&self) -> Option<u64> {
+        self.context_limit_tokens.map(u64::from)
+    }
+    fn approx_tpm_limit(&self) -> Option<u64> {
+        self.approx_tpm_limit
+    }
+    fn reasoning_suppression(&self) -> bool {
+        self.reasoning_suppression
+    }
+    fn route_available(&self) -> bool {
+        self.skip_reason.is_none() && !self.base_url.is_empty()
+    }
+}
+
 /// How a provider is paid for. Drives the cost-minimizing order; it is a
 /// property of the *plan*, not the vendor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -190,8 +227,8 @@ pub enum RouteReason {
 
 /// One selectable candidate with the audit trail for its position.
 #[derive(Debug)]
-pub struct RouteCandidate<'a> {
-    pub spec: &'a ProviderSpec,
+pub struct RouteCandidate<'a, S: RouteProvider> {
+    pub spec: &'a S,
     pub reason: RouteReason,
     /// Estimated first-token latency used for ordering, `None` unmeasured.
     pub est_ttft_ms: Option<u64>,
@@ -247,34 +284,34 @@ impl RouteGate {
     /// private references. `health` holds recent observations. The returned
     /// order is cheapest-first within eligibility; [`RouteReason`] records
     /// *why* each candidate sits where it does.
-    pub fn select<'a>(
+    pub fn select<'a, S: RouteProvider>(
         &self,
         lane: RouteLane,
-        specs: &'a [ProviderSpec],
+        specs: &'a [S],
         prompt_tokens_est: u64,
         private: bool,
         health: &ProviderStateBook,
         now: Instant,
-    ) -> Vec<RouteCandidate<'a>> {
+    ) -> Vec<RouteCandidate<'a, S>> {
         debug_assert!(lane.is_chat());
-        let mut candidates: Vec<RouteCandidate<'a>> = Vec::new();
+        let mut candidates: Vec<RouteCandidate<'a, S>> = Vec::new();
         let mut skipped_for_privacy = false;
         let mut skipped_for_context = false;
         let mut skipped_for_health = false;
 
         for spec in specs {
-            if spec.skip_reason.is_some() || spec.base_url.is_empty() {
+            if !spec.route_available() {
                 continue;
             }
             // Privacy is a hard wall: a provider whose plan may train on
             // inputs never sees private material, whatever the speed.
-            if private && !spec.privacy_ok_for_private_memory {
+            if private && !spec.privacy_ok_for_private_memory() {
                 skipped_for_privacy = true;
                 continue;
             }
             // Context ceiling: a provider that cannot hold the prompt is
             // not a candidate at all.
-            if let Some(limit) = spec.context_limit_tokens
+            if let Some(limit) = spec.context_limit_tokens()
                 && prompt_tokens_est > u64::from(limit)
             {
                 skipped_for_context = true;
@@ -283,13 +320,13 @@ impl RouteGate {
             // Free-tier token ceilings are approximate; a prompt that would
             // blow through the minute budget is sent elsewhere rather than
             // eaten by a 429.
-            if let Some(tpm) = spec.approx_tpm_limit
+            if let Some(tpm) = spec.approx_tpm_limit()
                 && prompt_tokens_est > tpm
             {
                 skipped_for_context = true;
                 continue;
             }
-            if let Some(state) = health.get(spec.id) {
+            if let Some(state) = health.get(spec.route_id()) {
                 if state.rate_limited_until.is_some_and(|until| now < until) {
                     skipped_for_health = true;
                     continue;
@@ -347,19 +384,19 @@ impl RouteGate {
                 _ => true,
             }
         };
-        candidates.retain(|c| lane_allows(c.spec.billing));
+        candidates.retain(|c| lane_allows(c.spec.billing()));
 
         // Within a billing class: measured TTFT first, reasoning-capable
         // before reasoning-forced on the fast lane (thinking time is TTFT).
         candidates.sort_by_key(|c| {
             let reasoning_penalty = match lane {
                 RouteLane::FastChat | RouteLane::LocalChat => {
-                    usize::from(!c.spec.reasoning_suppression)
+                    usize::from(!c.spec.reasoning_suppression())
                 }
                 _ => 0,
             };
             (
-                class_rank(c.spec.billing),
+                class_rank(c.spec.billing()),
                 reasoning_penalty,
                 c.est_ttft_ms.unwrap_or(u64::MAX),
             )
@@ -378,7 +415,7 @@ impl RouteGate {
         };
         let primary_rank = candidates
             .first()
-            .map(|c| class_rank(c.spec.billing))
+            .map(|c| class_rank(c.spec.billing()))
             .unwrap_or(0);
         for (index, candidate) in candidates.iter_mut().enumerate() {
             candidate.reason = if index == 0 {
