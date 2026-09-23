@@ -4,8 +4,8 @@
 //! in this module performs I/O.
 
 use std::collections::BTreeMap;
-use std::sync::{Mutex, RwLock};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, RwLock};
 
 use kamimusuhi_runtime::provider_bench::{CostCaps, CostGuard};
 use kamimusuhi_runtime::route_gate::ProviderStateBook;
@@ -146,7 +146,12 @@ impl Shared {
                 daily_usd: config.routing.max_daily_cost_usd,
                 monthly_usd: config.routing.max_monthly_cost_usd,
             },
-            Some(config.paths.current_state().join("routing-cost-ledger.json")),
+            Some(
+                config
+                    .paths
+                    .current_state()
+                    .join("routing-cost-ledger.json"),
+            ),
         );
         let tiers = config
             .tiers
