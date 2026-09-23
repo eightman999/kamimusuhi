@@ -2,7 +2,7 @@
 
 **日本語（本ページ）** | [English](./README.en.md)
 
-**かみむすび（Kamimusuhi）**は、ひとつのモデルや一台のコンピュータに閉じない、**永続・分散・発達する人工認知個体 / 情報空間上の人工生命体**を作るための実験的アーキテクチャです。
+**かみむすび（Kamimusuhi）**は、ひとつのモデルに閉じず、必要な感覚器・認知器官・計算資源を複数の計算機へ配置できる、**永続・発達する人工認知個体 / 情報空間上の人工生命体**を作るための実験的アーキテクチャです。
 
 目標は「長い system prompt を持つチャットボット」ではありません。セッション、モデル、端末、推論基盤が変わっても、**同じ個体としての自己・履歴・関係・権限系譜を継続できるシステム**を作ります。
 
@@ -22,7 +22,7 @@
 - 睡眠・再生・統合・忘却・夢に相当するオフライン処理
 - 視覚・聴覚・触覚・環境・機械テレメトリを束ねる人工感覚系
 - 発話、割り込み、相槌、韻律を含む音声運動系
-- 複数端末・複数計算機にまたがる分散身体
+- 複数端末・複数計算機へ配置できる感覚器・認知器官・計算資源
 - 自分が現在どの計算資源上で動いているかを把握する computational embodiment
 - モデルやハードウェアが交換されても追跡可能な一つの continuity lineage
 
@@ -291,23 +291,28 @@ memory / VRAM / thermal pressure
 
 「Python を C に書き換えれば速い」ではなく、**hot path と model-bound path を分けて測定する**のが原則です。
 
-## 分散しても一人であるために
+## 分散構成と個体境界
 
-複数端末が同時に感覚・推論・cache・proposal を持つことは許します。
+Kamimusuhi では、**器官や計算資源の分散**と、**個体そのものの複製**を分けます。
 
-しかし canonical self-state は、古い状態から勝手に二つの正統後継を作れません。
+カメラ、センサー、検索、GPU、LLM、worker などを複数端末へ配置しても、それらが bounded な organ / resource として一つの個体へ結果を返す限り、それは個体の複製ではありません。
+
+一方、canonical self-state を読み書きし、自律的に判断・発話・commit できる完全な runtime を複数ノードへコピーして同時に活動させる場合、それらを「分散した同じ一人」とは扱いません。**独立して活動可能になった時点で、別 `individual_id` / continuity root を持つ個体、または明示的な fork として扱います。**
+
+同一個体として許すのは、旧 runtime を停止・fence したうえで新 runtime へ authority を移す **migration / handoff** と、まだ発話・commit 権限を持たない inert な standby です。
 
 Continuity Kernel は少なくとも次を担います。
 
-- canonical head / lineage
+- individual ごとの canonical head / lineage
 - expected predecessor の検証
 - stale writer の拒否
 - atomic activation
-- split-brain detection
+- active writer / migration boundary の検証
+- accidental split-brain の検出と拒否
 - migration checkpoint
 - audit / recovery metadata
 
-ネットワーク分断で競合 branch が生じた場合は、明示的な reconciliation / quarantine / fork 指定が必要です。
+ネットワーク分断などで独立した branch が活動を始めた場合、後から履歴を混ぜて「実はずっと一人だった」ことにはしません。quarantine して、どの lineage を継続するかを明示するか、別個体として fork します。
 
 ## 実行・副作用も状態機械として扱う
 
@@ -376,7 +381,7 @@ v0.1 の狙いは **continuity slice** です。
 ./scripts/demo-v0.1.sh
 ```
 
-これは **別プロセス2つ** を1つの runtime directory に対して走らせます。process B に渡すのはディレクトリのパスだけで、会話ログも prompt buffer も共有メモリも渡しません。それでも同じ individual を canonical state から復元し、認知資源を差し替えたうえで応答します。
+これは **別プロセス2つを順番に** 1つの runtime directory に対して走らせる、再開 / handoff のデモです。process B に渡すのはディレクトリのパスだけで、会話ログも prompt buffer も共有メモリも渡しません。process A と B を独立個体として同時稼働させるものではなく、B が canonical state から同じ lineage を再開し、認知資源を差し替えたうえで応答します。
 
 個別に実行する場合:
 
