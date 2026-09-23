@@ -544,11 +544,18 @@ fn cost_of(tier: &TierConfig, usage: &TurnUsage) -> (Option<f64>, Option<&'stati
     if let Some(cost) = usage.actual_cost_usd {
         return (Some(cost), Some("actual"));
     }
-    if let (Some(input), Some(output)) = (tier.input_usd_per_mtok, tier.output_usd_per_mtok) {
-        let tokens = usage.prompt_tokens.unwrap_or(0) as f64 * input
-            + usage.completion_tokens.unwrap_or(0) as f64 * output;
+    if let (Some(input), Some(output), Some(prompt_tokens), Some(completion_tokens)) = (
+        tier.input_usd_per_mtok,
+        tier.output_usd_per_mtok,
+        usage.prompt_tokens,
+        usage.completion_tokens,
+    ) {
+        let tokens = prompt_tokens as f64 * input + completion_tokens as f64 * output;
         return (Some(tokens / 1e6), Some("estimate"));
     }
+    // Missing usage cannot safely be interpreted as zero tokens. The
+    // production CostGuard still books its pre-flight upper-bound estimate,
+    // while the UI reports the amount as unknown rather than "$0.0000".
     (None, None)
 }
 
@@ -714,6 +721,12 @@ mod tests {
         let (cost, kind) = cost_of(&tier, &usage);
         assert_eq!(cost, Some(2.0));
         assert_eq!(kind, Some("estimate"));
+
+        // Missing usage is unknown, never a fabricated zero-dollar turn.
+        let missing = usage_of(&json!({"choices": []}));
+        let (cost, kind) = cost_of(&tier, &missing);
+        assert_eq!(cost, None);
+        assert_eq!(kind, None);
 
         // An undeclared plan reports no cost — never zero.
         tier.input_usd_per_mtok = None;
