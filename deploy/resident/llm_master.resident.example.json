@@ -27,7 +27,10 @@
       "model": "qwen3.8-27b-q4_K_M",
       "node_local": true,
       "timeout_secs": 300,
-      "probe_interval_secs": 15
+      "probe_interval_secs": 15,
+      "privacy_ok_for_private_memory": true,
+      "reasoning_suppression": true,
+      "context_limit_tokens": 65536
     },
     {
       "name": "hai",
@@ -36,12 +39,21 @@
       "model": "qwen3.8-27b-uncensored",
       "auth_env": "HAI_API_KEY",
       "timeout_secs": 300,
-      "probe_interval_secs": 60
+      "probe_interval_secs": 60,
+      "privacy_ok_for_private_memory": true,
+      "reasoning_suppression": true
     }
   ],
   "routing": {
     "small_request_chars": 1200,
-    "log_conversations": true
+    "log_conversations": true,
+    "fast_chat_latency_ceiling_ms": 4000,
+    "private_by_default": true,
+    "max_completion_tokens_for_cost": 768,
+    "max_request_cost_usd": 0.02,
+    "max_session_cost_usd": 0.5,
+    "max_daily_cost_usd": 0.1,
+    "max_monthly_cost_usd": 2
   },
   "hai_account": {
     "base_url": "https://hai-api.hcloud.ltd/api",
