@@ -276,15 +276,15 @@ impl PersonaProviderConfig {
         &self,
         tools: Option<&ToolServerSetting>,
     ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
-        self.build_persona_with(tools, None)
+        self.build_persona_with(tools, &AvatarIdentity::default())
     }
 
     /// As [`Self::build_persona_with_tools`], also naming the individual's
-    /// avatar in dialogue.
+    /// avatar (and what else refers to it) in dialogue.
     pub fn build_persona_with(
         &self,
         tools: Option<&ToolServerSetting>,
-        avatar_name: Option<&str>,
+        identity: &AvatarIdentity<'_>,
     ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
         if self.locality == LocalityClass::InProcess {
             return Err(RuntimeError::PersonaConfig {
@@ -304,7 +304,8 @@ impl PersonaProviderConfig {
         }
         config = config
             .with_tools(tools.map(ToolServerSetting::to_backend))
-            .with_display_name(avatar_name)
+            .with_display_name(identity.name)
+            .with_identity(identity.aliases, identity.self_description)
             .with_reasoning(self.reasoning.to_backend())
             .with_extra_body(self.extra_body.clone());
         config
@@ -436,13 +437,13 @@ impl PersonaSetting {
         &self,
         tools: Option<&ToolServerSetting>,
     ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
-        self.build_with(tools, None)
+        self.build_with(tools, &AvatarIdentity::default())
     }
 
     pub fn build_with(
         &self,
         tools: Option<&ToolServerSetting>,
-        avatar_name: Option<&str>,
+        identity: &AvatarIdentity<'_>,
     ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
         self.check_privacy(PrivacyConstraint::Unconstrained)?;
         match self.backend {
@@ -454,7 +455,7 @@ impl PersonaSetting {
                         .ok_or_else(|| RuntimeError::PersonaConfig {
                             message: "openai-compatible needs a persona provider entry".to_owned(),
                         })?;
-                provider.build_persona_with(tools, avatar_name)
+                provider.build_persona_with(tools, identity)
             }
         }
     }
@@ -590,6 +591,22 @@ pub struct RuntimeConfig {
     /// presentation setting: it does not change the individual's identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_name: Option<String>,
+    /// Other names for the same individual (e.g. `Mio`, `みお`). Presentation
+    /// only, like `avatar_name`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub avatar_aliases: Vec<String>,
+    /// Operator-authored description of what the individual is and runs on,
+    /// given to the model so it answers questions about itself as itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_self_description: Option<String>,
+}
+
+/// Who the Persona speaks as: display name, aliases and self description.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AvatarIdentity<'a> {
+    pub name: Option<&'a str>,
+    pub aliases: &'a [String],
+    pub self_description: Option<&'a str>,
 }
 
 /// An MCP-like tool server (the resident's `/v1/tools`). Every tool it
@@ -654,6 +671,8 @@ impl RuntimeConfig {
             tools: None,
             reference: None,
             avatar_name: None,
+            avatar_aliases: Vec::new(),
+            avatar_self_description: None,
         }
     }
 
@@ -661,7 +680,7 @@ impl RuntimeConfig {
     /// [`Self::build_registry`]: the two namespaces never mix.
     pub fn build_persona(&self) -> Result<Box<dyn PersonaCore>, RuntimeError> {
         self.persona
-            .build_with(self.tools.as_ref(), self.avatar_name.as_deref())
+            .build_with(self.tools.as_ref(), &self.avatar_identity())
     }
 
     /// Build an additional language organ with the same tool access as the
@@ -670,7 +689,15 @@ impl RuntimeConfig {
         &self,
         provider: &PersonaProviderConfig,
     ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
-        provider.build_persona_with(self.tools.as_ref(), self.avatar_name.as_deref())
+        provider.build_persona_with(self.tools.as_ref(), &self.avatar_identity())
+    }
+
+    fn avatar_identity(&self) -> AvatarIdentity<'_> {
+        AvatarIdentity {
+            name: self.avatar_name.as_deref(),
+            aliases: &self.avatar_aliases,
+            self_description: self.avatar_self_description.as_deref(),
+        }
     }
 
     /// Build the reflector this config selects. `Mirror` resolves against the
