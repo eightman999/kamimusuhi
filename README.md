@@ -416,6 +416,12 @@ MIO coordinatorのURL・実験ID・genome IDを後から設定すると、その
       --privacy unconstrained \
       --dir .local/desktop
 
+常駐個体（Pi）と話す既定モードは、macOSアプリとしても起動できます。
+`~/.config/kamimusuhi/nodes` と `node_token` を読むので、Finderから起動しても同じ接続先を使います。
+
+    # target/macos/Kamimusuhi.app を作り、~/Applications へ配置
+    ./scripts/build-macos-app.sh --install
+
 画面にはチャット、会話用K-CORE state、追加LLM API登録、観測済み生成候補、Jevの根拠・帰属・依頼適合性評価と各遅延を表示します。`HAI_API_KEY` とJev設定をexportして起動すると、HAIの `qwen3.8-27b-uncensored` と `llm-jp-4-vl-9b` を自動登録します。追加APIはOpenAI-compatible `/chat/completions` として登録します。発話前のJev batchで発話可否・記憶の関連性・不足情報を判定した後、primaryを含む有効・privacy許可・必要な認証設定済みの全器官をrace開始します。最初の有効完了と10ms以内の同着1件までを匿名候補として品質判定し、ACCEPTなら遅い器官を待たずに返します。
 
 選択は生成済み応答の品質を優先し、遅延・成功率は補助情報です。Jevへは `candidate-N` の匿名IDだけを渡し、provider名・model名は見せません。空の応答と16 KiB超の応答を除外し、有効な応答と実際の出典付き根拠を全文で評価します。RETRY/REJECTなら次の完了候補を判定し、全providerを使い切ってもACCEPTがなければ最初のRETRY候補だけを1回修復します。Jev自体が応答不能（timeout・通信・TLS・429や5xxのHTTP status）なら、そのターンはrule-based gateへdegradeして会話を継続し、障害codeをtraceへ残します。credential未設定・形式不正・無効なchoice・provider申告のfallback・明示的なREJECT/WAIT・429以外の4xx応答はこれまでどおりfail-closedで、自動ACCEPTやprimary選択で補いません。キー未設定時はMock互換のrule-based経路を使い、意味評価は未実施と明示します。実APIでの精度・速度改善は未検証です。
