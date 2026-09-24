@@ -100,6 +100,13 @@ pub struct PersonaBackendConfig {
     pub tools: Option<ToolServerConfig>,
     /// The name the individual answers to in dialogue (its avatar name).
     pub display_name: String,
+    /// Other names that refer to the same individual (romanisation, reading,
+    /// project name). Without them a model treats "Mio" as a third party.
+    pub display_aliases: Vec<String>,
+    /// Operator-authored statement of what the individual is (where it runs,
+    /// what its parts are), so questions about it are answered as about
+    /// itself rather than about an unknown external system.
+    pub self_description: Option<String>,
     /// Whether the model thinks before answering.
     pub reasoning: ReasoningMode,
     /// Provider-specific request fields merged into every chat request
@@ -163,6 +170,8 @@ impl PersonaBackendConfig {
             system_instruction: DEFAULT_SYSTEM_INSTRUCTION.to_owned(),
             tools: None,
             display_name: DEFAULT_DISPLAY_NAME.to_owned(),
+            display_aliases: Vec::new(),
+            self_description: None,
             reasoning: ReasoningMode::default(),
             extra_body: None,
         }
@@ -189,6 +198,50 @@ impl PersonaBackendConfig {
             self.display_name = name.to_owned();
         }
         self
+    }
+
+    /// Aliases and the operator-authored self description. Blank entries,
+    /// and aliases equal to the display name, are dropped.
+    #[must_use]
+    pub fn with_identity(mut self, aliases: &[String], self_description: Option<&str>) -> Self {
+        let mut kept: Vec<String> = Vec::new();
+        for alias in aliases.iter().map(|a| a.trim()) {
+            if !alias.is_empty() && alias != self.display_name && !kept.iter().any(|k| k == alias) {
+                kept.push(alias.to_owned());
+            }
+        }
+        self.display_aliases = kept;
+        self.self_description = self_description
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .map(str::to_owned);
+        self
+    }
+
+    /// The identity preamble shared by every request: who "you" are, which
+    /// names mean you, and what you consist of.
+    fn identity_preamble(&self) -> String {
+        let name = &self.display_name;
+        let mut text = if self.display_aliases.is_empty() {
+            format!("あなたは『{name}』です。『{name}』はあなた自身の名前です。")
+        } else {
+            let aliases = self
+                .display_aliases
+                .iter()
+                .map(|a| format!("『{a}』"))
+                .collect::<Vec<_>>()
+                .join("・");
+            format!(
+                "あなたは『{name}』です。{aliases}も同じくあなた自身を指す呼び名です。\
+                 相手がこれらの名前で話すとき、それは第三者や別のシステムではなくあなたのことです。\
+                 あなたの改善点・状態・仕組みを聞かれたら、自分自身のこととして答えてください。"
+            )
+        };
+        if let Some(description) = &self.self_description {
+            text.push_str("\nあなたについて（操作者の記述）: ");
+            text.push_str(description);
+        }
+        text
     }
 
     #[must_use]
@@ -530,17 +583,22 @@ impl OpenAiCompatiblePersona {
             || input.envelope.conversation_core.is_some();
         let instruction = if dialogue {
             format!(
-                "あなたは『{}』として、日本語で通常1〜3文で返事してください。\
+                "{}\n日本語で通常1〜3文で返事してください。\
                  最初のメッセージのJSONセクションは実測状態と記憶の参考情報です。JSON自体を読み上げず、\
                  それを根拠に最後の相手の発言へ自然に答えてください。\
                  userは相手、assistantはあなたの過去の発言です。相手の好みを自分の好みと混同しないでください。\
                  OBSERVED_RUNTIMEのnot_connectedおよびnot_connected_to_this_interfaceは未接続を意味します。\
                  未接続のセンサーから観測情報を取得したとは言えません。\
                  会話の話題から自分の状態を推測したり、未知の感情・身体・経験を創作したりしないでください。\n{}",
-                self.config.display_name, self.config.system_instruction
+                self.config.identity_preamble(),
+                self.config.system_instruction
             )
         } else {
-            self.config.system_instruction.clone()
+            format!(
+                "{}\n{}",
+                self.config.identity_preamble(),
+                self.config.system_instruction
+            )
         };
         let instruction = if input.envelope.mio_observation.is_some() {
             format!(
@@ -2210,6 +2268,38 @@ mod tests {
             .request_body(&turn_input());
         assert!(named.contains("『澪』"));
         assert!(!named.contains("『かみむすび』"));
+    }
+
+    #[test]
+    fn aliases_and_self_description_bind_other_names_to_the_individual() {
+        let aliases = [
+            "Mio".to_owned(),
+            " 澪 ".to_owned(),
+            "みお".to_owned(),
+            String::new(),
+        ];
+        let persona = OpenAiCompatiblePersona::new(
+            config()
+                .with_display_name(Some("澪"))
+                .with_identity(&aliases, Some("Pi上で常駐する個体。")),
+        );
+        let body = request_json(&persona, &turn_input());
+        let system = body["messages"][0]["content"].as_str().expect("system");
+        assert!(system.contains("『Mio』・『みお』も同じくあなた自身を指す呼び名"));
+        assert!(
+            !system.contains("『澪』・"),
+            "display name is not its own alias"
+        );
+        assert!(system.contains("あなたについて（操作者の記述）: Pi上で常駐する個体。"));
+        // Without aliases the name alone is still bound to "you".
+        let plain = request_json(&persona_named("澪"), &turn_input());
+        let system = plain["messages"][0]["content"].as_str().expect("system");
+        assert!(system.contains("『澪』はあなた自身の名前です"));
+        assert!(!system.contains("操作者の記述"));
+    }
+
+    fn persona_named(name: &str) -> OpenAiCompatiblePersona {
+        OpenAiCompatiblePersona::new(config().with_display_name(Some(name)))
     }
 
     fn request_json(

@@ -71,6 +71,10 @@ impl RouteProvider for TierConfig {
     fn route_available(&self) -> bool {
         self.billing.is_some() && !self.base_url.is_empty()
     }
+
+    fn preferred_for(&self, lane: RouteLane) -> bool {
+        self.prefer_lanes.contains(&lane)
+    }
 }
 
 fn request_private(shared: &Shared, request: &RouteRequest) -> bool {
@@ -81,7 +85,11 @@ fn request_private(shared: &Shared, request: &RouteRequest) -> bool {
         .unwrap_or(shared.config.routing.private_by_default)
 }
 
-fn route_lane(request: &RouteRequest) -> RouteLane {
+/// The lane an auto-routed request belongs to. An explicit
+/// `kamimusuhi_route_lane` hint wins; otherwise the request's shape decides,
+/// so callers that send plain OpenAI bodies (the Persona Core does) are not
+/// all treated as fast chat.
+fn route_lane(shared: &Shared, request: &RouteRequest) -> RouteLane {
     if request.local_only || request.body.get("model").and_then(Value::as_str) == Some("k0") {
         return RouteLane::LocalChat;
     }
@@ -90,12 +98,49 @@ fn route_lane(request: &RouteRequest) -> RouteLane {
         .get("kamimusuhi_route_lane")
         .and_then(Value::as_str)
     {
-        Some("LOCAL_CHAT") => RouteLane::LocalChat,
-        Some("DEEP_REASONING") => RouteLane::DeepReasoning,
-        Some("TOOL_TASK") => RouteLane::ToolTask,
-        Some("MEMORY_HEAVY") => RouteLane::MemoryHeavy,
-        _ => RouteLane::FastChat,
+        Some("LOCAL_CHAT") => return RouteLane::LocalChat,
+        Some("FAST_CHAT") => return RouteLane::FastChat,
+        Some("DEEP_REASONING") => return RouteLane::DeepReasoning,
+        Some("TOOL_TASK") => return RouteLane::ToolTask,
+        Some("MEMORY_HEAVY") => return RouteLane::MemoryHeavy,
+        _ => {}
     }
+    let last = request
+        .body
+        .get("messages")
+        .and_then(Value::as_array)
+        .and_then(|messages| messages.last());
+    let last_role = last
+        .and_then(|message| message.get("role"))
+        .and_then(Value::as_str);
+    // A follow-up round of a tool loop: the person is already waiting on the
+    // tools, so a first-token latency ceiling must not bench its provider.
+    if last_role == Some("tool") {
+        return RouteLane::ToolTask;
+    }
+    if prompt_tokens_est(&request.body) >= shared.config.routing.memory_heavy_prompt_tokens {
+        return RouteLane::MemoryHeavy;
+    }
+    // Quick everyday exchanges are short; a long request is substantive work
+    // that should go to the stronger conversational tiers first.
+    let input_chars = last
+        .filter(|_| last_role == Some("user"))
+        .and_then(|message| message.get("content"))
+        .map_or(0, |content| match content {
+            Value::String(text) => text.chars().count(),
+            other => other.to_string().chars().count(),
+        });
+    if input_chars > shared.config.routing.fast_chat_max_input_chars {
+        return RouteLane::DeepReasoning;
+    }
+    RouteLane::FastChat
+}
+
+fn lane_name(lane: RouteLane) -> String {
+    serde_json::to_value(lane)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_default()
 }
 
 fn prompt_tokens_est(body: &Value) -> u64 {
@@ -171,7 +216,7 @@ pub fn plan<'a>(
 
     let small = requested == "k0"
         || prompt_chars(&request.body) <= shared.config.routing.small_request_chars;
-    let lane = route_lane(request);
+    let lane = route_lane(shared, request);
     let gate = RouteGate {
         fast_chat_ttft_ceiling_ms: Some(shared.config.routing.fast_chat_latency_ceiling_ms),
         ..Default::default()
@@ -211,12 +256,14 @@ pub fn plan<'a>(
     }
     Ok(chosen.into_iter().map(|t| (t, t.model.clone())).collect())
 }
-fn call_tier(
+/// The body actually sent to `tier`: routing-owned fields set, host-only
+/// hints removed, and the tier's own field adjustments applied.
+fn upstream_body(
     tier: &TierConfig,
     model: &str,
     body: &Value,
     default_max_tokens: Option<u32>,
-) -> Result<Value, String> {
+) -> Value {
     let mut upstream = body.clone();
     if let Value::Object(map) = &mut upstream {
         map.insert("model".into(), Value::String(model.to_owned()));
@@ -226,6 +273,18 @@ fn call_tier(
         // Host-only policy hints must never be forwarded to providers.
         map.remove("kamimusuhi_private");
         map.remove("kamimusuhi_route_lane");
+        for field in &tier.strip_fields {
+            if !matches!(field.as_str(), "model" | "stream" | "messages") {
+                map.remove(field);
+            }
+        }
+        if let Some(extra) = &tier.extra_body {
+            for (key, value) in extra {
+                if !matches!(key.as_str(), "model" | "stream" | "messages") {
+                    map.entry(key.clone()).or_insert_with(|| value.clone());
+                }
+            }
+        }
         if let Some(max_tokens) = default_max_tokens
             && !map.contains_key("max_tokens")
             && !map.contains_key("max_completion_tokens")
@@ -236,6 +295,16 @@ fn call_tier(
             map.insert("max_tokens".into(), Value::from(max_tokens));
         }
     }
+    upstream
+}
+
+fn call_tier(
+    tier: &TierConfig,
+    model: &str,
+    body: &Value,
+    default_max_tokens: Option<u32>,
+) -> Result<Value, String> {
+    let upstream = upstream_body(tier, model, body, default_max_tokens);
     let mut headers: Vec<Header> = bearer(tier.auth_env.as_deref())?;
     if tier.peer_local_only {
         headers.push(Header {
@@ -388,11 +457,20 @@ fn call_tier_guarded(
 
 pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
     let started = Instant::now();
+    let requested = request
+        .body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("kamimusuhi");
+    let lane = AUTO_MODELS
+        .contains(&requested)
+        .then(|| lane_name(route_lane(shared, request)));
     let plan = match plan(shared, request) {
         Ok(plan) => plan,
         Err(e) => {
             let event = RouteEvent {
                 at: unix_now(),
+                lane: lane.clone(),
                 latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                 ..RouteEvent::default()
             };
@@ -509,6 +587,7 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let event = RouteEvent {
         at: unix_now(),
+        lane,
         tier: result.as_ref().map(|(t, ..)| t.name.clone()),
         model: result.as_ref().map(|(_, _, m, ..)| m.clone()),
         billing: result
@@ -772,6 +851,9 @@ mod tests {
             context_limit_tokens: None,
             approx_tpm_limit: None,
             reasoning_suppression: Some(true),
+            extra_body: None,
+            strip_fields: Vec::new(),
+            prefer_lanes: Vec::new(),
         };
         let (cost, kind) = cost_of(&tier, &usage);
         assert_eq!(cost, Some(0.007));
@@ -1090,6 +1172,166 @@ mod tests {
     }
 
     #[test]
+    fn a_measured_tier_does_not_starve_its_unmeasured_sibling() {
+        let (s, _dir) = shared();
+        for t in ["llm_master", "hai"] {
+            s.set_tier(t, Ok(Value::Null), 1);
+        }
+        let req = RouteRequest {
+            body: json!({"model": "kamimusuhi", "messages": [{"role": "user", "content": "x".repeat(5000)}]}),
+            local_only: false,
+        };
+        // HAI answered first and got a latency sample; llm_master never
+        // has. It must still be tried, or it can never earn a sample.
+        s.route_health.lock().unwrap().get_mut("hai").observe(
+            true,
+            Some(1_500),
+            false,
+            None,
+            Duration::from_secs(60),
+            Instant::now(),
+        );
+        assert_eq!(names(&plan(&s, &req).expect("plan")), ["llm_master", "hai"]);
+        // Measured slower, it yields to the faster tier of the same band.
+        s.route_health
+            .lock()
+            .unwrap()
+            .get_mut("llm_master")
+            .observe(
+                true,
+                Some(3_000),
+                false,
+                None,
+                Duration::from_secs(60),
+                Instant::now(),
+            );
+        assert_eq!(names(&plan(&s, &req).expect("plan")), ["hai", "llm_master"]);
+    }
+
+    #[test]
+    fn tier_field_adjustments_shape_the_upstream_body() {
+        let (s, _dir) = shared();
+        let mut tier = s.config.tiers[2].clone();
+        tier.strip_fields = vec!["chat_template_kwargs".into(), "model".into()];
+        tier.extra_body = serde_json::from_value(json!({
+            "reasoning_effort": "low", "temperature": 0.1, "stream": true
+        }))
+        .unwrap();
+        let body = json!({"model": "kamimusuhi", "kamimusuhi_private": true,
+                          "chat_template_kwargs": {"enable_thinking": false},
+                          "temperature": 0.7, "messages": []});
+        let sent = upstream_body(&tier, "gpt-oss-120b", &body, Some(64));
+        assert!(sent.get("chat_template_kwargs").is_none());
+        assert!(sent.get("kamimusuhi_private").is_none());
+        assert_eq!(sent["reasoning_effort"], "low");
+        // The client's own value wins; routing-owned fields cannot be
+        // stripped or overridden by tier config.
+        assert_eq!(sent["temperature"], 0.7);
+        assert_eq!(sent["model"], "gpt-oss-120b");
+        assert_eq!(sent["stream"], false);
+        assert_eq!(sent["max_tokens"], 64);
+    }
+
+    #[test]
+    fn a_fast_tier_leads_quick_chat_but_not_long_requests() {
+        let (mut s, _dir) = shared();
+        let mut fast = s.config.tiers[2].clone();
+        fast.name = "cerebras".into();
+        fast.billing = Some(crate::config::TierBilling::Metered);
+        fast.input_usd_per_mtok = Some(0.25);
+        fast.output_usd_per_mtok = Some(0.69);
+        fast.privacy_ok_for_private_memory = Some(true);
+        fast.prefer_lanes = vec![RouteLane::FastChat];
+        s.config.tiers.push(fast);
+        for t in ["llm_master", "hai", "cerebras"] {
+            s.set_tier(t, Ok(Value::Null), 1);
+        }
+        let ask = |text: String| RouteRequest {
+            body: json!({"model": "kamimusuhi", "messages": [
+                {"role": "system", "content": "x".repeat(2_000)},
+                {"role": "user", "content": text}]}),
+            local_only: false,
+        };
+        assert_eq!(
+            names(&plan(&s, &ask("おはよう".into())).expect("plan"))[0],
+            "cerebras"
+        );
+        let long = plan(&s, &ask("調べて".repeat(100))).expect("plan");
+        assert_eq!(names(&long).last().map(String::as_str), Some("cerebras"));
+    }
+
+    #[test]
+    fn unhinted_requests_are_classified_into_lanes() {
+        let (s, _dir) = shared();
+        let lane = |body: Value| {
+            route_lane(
+                &s,
+                &RouteRequest {
+                    body,
+                    local_only: false,
+                },
+            )
+        };
+        let user = json!({"role": "user", "content": "hi"});
+        assert_eq!(lane(json!({"messages": [user]})), RouteLane::FastChat);
+        assert_eq!(
+            lane(
+                json!({"messages": [user, {"role": "assistant", "tool_calls": []},
+                                     {"role": "tool", "content": "{}"}]})
+            ),
+            RouteLane::ToolTask
+        );
+        assert_eq!(
+            lane(json!({"messages": [{"role": "user", "content": "x".repeat(600)}]})),
+            RouteLane::DeepReasoning,
+            "a long request is substantive work, not quick chat"
+        );
+        let big = "x".repeat(60_000);
+        assert_eq!(
+            lane(json!({"messages": [{"role": "user", "content": big}]})),
+            RouteLane::MemoryHeavy
+        );
+        // An explicit hint always wins over the request's shape.
+        assert_eq!(
+            lane(json!({"kamimusuhi_route_lane": "FAST_CHAT",
+                        "messages": [{"role": "tool", "content": "{}"}]})),
+            RouteLane::FastChat
+        );
+        assert_eq!(lane_name(RouteLane::ToolTask), "TOOL_TASK");
+    }
+
+    #[test]
+    fn route_events_record_the_lane() {
+        let (s, _dir) = shared();
+        let _ = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "no-such-tier", "messages": []}),
+                local_only: false,
+            },
+        );
+        assert_eq!(s.last_route.read().unwrap().as_ref().unwrap().lane, None);
+        let _ = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "kamimusuhi", "kamimusuhi_private": true,
+                             "messages": [{"role": "tool", "content": "{}"}]}),
+                local_only: true,
+            },
+        );
+        assert_eq!(
+            s.last_route
+                .read()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .lane
+                .as_deref(),
+            Some("LOCAL_CHAT")
+        );
+    }
+
+    #[test]
     fn small_requests_may_use_local() {
         let (s, _dir) = shared();
         for t in ["local", "llm_master", "hai"] {
@@ -1138,10 +1380,13 @@ mod tests {
         free.auth_env = None;
         s.config.tiers.insert(0, free);
 
+        // Long enough to rule out the small-request tier, but a short user
+        // message so the turn stays on the FAST_CHAT lane.
         let long = "x".repeat(5_000);
         let private = RouteRequest {
             body: json!({"model": "kamimusuhi",
-                         "messages": [{"role": "user", "content": long.clone()}]}),
+                         "messages": [{"role": "system", "content": long.clone()},
+                                      {"role": "user", "content": "hi"}]}),
             local_only: false,
         };
         let private_names = names(&plan(&s, &private).expect("private plan"));
@@ -1149,7 +1394,8 @@ mod tests {
 
         let public = RouteRequest {
             body: json!({"model": "kamimusuhi", "kamimusuhi_private": false,
-                         "messages": [{"role": "user", "content": long}]}),
+                         "messages": [{"role": "system", "content": long},
+                                      {"role": "user", "content": "hi"}]}),
             local_only: false,
         };
         let public_names = names(&plan(&s, &public).expect("public plan"));

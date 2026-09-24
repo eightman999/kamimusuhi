@@ -9,8 +9,12 @@ Botは受付を返信し、FIFOキューから **1件ずつ** Piの
 
 - サーバー・チャンネル・利用者IDをすべて照合する。空のallowlistでは起動しない。
   許可外、DM、Bot/Webhook、メンションのない発言は無視する。
-- 会話履歴のsubjectはサーバー・チャンネル・利用者IDから安定した値を作る。
-  これは履歴の区分であり、個体の記憶や参照可能な資料を利用者別に隔離する機能ではない。
+- 会話のsubjectは、`DISCORD_OPERATOR_SUBJECT`を設定すると操作者本人のsubject
+  （デスクトップが使う`$USER`、例：`eightman`）になり、関係性の記憶・想起・直近の会話を
+  デスクトップと共有する。未設定ならサーバー・チャンネル・利用者IDから作るDiscord専用の値で、
+  記憶プールがデスクトップと分かれるため、澪から見ると「初対面の相手」に近くなる。
+  `DISCORD_OPERATOR_SUBJECT`は許可ユーザーが1人のときだけ使える（他人と記憶を混ぜない）。
+  subjectは履歴の区分であり、個体の記憶や参照可能な資料を利用者別に隔離する機能ではない。
   最初は操作者本人と専用の非公開チャンネルだけを許可する。
 - **返信と受付表示はチャンネルの閲覧者全員に見える。**
   Discordへ送るのは受付表示と対話APIの`response`のみで、内部tool結果・エラー本文は転送しない。
@@ -59,6 +63,7 @@ test -e /srv/kamimusuhi/config/discord.env || install -m 600 deploy/resident/dis
 | `DISCORD_GUILD_ID` | 1つのサーバーID |
 | `DISCORD_ALLOWED_USER_IDS` | 操作者のユーザーID |
 | `DISCORD_ALLOWED_CHANNEL_IDS` | 専用チャンネルID／スレッドID |
+| `DISCORD_OPERATOR_SUBJECT` | 任意。デスクトップと同じsubject（例：`eightman`）。ペルソナ・記憶を揃える |
 
 residentの`secrets.env`はBotに読み込ませない。ローカルAPI接続にはnode token不要。
 配置前の設定ファイルをMacで用意する場合はGit対象外の`deploy/resident/local/`に保存する。

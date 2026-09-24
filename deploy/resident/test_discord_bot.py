@@ -174,6 +174,25 @@ class ConfigTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         Config.from_env()
 
+    def test_operator_subject_is_shared_with_other_surfaces(self):
+        config = Config('t', 10, frozenset({20}), frozenset({30}), 'eightman')
+        self.assertEqual(config.subject(message()), 'eightman')
+        self.assertEqual(CONFIG.subject(message()), subject_for(message()))
+
+    def test_operator_subject_validation(self):
+        base = {'DISCORD_BOT_TOKEN': 't', 'DISCORD_GUILD_ID': '10',
+                'DISCORD_ALLOWED_USER_IDS': '20', 'DISCORD_ALLOWED_CHANNEL_IDS': '30'}
+        with patch.dict(os.environ, {**base, 'DISCORD_OPERATOR_SUBJECT': 'eightman'}, clear=True):
+            self.assertEqual(Config.from_env().operator_subject, 'eightman')
+        with patch.dict(os.environ, {**base, 'DISCORD_OPERATOR_SUBJECT': ''}, clear=True):
+            self.assertIsNone(Config.from_env().operator_subject)
+        for bad in ['--dir', 'a b', 'a@b', 'x' * 65]:
+            with patch.dict(os.environ, {**base, 'DISCORD_OPERATOR_SUBJECT': bad}, clear=True):
+                self.assertRaises(ValueError, Config.from_env)
+        with patch.dict(os.environ, {**base, 'DISCORD_ALLOWED_USER_IDS': '20,21',
+                                     'DISCORD_OPERATOR_SUBJECT': 'eightman'}, clear=True):
+            self.assertRaises(ValueError, Config.from_env)
+
     def test_subject_is_stable_bounded_and_isolated(self):
         subjects = {subject_for(i) for i in [message(), message(guild=11),
                     message(channel=31), message(user=21)]}

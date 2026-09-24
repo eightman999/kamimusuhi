@@ -52,6 +52,48 @@
       "quota": {
         "max_tasks_per_day": 30
       }
+    },
+    {
+      "name": "agy",
+      "adapter": "generic",
+      "command": "agy",
+      "description": "Antigravity CLI（Gemini、調査・長文読解・コード理解向け）。ログインは llm_master 上で `agy` を一度対話起動して行う",
+      "discover": {
+        "args": [
+          "models"
+        ],
+        "format": "lines"
+      },
+      "run": {
+        "prefix": [],
+        "args": [
+          "-p",
+          "{prompt}"
+        ],
+        "model_args": [
+          "--model",
+          "{model}"
+        ],
+        "output": "text"
+      },
+      "permission_args": {
+        "read_only": [
+          "--mode",
+          "plan"
+        ],
+        "workspace_write": [
+          "--mode",
+          "accept-edits"
+        ]
+      },
+      "default_billing": "subscription",
+      "prefer_for": [
+        "research"
+      ],
+      "timeout_secs": 1800,
+      "quota": {
+        "max_tasks_per_day": 30
+      }
     }
   ]
 }

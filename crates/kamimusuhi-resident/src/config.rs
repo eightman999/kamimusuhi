@@ -327,6 +327,20 @@ pub struct TierConfig {
     /// Whether the tier can suppress reasoning for latency-sensitive chat.
     #[serde(default)]
     pub reasoning_suppression: Option<bool>,
+    /// Provider-specific request fields added to every upstream call (e.g.
+    /// `{"reasoning_effort": "low"}` for gpt-oss). Fields the client already
+    /// set, and the routing-owned `model`/`stream`/`messages`, win.
+    #[serde(default)]
+    pub extra_body: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Request fields removed before calling this tier, for providers that
+    /// reject fields they do not know (e.g. `chat_template_kwargs`, which
+    /// llama.cpp and HAI accept but strict OpenAI-compatible APIs refuse).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub strip_fields: Vec<String>,
+    /// Lanes this tier leads ahead of the billing order (e.g. a fast cloud
+    /// for `FAST_CHAT`). Privacy, health and spend limits still apply.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prefer_lanes: Vec<kamimusuhi_runtime::route_gate::RouteLane>,
 }
 
 const fn default_tier_timeout() -> u64 {
@@ -351,6 +365,14 @@ pub struct RoutingConfig {
     /// uses this as the RouteGate health cutoff; default is the 4s SLA.
     #[serde(default = "default_fast_chat_latency_ceiling_ms")]
     pub fast_chat_latency_ceiling_ms: u64,
+    /// Estimated prompt tokens from which an unhinted request is routed on
+    /// the MEMORY_HEAVY lane (context-limit aware, no fast-chat ceiling).
+    #[serde(default = "default_memory_heavy_prompt_tokens")]
+    pub memory_heavy_prompt_tokens: u64,
+    /// The last user message counts as everyday quick chat (`FAST_CHAT`)
+    /// up to this many characters; longer requests go to `DEEP_REASONING`.
+    #[serde(default = "default_fast_chat_max_input_chars")]
+    pub fast_chat_max_input_chars: usize,
     /// Persona requests are private unless an internal caller explicitly
     /// marks a request public.
     #[serde(default = "default_true")]
@@ -375,6 +397,8 @@ impl Default for RoutingConfig {
             small_request_chars: default_small_chars(),
             log_conversations: true,
             fast_chat_latency_ceiling_ms: default_fast_chat_latency_ceiling_ms(),
+            memory_heavy_prompt_tokens: default_memory_heavy_prompt_tokens(),
+            fast_chat_max_input_chars: default_fast_chat_max_input_chars(),
             private_by_default: true,
             max_completion_tokens_for_cost: default_max_completion_tokens_for_cost(),
             max_request_cost_usd: default_max_request_cost_usd(),
@@ -391,6 +415,14 @@ const fn default_small_chars() -> usize {
 
 const fn default_fast_chat_latency_ceiling_ms() -> u64 {
     4_000
+}
+
+const fn default_fast_chat_max_input_chars() -> usize {
+    200
+}
+
+const fn default_memory_heavy_prompt_tokens() -> u64 {
+    16_000
 }
 
 const fn default_max_completion_tokens_for_cost() -> u32 {
@@ -738,7 +770,29 @@ mod tests {
             crate::task_orchestrator::parse_executors_file(&std::fs::read(&path).expect("read"))
                 .expect("executors");
         let specs = kamimusuhi_runtime::agent_exec::resolve_all(&executors).expect("resolves");
-        assert_eq!(specs.len(), 3);
+        assert_eq!(specs.len(), 4);
+    }
+
+    #[test]
+    fn provider_tiers_example_parses_and_keeps_training_tiers_off_private_memory() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../deploy/resident/provider-tiers.example.json");
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("json");
+        let tiers: Vec<TierConfig> = serde_json::from_value(value["tiers"].clone()).expect("tiers");
+        for tier in &tiers {
+            assert!(tier.billing.is_some(), "{} declares billing", tier.name);
+            assert!(tier.auth_env.is_some(), "{} names its key", tier.name);
+        }
+        let private_ok = |name: &str| {
+            tiers
+                .iter()
+                .find(|t| t.name == name)
+                .and_then(|t| t.privacy_ok_for_private_memory)
+        };
+        assert_eq!(private_ok("gemini"), Some(false));
+        assert_eq!(private_ok("openrouter"), Some(false));
+        assert_eq!(private_ok("groq"), Some(true));
     }
 
     #[test]
