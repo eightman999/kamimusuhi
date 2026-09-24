@@ -52,6 +52,16 @@ pub const TOOL_CATALOG: &str = "tool_catalog";
 /// Synthetic tool: add discoverable tools' full definitions to this turn.
 pub const TOOL_ENABLE: &str = "tool_enable";
 
+/// Task-plane tool that hands work to an outside agent and returns at once.
+pub const TASK_DELEGATE: &str = "task_delegate";
+
+/// Whether a task was delegated (or continued) successfully in `records`.
+pub fn delegated(records: &[ToolCallRecord]) -> bool {
+    records
+        .iter()
+        .any(|r| r.ok && matches!(r.name.as_str(), TASK_DELEGATE | "task_continue"))
+}
+
 /// Longest tool description sent to the model, in characters.
 pub const TOOL_DESCRIPTION_CHARS: usize = 200;
 /// Longest parameter description sent to the model, in characters.
@@ -172,6 +182,11 @@ impl ToolOffer {
                     "names": {"type": "array", "items": {"type": "string"},
                               "description": "有効化するツール名"}}}}}),
         ]
+    }
+
+    /// Whether `name` is offered from the first round.
+    pub fn offers(&self, name: &str) -> bool {
+        self.core.iter().any(|d| d["function"]["name"] == name)
     }
 
     /// Tools offered from the first round.

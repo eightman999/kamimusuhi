@@ -29,6 +29,7 @@
 use std::time::Duration;
 
 use kamimusuhi_core::c0::{ReflectionInput, ReflectionOutput, Reflector};
+use kamimusuhi_core::commitment::promises_background_work;
 use kamimusuhi_core::digest::json_digest;
 use kamimusuhi_core::ids::PersonaBackendId;
 use kamimusuhi_core::persona::{
@@ -911,6 +912,8 @@ impl OpenAiCompatiblePersona {
             return Ok((self.content_of(&parsed)?, records));
         }
         body["tools"] = serde_json::Value::Array(offer.initial_definitions());
+        let can_delegate = offer.offers(tools::TASK_DELEGATE);
+        let mut nudged = false;
         for _round in 0..tools.max_rounds {
             let parsed = send(&body)?;
             let message = parsed
@@ -919,7 +922,27 @@ impl OpenAiCompatiblePersona {
                 .unwrap_or(serde_json::Value::Null);
             let calls = tools::requested_calls(&message);
             if calls.is_empty() {
-                return Ok((self.content_of(&parsed)?, records));
+                let expression = self.content_of(&parsed)?;
+                // A reply that takes on work for later has started nothing
+                // unless a task was delegated. Ask once: delegate now, or
+                // answer without the promise.
+                if can_delegate
+                    && !nudged
+                    && !tools::delegated(&records)
+                    && promises_background_work(&expression)
+                {
+                    nudged = true;
+                    push_message(
+                        &mut body,
+                        serde_json::json!({"role": "assistant", "content": expression}),
+                    );
+                    push_message(
+                        &mut body,
+                        serde_json::json!({"role": "user", "content": UNBACKED_PROMISE_NUDGE}),
+                    );
+                    continue;
+                }
+                return Ok((expression, records));
             }
             // Echo only the structural parts of the assistant turn.
             let mut assistant = serde_json::json!({"role": "assistant",
@@ -963,6 +986,12 @@ impl OpenAiCompatiblePersona {
         Ok((self.content_of(&parsed)?, records))
     }
 }
+
+/// Host turn sent when a reply promises later work without a task behind it.
+const UNBACKED_PROMISE_NUDGE: &str = "（ホストより）今の返事はこのあと作業すると約束していますが、タスクはまだ作成されていません。\
+     このターンが終わると、タスクにしていない作業は誰も進めません。\
+     裏で進める作業なら、いま task_delegate を呼んでタスクにしてください（objective には相手の依頼を具体的に書く）。\
+     タスクにしない場合は、まだ着手していないことが分かる返事に書き直してください。";
 
 /// Tool-call markup that a model wrote as prose instead of a structured
 /// call. It must never become the expression.
@@ -2258,6 +2287,95 @@ mod tests {
             last.get("tools").is_none(),
             "tools withdrawn after the last round"
         );
+    }
+
+    fn delegate_tool_server(
+        extra: Vec<kamimusuhi_testkit::FixtureResponse>,
+    ) -> kamimusuhi_testkit::FixtureServer {
+        let mut responses = vec![raw_json(&serde_json::json!({"tools": [
+            {"type": "function", "function": {"name": "task_delegate", "parameters": {}}}]}))];
+        responses.extend(extra);
+        kamimusuhi_testkit::FixtureServer::start(responses).expect("tools")
+    }
+
+    #[test]
+    fn an_unbacked_promise_is_sent_back_once_and_can_become_a_task() {
+        use kamimusuhi_testkit::{FixtureResponse, FixtureServer};
+        let tool_server = delegate_tool_server(vec![raw_json(
+            &serde_json::json!({"ok": true, "result": {"task_id": "t1", "executor": "devin"}}),
+        )]);
+        let model = FixtureServer::start(vec![
+            FixtureResponse::ok("Devinを使って調べてみますね。"),
+            raw_json(
+                &serde_json::json!({"choices": [{"message": {"role": "assistant", "content": null,
+                "tool_calls": [{"id": "c1", "type": "function", "function": {
+                    "name": "task_delegate", "arguments": "{\"objective\":\"忘却の調査\"}"}}]}}]}),
+            ),
+            FixtureResponse::ok("タスク t1 として Devin に回しました。"),
+        ])
+        .expect("model");
+        let config =
+            PersonaBackendConfig::new(BACKEND, model.base_url(), "test-model").with_tools(Some(
+                ToolServerConfig::new(tool_server.base_url().trim_end_matches("/v1").to_owned()),
+            ));
+        let result = OpenAiCompatiblePersona::new(config)
+            .turn(turn_input())
+            .expect("turn");
+        assert_eq!(
+            result.response_intent,
+            "タスク t1 として Devin に回しました。"
+        );
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "task_delegate");
+        let second: serde_json::Value =
+            serde_json::from_str(&model.requests()[1].body).expect("json");
+        let messages = second["messages"].as_array().expect("messages");
+        assert_eq!(
+            messages[messages.len() - 2]["content"],
+            "Devinを使って調べてみますね。"
+        );
+        assert!(
+            messages[messages.len() - 1]["content"]
+                .as_str()
+                .unwrap_or("")
+                .contains("task_delegate")
+        );
+    }
+
+    #[test]
+    fn a_promise_is_nudged_only_once_and_never_without_the_delegate_tool() {
+        use kamimusuhi_testkit::{FixtureResponse, FixtureServer};
+        // The model keeps promising: the second promise is the answer.
+        let tool_server = delegate_tool_server(Vec::new());
+        let model = FixtureServer::start(vec![
+            FixtureResponse::ok("調べてみますね。"),
+            FixtureResponse::ok("調べてみますね。"),
+        ])
+        .expect("model");
+        let config =
+            PersonaBackendConfig::new(BACKEND, model.base_url(), "test-model").with_tools(Some(
+                ToolServerConfig::new(tool_server.base_url().trim_end_matches("/v1").to_owned()),
+            ));
+        let result = OpenAiCompatiblePersona::new(config)
+            .turn(turn_input())
+            .expect("turn");
+        assert_eq!(result.response_intent, "調べてみますね。");
+        assert_eq!(model.requests().len(), 2);
+
+        // Without task_delegate on offer there is nothing to ask for.
+        let tool_server = FixtureServer::start(vec![raw_json(&serde_json::json!({"tools": [
+            {"type": "function", "function": {"name": "library_list", "parameters": {}}}]}))])
+        .expect("tools");
+        let model =
+            FixtureServer::start(vec![FixtureResponse::ok("調べてみますね。")]).expect("model");
+        let config =
+            PersonaBackendConfig::new(BACKEND, model.base_url(), "test-model").with_tools(Some(
+                ToolServerConfig::new(tool_server.base_url().trim_end_matches("/v1").to_owned()),
+            ));
+        OpenAiCompatiblePersona::new(config)
+            .turn(turn_input())
+            .expect("turn");
+        assert_eq!(model.requests().len(), 1);
     }
 
     #[test]

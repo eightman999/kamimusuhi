@@ -24,7 +24,7 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use kamimusuhi_runtime::agent_exec::history::{
-    Battery, EvalCase, Feedback, HistoryRecord, Verdict,
+    Battery, EvalCase, Feedback, FeedbackSource, HistoryRecord, Verdict,
 };
 use kamimusuhi_runtime::agent_exec::{
     self as ax, AgentBilling, ExecutorConfig, ExecutorRegistry, ExecutorSpec, ModelCatalog, RunEnd,
@@ -462,6 +462,7 @@ impl TaskPlane {
                     "models": entry.map_or(0, |c| c.models.len()),
                     "catalog_checked": entry.filter(|c| c.checked_at > 0).map(|c| iso8601(c.checked_at)),
                     "catalog_error": entry.and_then(|c| c.error.clone()),
+                    "needs_login": entry.is_some_and(ax::catalog::CatalogEntry::needs_login),
                     "harness_version": entry.and_then(|c| c.harness_version.clone()),
                     "protocol": e.spec().protocol.as_str(),
                     "can_resume": e.can_resume(),
@@ -556,11 +557,22 @@ fn parse_kind(value: &Value) -> Result<TaskKind, (u16, Value)> {
     }
 }
 
-fn candidates(registry: &ExecutorRegistry) -> Vec<(Arc<dyn TaskExecutor>, bool)> {
+/// Executors with whether each can take work now: installed, and not
+/// waiting for the operator to log in.
+fn candidates(
+    registry: &ExecutorRegistry,
+    catalog: &ModelCatalog,
+) -> Vec<(Arc<dyn TaskExecutor>, bool)> {
     registry
         .all()
         .iter()
-        .map(|e| (Arc::clone(e), e.health().ok))
+        .map(|e| {
+            let signed_out = catalog
+                .executors
+                .get(&e.spec().name)
+                .is_some_and(ax::catalog::CatalogEntry::needs_login);
+            (Arc::clone(e), e.health().ok && !signed_out)
+        })
         .collect()
 }
 
@@ -735,7 +747,8 @@ pub fn delegate(shared: &Shared, args: &Value, by: &str) -> (u16, Value) {
         }
     }
     let registry = plane.registry();
-    let pool = candidates(&registry);
+    let catalog = plane.catalog_snapshot();
+    let pool = candidates(&registry, &catalog);
     let cands: Vec<ax::Candidate<'_>> = pool
         .iter()
         .map(|(e, ok)| ax::Candidate {
@@ -743,7 +756,6 @@ pub fn delegate(shared: &Shared, args: &Value, by: &str) -> (u16, Value) {
             healthy: *ok,
         })
         .collect();
-    let catalog = plane.catalog_snapshot();
     let executor_arg = args["executor"]
         .as_str()
         .filter(|e| !e.is_empty() && *e != "auto");
@@ -1575,6 +1587,7 @@ pub fn feedback(shared: &Shared, args: &Value, by: &str) -> (u16, Value) {
         at: unix_now(),
         verdict,
         note: note.clone(),
+        source: FeedbackSource::Operator,
     });
     let text = format!(
         "{}{}",
@@ -1591,6 +1604,85 @@ pub fn feedback(shared: &Shared, args: &Value, by: &str) -> (u16, Value) {
         None,
         Some((by, &text)),
         Some(json!({"feedback": verdict})),
+    );
+    (
+        200,
+        json!({"ok": true, "task_id": task.id, "verdict": verdict}),
+    )
+}
+
+/// `review`: the individual's judgement of a finished task, collected by
+/// the continuity node (`task_review`) after the task ended. Recorded once
+/// per task; `unrated` marks it reviewed without a verdict. A verdict
+/// counts in the statistics unless the operator gives their own.
+/// Reachable only through the node-authenticated `/v1/agents`, never as a
+/// model tool: the individual judges in a host-run review turn.
+pub fn review(shared: &Shared, args: &Value, by: &str) -> (u16, Value) {
+    let plane = match plane(shared) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if by != "operator" {
+        return (403, json!({"error": "reviews are recorded by the host"}));
+    }
+    let task = match delegated(shared, args) {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    if !matches!(task.status, TaskStatus::Done | TaskStatus::Failed) {
+        return (409, json!({"error": "task has not finished"}));
+    }
+    if task.detail.get("review").is_some_and(|r| !r.is_null()) {
+        return (409, json!({"error": "task was already reviewed"}));
+    }
+    let verdict = match args["verdict"].as_str() {
+        Some("unrated") => None,
+        Some(v) => match Verdict::parse(v) {
+            Some(v) => Some(v),
+            None => {
+                return (
+                    400,
+                    json!({"error": "verdict must be accept, reject or unrated"}),
+                );
+            }
+        },
+        None => {
+            return (
+                400,
+                json!({"error": "verdict must be accept, reject or unrated"}),
+            );
+        }
+    };
+    let note = args["note"].as_str().map(|n| clip(n, ITEM_CHARS));
+    let at = unix_now();
+    if let Some(verdict) = verdict {
+        plane.history.feedback(&Feedback {
+            task_id: task.id.clone(),
+            at,
+            verdict,
+            note: note.clone(),
+            source: FeedbackSource::Mio,
+        });
+    }
+    let label = match verdict {
+        Some(Verdict::Accept) => "採用",
+        Some(Verdict::Reject) => "不採用",
+        None => "保留",
+    };
+    shared.tasks.update(
+        &shared.spool,
+        &task.id,
+        None,
+        Some((
+            "mio",
+            &format!(
+                "澪の評価: {label}{}",
+                note.as_deref()
+                    .map(|n| format!(" — {n}"))
+                    .unwrap_or_default()
+            ),
+        )),
+        Some(json!({"review": {"verdict": verdict, "note": note, "at": iso8601(at)}})),
     );
     (
         200,
@@ -1660,7 +1752,8 @@ pub fn eval(shared: &Shared, args: &Value, by: &str) -> (u16, Value) {
     let writable = plane.allows_write(&workspace_name) && task_worktree::is_repo(&workspace);
     let run_id = format!("e{:x}", crate::util::unix_now_ms());
     let registry = plane.registry();
-    let pool = candidates(&registry);
+    let catalog = plane.catalog_snapshot();
+    let pool = candidates(&registry, &catalog);
     let cands: Vec<ax::Candidate<'_>> = pool
         .iter()
         .map(|(e, ok)| ax::Candidate {
@@ -1668,7 +1761,6 @@ pub fn eval(shared: &Shared, args: &Value, by: &str) -> (u16, Value) {
             healthy: *ok,
         })
         .collect();
-    let catalog = plane.catalog_snapshot();
     let (mut started, mut skipped, mut errors) = (Vec::new(), Vec::new(), Vec::new());
     for target in &targets {
         let (executor, model) = match target.split_once(':') {
@@ -1766,8 +1858,10 @@ pub fn panel(shared: &Shared) -> (u16, Value) {
         Err(e) => return e,
     };
     let (_, feedback) = plane.history.load();
+    // The operator's own verdict; the individual's is `detail.review`.
     let verdicts: HashMap<&str, Verdict> = feedback
         .iter()
+        .filter(|f| f.source == FeedbackSource::Operator)
         .map(|f| (f.task_id.as_str(), f.verdict))
         .collect();
     let mut tasks: Vec<Value> = shared
@@ -1850,6 +1944,7 @@ pub fn handle(shared: &Shared, request: &Value, by: &str) -> (u16, Value) {
         "status" => status(shared, request),
         "cancel" => cancel(shared, request, by),
         "feedback" => feedback(shared, request, by),
+        "review" => review(shared, request, by),
         "apply" => worktree_action(shared, request, by, true),
         "discard" => worktree_action(shared, request, by, false),
         "stats" => stats(shared),
@@ -1858,6 +1953,42 @@ pub fn handle(shared: &Shared, request: &Value, by: &str) -> (u16, Value) {
         "panel" => panel(shared),
         other => (400, json!({"error": format!("unknown action {other}")})),
     }
+}
+
+/// Operator entry point (`/v1/agents`): this node's task plane, or else
+/// the first peer that has one, so a surface connected to a node without
+/// executors (the Pi) still sees and drives the task plane. Returns the
+/// reply and the node that served it. Forwarded requests carry
+/// `local_only` so they are never forwarded again.
+pub fn handle_or_forward(shared: &Shared, request: &Value, by: &str) -> (u16, Value, String) {
+    if shared.task_plane.is_some() || request["local_only"].as_bool().unwrap_or(false) {
+        let mut request = request.clone();
+        if let Some(map) = request.as_object_mut() {
+            map.remove("local_only");
+        }
+        let (status, reply) = handle(shared, &request, by);
+        return (status, reply, shared.config.node.id.clone());
+    }
+    let mut forwarded = request.clone();
+    forwarded["local_only"] = Value::Bool(true);
+    let mut last = (
+        404,
+        json!({"error": "no task plane on this node or its peers"}),
+    );
+    for peer in &shared.config.peers {
+        match crate::tools::post_peer(
+            &shared.peer_url(peer),
+            "/v1/agents",
+            &forwarded,
+            shared.token.as_deref(),
+        ) {
+            // No task plane (or no resident) there: try the next peer.
+            None | Some((404, _)) => {}
+            Some((status, reply)) if status == 200 => return (status, reply, peer.id.clone()),
+            Some(other) => last = other,
+        }
+    }
+    (last.0, last.1, String::new())
 }
 
 /// Tool-call entry point: wraps replies in the tools' `ok`/`error` shape.
@@ -2067,6 +2198,35 @@ mod tests {
         let (_, reply) = tool(shared, "task_delegate", &args);
         assert_eq!(reply["ok"], true, "{reply}");
         reply["result"]["task_id"].as_str().expect("id").to_owned()
+    }
+
+    #[test]
+    fn an_unbacked_promise_is_started_as_a_delegated_task_once() {
+        let (shared, _dir) = fixture(false);
+        let bg = crate::commitments::background(
+            &shared,
+            "turn",
+            "me",
+            "忘却の仕組みを調べて",
+            "調べてみますね。",
+            &json!([]),
+        );
+        let id = bg["task_id"].as_str().expect("commitment").to_owned();
+        let (status, reply) = crate::commitments::start(&shared, &json!({"id": id}), "operator");
+        assert_eq!(status, 200, "{reply}");
+        let delegated = reply["delegated"]["task_id"].as_str().expect("task id");
+        let commitment = shared.tasks.get(&id).expect("commitment");
+        assert_eq!(commitment.status, TaskStatus::Done);
+        assert_eq!(commitment.detail["delegated"]["id"], delegated);
+        assert_eq!(commitment.detail["delegated"]["node"], "test");
+        let task = shared.tasks.get(delegated).expect("delegated task");
+        assert!(
+            task.title.contains("忘却の仕組みを調べて"),
+            "{}",
+            task.title
+        );
+        let (status, _) = crate::commitments::start(&shared, &json!({"id": id}), "operator");
+        assert_eq!(status, 409, "a commitment starts once");
     }
 
     fn git_out(dir: &Path, args: &[&str]) -> String {

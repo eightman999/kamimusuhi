@@ -278,13 +278,17 @@ fn handle(shared: &Shared, stream: TcpStream) {
             json_response(stream, status, &reply, &[]);
         }
         ("GET", "/v1/agents") => {
-            let (status, reply) =
-                crate::task_orchestrator::handle(shared, &json!({"action": "health"}), "operator");
+            let (status, reply, _) = crate::task_orchestrator::handle_or_forward(
+                shared,
+                &json!({"action": "health"}),
+                "operator",
+            );
             json_response(stream, status, &reply, &[]);
         }
         ("POST", "/v1/agents") => {
             let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
-            let (status, reply) = crate::task_orchestrator::handle(shared, &body, "operator");
+            let (status, reply, _) =
+                crate::task_orchestrator::handle_or_forward(shared, &body, "operator");
             json_response(stream, status, &reply, &[]);
         }
         ("POST", "/v1/library") => {

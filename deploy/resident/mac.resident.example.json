@@ -33,5 +33,13 @@
       "max_tasks_per_day": 60,
       "max_usd_per_day": 1.0
     }
-  }
+  },
+  "mcp_servers": [
+    {
+      "name": "colab",
+      "command": "/Users/USER/.local/bin/colab-mcp",
+      "call_timeout_secs": 120,
+      "description": "Google Colab（Mac のブラウザで開いた Colab ノートブックを操作）。まず open_colab_browser_connection を呼ぶと Mac で Colab タブが開き、操作者がタブで接続を許可するとノートブック編集・実行のツールが増える（60秒待つ）。操作者の Google アカウントの Colab ランタイムで動く"
+    }
+  ]
 }

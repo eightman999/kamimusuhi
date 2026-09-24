@@ -1586,8 +1586,17 @@ impl DialogueSession {
                 .iter()
                 .zip(&tool_evidence_ids)
                 .map(|(c, id)| {
-                    serde_json::json!({"name": c.name, "ok": c.ok,
-                                       "latency_ms": c.latency_ms, "evidence_id": id})
+                    let mut entry = serde_json::json!({"name": c.name, "ok": c.ok,
+                                       "latency_ms": c.latency_ms, "evidence_id": id});
+                    // A delegated task keeps running after the turn; its id
+                    // lets the surface show that work started and where.
+                    if c.ok
+                        && let Some(task_id) = c.result["task_id"].as_str()
+                    {
+                        entry["task"] = serde_json::json!({"id": task_id,
+                            "executor": c.result["executor"], "model": c.result["model"]});
+                    }
+                    entry
                 })
                 .collect(),
             reference_lookups: reference_context

@@ -770,7 +770,7 @@ mod tests {
             crate::task_orchestrator::parse_executors_file(&std::fs::read(&path).expect("read"))
                 .expect("executors");
         let specs = kamimusuhi_runtime::agent_exec::resolve_all(&executors).expect("resolves");
-        assert_eq!(specs.len(), 4);
+        assert_eq!(specs.len(), 6);
     }
 
     #[test]

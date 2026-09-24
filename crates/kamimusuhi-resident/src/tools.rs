@@ -115,7 +115,12 @@ fn action_for(name: &str) -> Option<&'static str> {
     })
 }
 
-fn post_peer(url: &str, suffix: &str, body: &Value, token: Option<&str>) -> Option<(u16, Value)> {
+pub(crate) fn post_peer(
+    url: &str,
+    suffix: &str,
+    body: &Value,
+    token: Option<&str>,
+) -> Option<(u16, Value)> {
     use kamimusuhi_resource_http::{Endpoint, TrustAnchors, http};
     let endpoint = Endpoint::parse(url, suffix).ok()?;
     let response = http::post_json(

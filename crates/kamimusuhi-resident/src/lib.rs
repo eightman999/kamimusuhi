@@ -10,6 +10,7 @@
 
 pub mod approvals;
 pub mod client;
+pub mod commitments;
 pub mod config;
 pub mod dialogue;
 pub mod jobs;
@@ -25,6 +26,7 @@ pub mod state;
 pub mod status;
 pub mod task_ledger;
 pub mod task_orchestrator;
+pub mod task_review;
 pub mod task_worktree;
 pub mod tasks;
 pub mod tools;

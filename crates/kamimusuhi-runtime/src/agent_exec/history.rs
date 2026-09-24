@@ -61,7 +61,20 @@ impl Verdict {
     }
 }
 
-/// A person's judgement of a result. The latest one per task counts.
+/// Who judged a result.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FeedbackSource {
+    /// The operator (`feedback`).
+    #[default]
+    Operator,
+    /// The individual, reviewing the report after the task finished
+    /// (`review`).
+    Mio,
+}
+
+/// A judgement of a result. Per task the latest operator verdict counts;
+/// the individual's review counts only where the operator gave none.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Feedback {
     pub task_id: String,
@@ -69,6 +82,22 @@ pub struct Feedback {
     pub verdict: Verdict,
     #[serde(default)]
     pub note: Option<String>,
+    #[serde(default)]
+    pub source: FeedbackSource,
+}
+
+/// The verdict that counts per task (operator over the individual).
+pub fn verdicts(feedback: &[Feedback]) -> HashMap<&str, Verdict> {
+    let mut out: HashMap<&str, (FeedbackSource, Verdict)> = HashMap::new();
+    for f in feedback {
+        let keep = out.get(f.task_id.as_str()).is_some_and(|(source, _)| {
+            *source == FeedbackSource::Operator && f.source == FeedbackSource::Mio
+        });
+        if !keep {
+            out.insert(f.task_id.as_str(), (f.source, f.verdict));
+        }
+    }
+    out.into_iter().map(|(id, (_, v))| (id, v)).collect()
 }
 
 /// Aggregate for one task kind × executor × model.
@@ -108,10 +137,7 @@ fn quality(record: &HistoryRecord, verdict: Option<Verdict>) -> f64 {
 }
 
 pub fn stats(records: &[HistoryRecord], feedback: &[Feedback]) -> Vec<StatRow> {
-    let verdicts: HashMap<&str, Verdict> = feedback
-        .iter()
-        .map(|f| (f.task_id.as_str(), f.verdict))
-        .collect();
+    let verdicts = verdicts(feedback);
     let mut groups: BTreeMap<(String, String, String), Vec<&HistoryRecord>> = BTreeMap::new();
     for r in records {
         groups
@@ -367,6 +393,7 @@ mod tests {
             at: 2,
             verdict: Verdict::Reject,
             note: None,
+            source: FeedbackSource::Operator,
         }];
         let rows = stats(&records, &feedback);
         assert_eq!(
@@ -380,6 +407,28 @@ mod tests {
         assert_eq!(devin.mean_usd, None, "unknown cost stays unknown");
         let opencode = rows.iter().find(|r| r.executor == "opencode").expect("oc");
         assert!(opencode.score > devin.score - 0.2);
+    }
+
+    #[test]
+    fn the_operators_verdict_outranks_the_individuals_review() {
+        let f = |id: &str, verdict, source| Feedback {
+            task_id: id.to_owned(),
+            at: 0,
+            verdict,
+            note: None,
+            source,
+        };
+        let feedback = vec![
+            f("a", Verdict::Accept, FeedbackSource::Mio),
+            f("b", Verdict::Reject, FeedbackSource::Operator),
+            f("b", Verdict::Accept, FeedbackSource::Mio),
+            f("c", Verdict::Accept, FeedbackSource::Mio),
+            f("c", Verdict::Reject, FeedbackSource::Operator),
+        ];
+        let v = verdicts(&feedback);
+        assert_eq!(v["a"], Verdict::Accept, "a review counts alone");
+        assert_eq!(v["b"], Verdict::Reject, "a later review does not override");
+        assert_eq!(v["c"], Verdict::Reject);
     }
 
     #[test]

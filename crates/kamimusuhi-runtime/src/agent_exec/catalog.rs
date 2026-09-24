@@ -168,6 +168,26 @@ pub fn describe(spec: &ExecutorSpec, raw: RawModel, now: u64) -> ModelDescriptor
     }
 }
 
+/// Whether a discovery error says the harness is not signed in. Such a
+/// harness starts but cannot do any work until the operator logs in.
+pub fn needs_login(error: &str) -> bool {
+    let error = error.to_lowercase();
+    [
+        "not logged in",
+        "sign in",
+        "log in",
+        "login",
+        "authenticate",
+        "unauthorized",
+    ]
+    .iter()
+    .any(|m| error.contains(m))
+}
+
+/// Discovery error meaning only "no model list": the harness runs with its
+/// default model.
+pub const NO_DISCOVERY: &str = "no model discovery configured";
+
 /// One executor's last discovery.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CatalogEntry {
@@ -185,6 +205,10 @@ pub struct CatalogEntry {
 }
 
 impl CatalogEntry {
+    pub fn needs_login(&self) -> bool {
+        self.error.as_deref().is_some_and(needs_login)
+    }
+
     pub fn is_stale(&self, ttl_secs: u64, now: u64) -> bool {
         self.checked_at == 0 || now.saturating_sub(self.checked_at) >= ttl_secs
     }

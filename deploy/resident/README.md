@@ -241,9 +241,11 @@ resident（Pi）は並列に進む作業をタスクとして記録する（`cur
 | 承認後の反映 commit/push（`commit`） | 承認 |
 | 定期ジョブ（`job`, ジョブごとに 1 枚を更新） | — |
 | 外部エージェントへの委譲（`delegated`, Task Plane） | 委譲した対話ターン |
+| 未着手の引受（`commitment`, 状態=あなたの判断待ち） | 対話ターン |
 
 - 操作者: `GET /v1/tasks`, `POST /v1/tasks {"action":"create"|"update",...}`（GUI のタスク画面）。
 - 澪（個体）: tool `task_list` / `task_create` / `task_update` で自分の計画を載せる。自動記録タスクは澪からは変更不可。
+- 澪が「調べてみますね」のように作業を引き受けたのに `task_delegate` を呼ばなかった場合、ホストが一度だけ「今タスクにするか、約束せずに答え直すか」を差し戻す。それでも委譲されなければ `commitment` タスクとして残し、GUI の返答の下に「⚠ 引き受けたが未着手」と「タスクとして開始」「取り消し」を出す。開始は `POST /v1/tasks {"action":"start","id":…}`（操作者のみ、Task Plane を持つ自ノードか最初の peer に委譲）。委譲できた返答には「▶ 裏で実行中 task_id · executor」が付く。
 - 再起動時に進行中だった自動記録タスクは「失敗（中断）」になる。完了は 3 日表示、400 件を保持。
 
 ## Task Plane（外部エージェント）
@@ -252,6 +254,8 @@ llm_master は Devin / OpenCode / Command Code などの agent harness に作業
 harness は `task_plane.executors_file`（例: `agent-executors.example.json`）で増減でき、ファイル変更は再起動なしで反映される。詳細は [docs/implementation/task-plane.md](../../docs/implementation/task-plane.md)。
 
 ### Mac ノード（Task Plane 用）
+
+Mac ノードは澪の Google Colab 操作（[colab-mcp](https://github.com/googlecolab/colab-mcp)）も受け持つ。colab-mcp は起動したマシンでブラウザを開き、その Colab タブが同じマシンの localhost に WebSocket で接続する仕組みなので、ブラウザのない Pi / llm_master では動かない。導入は `uv tool install git+https://github.com/googlecolab/colab-mcp`、`mcp_servers` に `colab`（`mac.resident.example.json`）、澪の `runtime.json` の `tools.allowed` に `mcp__colab__*`。澪が `open_colab_browser_connection` を呼ぶと Mac で Colab タブが開き、操作者がタブで接続すると編集・実行ツールが増える。
 
 開発 Mac にも cognition ノード `mac` を LaunchAgent で常駐させられる（Devin / OpenCode / Command Code がそこに入っているため）。個体の正本は持たず、NAS も使わない（spool はローカルに残る）。
 
