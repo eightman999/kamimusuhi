@@ -84,8 +84,19 @@ pub struct CommandOutput {
 /// passes, so a wedged tool (e.g. `nvidia-smi` on a sick driver) cannot pin a
 /// probe thread forever.
 pub fn run_with_timeout(program: &str, args: &[&str], timeout: Duration) -> Option<CommandOutput> {
+    run_with_timeout_env(program, args, &[], timeout)
+}
+
+/// [`run_with_timeout`] with extra environment variables for the child.
+pub fn run_with_timeout_env(
+    program: &str,
+    args: &[&str],
+    env: &[(&str, &str)],
+    timeout: Duration,
+) -> Option<CommandOutput> {
     let mut child = Command::new(program)
         .args(args)
+        .envs(env.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

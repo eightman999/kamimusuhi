@@ -116,11 +116,18 @@ class Resident:
 
 
 class DialogueBridge:
-    def __init__(self, config, resident, queue_size=16):
+    # Matches the resident's default dialogue.max_concurrent.
+    WORKERS = 2
+
+    def __init__(self, config, resident, queue_size=16, workers=WORKERS):
         self.config = config
         self.resident = resident
         self.queue = asyncio.Queue(maxsize=queue_size)
         self.seen = OrderedDict()
+        self.workers = workers
+        # One lock per subject keeps each conversation in order while other
+        # subjects proceed. Bounded by the allowlists (users x channels).
+        self.subject_locks = {}
 
     async def reply(self, message, text, **kwargs):
         try:
@@ -159,32 +166,43 @@ class DialogueBridge:
                 accepted.set_result(False)
 
     async def run(self):
-        """Exactly one consumer for this bot; never start a task per dialogue."""
+        """A fixed pool of consumers; never start a task per dialogue."""
+        await asyncio.gather(*(self.consume() for _ in range(self.workers)))
+
+    async def consume(self):
         while True:
             message, text, accepted = await self.queue.get()
             try:
-                if not await accepted:
-                    continue
-                try:
-                    response = await self.resident.talk(text, self.config.subject(message))
-                except (aiohttp.ClientError, asyncio.TimeoutError, ResidentError) as exc:
-                    LOG.warning("resident request failed (%s)", type(exc).__name__)
-                    await self.reply(message, "澪の応答を受け取れませんでした。Pi側で処理が続いている可能性があります。自動再送はしていません。")
-                    continue
-                if len(response.encode("utf-16-le")) // 2 <= 1900:
-                    await self.reply(message, response)
-                else:
-                    file = discord.File(io.BytesIO(response.encode("utf-8")), filename="mio-response.txt")
-                    try:
-                        await self.reply(message, "長い応答をファイルにまとめました。", file=file)
-                    finally:
-                        file.close()
-            except Exception as exc:
-                # A failed item must not kill the worker or leak private bodies.
-                LOG.error("queue item failed (%s)", type(exc).__name__)
-                await self.reply(message, "この呼び出しの処理に失敗しました。自動再送はしていません。")
+                subject = self.config.subject(message)
+                # No await between taking the item and queueing on its lock:
+                # asyncio locks are FIFO, so a subject's turns keep their order.
+                async with self.subject_locks.setdefault(subject, asyncio.Lock()):
+                    await self.answer(message, text, accepted, subject)
             finally:
                 self.queue.task_done()
+
+    async def answer(self, message, text, accepted, subject):
+        try:
+            if not await accepted:
+                return
+            try:
+                response = await self.resident.talk(text, subject)
+            except (aiohttp.ClientError, asyncio.TimeoutError, ResidentError) as exc:
+                LOG.warning("resident request failed (%s)", type(exc).__name__)
+                await self.reply(message, "澪の応答を受け取れませんでした。Pi側で処理が続いている可能性があります。自動再送はしていません。")
+                return
+            if len(response.encode("utf-16-le")) // 2 <= 1900:
+                await self.reply(message, response)
+            else:
+                file = discord.File(io.BytesIO(response.encode("utf-8")), filename="mio-response.txt")
+                try:
+                    await self.reply(message, "長い応答をファイルにまとめました。", file=file)
+                finally:
+                    file.close()
+        except Exception as exc:
+            # A failed item must not kill the worker or leak private bodies.
+            LOG.error("queue item failed (%s)", type(exc).__name__)
+            await self.reply(message, "この呼び出しの処理に失敗しました。自動再送はしていません。")
 
 
 class MioClient(discord.Client):

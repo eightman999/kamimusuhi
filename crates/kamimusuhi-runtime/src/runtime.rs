@@ -13,6 +13,7 @@
 //! kamimusuhi.sqlite   canonical state: identity, lineage, evidence, memory, Library
 //! runtime.json        infrastructure: which fake fills which cognitive slot
 //! trace.jsonl         observability: append-only, owns nothing
+//! writer.lock         coordination: serializes writer claims across processes
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -145,6 +146,7 @@ pub struct RuntimePaths {
 
 impl RuntimePaths {
     pub const DB_FILE_NAME: &'static str = "kamimusuhi.sqlite";
+    pub const WRITER_LOCK_FILE_NAME: &'static str = "writer.lock";
 
     pub fn new(dir: impl Into<PathBuf>) -> Self {
         Self { dir: dir.into() }
@@ -160,6 +162,10 @@ impl RuntimePaths {
 
     pub fn trace(&self) -> PathBuf {
         self.dir.join(JsonlTraceSink::FILE_NAME)
+    }
+
+    pub fn writer_lock(&self) -> PathBuf {
+        self.dir.join(Self::WRITER_LOCK_FILE_NAME)
     }
 
     fn display(&self) -> String {
@@ -378,6 +384,29 @@ impl Runtime {
             self.config.node_id,
             self.boot_id,
         )?)
+    }
+
+    /// Hold the directory's writer lock until the returned file is dropped.
+    ///
+    /// Several processes may run turns against one directory at once; each
+    /// claims its own epoch, which fences out the others. Claiming the epoch
+    /// and submitting under it happen inside this lock so that a concurrent
+    /// claim can never land between them. The lock is advisory (`flock`) and
+    /// is released by the OS if the process dies.
+    pub fn lock_writer(&self) -> Result<std::fs::File, RuntimeError> {
+        let path = self.paths.writer_lock();
+        let io = |e: std::io::Error| RuntimeError::DirectoryIo {
+            path: path.display().to_string(),
+            message: e.to_string(),
+        };
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(io)?;
+        file.lock().map_err(io)?;
+        Ok(file)
     }
 
     pub fn store(&self) -> &SqliteStore {

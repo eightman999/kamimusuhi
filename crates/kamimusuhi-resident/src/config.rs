@@ -511,6 +511,14 @@ pub struct DialogueConfig {
     pub privacy: String,
     #[serde(default = "default_dialogue_timeout")]
     pub timeout_secs: u64,
+    /// Turns that may run at once across all clients. Turns for the same
+    /// subject still run one at a time, in arrival order.
+    #[serde(default = "default_dialogue_concurrency")]
+    pub max_concurrent: usize,
+}
+
+const fn default_dialogue_concurrency() -> usize {
+    2
 }
 
 fn default_privacy() -> String {
@@ -721,6 +729,13 @@ impl Config {
                     ));
                 }
             }
+        }
+        if self
+            .dialogue
+            .as_ref()
+            .is_some_and(|d| d.max_concurrent == 0)
+        {
+            return Err("dialogue.max_concurrent must be positive".to_owned());
         }
         if let Some(nas) = &self.nas
             && (!nas.root.is_absolute() || nas.marker.contains('/'))

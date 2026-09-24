@@ -33,6 +33,8 @@ pub struct Routed {
     pub body: Value,
     pub tier: Option<String>,
     pub attempts: Vec<String>,
+    /// The routing event recorded for this request.
+    pub event: Option<RouteEvent>,
 }
 
 impl RouteProvider for TierConfig {
@@ -479,12 +481,13 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
                 "logs/routing",
                 serde_json::to_value(&event).unwrap_or(Value::Null),
             );
-            *shared.last_route.write().unwrap_or_else(|p| p.into_inner()) = Some(event);
+            *shared.last_route.write().unwrap_or_else(|p| p.into_inner()) = Some(event.clone());
             return Routed {
                 status: 400,
                 body: error_body(&e, "invalid_request_error"),
                 tier: None,
                 attempts: Vec::new(),
+                event: Some(event),
             };
         }
     };
@@ -609,7 +612,7 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
         serde_json::to_value(&event).unwrap_or(Value::Null),
     );
     shared.usage.record_request(&event, false);
-    *shared.last_route.write().unwrap_or_else(|p| p.into_inner()) = Some(event);
+    *shared.last_route.write().unwrap_or_else(|p| p.into_inner()) = Some(event.clone());
 
     match result {
         Some((tier, body, _model, ..)) => {
@@ -632,6 +635,7 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
                 body,
                 tier: Some(tier.name.clone()),
                 attempts,
+                event: Some(event),
             }
         }
         None => Routed {
@@ -642,6 +646,7 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
             ),
             tier: None,
             attempts,
+            event: Some(event),
         },
     }
 }
