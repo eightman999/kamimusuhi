@@ -33,7 +33,7 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::provider_bench::ProviderSpec;
 
@@ -48,6 +48,12 @@ pub trait RouteProvider {
     fn approx_tpm_limit(&self) -> Option<u64>;
     fn reasoning_suppression(&self) -> bool;
     fn route_available(&self) -> bool;
+    /// Operator preference: this provider leads `lane` ahead of the billing
+    /// order (e.g. a fast metered cloud for quick everyday chat). Privacy,
+    /// context, health and spend limits still apply.
+    fn preferred_for(&self, _lane: RouteLane) -> bool {
+        false
+    }
 }
 
 impl RouteProvider for ProviderSpec {
@@ -92,7 +98,7 @@ pub enum BillingClass {
 
 /// A lane of work with its own routing rules. Chat lanes pick an
 /// OpenAI-compatible provider; agent lanes are separate harnesses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RouteLane {
     /// Ordinary conversation: latency matters, cheap-first.
@@ -273,6 +279,11 @@ pub struct RouteGate {
     /// A slow provider is temporarily benched, then retried so recovery does
     /// not require a resident restart.
     pub latency_retry_after: Duration,
+    /// A latency sample older than this no longer describes the provider.
+    /// Unmeasured and stale candidates are explored first within their
+    /// billing band; otherwise the first provider to be measured would win
+    /// that band forever and its siblings would never get a sample.
+    pub latency_explore_after: Duration,
 }
 
 impl Default for RouteGate {
@@ -286,6 +297,7 @@ impl Default for RouteGate {
             // 12-48s, fast clouds at 0.4-2s, HAI at 4-22s.
             fast_chat_ttft_ceiling_ms: Some(30_000),
             latency_retry_after: Duration::from_secs(60),
+            latency_explore_after: Duration::from_secs(15 * 60),
         }
     }
 }
@@ -423,9 +435,31 @@ impl RouteGate {
         };
         candidates.retain(|c| lane_allows(c.spec.billing()));
 
-        // Within a billing class: measured TTFT first, reasoning-capable
-        // before reasoning-forced on the fast lane (thinking time is TTFT).
-        candidates.sort_by_key(|c| {
+        // Within a billing class: unmeasured/stale candidates are explored
+        // first, then measured TTFT, reasoning-capable before reasoning-forced
+        // on the fast lane (thinking time is TTFT).
+        let ceiling = match lane {
+            RouteLane::FastChat => self.fast_chat_ttft_ceiling_ms,
+            _ => None,
+        };
+        let order_ms = |c: &RouteCandidate<'a, S>| -> u64 {
+            let Some(state) = health.get(c.spec.route_id()) else {
+                return 0;
+            };
+            let Some(ewma) = state.ewma_ttft_ms else {
+                return 0;
+            };
+            let stale = state
+                .last_observed_at
+                .is_none_or(|at| now >= at + self.latency_explore_after);
+            // A sample past the lane's ceiling is not re-explored on a
+            // user-facing lane: it would spend a slow turn to confirm it.
+            if stale && ceiling.is_none_or(|limit| ewma <= limit as f64) {
+                return 0;
+            }
+            ewma as u64
+        };
+        candidates.sort_by_cached_key(|c| {
             let reasoning_penalty = match lane {
                 RouteLane::FastChat | RouteLane::LocalChat => {
                     usize::from(!c.spec.reasoning_suppression())
@@ -433,9 +467,10 @@ impl RouteGate {
                 _ => 0,
             };
             (
+                usize::from(!c.spec.preferred_for(lane)),
                 class_rank(c.spec.billing()),
                 reasoning_penalty,
-                c.est_ttft_ms.unwrap_or(u64::MAX),
+                order_ms(c),
             )
         });
 
@@ -760,6 +795,155 @@ mod tests {
         ];
         let order = gate.select(RouteLane::FastChat, &specs, 2_000, false, &health, now);
         assert_eq!(order[0].spec.id, "fast-free");
+    }
+
+    #[test]
+    fn unmeasured_and_stale_siblings_are_explored_within_a_band() {
+        let gate = RouteGate::default();
+        let now = Instant::now();
+        let mut health = ProviderStateBook::default();
+        health.get_mut("sub").observe(
+            true,
+            Some(2_000),
+            false,
+            None,
+            gate.rate_limit_cooldown,
+            now,
+        );
+        let specs = vec![
+            spec("sub", BillingClass::Subscription, true, None, None, true),
+            spec("local", BillingClass::Local, true, None, None, true),
+            spec("paid", BillingClass::Metered, true, None, None, true),
+        ];
+        // The measured provider must not starve its unmeasured sibling; the
+        // billing band still dominates (paid stays last).
+        let ids = |order: Vec<RouteCandidate<'_, ProviderSpec>>| {
+            order.iter().map(|c| c.spec.id).collect::<Vec<_>>()
+        };
+        let order = gate.select(RouteLane::FastChat, &specs, 2_000, false, &health, now);
+        assert_eq!(ids(order), vec!["local", "sub", "paid"]);
+
+        // Once measured slower, the faster sibling leads again ...
+        health.get_mut("local").observe(
+            true,
+            Some(3_500),
+            false,
+            None,
+            gate.rate_limit_cooldown,
+            now,
+        );
+        let order = gate.select(RouteLane::FastChat, &specs, 2_000, false, &health, now);
+        assert_eq!(ids(order), vec!["sub", "local", "paid"]);
+
+        // ... until the loser's sample goes stale and it is sampled again.
+        let later = now + gate.latency_explore_after;
+        health.get_mut("sub").observe(
+            true,
+            Some(2_000),
+            false,
+            None,
+            gate.rate_limit_cooldown,
+            later,
+        );
+        let order = gate.select(RouteLane::FastChat, &specs, 2_000, false, &health, later);
+        assert_eq!(ids(order), vec!["local", "sub", "paid"]);
+    }
+
+    #[test]
+    fn stale_samples_past_the_fast_ceiling_are_not_explored_on_fast_chat() {
+        let gate = RouteGate::default();
+        let now = Instant::now();
+        let mut health = ProviderStateBook::default();
+        health.get_mut("slow").observe(
+            true,
+            Some(40_000),
+            false,
+            None,
+            gate.rate_limit_cooldown,
+            now,
+        );
+        health.get_mut("fast").observe(
+            true,
+            Some(2_000),
+            false,
+            None,
+            gate.rate_limit_cooldown,
+            now + gate.latency_explore_after,
+        );
+        let specs = vec![
+            spec("slow", BillingClass::Local, true, None, None, true),
+            spec("fast", BillingClass::Subscription, true, None, None, true),
+        ];
+        let later = now + gate.latency_explore_after;
+        let order = gate.select(RouteLane::FastChat, &specs, 2_000, false, &health, later);
+        assert_eq!(order[0].spec.id, "fast");
+        // Lanes without a latency ceiling do re-sample it.
+        let order = gate.select(RouteLane::ToolTask, &specs, 2_000, false, &health, later);
+        assert_eq!(order[0].spec.id, "slow");
+    }
+
+    struct Preferring(ProviderSpec, RouteLane);
+    impl RouteProvider for Preferring {
+        fn route_id(&self) -> &str {
+            self.0.route_id()
+        }
+        fn billing(&self) -> BillingClass {
+            self.0.billing()
+        }
+        fn privacy_ok_for_private_memory(&self) -> bool {
+            self.0.privacy_ok_for_private_memory()
+        }
+        fn context_limit_tokens(&self) -> Option<u64> {
+            self.0.context_limit_tokens()
+        }
+        fn approx_tpm_limit(&self) -> Option<u64> {
+            self.0.approx_tpm_limit()
+        }
+        fn reasoning_suppression(&self) -> bool {
+            self.0.reasoning_suppression()
+        }
+        fn route_available(&self) -> bool {
+            self.0.route_available()
+        }
+        fn preferred_for(&self, lane: RouteLane) -> bool {
+            lane == self.1
+        }
+    }
+
+    #[test]
+    fn lane_preference_leads_only_its_lane_and_never_breaks_privacy() {
+        let gate = RouteGate::default();
+        let health = ProviderStateBook::default();
+        let now = Instant::now();
+        let specs = vec![
+            Preferring(
+                spec("sub", BillingClass::Subscription, true, None, None, true),
+                RouteLane::MemoryHeavy,
+            ),
+            Preferring(
+                spec("fast-paid", BillingClass::Metered, true, None, None, true),
+                RouteLane::FastChat,
+            ),
+            Preferring(
+                spec("fast-free", BillingClass::FreeTier, false, None, None, true),
+                RouteLane::FastChat,
+            ),
+        ];
+        let ids = |lane, private| {
+            gate.select(lane, &specs, 2_000, private, &health, now)
+                .iter()
+                .map(|c| c.spec.route_id().to_owned())
+                .collect::<Vec<_>>()
+        };
+        // Everyday chat: the preferred fast providers lead the billing order.
+        assert_eq!(
+            ids(RouteLane::FastChat, false),
+            ["fast-free", "fast-paid", "sub"]
+        );
+        // A private turn still never reaches a training free tier.
+        assert_eq!(ids(RouteLane::FastChat, true), ["fast-paid", "sub"]);
+        // Other lanes keep the normal order.
+        assert_eq!(ids(RouteLane::DeepReasoning, true), ["sub", "fast-paid"]);
     }
 
     #[test]

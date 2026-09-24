@@ -83,6 +83,10 @@ pub struct SyncState {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct RouteEvent {
     pub at: u64,
+    /// Route-gate lane of an auto-routed request (`FAST_CHAT`, `TOOL_TASK`,
+    /// ...); `None` for an explicitly forced tier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lane: Option<String>,
     pub tier: Option<String>,
     /// Upstream model that served the request.
     pub model: Option<String>,
