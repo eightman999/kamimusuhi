@@ -42,6 +42,22 @@ persona / memory を含む通常の対話は既定で private とし、
 - `condition: small_request` の tier は短い要求（既定1200文字以下）か `model: "k0"` のときのみ使う。 `k0` と `X-Kamimusuhi-Route: local` は LocalChat として local tier のみに制限する。
 - model 名で `hai` や `hai/glm-5.3` のようにtierを強制できるが、local-only / privacy wall / production cost guard は迂回できない。
 - `stream: true` は完成応答を SSE として返す（逐次生成ではない）。
+- lane はヒント（`kamimusuhi_route_lane`）がなければ要求の形で決まる: 最後が tool 結果 → `TOOL_TASK`、推定16kトークン以上 → `MEMORY_HEAVY`、最後の発言が `routing.fast_chat_max_input_chars`（既定200字）を超える → `DEEP_REASONING`、それ以外（即答で済む日常会話）→ `FAST_CHAT`。lane は routing ログに残る。
+- 未計測・計測が15分以上古い tier は同じ band 内で先に試す（片方だけ計測されて他方が永久に選ばれない状態を防ぐ）。
+- tier の `prefer_lanes`（例 `["FAST_CHAT"]`）は、その lane で billing class より前に置く。privacy / health / cost guard はそのまま効く。
+- tier の `extra_body` はプロバイダ固有の項目を足し（例 gpt-oss の `reasoning_effort`）、`strip_fields` は未知の項目を拒否するAPI向けに項目を消す（例 `chat_template_kwargs`）。`model` / `stream` / `messages` は変えられない。
+
+### 追加プロバイダ（Groq / Cerebras / OpenAI / Gemini / OpenRouter）
+
+定義は `provider-tiers.example.json`。`privacy_ok_for_private_memory` は各社の一次情報で
+「API入力を学習に使わない」と明記されているものだけ true（2026-09-24確認: Groq・Cerebras・OpenAI）。
+Gemini の無料枠と OpenRouter の `:free` は学習に使われ得るので false（非private要求のみ）。
+日常会話（FAST_CHAT）は llm_master（Gemma 4, `prefer_lanes: ["FAST_CHAT"]`）を最優先にする。gpt-oss（Groq/Cerebras）は速い（約0.5秒）が敬語の接客調になりペルソナが崩れるため、llm_master がスリープ・遅延時の予備にしている。Gemma の実ターンは約5秒かかり得るので、Pi の `fast_chat_latency_ceiling_ms` は 12000。長い依頼は HAI / llm_master が先。
+
+1. キーを Mac のファイル（mode 600）に置き、secrets.env へ送る（値は ssh stdin のみ）:
+   `KEY_FILES="GROQ_API_KEY=<file>,CEREBRAS_API_KEY=<file>" deploy/resident/push-secrets.sh <host>`
+2. キーを入れた tier だけを `resident.json` の `tiers` に追加し、`kamimusuhi check-config` 後に resident を再起動する。
+3. Cerebras/OpenAI は従量。上の CostGuard 上限（既定 $0.10/day）に達すると次の tier に落ちる。
 
 従量 tier は送信前に production `CostGuard` を通る。既定上限は
 **$0.02/request / $0.50/daemon session / $0.10/day / $2.00/month**。
@@ -256,6 +272,10 @@ deploy/resident/install-mac.sh --uninstall # LaunchAgent を外す（データ�
 ## アバター名
 
 個体の `runtime.json` の `avatar_name`（例 `"澪"`）が、Persona が名乗る名前になる（未設定は「かみむすび」）。表示上の名前で、個体の identity は変わらない。
+
+`avatar_aliases`（例 `["Mio", "みお"]`）と `avatar_self_description`（操作者が書く「何者か」の説明）を設定すると、
+毎ターンの冒頭で「これらの名前は第三者ではなくあなた自身」と伝える。別名が既存の名前（例: 実験系の MIO/MIOBA）と
+紛らわしい場合は、説明文でその区別も書く。runtime の再起動は不要（ターンごとに読み込む）。
 
 ## 状態確認
 

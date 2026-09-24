@@ -42,13 +42,14 @@
       "probe_interval_secs": 15,
       "privacy_ok_for_private_memory": true,
       "reasoning_suppression": true,
-      "context_limit_tokens": 65536
+      "context_limit_tokens": 65536,
+      "prefer_lanes": ["FAST_CHAT"]
     }
   ],
   "routing": {
     "small_request_chars": 1200,
     "log_conversations": true,
-    "fast_chat_latency_ceiling_ms": 4000,
+    "fast_chat_latency_ceiling_ms": 12000,
     "private_by_default": true,
     "max_completion_tokens_for_cost": 768,
     "max_request_cost_usd": 0.02,
