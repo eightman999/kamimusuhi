@@ -17,6 +17,8 @@ import discord
 
 LOG = logging.getLogger("kamimusuhi.discord")
 RESIDENT_URL = "http://127.0.0.1:7860"
+# Accepted by both the resident API and `kamimusuhi-runtime talk --subject`.
+SUBJECT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
 
 def snowflakes(value: str) -> frozenset[int]:
@@ -35,6 +37,9 @@ class Config:
     guild_id: int
     users: frozenset[int]
     channels: frozenset[int]
+    # The operator's own subject (the one the desktop uses, e.g. $USER), so
+    # Discord turns share relationship memory and recall with other surfaces.
+    operator_subject: str | None = None
 
     @classmethod
     def from_env(cls):
@@ -44,9 +49,17 @@ class Config:
         guilds = snowflakes(os.environ.get("DISCORD_GUILD_ID", ""))
         if len(guilds) != 1:
             raise ValueError("DISCORD_GUILD_ID must contain one ID")
-        return cls(token, next(iter(guilds)),
-                   snowflakes(os.environ.get("DISCORD_ALLOWED_USER_IDS", "")),
-                   snowflakes(os.environ.get("DISCORD_ALLOWED_CHANNEL_IDS", "")))
+        users = snowflakes(os.environ.get("DISCORD_ALLOWED_USER_IDS", ""))
+        operator = os.environ.get("DISCORD_OPERATOR_SUBJECT", "").strip() or None
+        if operator is not None:
+            if not SUBJECT_RE.fullmatch(operator):
+                raise ValueError("DISCORD_OPERATOR_SUBJECT must be 1-64 chars of [A-Za-z0-9._-]")
+            if len(users) != 1:
+                # Sharing one subject between people would merge their memories.
+                raise ValueError("DISCORD_OPERATOR_SUBJECT requires exactly one allowed user")
+        return cls(token, next(iter(guilds)), users,
+                   snowflakes(os.environ.get("DISCORD_ALLOWED_CHANNEL_IDS", "")),
+                   operator)
 
     def allows(self, message):
         return (message.guild is not None
@@ -55,6 +68,11 @@ class Config:
                 and message.author.id in self.users
                 and not message.author.bot
                 and message.webhook_id is None)
+
+    def subject(self, message):
+        if self.operator_subject is not None and message.author.id in self.users:
+            return self.operator_subject
+        return subject_for(message)
 
 
 def subject_for(message):
@@ -148,7 +166,7 @@ class DialogueBridge:
                 if not await accepted:
                     continue
                 try:
-                    response = await self.resident.talk(text, subject_for(message))
+                    response = await self.resident.talk(text, self.config.subject(message))
                 except (aiohttp.ClientError, asyncio.TimeoutError, ResidentError) as exc:
                     LOG.warning("resident request failed (%s)", type(exc).__name__)
                     await self.reply(message, "澪の応答を受け取れませんでした。Pi側で処理が続いている可能性があります。自動再送はしていません。")
