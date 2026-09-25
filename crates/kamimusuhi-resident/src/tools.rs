@@ -256,7 +256,7 @@ fn call_title(name: &str, arguments: &Value) -> String {
 }
 
 /// Task-board tools for the individual: plan and track its own work.
-fn task_tool(shared: &Shared, name: &str, request: &Value) -> (u16, Value) {
+fn task_tool(shared: &Shared, name: &str, request: &Value, turn: Option<&str>) -> (u16, Value) {
     let mut args = match &request["arguments"] {
         Value::String(text) => serde_json::from_str(text).unwrap_or_else(|_| json!({})),
         Value::Null => json!({}),
@@ -265,11 +265,7 @@ fn task_tool(shared: &Shared, name: &str, request: &Value) -> (u16, Value) {
     // A task the individual plans mid-conversation follows that turn.
     if name == "task_create"
         && args["depends_on"].as_array().is_none_or(Vec::is_empty)
-        && let Some(turn) = shared
-            .current_turn
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
+        && let Some(turn) = turn
     {
         args["depends_on"] = json!([turn]);
     }
@@ -292,14 +288,19 @@ fn task_tool(shared: &Shared, name: &str, request: &Value) -> (u16, Value) {
 /// Task-plane tools: served here when this node has executors, otherwise
 /// by the first peer that does. The delegated task is recorded on the
 /// board of the node that runs it.
-fn task_plane_tool(shared: &Shared, name: &str, request: &Value) -> (u16, Value) {
+fn task_plane_tool(
+    shared: &Shared,
+    name: &str,
+    request: &Value,
+    turn: Option<&str>,
+) -> (u16, Value) {
     if shared.task_plane.is_some() {
         let args = match &request["arguments"] {
             Value::String(text) => serde_json::from_str(text).unwrap_or_else(|_| json!({})),
             Value::Null => json!({}),
             other => other.clone(),
         };
-        return crate::task_orchestrator::tool(shared, name, &args);
+        return crate::task_orchestrator::tool(shared, name, &args, turn);
     }
     if !request["local_only"].as_bool().unwrap_or(false) {
         let mut forwarded = request.clone();
@@ -320,24 +321,21 @@ fn task_plane_tool(shared: &Shared, name: &str, request: &Value) -> (u16, Value)
 }
 
 /// Execute a tool call and record it on the task board as a successor of
-/// the dialogue turn in progress. Forwarded (`local_only`) calls are
-/// recorded by the node that forwarded them, not twice.
-pub fn call(shared: &Shared, request: &Value) -> (u16, Value) {
+/// `turn`, the dialogue turn that made it (see [`Shared::turn_for`]).
+/// Forwarded (`local_only`) calls are recorded by the node that forwarded
+/// them, not twice.
+pub fn call(shared: &Shared, request: &Value, turn: Option<&str>) -> (u16, Value) {
     let name = request["name"].as_str().unwrap_or("");
     if crate::task_orchestrator::TOOL_NAMES.contains(&name) {
-        return task_plane_tool(shared, name, request);
+        return task_plane_tool(shared, name, request, turn);
     }
     if name.starts_with("task_") {
-        return task_tool(shared, name, request);
+        return task_tool(shared, name, request, turn);
     }
     if request["local_only"].as_bool().unwrap_or(false) {
         return call_inner(shared, request);
     }
-    let turn = shared
-        .current_turn
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .clone();
+    let turn = turn.map(str::to_owned);
     let node = executing_node(shared, name, &request["arguments"]);
     let task = shared.tasks.create(
         &shared.spool,

@@ -135,9 +135,10 @@ pub struct Shared {
     pub mcp: Vec<std::sync::Arc<crate::mcp::McpServer>>,
     pub approvals: crate::approvals::ApprovalQueue,
     pub tasks: std::sync::Arc<crate::tasks::TaskBoard>,
-    /// Task id of the dialogue turn in progress, so tool calls made during
-    /// it are recorded as its successors.
-    pub current_turn: std::sync::Mutex<Option<String>>,
+    /// Dialogue turns in progress (task id → the last route served for
+    /// it), so tool calls and model calls made during a turn are attributed
+    /// to that turn even while several run at once.
+    pub turns: std::sync::Mutex<BTreeMap<String, Option<RouteEvent>>>,
     pub jobs: crate::jobs::JobStatus,
     /// External agent harnesses (`None` when this node has none).
     pub task_plane: Option<std::sync::Arc<crate::task_orchestrator::TaskPlane>>,
@@ -201,7 +202,7 @@ impl Shared {
                     &config.paths,
                 ))
             }),
-            current_turn: std::sync::Mutex::new(None),
+            turns: std::sync::Mutex::new(BTreeMap::new()),
             jobs: crate::jobs::JobStatus::default(),
             config,
             started: unix_now(),
@@ -221,6 +222,47 @@ impl Shared {
             route_health: Mutex::new(ProviderStateBook::default()),
             cost_guard: Mutex::new(cost_guard),
             requests: AtomicU64::new(0),
+        }
+    }
+
+    pub fn begin_turn(&self, turn: &str) {
+        self.turns
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(turn.to_owned(), None);
+    }
+
+    /// Close a turn and return the last route served for it.
+    pub fn end_turn(&self, turn: &str) -> Option<RouteEvent> {
+        self.turns
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(turn)
+            .flatten()
+    }
+
+    /// The turn a request belongs to: the one its `X-Kamimusuhi-Turn`
+    /// header names when that turn is in progress. Without the header
+    /// (an older runtime binary, a non-loopback persona URL) the request is
+    /// attributed only when exactly one turn is running — never guessed
+    /// between concurrent ones.
+    pub fn turn_for(&self, header: Option<&str>) -> Option<String> {
+        let turns = self.turns.lock().unwrap_or_else(|p| p.into_inner());
+        match header {
+            Some(turn) => turns.contains_key(turn).then(|| turn.to_owned()),
+            None if turns.len() == 1 => turns.keys().next().cloned(),
+            None => None,
+        }
+    }
+
+    pub fn record_turn_route(&self, turn: &str, event: RouteEvent) {
+        if let Some(slot) = self
+            .turns
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get_mut(turn)
+        {
+            *slot = Some(event);
         }
     }
 

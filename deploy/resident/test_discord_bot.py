@@ -55,7 +55,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(call.kwargs['mention_author'])
             self.assertEqual(call.kwargs['allowed_mentions'].to_dict(), {'parse': []})
 
-    async def test_fifo_and_single_active_request(self):
+    async def test_same_subject_is_fifo_and_one_at_a_time(self):
         started, finish = asyncio.Event(), asyncio.Event()
         active, max_active, order = 0, 0, []
         async def talk(text, subject):
@@ -81,6 +81,36 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         await self.drain()
         self.assertEqual(order, ['first', 'second', 'third'])
         self.assertEqual(max_active, 1)
+
+    async def test_different_subjects_run_together_up_to_the_pool(self):
+        config = Config('fake-token', 10, frozenset({20, 21, 22}), frozenset({30}))
+        bridge = DialogueBridge(config, self.backend)
+        worker = asyncio.create_task(bridge.run())
+        both, finish = asyncio.Event(), asyncio.Event()
+        active, max_active = 0, 0
+        async def talk(text, subject):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            if active == 2:
+                both.set()
+            await finish.wait()
+            active -= 1
+            return text
+        self.backend.talk.side_effect = talk
+        try:
+            for i, user in enumerate([20, 21, 22], 1):
+                await bridge.handle(message(id=i, user=user, text=f'<@99> m{i}'), 99)
+            await asyncio.wait_for(both.wait(), timeout=2)
+            await asyncio.sleep(0.05)
+            self.assertEqual(max_active, 2)
+            finish.set()
+            await asyncio.wait_for(bridge.queue.join(), timeout=2)
+            self.assertEqual(self.backend.talk.await_count, 3)
+        finally:
+            worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker
 
     async def test_duplicate_gateway_message_not_processed_twice(self):
         event = message()

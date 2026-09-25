@@ -206,6 +206,28 @@ pub const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 /// Bounds the main response headers and, independently, chunked trailers.
 pub const MAX_HEADER_BYTES: usize = 64 * 1024;
 
+/// Names the resident dialogue turn this process is serving. The resident
+/// sets it on each `kamimusuhi-runtime talk` child so the model and tool
+/// calls that child makes back to the resident can be attributed to their
+/// own turn while several turns run at once.
+pub const TURN_ENV: &str = "KAMIMUSUHI_TURN";
+/// Carries [`TURN_ENV`] on plain-HTTP requests to a loopback peer — never
+/// to a remote or TLS endpoint, which has no use for a local turn id.
+pub const TURN_HEADER: &str = "X-Kamimusuhi-Turn";
+
+fn turn_header(socket: &TcpStream) -> Option<String> {
+    if !socket.peer_addr().is_ok_and(|a| a.ip().is_loopback()) {
+        return None;
+    }
+    let turn = std::env::var(TURN_ENV).ok()?;
+    (!turn.is_empty()
+        && turn.len() <= 128
+        && turn
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+    .then_some(turn)
+}
+
 /// Smallest socket timeout worth setting.
 ///
 /// A `SO_RCVTIMEO` that rounds to zero means *no timeout* on POSIX, and some
@@ -432,6 +454,11 @@ fn open_request(
         .set_read_timeout(Some(remaining("handshake")?))
         .map_err(|source| HttpError::Transport(format!("set_read_timeout: {source}")))?;
 
+    let turn = if endpoint.tls {
+        None
+    } else {
+        turn_header(&socket)
+    };
     let mut stream = if endpoint.tls {
         let config = crate::tls::client_config(anchors)
             .map_err(|(kind, detail)| HttpError::Tls { kind, detail })?;
@@ -462,6 +489,9 @@ fn open_request(
     );
     for header in headers {
         request.push_str(&format!("{}: {}\r\n", header.name, header.value));
+    }
+    if let Some(turn) = turn {
+        request.push_str(&format!("{TURN_HEADER}: {turn}\r\n"));
     }
     request.push_str("\r\n");
     request.push_str(body);

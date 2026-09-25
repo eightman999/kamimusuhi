@@ -3,18 +3,95 @@
 //! Each turn runs `kamimusuhi-runtime talk` against the canonical runtime
 //! directory, so the reply comes from the Persona Core with the individual's
 //! memory and continuity, and the turn is recorded by the runtime itself.
-//! Turns are serialized: the runtime directory has a single writer.
+//!
+//! Up to `max_concurrent` turns run at once, each in its own runtime
+//! process; the runtime serializes the part that writes to the individual
+//! (writer claim and draft submission) behind its own directory lock. Turns
+//! for the same subject run one at a time, in arrival order, so each sees
+//! the previous one's reply in its context.
 
-use std::sync::Mutex;
+use std::collections::VecDeque;
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+use kamimusuhi_resource_http::http::TURN_ENV;
 use serde_json::{Value, json};
 
 use crate::config::DialogueConfig;
 use crate::state::Shared;
-use crate::util::run_with_timeout;
+use crate::util::run_with_timeout_env;
 
-static TURN_LOCK: Mutex<()> = Mutex::new(());
+/// Admission for dialogue turns: a global limit plus one turn per subject.
+struct TurnGate {
+    state: Mutex<GateState>,
+    changed: Condvar,
+}
+
+struct GateState {
+    next_ticket: u64,
+    /// Waiting (ticket, subject), oldest first.
+    waiting: VecDeque<(u64, String)>,
+    running: Vec<String>,
+}
+
+static GATE: TurnGate = TurnGate::new();
+
+/// Holds one admitted turn; dropping it admits the next.
+struct TurnSlot {
+    gate: &'static TurnGate,
+    subject: String,
+}
+
+impl TurnGate {
+    const fn new() -> Self {
+        Self {
+            state: Mutex::new(GateState {
+                next_ticket: 0,
+                waiting: VecDeque::new(),
+                running: Vec::new(),
+            }),
+            changed: Condvar::new(),
+        }
+    }
+
+    fn admit(&'static self, subject: &str, max_concurrent: usize) -> TurnSlot {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let ticket = state.next_ticket;
+        state.next_ticket += 1;
+        state.waiting.push_back((ticket, subject.to_owned()));
+        loop {
+            // A turn may start when there is room and no earlier waiter for
+            // its subject is ahead of it; a busy subject never blocks others.
+            let ready = state.running.len() < max_concurrent.max(1)
+                && !state.running.iter().any(|s| s == subject)
+                && state
+                    .waiting
+                    .iter()
+                    .find(|(_, s)| s == subject)
+                    .is_some_and(|(t, _)| *t == ticket);
+            if ready {
+                state.waiting.retain(|(t, _)| *t != ticket);
+                state.running.push(subject.to_owned());
+                return TurnSlot {
+                    gate: self,
+                    subject: subject.to_owned(),
+                };
+            }
+            state = self.changed.wait(state).unwrap_or_else(|p| p.into_inner());
+        }
+    }
+}
+
+impl Drop for TurnSlot {
+    fn drop(&mut self) {
+        let mut state = self.gate.state.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(index) = state.running.iter().position(|s| *s == self.subject) {
+            state.running.remove(index);
+        }
+        drop(state);
+        self.gate.changed.notify_all();
+    }
+}
 
 const MAX_MESSAGE_BYTES: usize = 32 * 1024;
 
@@ -52,7 +129,7 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
             json!({"error": "individual is not initialized on this node"}),
         );
     }
-    let _turn = TURN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _slot = GATE.admit(subject, config.max_concurrent);
     let task_id = shared.tasks.create(
         &shared.spool,
         crate::tasks::NewTask {
@@ -65,15 +142,8 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
             detail: json!({"subject": subject}),
         },
     );
-    *shared
-        .current_turn
-        .lock()
-        .unwrap_or_else(|p| p.into_inner()) = Some(task_id.clone());
+    shared.begin_turn(&task_id);
     let finish = |status: crate::tasks::TaskStatus, note: &str| {
-        *shared
-            .current_turn
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = None;
         shared.tasks.update(
             &shared.spool,
             &task_id,
@@ -85,7 +155,7 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
     let started = Instant::now();
     let dir = config.dir.to_string_lossy().into_owned();
     let binary = config.runtime_binary.to_string_lossy().into_owned();
-    let output = run_with_timeout(
+    let output = run_with_timeout_env(
         &binary,
         &[
             "talk",
@@ -98,8 +168,11 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
             "--message",
             message,
         ],
+        &[(TURN_ENV, &task_id)],
         Duration::from_secs(config.timeout_secs),
     );
+    // This turn's own routing event, not whichever turn routed last.
+    let turn_route = shared.end_turn(&task_id);
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let Some(output) = output else {
         finish(crate::tasks::TaskStatus::Failed, "時間切れ");
@@ -126,24 +199,19 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
             // turn's upstream call(s): tier, model, tokens, and the cost
             // basis. `cost_usd` is absent when the plan's price is unknown —
             // never rendered as zero.
-            let route = shared
-                .last_route
-                .read()
-                .unwrap_or_else(|p| p.into_inner())
-                .as_ref()
-                .map(|r| {
-                    json!({
-                        "tier": r.tier,
-                        "model": r.model,
-                        "billing": r.billing,
-                        "latency_ms": r.latency_ms,
-                        "prompt_tokens": r.prompt_tokens,
-                        "completion_tokens": r.completion_tokens,
-                        "cached_tokens": r.cached_tokens,
-                        "cost_usd": r.cost_usd,
-                        "cost_kind": r.cost_kind,
-                    })
-                });
+            let route = turn_route.as_ref().map(|r| {
+                json!({
+                    "tier": r.tier,
+                    "model": r.model,
+                    "billing": r.billing,
+                    "latency_ms": r.latency_ms,
+                    "prompt_tokens": r.prompt_tokens,
+                    "completion_tokens": r.completion_tokens,
+                    "cached_tokens": r.cached_tokens,
+                    "cost_usd": r.cost_usd,
+                    "cost_kind": r.cost_kind,
+                })
+            });
             let _ = shared.spool.append(
                 "conversations/dialogue",
                 json!({
@@ -250,6 +318,59 @@ pub fn history(shared: &Shared, request: &Value) -> (u16, Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn gate() -> &'static TurnGate {
+        Box::leak(Box::new(TurnGate::new()))
+    }
+
+    /// Admit `subject` on a helper thread; the receiver fires once admitted
+    /// and the slot is held until the returned sender is dropped.
+    fn admit_async(
+        gate: &'static TurnGate,
+        subject: &str,
+        max: usize,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        let (admitted_tx, admitted_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let subject = subject.to_owned();
+        std::thread::spawn(move || {
+            let _slot = gate.admit(&subject, max);
+            let _ = admitted_tx.send(());
+            let _ = release_rx.recv();
+        });
+        (admitted_rx, release_tx)
+    }
+
+    const SOON: Duration = Duration::from_millis(200);
+
+    #[test]
+    fn different_subjects_run_together_up_to_the_limit() {
+        let gate = gate();
+        let (a, release_a) = admit_async(gate, "desktop", 2);
+        let (b, _release_b) = admit_async(gate, "discord", 2);
+        a.recv_timeout(SOON).expect("first admitted");
+        b.recv_timeout(SOON)
+            .expect("second runs alongside the first");
+        let (c, _release_c) = admit_async(gate, "third", 2);
+        assert!(c.recv_timeout(SOON).is_err(), "limit of 2 holds");
+        drop(release_a);
+        c.recv_timeout(SOON).expect("admitted once a slot frees");
+    }
+
+    #[test]
+    fn the_same_subject_waits_without_blocking_others() {
+        let gate = gate();
+        let (first, release_first) = admit_async(gate, "eightman", 2);
+        first.recv_timeout(SOON).expect("first admitted");
+        let (second, _release_second) = admit_async(gate, "eightman", 2);
+        assert!(second.recv_timeout(SOON).is_err(), "same subject waits");
+        let (other, _release_other) = admit_async(gate, "someone-else", 2);
+        other
+            .recv_timeout(SOON)
+            .expect("a waiting subject does not block another");
+        drop(release_first);
+        second.recv_timeout(SOON).expect("runs after the first");
+    }
 
     #[test]
     fn subjects_are_restricted() {

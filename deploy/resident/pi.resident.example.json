@@ -77,7 +77,8 @@
     "runtime_binary": "/srv/kamimusuhi/runtime/bin/kamimusuhi-runtime",
     "dir": "/srv/kamimusuhi/runtime/individual",
     "privacy": "unconstrained",
-    "timeout_secs": 600
+    "timeout_secs": 600,
+    "max_concurrent": 2
   },
   "mcp_servers": [
     {

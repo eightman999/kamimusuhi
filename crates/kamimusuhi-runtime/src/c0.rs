@@ -195,12 +195,17 @@ pub struct DraftOutcome {
 }
 
 /// Lazily claim writer authority — only when a draft actually exists, so a
-/// read-only conversation never takes the epoch.
+/// read-only conversation never takes the epoch. A cached identity is reused
+/// only while it is still the current epoch: another process (a concurrent
+/// turn, a reflection job) may have claimed since, and submitting under the
+/// fenced epoch would reject the draft. Call with the writer lock held.
 pub fn ensure_writer(
     runtime: &Runtime,
     cached: &mut Option<WriterIdentity>,
 ) -> Result<WriterIdentity, RuntimeError> {
-    if let Some(writer) = cached {
+    if let Some(writer) = cached
+        && writer.writer_epoch == runtime.head()?.writer_epoch
+    {
         return Ok(*writer);
     }
     let writer = runtime.claim_writer()?;
@@ -220,6 +225,11 @@ pub fn submit_drafts(
     drafts: Vec<ProposalDraft>,
 ) -> Result<Vec<DraftOutcome>, RuntimeError> {
     let mut outcomes = Vec::new();
+    if drafts.is_empty() {
+        return Ok(outcomes);
+    }
+    // Claim and submit as one step with respect to other processes.
+    let _lock = runtime.lock_writer()?;
     for (index, draft) in drafts.into_iter().enumerate() {
         let writer = ensure_writer(runtime, cached_writer)?;
         let head = runtime.head()?;

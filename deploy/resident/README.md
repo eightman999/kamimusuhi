@@ -127,7 +127,7 @@ llm_master の local LLM は既存の user unit `llama-master.service`（linger 
 ## 対話（個体と話す）
 
 `POST /v1/kamimusuhi/talk`（Pi のみ, `dialogue` 設定）は Pi の個体ディレクトリに対して `kamimusuhi-runtime talk` を1ターンずつ実行する。
-Persona Core・記憶・連続性を持つ個体として応答し、ターンは runtime 自身が記録する（同時実行は直列化）。LLM は resident の routing（HAI → llm_master）を使う。
+Persona Core・記憶・連続性を持つ個体として応答し、ターンは runtime 自身が記録する。デスクトップやDiscordなど複数クライアントの対話は合計 `dialogue.max_concurrent`（既定2）件まで並行し、同じ subject のターンは受付順に1件ずつ実行する。個体への書き込み（writer epoch の取得と記憶更新の提出）は runtime ディレクトリの `writer.lock` で直列化される。LLM は resident の routing（HAI → llm_master）を使う。
 
 Mac などから:
 
@@ -142,7 +142,7 @@ token は `$KAMIMUSUHI_NODE_TOKEN` または `~/.config/kamimusuhi/node_token`�
 ## Discord Bot
 
 Discordから同じ個体を呼び出すには [Discord Botの導入手順](discord.md) を参照。
-許可したチャンネルで `@澪 こんにちは` と呼び出すと、FIFOキューで1件ずつ対話APIへ渡し、元メッセージへ返信する。
+許可したチャンネルで `@澪 こんにちは` と呼び出すと、FIFOキューから（subjectごとに順番を守って最大2件並行で）対話APIへ渡し、元メッセージへ返信する。
 
 ## Library（参照用データ）
 

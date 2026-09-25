@@ -18,6 +18,8 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use kamimusuhi_resource_http::http::TURN_HEADER;
+
 use crate::probes::ROUTE_HEADER;
 use crate::router::{self, AUTO_MODELS, RouteRequest};
 use crate::state::Shared;
@@ -274,7 +276,8 @@ fn handle(shared: &Shared, stream: TcpStream) {
         }
         ("POST", "/v1/tools/call") => {
             let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
-            let (status, reply) = crate::tools::call(shared, &body);
+            let turn = shared.turn_for(request.header(TURN_HEADER));
+            let (status, reply) = crate::tools::call(shared, &body, turn.as_deref());
             json_response(stream, status, &reply, &[]);
         }
         ("GET", "/v1/agents") => {
@@ -382,6 +385,7 @@ fn chat(shared: &Shared, stream: TcpStream, request: &Request) {
     }
     let wants_stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let _ = stream.set_write_timeout(Some(Duration::from_secs(60)));
+    let turn = shared.turn_for(request.header(TURN_HEADER));
     let routed = router::route(
         shared,
         &RouteRequest {
@@ -389,6 +393,9 @@ fn chat(shared: &Shared, stream: TcpStream, request: &Request) {
             local_only: local_only(request),
         },
     );
+    if let (Some(turn), Some(event)) = (turn, routed.event.clone()) {
+        shared.record_turn_route(&turn, event);
+    }
     let extra = vec![(
         "X-Kamimusuhi-Tier",
         routed.tier.clone().unwrap_or_else(|| "none".to_owned()),
@@ -442,6 +449,49 @@ mod usage_tests {
         ] {
             assert!(usage_query(&format!("/v1/usage/history?{query}")).is_err());
         }
+    }
+
+    #[test]
+    fn model_calls_are_attributed_to_the_turn_that_made_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = serde_json::from_value(json!({
+            "node": {"id": "test", "role": "cognition", "listen": "127.0.0.1:0"},
+            "paths": {"root": dir.path()},
+        }))
+        .unwrap();
+        let spool = crate::spool::Spool::new(dir.path().join("spool"), "test").unwrap();
+        let shared = Arc::new(Shared::new(config, spool, 1, None));
+        shared.begin_turn("t-a");
+        shared.begin_turn("t-b");
+        // Concurrent turns: an unlabelled call is not guessed.
+        assert_eq!(shared.turn_for(None), None);
+        assert_eq!(shared.turn_for(Some("t-z")), None);
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let s = Arc::clone(&shared);
+        let worker = thread::spawn(move || handle(&s, listener.accept().unwrap().0));
+        let mut client = TcpStream::connect(addr).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let body = r#"{"model":"kamimusuhi","messages":[{"role":"user","content":"hi"}]}"#;
+        write!(
+            client,
+            "POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\n{TURN_HEADER}: t-b\r\n\
+             Content-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        worker.join().unwrap();
+
+        assert!(shared.end_turn("t-b").is_some(), "{response}");
+        assert!(shared.end_turn("t-a").is_none());
+        // With a single turn left running, an unlabelled call belongs to it.
+        shared.begin_turn("t-c");
+        assert_eq!(shared.turn_for(None).as_deref(), Some("t-c"));
     }
 
     #[test]

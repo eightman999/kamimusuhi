@@ -691,6 +691,11 @@ fn start_task(
 
 /// `task_delegate`: create the task and return at once.
 pub fn delegate(shared: &Shared, args: &Value, by: &str) -> (u16, Value) {
+    delegate_in_turn(shared, args, by, None)
+}
+
+/// [`delegate`] from inside a dialogue turn: the task follows that turn.
+fn delegate_in_turn(shared: &Shared, args: &Value, by: &str, turn: Option<&str>) -> (u16, Value) {
     let plane = match plane(shared) {
         Ok(p) => Arc::clone(p),
         Err(e) => return e,
@@ -799,13 +804,7 @@ pub fn delegate(shared: &Shared, args: &Value, by: &str) -> (u16, Value) {
     let depends_on: Vec<String> = if by == "operator" {
         Vec::new()
     } else {
-        shared
-            .current_turn
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
-            .into_iter()
-            .collect()
+        turn.map(str::to_owned).into_iter().collect()
     };
     let request = TaskRequest {
         task_id: String::new(),
@@ -1861,7 +1860,7 @@ pub fn handle(shared: &Shared, request: &Value, by: &str) -> (u16, Value) {
 }
 
 /// Tool-call entry point: wraps replies in the tools' `ok`/`error` shape.
-pub fn tool(shared: &Shared, name: &str, args: &Value) -> (u16, Value) {
+pub fn tool(shared: &Shared, name: &str, args: &Value, turn: Option<&str>) -> (u16, Value) {
     let action = match name {
         "task_delegate" => "delegate",
         "task_status" => "status",
@@ -1876,7 +1875,11 @@ pub fn tool(shared: &Shared, name: &str, args: &Value) -> (u16, Value) {
         json!({})
     };
     request["action"] = json!(action);
-    let (status, reply) = handle(shared, &request, "mio");
+    let (status, reply) = if action == "delegate" {
+        delegate_in_turn(shared, &request, "mio", turn)
+    } else {
+        handle(shared, &request, "mio")
+    };
     if status == 200 {
         (200, json!({"ok": true, "result": reply}))
     } else {
@@ -2064,7 +2067,7 @@ mod tests {
     }
 
     fn delegate_ok(shared: &Shared, args: Value) -> String {
-        let (_, reply) = tool(shared, "task_delegate", &args);
+        let (_, reply) = tool(shared, "task_delegate", &args, None);
         assert_eq!(reply["ok"], true, "{reply}");
         reply["result"]["task_id"].as_str().expect("id").to_owned()
     }
@@ -2089,6 +2092,7 @@ mod tests {
             &shared,
             "task_delegate",
             &json!({"objective": "WRITE", "permissions": "workspace_write"}),
+            None,
         );
         assert!(
             reply["error"]
@@ -2104,6 +2108,7 @@ mod tests {
             &shared,
             "task_delegate",
             &json!({"objective": "x", "permissions": "autonomous_workspace"}),
+            None,
         );
         assert_eq!(reply["ok"], false, "autonomous is the operator's call");
 
@@ -2121,7 +2126,7 @@ mod tests {
         let worktree = PathBuf::from(task.detail["worktree"].as_str().expect("worktree"));
         assert!(worktree.join("written.txt").exists());
         assert_eq!(task.detail["files_changed"], json!(["written.txt"]));
-        let (_, status) = tool(&shared, "task_status", &json!({"id": id}));
+        let (_, status) = tool(&shared, "task_status", &json!({"id": id}), None);
         assert!(
             status["result"]["result"]["diff_stat"]
                 .as_str()
@@ -2142,6 +2147,7 @@ mod tests {
             &shared,
             "task_continue",
             &json!({"id": id, "instruction": "続けて"}),
+            None,
         );
         let next = reply["result"]["task_id"]
             .as_str()
@@ -2188,6 +2194,7 @@ mod tests {
             &shared,
             "task_continue",
             &json!({"id": first, "instruction": "もう少し詳しく"}),
+            None,
         );
         assert_eq!(reply["ok"], true, "{reply}");
         let next = reply["result"]["task_id"].as_str().expect("id").to_owned();
@@ -2195,7 +2202,7 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Done, "{task:?}");
         assert_eq!(task.depends_on, vec![first.clone()]);
         assert_eq!(task.detail["continues"], json!(first));
-        let (_, status) = tool(&shared, "task_status", &json!({"id": next}));
+        let (_, status) = tool(&shared, "task_status", &json!({"id": next}), None);
         let summary = status["result"]["result"]["summary"]
             .as_str()
             .expect("summary");
@@ -2207,9 +2214,10 @@ mod tests {
             &shared,
             "task_continue",
             &json!({"id": running, "instruction": "x"}),
+            None,
         );
         assert_eq!(busy["ok"], false);
-        tool(&shared, "task_cancel", &json!({"id": running}));
+        tool(&shared, "task_cancel", &json!({"id": running}), None);
         wait_finished(&shared, &running);
     }
 
@@ -2221,7 +2229,7 @@ mod tests {
             &json!({"quota": {"max_tasks_per_day": 1}, "allow_metered": true}),
         );
         let first = delegate_ok(&shared, json!({"objective": "one"}));
-        let (_, second) = tool(&shared, "task_delegate", &json!({"objective": "two"}));
+        let (_, second) = tool(&shared, "task_delegate", &json!({"objective": "two"}), None);
         assert_eq!(second["ok"], false);
         assert!(
             second["error"].as_str().unwrap_or("").contains("1/1"),
@@ -2241,6 +2249,7 @@ mod tests {
             &shared,
             "task_delegate",
             &json!({"objective": "x", "model": "fake:fake-metered"}),
+            None,
         );
         assert!(
             reply["error"].as_str().unwrap_or("").contains("費用上限"),
@@ -2392,8 +2401,7 @@ mod tests {
     #[test]
     fn delegation_returns_at_once_and_the_result_becomes_evidence() {
         let (shared, _dir) = fixture(false);
-        *shared.current_turn.lock().expect("turn") = Some("tturn".to_owned());
-        let (status, models) = tool(&shared, "agent_models", &json!({}));
+        let (status, models) = tool(&shared, "agent_models", &json!({}), None);
         assert_eq!(status, 200);
         let refs: Vec<&str> = models["result"]["models"]
             .as_array()
@@ -2411,6 +2419,7 @@ mod tests {
             &shared,
             "task_delegate",
             &json!({"objective": "調べて", "kind": "research"}),
+            Some("tturn"),
         );
         assert!(
             started.elapsed() < Duration::from_secs(2),
@@ -2425,7 +2434,7 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Done, "{task:?}");
         assert_eq!(task.kind, "delegated");
         assert_eq!(task.depends_on, vec!["tturn"]);
-        let (_, status) = tool(&shared, "task_status", &json!({"id": id}));
+        let (_, status) = tool(&shared, "task_status", &json!({"id": id}), None);
         let result = &status["result"]["result"];
         assert_eq!(result["evidence_id"], format!("ev-task-{id}"));
         let summary = result["summary"].as_str().expect("summary");
@@ -2458,6 +2467,7 @@ mod tests {
             &shared,
             "task_delegate",
             &json!({"objective": "x", "model": "fake:fake-metered"}),
+            None,
         );
         assert_eq!(reply["ok"], false);
         assert!(
@@ -2470,12 +2480,14 @@ mod tests {
             &shared,
             "task_delegate",
             &json!({"objective": "x", "permissions": "workspace_write"}),
+            None,
         );
         assert_eq!(reply["ok"], false);
         let (_, reply) = tool(
             &shared,
             "task_delegate",
             &json!({"objective": "x", "workspace": "/etc"}),
+            None,
         );
         assert_eq!(reply["ok"], false, "only allowlisted workspaces");
     }
@@ -2483,25 +2495,35 @@ mod tests {
     #[test]
     fn running_tasks_can_be_cancelled() {
         let (shared, _dir) = fixture(false);
-        let (_, reply) = tool(&shared, "task_delegate", &json!({"objective": "SLEEP"}));
+        let (_, reply) = tool(
+            &shared,
+            "task_delegate",
+            &json!({"objective": "SLEEP"}),
+            None,
+        );
         let id = reply["result"]["task_id"].as_str().expect("id").to_owned();
         std::thread::sleep(Duration::from_millis(300));
-        let (_, cancelled) = tool(&shared, "task_cancel", &json!({"id": id}));
+        let (_, cancelled) = tool(&shared, "task_cancel", &json!({"id": id}), None);
         assert_eq!(cancelled["ok"], true, "{cancelled}");
         let task = wait_finished(&shared, &id);
         assert_eq!(task.status, TaskStatus::Cancelled);
-        let (_, again) = tool(&shared, "task_cancel", &json!({"id": id}));
+        let (_, again) = tool(&shared, "task_cancel", &json!({"id": id}), None);
         assert_eq!(again["ok"], false);
     }
 
     #[test]
     fn a_read_only_task_that_writes_fails() {
         let (shared, _dir) = fixture(false);
-        let (_, reply) = tool(&shared, "task_delegate", &json!({"objective": "WRITE"}));
+        let (_, reply) = tool(
+            &shared,
+            "task_delegate",
+            &json!({"objective": "WRITE"}),
+            None,
+        );
         let id = reply["result"]["task_id"].as_str().expect("id").to_owned();
         let task = wait_finished(&shared, &id);
         assert_eq!(task.status, TaskStatus::Failed);
-        let (_, status) = tool(&shared, "task_status", &json!({"id": id}));
+        let (_, status) = tool(&shared, "task_status", &json!({"id": id}), None);
         assert_eq!(status["result"]["result"]["read_only_violation"], true);
         assert_eq!(
             status["result"]["result"]["files_changed"],
