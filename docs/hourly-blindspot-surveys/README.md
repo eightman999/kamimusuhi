@@ -24,6 +24,10 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 
 | Date / time (JST) | Survey | Main blind spots | 反映判断 |
 |---|---|---|---|
+| 2026-09-25 18:59:16 | [2026-09-25-18-59-16.md](./2026-09-25-18-59-16.md) | out-of-band trace custody / generated-cognition recirculation / cognitive-payload delivery acknowledgement / registry-construction reentrancy / temporal-gradient sequence privacy / retry-exhaustion custody | 未判定 |
+| 2026-09-25 12:59:27 | [2026-09-25-12-59-27.md](./2026-09-25-12-59-27.md) | artifact availability horizon / consent-qualified replication / last-surviving-copy recovery / online budget enforcement / embodiment-qualified references / capability-flap resume identity | 未判定 |
+| 2026-09-25 06:59:57 | [2026-09-25-06-59-57.md](./2026-09-25-06-59-57.md) | standing-duty activation / non-monotone restriction safety / generational readiness closure / causal-carrier coverage | 未判定 |
+| 2026-09-25 00:57:32 | [2026-09-25-00-57-32.md](./2026-09-25-00-57-32.md) | assurance-claim qualification / presentation-frontier utterance memory / batch control-transfer settlement / policy-invalidation fallback / device-custodied private memory | 未判定 |
 | 2026-09-24 18:59:40 | [2026-09-24-18-59-40.md](./2026-09-24-18-59-40.md) | provider-protocol replay envelope completeness / shared-acquisition cancellation ownership / semantic transcript role closure / cross-surface effect replay identity / proof-before-detach capability polarity | 未判定 |
 | 2026-09-24 13:10:32 | [2026-09-24-13-10-32.md](./2026-09-24-13-10-32.md) | lossy projection non-writeback / transition-qualified effects under replay / semantic-sentinel-safe resource accounting / guard–executor language inclusion / causal-cut destructive mutation | 未判定 |
 | 2026-09-24 06:59:39 | [2026-09-24-06-59-39.md](./2026-09-24-06-59-39.md) | challenge-bound continuity attach proof / keyed single-flight read ownership + revalidation / authoritative-consumer roundtrip closure / perspective-qualified gray health | 未判定 |
