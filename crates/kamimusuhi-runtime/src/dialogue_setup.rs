@@ -12,7 +12,8 @@ use kamimusuhi_core::ids::PersonaBackendId;
 use kamimusuhi_core::routing::LocalityClass;
 
 use crate::llm_jev::{
-    DEFAULT_HAI_BASE_URL, GROKBOT_API_KEY_ENV, HAI_API_KEY_ENV, HAI_LLM_JP_MODEL,
+    DEFAULT_GEMMA_BASE_URL, DEFAULT_HAI_BASE_URL, GEMMA_12B_MODEL, GEMMA_API_KEY_ENV,
+    GEMMA_PROVIDER_ID, GROKBOT_API_KEY_ENV, HAI_API_KEY_ENV, HAI_LLM_JP_MODEL,
     HAI_LLM_JP_PROVIDER_ID, HAI_QWEN_MODEL, HAI_QWEN_PROVIDER_ID, LLM_AUTH_ENV_ENV,
     LLM_BASE_URL_ENV, LLM_MODEL_ENV, LLM_PROVIDER_ENV, TypesafeConfig,
 };
@@ -159,9 +160,31 @@ pub fn language_provider_kind(provider: &PersonaProviderConfig) -> &'static str 
         && provider.base_url.trim_end_matches('/') == DEFAULT_HAI_BASE_URL.trim_end_matches('/')
     {
         "hai"
+    } else if provider.auth_env.as_deref() == Some(GEMMA_API_KEY_ENV) {
+        "gemma"
     } else {
         "openai-compatible"
     }
+}
+
+pub fn gemma_language_providers() -> BTreeMap<String, PersonaProviderConfig> {
+    let mut map = BTreeMap::new();
+    map.insert(
+        GEMMA_PROVIDER_ID.to_owned(),
+        PersonaProviderConfig {
+            backend_id: persona_backend_id_for(DEFAULT_GEMMA_BASE_URL, GEMMA_12B_MODEL),
+            locality: LocalityClass::LocalHost,
+            base_url: DEFAULT_GEMMA_BASE_URL.to_owned(),
+            model: GEMMA_12B_MODEL.to_owned(),
+            auth_env: Some(GEMMA_API_KEY_ENV.to_owned()),
+            timeout_ms: 60_000,
+            tls_root_ca_path: None,
+            system_instruction: None,
+            reasoning: Default::default(),
+            extra_body: None,
+        },
+    );
+    map
 }
 
 /// Resolve the language-organ environment into the existing Persona setting.
@@ -177,7 +200,10 @@ pub fn persona_setting_from_environment(
     if provider == "mock" {
         return Ok(None);
     }
-    if !matches!(provider.as_str(), "grokbot" | "hai" | "openai-compatible") {
+    if !matches!(
+        provider.as_str(),
+        "grokbot" | "hai" | "gemma" | "gemma-4-12b" | "openai-compatible"
+    ) {
         return Err(RuntimeError::Usage(format!(
             "unsupported {LLM_PROVIDER_ENV} value {provider:?}"
         )));
@@ -220,6 +246,7 @@ fn provider_auth_env(
     let value = match provider {
         "grokbot" => Some(GROKBOT_API_KEY_ENV.to_owned()),
         "hai" => Some(HAI_API_KEY_ENV.to_owned()),
+        "gemma" | "gemma-4-12b" => Some(GEMMA_API_KEY_ENV.to_owned()),
         _ => explicit_auth_env.map(str::trim).map(str::to_owned),
     };
     if let Some(name) = &value

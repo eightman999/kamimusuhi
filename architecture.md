@@ -224,6 +224,29 @@ A model migration SHOULD be evaluated using a continuity suite covering at least
 
 A replacement can preserve authorized lineage while still causing measurable personality drift. Continuity and behavioral invariance are separate concepts.
 
+### 4.4 Developmental Phenotype Projection & Language Organ Boundary
+
+MIOBA genome/phenotype observations do not define canonical identity. To express developmental state without compromising continuity boundaries:
+
+```text
+  [MIOBA Genome] ──► [Development] ──► [Phenotype / Lifetime Evaluation]
+                                                │
+                                                ▼ (Read-only observation)
+  [PersonaSeed + Canonical Self State] ──► [DevelopmentalDisposition]
+                                                │
+                                                ▼ (Non-canonical typed envelope)
+                                        [Language Organ (Gemma / Qwen / LLM-jp)]
+                                                │
+                                                ▼
+                                            [Utterance]
+```
+
+Key rules:
+1. **Read-only observation**: MIOBA observations are read-only inputs (`AuthorityClass::ExternalMaterial`) and cannot mutate canonical self-state, relationship memory, or persona seeds.
+2. **Non-verbatim projection**: Genome IR and raw floating-point parameters are mapped to bounded, categorical disposition parameters (`DevelopmentalDisposition`), never copied verbatim into prompts as raw gene strings.
+3. **Deterministic degradation**: If MIOBA observations become stale or unavailable, disposition projection deterministically degrades to `canonical_baseline` (`PersonaSeed` + canonical state only).
+4. **Interchangeable language organ**: The language model (e.g. Gemma 4 12B, HAI Qwen, HAI LLM-jp) functions as an interchangeable language organ that expresses state, rather than holding ownership of identity.
+
 ## 5. Cognitive modes
 
 ### 5.1 Reflex layer

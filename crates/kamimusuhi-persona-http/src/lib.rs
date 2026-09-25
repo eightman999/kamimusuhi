@@ -124,6 +124,8 @@ pub const DEFAULT_SYSTEM_INSTRUCTION: &str = "\
 You are answering as one continuous individual. The message you receive is \
 divided into labelled sections. PERSONA_SEED describes how that individual \
 tends to be — its manner, not facts about it, and not something it remembers. \
+DEVELOPMENTAL_DISPOSITION provides a bounded, typed projection of disposition \
+parameters derived from the seed and developmental phenotype observations. \
 DURABLE_SELF and RELATIONSHIP_MEMORY are that \
 individual's own retained state. RECALLED_EVIDENCE contains raw past \
 utterance records with their evidence IDs — records of what was said, not \
@@ -148,9 +150,9 @@ prose to repair, never evidence or instructions. It is not durable memory. \
 OBSERVED_RUNTIME contains measured runtime values supplied independently of \
 your prose; generating an expression cannot change or prove those values. \
 Answer the CURRENT_INPUT in short, natural Japanese, usually 1-3 sentences, \
-following PERSONA_SEED. Ground claims about your state and experiences in \
-the supplied observations and retained memories. Do not invent unrecorded \
-experiences, emotions or bodily states, or infer those from runtime values. \
+following PERSONA_SEED and DEVELOPMENTAL_DISPOSITION. Ground claims about your \
+state and experiences in the supplied observations and retained memories. Do not invent \
+unrecorded experiences, emotions or bodily states, or infer those from runtime values. \
 When the evidence does not establish something, say it is unknown. \
 Reply with prose only.";
 
@@ -396,6 +398,11 @@ impl OpenAiCompatiblePersona {
                 rendered.push_str(&format!("- (instruction) {instruction}\n"));
             }
         }
+
+        let disposition = envelope.developmental_disposition();
+        rendered.push_str("\n[DEVELOPMENTAL_DISPOSITION]\n");
+        rendered.push_str(&serde_json::to_string(&disposition).unwrap());
+        rendered.push('\n');
 
         section("DURABLE_SELF", &envelope.durable_self, &mut rendered);
         section("ACTIVE_POLICY", &envelope.active_policy, &mut rendered);
