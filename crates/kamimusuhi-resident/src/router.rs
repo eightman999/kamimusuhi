@@ -153,12 +153,24 @@ fn prompt_tokens_est(body: &Value) -> u64 {
     bytes.saturating_add(2) / 3
 }
 
-fn completion_tokens_for_cost(shared: &Shared, body: &Value) -> u32 {
-    ["max_completion_tokens", "max_tokens"]
-        .into_iter()
-        .find_map(|key| body.get(key).and_then(Value::as_u64))
-        .and_then(|value| u32::try_from(value).ok())
-        .unwrap_or(shared.config.routing.max_completion_tokens_for_cost)
+fn completion_tokens_for_cost(shared: &Shared, body: &Value) -> Result<u32, String> {
+    // Providers honor either spelling and both may be present after
+    // extra_body merging; the priced worst case is the largest output cap
+    // the sent body actually allows. Reject invalid/oversized values:
+    // pricing a smaller default while forwarding null or a huge cap
+    // would not bound what the provider can bill.
+    let mut maximum = None;
+    for key in ["max_completion_tokens", "max_tokens"] {
+        if let Some(value) = body.get(key) {
+            let limit = value
+                .as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| *n > 0)
+                .ok_or_else(|| format!("cost guard: invalid {key}"))?;
+            maximum = Some(maximum.map_or(limit, |previous: u32| previous.max(limit)));
+        }
+    }
+    Ok(maximum.unwrap_or(shared.config.routing.max_completion_tokens_for_cost))
 }
 
 fn prompt_chars(body: &Value) -> usize {
@@ -300,13 +312,10 @@ fn upstream_body(
     upstream
 }
 
-fn call_tier(
-    tier: &TierConfig,
-    model: &str,
-    body: &Value,
-    default_max_tokens: Option<u32>,
-) -> Result<Value, String> {
-    let upstream = upstream_body(tier, model, body, default_max_tokens);
+/// Send an already-shaped upstream body to `tier` and validate the reply.
+/// Callers build the body once with [`upstream_body`] so the same JSON
+/// that a guard priced is the JSON on the wire.
+fn call_tier(tier: &TierConfig, upstream: &Value) -> Result<Value, String> {
     let mut headers: Vec<Header> = bearer(tier.auth_env.as_deref())?;
     if tier.peer_local_only {
         headers.push(Header {
@@ -402,7 +411,7 @@ fn call_tier_guarded(
     body: &Value,
 ) -> Result<GuardedReply, String> {
     if tier.billing != Some(TierBilling::Metered) {
-        let reply = call_tier(tier, model, body, None)?;
+        let reply = call_tier(tier, &upstream_body(tier, model, body, None))?;
         let usage = usage_of(&reply);
         let (cost_usd, cost_kind) = cost_of(tier, &usage);
         return Ok(GuardedReply {
@@ -415,8 +424,19 @@ fn call_tier_guarded(
         .input_usd_per_mtok
         .zip(tier.output_usd_per_mtok)
         .ok_or_else(|| "cost guard: metered tier has no declared price".to_owned())?;
-    let prompt_tokens = prompt_tokens_est(body);
-    let max_completion_tokens = completion_tokens_for_cost(shared, body);
+    // The guard prices the exact body the provider will receive:
+    // strip_fields / extra_body can remove, keep or raise the output cap
+    // the client sent — or add one it did not — so the estimate and the
+    // permit decision are computed from the shaped body, and that same
+    // body is what goes on the wire.
+    let upstream = upstream_body(
+        tier,
+        model,
+        body,
+        Some(shared.config.routing.max_completion_tokens_for_cost),
+    );
+    let prompt_tokens = prompt_tokens_est(&upstream);
+    let max_completion_tokens = completion_tokens_for_cost(shared, &upstream)?;
     // Keep the guard locked through the paid call. Metered fallbacks are
     // rare, and serializing only those calls prevents concurrent requests
     // from both reserving the same remaining daily/monthly budget.
@@ -425,7 +445,7 @@ fn call_tier_guarded(
     guard
         .permit(estimate)
         .map_err(|error| format!("cost guard: {error}"))?;
-    match call_tier(tier, model, body, Some(max_completion_tokens)) {
+    match call_tier(tier, &upstream) {
         Ok(reply) => {
             let usage = usage_of(&reply);
             let (reported_cost, reported_kind) = cost_of(tier, &usage);
@@ -817,6 +837,47 @@ mod tests {
                 body.len(), body
             )
             .expect("reply");
+        });
+        (url, handle)
+    }
+
+    /// Like `completion_server`, but the handle yields the request JSON
+    /// the upstream actually received.
+    fn capturing_completion_server(reply: Value) -> (String, std::thread::JoinHandle<Value>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture");
+        let url = format!("http://{}/v1", listener.local_addr().expect("address"));
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept fixture");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("timeout");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                assert!(reader.read_line(&mut line).expect("request header") > 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    length = value.trim().parse::<usize>().expect("length");
+                }
+            }
+            let mut request = vec![0; length];
+            reader.read_exact(&mut request).expect("request body");
+            let body = reply.to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(), body
+            )
+            .expect("reply");
+            serde_json::from_slice(&request).expect("request JSON")
         });
         (url, handle)
     }
@@ -1445,6 +1506,164 @@ mod tests {
                 .spent_usd(),
             0.0,
             "blocked call never reaches the network and spends nothing"
+        );
+    }
+
+    /// The guard must price the body the provider receives. An
+    /// `extra_body` output cap larger than the estimate priced would
+    /// otherwise be sent under the cheaper estimate.
+    #[test]
+    fn metered_extra_body_output_cap_is_priced_and_refused_before_sending() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind fixture");
+        let url = format!("http://{}/v1", listener.local_addr().expect("address"));
+        let (mut s, _dir) = shared();
+        let mut paid = s.config.tiers[2].clone();
+        paid.name = "paid".to_owned();
+        paid.base_url = url;
+        paid.billing = Some(TierBilling::Metered);
+        paid.input_usd_per_mtok = Some(0.0);
+        paid.output_usd_per_mtok = Some(2.0);
+        paid.privacy_ok_for_private_memory = Some(true);
+        paid.extra_body = serde_json::from_value(json!({"max_completion_tokens": 100_000}))
+            .expect("extra_body map");
+        s.config.tiers = vec![paid];
+        s.set_tier("paid", Ok(Value::Null), 1);
+
+        let routed = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "kamimusuhi",
+                             "messages": [{"role": "user", "content": "hi"}]}),
+                local_only: false,
+            },
+        );
+        // 100k output tokens at $2/M is a $0.20 worst case — over the
+        // $0.02 request cap even though the client sent no limit at all.
+        assert_eq!(routed.status, 503);
+        assert!(
+            routed
+                .attempts
+                .iter()
+                .any(|attempt| attempt.contains("cost guard:"))
+        );
+        assert!(
+            s.tier_healthy("paid"),
+            "budget rejection is policy, not provider health failure"
+        );
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        assert!(
+            listener.accept().is_err(),
+            "a refused call must never reach the provider"
+        );
+        assert_eq!(
+            s.cost_guard
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .spent_usd(),
+            0.0
+        );
+    }
+
+    #[test]
+    fn invalid_metered_output_caps_never_reach_the_provider() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let (s, _dir) = shared();
+        let mut paid = s.config.tiers[2].clone();
+        paid.base_url = format!("http://{}/v1", listener.local_addr().unwrap());
+        paid.timeout_secs = 1;
+        paid.billing = Some(TierBilling::Metered);
+        paid.input_usd_per_mtok = Some(0.0);
+        paid.output_usd_per_mtok = Some(2.0);
+        for key in ["max_tokens", "max_completion_tokens"] {
+            for invalid in [
+                json!(null),
+                json!(0),
+                json!(-1),
+                json!("256"),
+                json!(1.5),
+                json!(u64::MAX),
+            ] {
+                paid.extra_body = Some(Map::from_iter([(key.to_owned(), invalid)]));
+                let body = json!({"messages": [{"role": "user", "content": "hi"}]});
+                assert!(matches!(call_tier_guarded(&s, &paid, "q", &body),
+                    Err(error) if error.starts_with("cost guard: invalid ")));
+            }
+        }
+        assert!(matches!(listener.accept(), Err(error)
+            if error.kind() == std::io::ErrorKind::WouldBlock));
+        assert_eq!(s.cost_guard.lock().unwrap().spent_usd(), 0.0);
+    }
+
+    #[test]
+    fn stripped_metered_output_cap_is_replaced_before_pricing() {
+        let (url, server) = capturing_completion_server(json!({
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]
+        }));
+        let (s, _dir) = shared();
+        let mut paid = s.config.tiers[2].clone();
+        paid.base_url = url;
+        paid.billing = Some(TierBilling::Metered);
+        paid.input_usd_per_mtok = Some(0.0);
+        paid.output_usd_per_mtok = Some(2.0);
+        paid.strip_fields = vec!["max_tokens".to_owned()];
+        paid.extra_body = serde_json::from_value(json!({"max_completion_tokens": 256})).unwrap();
+        let result = call_tier_guarded(
+            &s,
+            &paid,
+            "q",
+            &json!({
+                "max_tokens": 100_000,
+                "messages": [{"role": "user", "content": "hi"}]
+            }),
+        )
+        .unwrap();
+        let sent = server.join().unwrap();
+        assert!(sent.get("max_tokens").is_none());
+        assert_eq!(sent["max_completion_tokens"], 256);
+        assert_eq!(result.cost_usd, Some(256.0 * 2.0 / 1e6));
+    }
+
+    /// A permitted `extra_body` cap is sent as configured, and the cost
+    /// recorded is the estimate for that exact sent body.
+    #[test]
+    fn metered_extra_body_cap_within_budget_is_sent_and_charged_as_priced() {
+        let (url, server) = capturing_completion_server(json!({
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]
+        }));
+        let (mut s, _dir) = shared();
+        let mut paid = s.config.tiers[2].clone();
+        paid.name = "paid".to_owned();
+        paid.base_url = url;
+        paid.billing = Some(TierBilling::Metered);
+        paid.input_usd_per_mtok = Some(0.0);
+        paid.output_usd_per_mtok = Some(2.0);
+        paid.privacy_ok_for_private_memory = Some(true);
+        paid.extra_body =
+            serde_json::from_value(json!({"max_completion_tokens": 256})).expect("extra_body map");
+        s.config.tiers = vec![paid];
+        s.set_tier("paid", Ok(Value::Null), 1);
+
+        let routed = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "kamimusuhi",
+                             "messages": [{"role": "user", "content": "hi"}]}),
+                local_only: false,
+            },
+        );
+        assert_eq!(routed.status, 200);
+        let sent = server.join().expect("fixture finished");
+        assert_eq!(sent["max_completion_tokens"], 256);
+        assert_eq!(sent["model"], "q");
+        let event = routed.event.expect("route event");
+        assert_eq!(event.cost_kind.as_deref(), Some("estimate"));
+        let priced = 256.0 * 2.0 / 1e6;
+        assert!(
+            (event.cost_usd.expect("cost") - priced).abs() < 1e-9,
+            "recorded cost must price the sent 256-token cap, not the client body"
         );
     }
 

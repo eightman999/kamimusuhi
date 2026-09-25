@@ -36,8 +36,9 @@ use crate::workspace::{AuthorityClass, Workspace, WorkspaceDomain, WorkspaceItem
 /// **Boundaries:**
 /// - `authority` is strictly [`AuthorityClass::ExternalMaterial`] (zero write authority).
 /// - Non-heritable: lifetime plasticity and phenotype states do not flow back into genome.
-/// - Deterministic degradation: when MIOBA observation is unavailable, stale, or missing,
-///   it degrades strictly to `canonical_baseline` (seed + canonical state).
+/// - Deterministic degradation: when MIOBA observation is unavailable, stale, missing,
+///   or lacks a required metric, it degrades strictly to `canonical_baseline`
+///   (seed + canonical state). Metrics are never filled with neutral placeholders.
 /// - Raw genome values / IR strings are never copied verbatim into prompts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DevelopmentalDisposition {
@@ -105,59 +106,66 @@ impl DevelopmentalDisposition {
             let metrics = snapshot.pointer("/evaluation/metrics");
             let summary = snapshot.pointer("/evaluation/summary");
 
-            let homeostasis_score = metrics
-                .and_then(|m| m.get("homeostasis_score"))
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.5);
-
-            let recovery_score = metrics
-                .and_then(|m| m.get("disturbance_recovery_score"))
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.5);
-
-            let active_fraction = summary
-                .and_then(|s| s.get("active_fraction"))
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.5);
-
-            let homeostasis_register = if homeostasis_score > 0.7 {
-                "homeostatic_equilibrium"
-            } else if homeostasis_score < 0.4 {
-                "homeostatic_strain"
-            } else {
-                "homeostatic_transient"
-            }
-            .to_owned();
-
-            let adaptability_bias = if recovery_score > 0.7 {
-                "high_resilience"
-            } else if recovery_score < 0.4 {
-                "low_resilience"
-            } else {
-                "moderate_resilience"
-            }
-            .to_owned();
-
-            let activity_level = if active_fraction > 0.8 {
-                "elevated_activity"
-            } else if active_fraction < 0.3 {
-                "subdued_activity"
-            } else {
-                "steady_activity"
-            }
-            .to_owned();
-
-            return Self {
-                projection_source: "mio_phenotype_projected".to_owned(),
-                seed_digest,
-                homeostasis_register,
-                adaptability_bias,
-                activity_level,
-                register_traits,
-                stance_traits,
-                instructions,
-                authority: AuthorityClass::ExternalMaterial,
+            // Every projected signal requires a real observed value. A
+            // missing or malformed metric — including a legitimately
+            // absent `disturbance_recovery_score` on an undisturbed
+            // episode — degrades the whole projection to the canonical
+            // baseline; fabricating a neutral score would present an
+            // unobserved temperament as measured. Bounds mirror
+            // `MioSnapshot` validation: these metrics are [0, 1] shares.
+            let fraction = |value: Option<&serde_json::Value>| -> Option<f64> {
+                value
+                    .and_then(serde_json::Value::as_f64)
+                    .filter(|v| (0.0..=1.0).contains(v))
             };
+
+            let homeostasis_score = fraction(metrics.and_then(|m| m.get("homeostasis_score")));
+            let recovery_score =
+                fraction(metrics.and_then(|m| m.get("disturbance_recovery_score")));
+            let active_fraction = fraction(summary.and_then(|s| s.get("active_fraction")));
+
+            if let (Some(homeostasis_score), Some(recovery_score), Some(active_fraction)) =
+                (homeostasis_score, recovery_score, active_fraction)
+            {
+                let homeostasis_register = if homeostasis_score > 0.7 {
+                    "homeostatic_equilibrium"
+                } else if homeostasis_score < 0.4 {
+                    "homeostatic_strain"
+                } else {
+                    "homeostatic_transient"
+                }
+                .to_owned();
+
+                let adaptability_bias = if recovery_score > 0.7 {
+                    "high_resilience"
+                } else if recovery_score < 0.4 {
+                    "low_resilience"
+                } else {
+                    "moderate_resilience"
+                }
+                .to_owned();
+
+                let activity_level = if active_fraction > 0.8 {
+                    "elevated_activity"
+                } else if active_fraction < 0.3 {
+                    "subdued_activity"
+                } else {
+                    "steady_activity"
+                }
+                .to_owned();
+
+                return Self {
+                    projection_source: "mio_phenotype_projected".to_owned(),
+                    seed_digest,
+                    homeostasis_register,
+                    adaptability_bias,
+                    activity_level,
+                    register_traits,
+                    stance_traits,
+                    instructions,
+                    authority: AuthorityClass::ExternalMaterial,
+                };
+            }
         }
 
         // Deterministic degradation to baseline when unavailable or stale
@@ -858,6 +866,83 @@ mod tests {
         let unavail_degraded = DevelopmentalDisposition::project(&envelope);
         assert_eq!(unavail_degraded.projection_source, "canonical_baseline");
         assert_eq!(unavail_degraded.homeostasis_register, "baseline");
+    }
+
+    #[test]
+    fn missing_or_invalid_mio_metrics_degrade_to_baseline() {
+        let seed = v0_seed(V0_SEED_ID);
+        let mut envelope = PersonaEnvelope::default().with_seed(seed.clone());
+        let observation = |metrics: serde_json::Value, summary: serde_json::Value| {
+            serde_json::json!({
+                "observation": {
+                    "connection": "connected",
+                    "evaluation_freshness": "recent_record",
+                    "snapshot": {
+                        "evaluation": { "metrics": metrics, "summary": summary }
+                    }
+                }
+            })
+        };
+        let assert_baseline = |envelope: &PersonaEnvelope| {
+            let degraded = DevelopmentalDisposition::project(envelope);
+            assert_eq!(degraded.projection_source, "canonical_baseline");
+            assert_eq!(degraded.homeostasis_register, "baseline");
+            assert_eq!(degraded.adaptability_bias, "baseline");
+            assert_eq!(degraded.activity_level, "baseline");
+            // Degradation keeps the operator-configured disposition.
+            assert_eq!(degraded.seed_digest, Some(seed.content_digest.clone()));
+            assert!(!degraded.register_traits.is_empty());
+            assert!(!degraded.stance_traits.is_empty());
+            assert_eq!(degraded.authority, AuthorityClass::ExternalMaterial);
+        };
+
+        let metrics = serde_json::json!({
+            "homeostasis_score": 0.85,
+            "disturbance_recovery_score": 0.75,
+        });
+        let summary = serde_json::json!({ "active_fraction": 0.5 });
+
+        // Each required metric missing — including a legitimate absence
+        // like an undisturbed episode's `disturbance_recovery_score`.
+        for incomplete in [
+            serde_json::json!({"disturbance_recovery_score": 0.75}),
+            serde_json::json!({"homeostasis_score": 0.85}),
+            serde_json::json!({}),
+        ] {
+            envelope.mio_observation = Some(observation(incomplete, summary.clone()));
+            assert_baseline(&envelope);
+        }
+        envelope.mio_observation = Some(observation(metrics.clone(), serde_json::json!({})));
+        assert_baseline(&envelope);
+
+        // Null, wrong type, and out-of-domain values are not observations
+        // either — none may be turned into a neutral temperament.
+        for bad in [
+            serde_json::json!(null),
+            serde_json::json!("high"),
+            serde_json::json!([0.7]),
+            serde_json::json!(-0.1),
+            serde_json::json!(1.5),
+        ] {
+            let mut broken = metrics.clone();
+            broken["disturbance_recovery_score"] = bad;
+            envelope.mio_observation = Some(observation(broken, summary.clone()));
+            assert_baseline(&envelope);
+        }
+
+        // Boundary values are real observations and project normally.
+        envelope.mio_observation = Some(observation(
+            serde_json::json!({
+                "homeostasis_score": 1.0,
+                "disturbance_recovery_score": 0.0,
+            }),
+            serde_json::json!({ "active_fraction": 0.0 }),
+        ));
+        let projected = DevelopmentalDisposition::project(&envelope);
+        assert_eq!(projected.projection_source, "mio_phenotype_projected");
+        assert_eq!(projected.homeostasis_register, "homeostatic_equilibrium");
+        assert_eq!(projected.adaptability_bias, "low_resilience");
+        assert_eq!(projected.activity_level, "subdued_activity");
     }
 
     #[test]

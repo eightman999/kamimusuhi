@@ -179,6 +179,10 @@ pub struct ProviderHealth {
     /// Time of the latest live request observation. A stale slow sample must
     /// not bench a recovered provider forever.
     pub last_observed_at: Option<Instant>,
+    /// Time of the latest failed observation. The failure-rate bench is
+    /// measured from here so it expires into a bounded retry instead of
+    /// excluding the provider until restart; a success clears it.
+    pub last_failure_at: Option<Instant>,
 }
 
 impl ProviderHealth {
@@ -203,6 +207,10 @@ impl ProviderHealth {
         self.last_observed_at = Some(now);
         if ok {
             self.consecutive_failures = 0;
+            // An answered request ends the failure bench. Keep any 429
+            // cooldown: an already in-flight request can finish while
+            // the provider still requires new requests to back off.
+            self.last_failure_at = None;
             if let Some(ttft) = ttft_ms {
                 let ttft = ttft as f64;
                 self.ewma_ttft_ms = Some(self.ewma_ttft_ms.map_or(ttft, |e| 0.6 * e + 0.4 * ttft));
@@ -213,6 +221,7 @@ impl ProviderHealth {
         } else {
             self.window_failures += 1;
             self.consecutive_failures += 1;
+            self.last_failure_at = Some(now);
             if rate_limited {
                 self.rate_limited_until = Some(now + cooldown);
             }
@@ -271,6 +280,11 @@ pub struct RouteGate {
     pub failure_rate_threshold: f64,
     /// Minimum window size before the failure rate counts.
     pub failure_window_min: u32,
+    /// A provider benched by the failure rate is retried after this
+    /// interval. A renewed failure
+    /// re-arms the bench and a success ends it, so a transient outage can
+    /// never exclude a provider until process restart.
+    pub failure_retry_after: Duration,
     /// EWMA first-token latency above which a provider stops being usable
     /// for [`RouteLane::FastChat`]. A slow-but-free provider is not "usable"
     /// for conversation; beyond this ceiling the turn falls through to the
@@ -292,6 +306,7 @@ impl Default for RouteGate {
             rate_limit_cooldown: Duration::from_secs(60),
             failure_rate_threshold: 0.5,
             failure_window_min: 3,
+            failure_retry_after: Duration::from_secs(60),
             // Thirty seconds to the first token is where "slow" stops being
             // conversation: measured free-tier reasoning upstreams sit at
             // 12-48s, fast clouds at 0.4-2s, HAI at 4-22s.
@@ -369,10 +384,18 @@ impl RouteGate {
                     skipped_for_health = true;
                     continue;
                 }
+                // A sustained failure rate benches the provider, but the
+                // bench is bounded: once the last failure is
+                // `failure_retry_after` old the provider is eligible for
+                // retry. A renewed failure re-arms the bench and
+                // a success ends it — recovery never needs a restart.
                 if state.window_requests >= self.failure_window_min
                     && state
                         .failure_rate()
                         .is_some_and(|rate| rate > self.failure_rate_threshold)
+                    && state
+                        .last_failure_at
+                        .is_some_and(|at| now < at + self.failure_retry_after)
                 {
                     skipped_for_health = true;
                     continue;
@@ -766,6 +789,130 @@ mod tests {
             later,
         );
         assert_eq!(order.len(), 1);
+    }
+
+    #[test]
+    fn a_failure_bench_expires_into_bounded_retries_and_success_recovers() {
+        let gate = RouteGate::default();
+        let now = Instant::now();
+        let mut health = ProviderStateBook::default();
+        // Three straight failures arm the bench.
+        for _ in 0..3 {
+            health.get_mut("flaky").observe(
+                false,
+                None,
+                false,
+                None,
+                gate.rate_limit_cooldown,
+                now,
+            );
+        }
+        let specs = vec![
+            spec("flaky", BillingClass::FreeTier, true, None, None, true),
+            spec("steady", BillingClass::Metered, true, None, None, true),
+        ];
+        let ids = |health: &ProviderStateBook, at: Instant| {
+            gate.select(RouteLane::FastChat, &specs, 2_000, false, health, at)
+                .iter()
+                .map(|c| c.spec.id)
+                .collect::<Vec<_>>()
+        };
+        // Refused while the bench is fresh — a transient outage still
+        // shields live requests.
+        assert_eq!(ids(&health, now + Duration::from_secs(1)), ["steady"]);
+        // The bench expires into a bounded retry: eligible again after
+        // the interval, still eligible a day later — never a permanent
+        // exclusion.
+        let retry = now + gate.failure_retry_after + Duration::from_secs(1);
+        assert_eq!(ids(&health, retry), ["flaky", "steady"]);
+        assert_eq!(
+            ids(&health, now + Duration::from_secs(86_400)),
+            ["flaky", "steady"]
+        );
+        // A renewed failure re-arms the bench instead of retrying every
+        // turn.
+        health
+            .get_mut("flaky")
+            .observe(false, None, false, None, gate.rate_limit_cooldown, retry);
+        assert_eq!(ids(&health, retry + Duration::from_secs(1)), ["steady"]);
+        // An answered request — e.g. a forced-tier call served while the
+        // provider was benched — is proof of life and clears the bench at
+        // once.
+        health.get_mut("flaky").observe(
+            true,
+            Some(800),
+            false,
+            None,
+            gate.rate_limit_cooldown,
+            retry + Duration::from_secs(2),
+        );
+        assert_eq!(
+            ids(&health, retry + Duration::from_secs(3)),
+            ["flaky", "steady"]
+        );
+        // Failing again re-benches for another full interval; the next
+        // half-open retry still comes.
+        health.get_mut("flaky").observe(
+            false,
+            None,
+            false,
+            None,
+            gate.rate_limit_cooldown,
+            retry + Duration::from_secs(4),
+        );
+        assert_eq!(ids(&health, retry + Duration::from_secs(5)), ["steady"]);
+        let later =
+            retry + Duration::from_secs(4) + gate.failure_retry_after + Duration::from_secs(1);
+        assert_eq!(ids(&health, later), ["flaky", "steady"]);
+    }
+
+    #[test]
+    fn in_flight_success_does_not_cancel_a_rate_limit_cooldown() {
+        let gate = RouteGate::default();
+        let now = Instant::now();
+        let mut health = ProviderStateBook::default();
+        let specs = [spec(
+            "limited",
+            BillingClass::FreeTier,
+            true,
+            None,
+            None,
+            true,
+        )];
+        health
+            .get_mut("limited")
+            .observe(false, None, true, None, gate.rate_limit_cooldown, now);
+        health.get_mut("limited").observe(
+            true,
+            Some(100),
+            false,
+            None,
+            gate.rate_limit_cooldown,
+            now + Duration::from_secs(1),
+        );
+        assert!(
+            gate.select(
+                RouteLane::FastChat,
+                &specs,
+                100,
+                false,
+                &health,
+                now + Duration::from_secs(2)
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            gate.select(
+                RouteLane::FastChat,
+                &specs,
+                100,
+                false,
+                &health,
+                now + gate.rate_limit_cooldown + Duration::from_secs(1)
+            )
+            .len(),
+            1
+        );
     }
 
     #[test]
