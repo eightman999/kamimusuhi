@@ -1,0 +1,16 @@
+{
+  "name": "kamimusuhi-intercom-relay",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "dry-run": "wrangler deploy --dry-run",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260928.1",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.142.0"
+  }
+}
