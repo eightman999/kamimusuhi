@@ -15,8 +15,35 @@
       "alt_urls": [
         "http://PI_TAILNET_HOST:7860"
       ]
+    },
+    {
+      "id": "llm_master",
+      "role": "cognition",
+      "url": "http://LLM_MASTER_HOST:7860",
+      "alt_urls": [
+        "http://100.74.160.53:7860"
+      ]
     }
   ],
+  "dialogue": {
+    "runtime_binary": "@ROOT@/runtime/bin/kamimusuhi-runtime",
+    "dir": "@ROOT@/runtime/individual",
+    "privacy": "unconstrained",
+    "timeout_secs": 600
+  },
+  "intercom": {
+    "enabled": true,
+    "sisters": {
+      "pi": {
+        "label": "次女",
+        "note": "Pi上の姉妹（continuity ノードの個体）"
+      },
+      "llm_master": {
+        "label": "三女",
+        "note": "llm_master上の妹（cognition ノードの個体）"
+      }
+    }
+  },
   "task_plane": {
     "executors_file": "@ROOT@/config/agent-executors.json",
     "workspaces": [
@@ -33,5 +60,38 @@
       "max_tasks_per_day": 60,
       "max_usd_per_day": 1.0
     }
-  }
+  },
+  "mcp_servers": [
+    {
+      "name": "computer_mac",
+      "command": "@ROOT@/mcp/computer/computer-mcp",
+      "call_timeout_secs": 30,
+      "description": "このMacの実デスクトップ(Aqua)へのGUI操作。観測系は直接、操作系はtool_judgeモデル審査。install-mac.shで配置。Accessibilityと画面収録の許可は操作者がシステム設定で付与する(health_checkで確認可)。",
+      "judge_required": [
+        "mouse_move",
+        "click",
+        "key_press",
+        "type_text",
+        "scroll",
+        "activate",
+        "open_application"
+      ]
+    }
+  ],
+  "tool_judge": {
+    "model": "llm_master",
+    "on_unavailable": "approval"
+  },
+  "tiers": [
+    {
+      "name": "llm_master",
+      "base_url": "http://100.74.160.53:7860/v1",
+      "model": "local",
+      "auth_env": "KAMIMUSUHI_NODE_TOKEN",
+      "peer_local_only": true,
+      "timeout_secs": 120,
+      "probe_interval_secs": 15,
+      "billing": "local"
+    }
+  ]
 }

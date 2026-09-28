@@ -142,6 +142,11 @@ pub struct Shared {
     pub jobs: crate::jobs::JobStatus,
     /// External agent harnesses (`None` when this node has none).
     pub task_plane: Option<std::sync::Arc<crate::task_orchestrator::TaskPlane>>,
+    /// The commitment engine: durable goals pursued across restarts.
+    pub commitments: crate::commitments::Commitments,
+    /// Sister-to-sister messaging between this node's individual and the
+    /// individuals hosted on peer nodes.
+    pub intercom: crate::intercom::Intercom,
 }
 
 fn read<T: Clone>(lock: &RwLock<T>) -> T {
@@ -202,6 +207,15 @@ impl Shared {
                     &config.paths,
                 ))
             }),
+            commitments: crate::commitments::Commitments::load(
+                config.paths.current_state().join("commitments.json"),
+                config.commitments.clone(),
+            ),
+            intercom: crate::intercom::Intercom::load(
+                config.paths.current_state().join("intercom.json"),
+                config.intercom.clone(),
+                config.node.id.clone(),
+            ),
             turns: std::sync::Mutex::new(BTreeMap::new()),
             jobs: crate::jobs::JobStatus::default(),
             config,
@@ -282,6 +296,17 @@ impl Shared {
             .read()
             .unwrap_or_else(|p| p.into_inner())
             .get(name)
+            .is_some_and(|r| r.healthy)
+    }
+
+    /// Whether the peer's last health probe succeeded. A peer that fails
+    /// probes is not contacted for listings or forwarded calls: its socket
+    /// may accept a connection and still never answer.
+    pub fn peer_healthy(&self, id: &str) -> bool {
+        self.peers
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(id)
             .is_some_and(|r| r.healthy)
     }
 
@@ -390,6 +415,8 @@ impl Shared {
             "mcp": self.mcp.iter().map(|m| m.status()).collect::<Vec<_>>(),
             "jobs": read(&*self.jobs),
             "task_plane": self.task_plane.as_ref().map(|p| p.status()),
+            "commitments": self.commitments.summary(),
+            "intercom": self.intercom.summary(),
             "approvals_pending": self.approvals.list(true).iter().map(|a| a.view()).collect::<Vec<_>>(),
             "generated_at": iso8601(unix_now()),
         })

@@ -207,7 +207,7 @@ pub fn decide(shared: &Shared, request: &Value) -> (u16, Value) {
                         None,
                     );
                 }
-                let _ = shared.spool.append(
+                let _ = shared.spool.append_sync(
                     "logs/approvals",
                     json!({"event": "rejected", "approval": a.view()}),
                 );
@@ -304,7 +304,7 @@ pub fn decide(shared: &Shared, request: &Value) -> (u16, Value) {
         ApprovalState::Failed
     };
     shared.approvals.finish(id, state.clone(), result.clone());
-    let _ = shared.spool.append(
+    let _ = shared.spool.append_sync(
         "logs/approvals",
         json!({"event": "approved", "id": id, "tool": claimed.exposed, "state": state,
                "arguments": claimed.arguments, "result": result}),

@@ -1449,6 +1449,7 @@ dependencies = [
  "base64",
  "kamimusuhi-resource-http",
  "kamimusuhi-runtime",
+ "kamimusuhi-testkit",
  "rusqlite",
  "serde",
  "serde_json",

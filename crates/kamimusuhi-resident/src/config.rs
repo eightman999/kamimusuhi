@@ -4,6 +4,7 @@
 //! it: every secret is referenced by the *name* of an environment variable,
 //! which systemd loads from a mode-600 file outside the repository.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -62,6 +63,254 @@ pub struct Config {
     /// External agent harnesses this node runs tasks on (task plane).
     #[serde(default)]
     pub task_plane: Option<TaskPlaneConfig>,
+    /// The commitment engine: durable goals pursued across turns and
+    /// restarts (see commitments.rs).
+    #[serde(default)]
+    pub commitments: CommitmentsConfig,
+    /// Sister-to-sister messaging: envelopes between the individuals on
+    /// different nodes, delivered as dialogue turns (see intercom.rs).
+    #[serde(default)]
+    pub intercom: IntercomConfig,
+    /// Model adjudication for tools listed in an MCP server's
+    /// `judge_required` (see judge.rs).
+    #[serde(default)]
+    pub tool_judge: ToolJudgeConfig,
+}
+
+/// Which model screens `judge_required` tool calls before they run, and
+/// what happens when it cannot answer. The default asks the `hai` tier
+/// and queues the call for the operator when no verdict comes back, so an
+/// absent judge is a human question, never a silent yes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolJudgeConfig {
+    /// Judge in router model syntax: a tier name (`hai`), `tier/model`,
+    /// or `kamimusuhi` to let the router pick.
+    #[serde(default = "default_judge_model")]
+    pub model: String,
+    /// Fallback when the judge is unreachable or answers unusably.
+    #[serde(default)]
+    pub on_unavailable: JudgeUnavailable,
+    /// Extra operator policy appended to the judge's instructions.
+    #[serde(default)]
+    pub policy: Option<String>,
+}
+
+fn default_judge_model() -> String {
+    "hai".to_owned()
+}
+
+impl Default for ToolJudgeConfig {
+    fn default() -> Self {
+        Self {
+            model: default_judge_model(),
+            on_unavailable: JudgeUnavailable::default(),
+            policy: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JudgeUnavailable {
+    /// Queue the call for the human operator (the `approval_required` path).
+    #[default]
+    Approval,
+    /// Refuse the call outright.
+    Deny,
+}
+
+/// Commitment engine policy. The engine needs a task plane to act; with
+/// none configured, commitments still persist but no attempt dispatches.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommitmentsConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Seconds between engine passes over the commitment list.
+    #[serde(default = "default_tick_secs")]
+    pub tick_secs: u64,
+    /// Commitment attempts in flight at once, over all commitments.
+    #[serde(default = "default_max_active")]
+    pub max_active: usize,
+    /// Identical failure signatures tolerated before climbing the replan
+    /// ladder (L0→L1→…).
+    #[serde(default = "default_same_failure_limit")]
+    pub same_failure_limit: u64,
+    /// A running attempt silent this long gets a stall note.
+    #[serde(default = "default_stall_note_secs")]
+    pub stall_note_secs: u64,
+    /// How long an externally-blocked commitment sleeps before retrying.
+    #[serde(default = "default_blocked_sleep_secs")]
+    pub blocked_sleep_secs: u64,
+    /// Per-commitment default attempt budget (unset budgets inherit this).
+    #[serde(default = "default_attempt_budget")]
+    pub default_attempts: u64,
+    /// Per-commitment default wall-clock budget; `null` = no time limit.
+    #[serde(default = "default_time_budget")]
+    pub default_time_secs: Option<u64>,
+    /// Per-commitment default cost budget; `null` = no cost limit.
+    #[serde(default)]
+    pub default_usd: Option<f64>,
+    /// When set (and `dialogue` is configured), commitment outcomes are
+    /// delivered to the individual as dialogue turns on this subject:
+    /// done, abandoned and each entry into `escalated` become turns she
+    /// can remember — the engine's results reach her memory through the
+    /// normal intake, not around it. Unset = no delivery.
+    #[serde(default)]
+    pub notify_subject: Option<String>,
+}
+
+const fn default_tick_secs() -> u64 {
+    30
+}
+const fn default_max_active() -> usize {
+    2
+}
+const fn default_same_failure_limit() -> u64 {
+    2
+}
+const fn default_stall_note_secs() -> u64 {
+    600
+}
+const fn default_blocked_sleep_secs() -> u64 {
+    900
+}
+const fn default_attempt_budget() -> u64 {
+    30
+}
+const fn default_time_budget() -> Option<u64> {
+    Some(6 * 3600)
+}
+
+impl Default for CommitmentsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            tick_secs: default_tick_secs(),
+            max_active: default_max_active(),
+            same_failure_limit: default_same_failure_limit(),
+            stall_note_secs: default_stall_note_secs(),
+            blocked_sleep_secs: default_blocked_sleep_secs(),
+            default_attempts: default_attempt_budget(),
+            default_time_secs: default_time_budget(),
+            default_usd: None,
+            notify_subject: None,
+        }
+    }
+}
+
+/// Sister-to-sister messaging between the individuals hosted on peer
+/// nodes. Each node that hosts an individual (`dialogue` configured)
+/// accepts envelopes over `POST /v1/intercom` and turns them into dialogue
+/// turns under the subject `sister@<from>`. Replies are active — the
+/// individual calls `peer_say` — except in conversations the operator
+/// opened with an auto-reply budget, where each turn's response is
+/// forwarded until the budget or the hop limit runs out.
+///
+/// Delivery is direct HTTP first; when the peer is unreachable and a
+/// `relay` is configured, the envelope goes through the relay's per-node
+/// mailbox and the receiver's poller picks it up. Both paths converge on
+/// the same deduplicated accept path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IntercomConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Total forwards a conversation tolerates before envelopes drop —
+    /// the hard ceiling on unattended back-and-forth.
+    #[serde(default = "default_max_hops")]
+    pub max_hops: u64,
+    /// Per-attempt delivery timeout.
+    #[serde(default = "default_intercom_timeout")]
+    pub send_timeout_secs: u64,
+    /// Base backoff between delivery attempts (doubles to a 1h cap).
+    #[serde(default = "default_intercom_retry")]
+    pub retry_secs: u64,
+    /// Delivery attempts before a message is dead-lettered.
+    #[serde(default = "default_intercom_attempts")]
+    pub max_attempts: u32,
+    /// Outbound messages accepted per peer per UTC day.
+    #[serde(default = "default_daily_limit")]
+    pub per_peer_daily_limit: u64,
+    /// Auto-reply turns granted when the operator opens a conversation —
+    /// and the ceiling on budgets arriving inside inbound envelopes.
+    #[serde(default = "default_auto_turns")]
+    pub auto_reply_turns: u64,
+    /// Relay mailbox for peers unreachable directly, and this node's own
+    /// inbound path when it cannot be reached (see deploy/relay).
+    #[serde(default)]
+    pub relay: Option<RelayConfig>,
+    /// Display metadata for the sister individuals, keyed by peer id —
+    /// the name the individual sees in incoming messages.
+    #[serde(default)]
+    pub sisters: BTreeMap<String, SisterConfig>,
+}
+
+/// A mailbox relay, e.g. the Cloudflare Worker in `deploy/relay`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelayConfig {
+    /// Base URL, e.g. `https://kamimusuhi-relay.<account>.workers.dev`.
+    pub url: String,
+    /// Environment variable holding the relay bearer token.
+    #[serde(default = "default_relay_token_env")]
+    pub token_env: String,
+    /// Seconds between inbox polls.
+    #[serde(default = "default_relay_poll")]
+    pub poll_secs: u64,
+}
+
+/// How a sister individual is presented in message framing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SisterConfig {
+    /// e.g. `長女` — shown to the receiving individual.
+    pub label: String,
+    /// Optional context line (who she is, what her node does).
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+const fn default_max_hops() -> u64 {
+    12
+}
+const fn default_intercom_timeout() -> u64 {
+    30
+}
+const fn default_intercom_retry() -> u64 {
+    60
+}
+const fn default_intercom_attempts() -> u32 {
+    72
+}
+const fn default_daily_limit() -> u64 {
+    200
+}
+const fn default_auto_turns() -> u64 {
+    6
+}
+fn default_relay_token_env() -> String {
+    "KAMIMUSUHI_RELAY_TOKEN".to_owned()
+}
+const fn default_relay_poll() -> u64 {
+    15
+}
+
+impl Default for IntercomConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_hops: default_max_hops(),
+            send_timeout_secs: default_intercom_timeout(),
+            retry_secs: default_intercom_retry(),
+            max_attempts: default_intercom_attempts(),
+            per_peer_daily_limit: default_daily_limit(),
+            auto_reply_turns: default_auto_turns(),
+            relay: None,
+            sisters: BTreeMap::new(),
+        }
+    }
 }
 
 /// Task plane: agent harnesses (Devin, OpenCode, Command Code, …) the
@@ -736,6 +985,46 @@ impl Config {
             .is_some_and(|d| d.max_concurrent == 0)
         {
             return Err("dialogue.max_concurrent must be positive".to_owned());
+        }
+        let cm = &self.commitments;
+        if cm.enabled
+            && (cm.tick_secs == 0
+                || cm.max_active == 0
+                || cm.same_failure_limit == 0
+                || cm.stall_note_secs == 0
+                || cm.blocked_sleep_secs == 0
+                || cm.default_attempts == 0
+                || cm.default_time_secs.is_some_and(|t| t == 0)
+                || cm.default_usd.is_some_and(|u| !u.is_finite() || u < 0.0))
+        {
+            return Err("commitments intervals/limits must be positive".to_owned());
+        }
+        if let Some(subject) = &cm.notify_subject
+            && !crate::dialogue::valid_subject(subject)
+        {
+            return Err("commitments.notify_subject is not a valid dialogue subject".to_owned());
+        }
+        let ic = &self.intercom;
+        if ic.enabled
+            && (ic.max_hops == 0
+                || ic.send_timeout_secs == 0
+                || ic.retry_secs == 0
+                || ic.max_attempts == 0
+                || ic.per_peer_daily_limit == 0)
+        {
+            return Err("intercom intervals/limits must be positive".to_owned());
+        }
+        for id in ic.sisters.keys() {
+            if !self.peers.iter().any(|p| &p.id == id) {
+                return Err(format!("intercom sister {id:?} is not a configured peer"));
+            }
+        }
+        if let Some(relay) = &ic.relay {
+            kamimusuhi_resource_http::Endpoint::parse(&relay.url, "/health")
+                .map_err(|e| format!("intercom.relay: {e}"))?;
+            if relay.poll_secs == 0 {
+                return Err("intercom.relay.poll_secs must be positive".to_owned());
+            }
         }
         if let Some(nas) = &self.nas
             && (!nas.root.is_absolute() || nas.marker.contains('/'))

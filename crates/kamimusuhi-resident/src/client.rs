@@ -245,9 +245,47 @@ pub fn library(url: &str, token: Option<&str>, body: &Value) -> Result<Value, St
     }
 }
 
+/// `POST /v1/commitments` (commitment engine).
+pub fn commitments(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/v1/commitments")?;
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        Duration::from_secs(60),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
+}
+
 /// `POST /v1/agents` (task plane).
 pub fn agents(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
     let endpoint = Endpoint::parse(url, "/v1/agents")?;
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        Duration::from_secs(60),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
+}
+
+/// `POST /v1/intercom` (sister-to-sister messaging between peer individuals).
+pub fn intercom(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/v1/intercom")?;
     let response = http::post_json(
         &endpoint,
         &body.to_string(),

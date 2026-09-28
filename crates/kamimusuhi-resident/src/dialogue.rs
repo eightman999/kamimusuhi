@@ -95,7 +95,7 @@ impl Drop for TurnSlot {
 
 const MAX_MESSAGE_BYTES: usize = 32 * 1024;
 
-fn valid_subject(subject: &str) -> bool {
+pub(crate) fn valid_subject(subject: &str) -> bool {
     // Must start alphanumeric so it can never be parsed as a CLI flag.
     subject
         .bytes()
@@ -143,6 +143,19 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
         },
     );
     shared.begin_turn(&task_id);
+    // Journal the intake before the turn runs: a message we received is
+    // part of the dialogue history even if the runtime dies mid-turn —
+    // timeout, crash, or a restart all leave this record behind. The
+    // outcome lands as a second record under the same `task_id`.
+    let _ = shared.spool.append_sync(
+        "conversations/dialogue",
+        json!({
+            "kind": "received",
+            "subject": subject,
+            "task_id": task_id,
+            "message": message,
+        }),
+    );
     let finish = |status: crate::tasks::TaskStatus, note: &str| {
         shared.tasks.update(
             &shared.spool,
@@ -176,6 +189,11 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let Some(output) = output else {
         finish(crate::tasks::TaskStatus::Failed, "時間切れ");
+        let _ = shared.spool.append_sync(
+            "conversations/dialogue",
+            json!({"kind": "failed", "subject": subject, "task_id": task_id,
+                   "message": message, "error": "timeout", "latency_ms": latency_ms}),
+        );
         return (504, json!({"error": "talk timed out or could not start"}));
     };
     let reply = output
@@ -212,10 +230,12 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
                     "cost_kind": r.cost_kind,
                 })
             });
-            let _ = shared.spool.append(
+            let _ = shared.spool.append_sync(
                 "conversations/dialogue",
                 json!({
+                    "kind": "answered",
                     "subject": subject,
+                    "task_id": task_id,
                     "latency_ms": latency_ms,
                     "message": message,
                     "response": reply.get("response"),
@@ -244,10 +264,14 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
         _ => {
             finish(crate::tasks::TaskStatus::Failed, "応答生成に失敗");
             let tail: Vec<&str> = output.stderr.lines().rev().take(5).collect();
-            (
-                502,
-                json!({"error": "talk failed", "stderr_tail": tail.into_iter().rev().collect::<Vec<_>>()}),
-            )
+            let tail: Vec<&str> = tail.into_iter().rev().collect();
+            let _ = shared.spool.append_sync(
+                "conversations/dialogue",
+                json!({"kind": "failed", "subject": subject, "task_id": task_id,
+                       "message": message, "error": "generation_failed",
+                       "stderr_tail": tail, "latency_ms": latency_ms}),
+            );
+            (502, json!({"error": "talk failed", "stderr_tail": tail}))
         }
     }
 }
@@ -296,18 +320,35 @@ pub fn history(shared: &Shared, request: &Value) -> (u16, Value) {
     })
     .unwrap_or_default();
     let mut seen = std::collections::HashSet::new();
-    let mut turns: Vec<Value> = collected
+    let all: Vec<Value> = collected
         .into_iter()
         .filter_map(|(_, line)| serde_json::from_str::<Value>(&line).ok())
         .filter(|v| v["subject"].as_str() == Some(subject.as_str()))
         .filter(|v| seen.insert(v["id"].as_str().unwrap_or("").to_owned()))
+        .collect();
+    // A `received` intake record with a matching outcome record is folded
+    // into it; a `received` with no outcome stands on its own — the turn
+    // died and this is the only trace that it was ever heard.
+    let answered: std::collections::HashSet<String> = all
+        .iter()
+        .filter(|v| v["kind"].as_str() != Some("received"))
+        .filter_map(|v| v["task_id"].as_str().map(str::to_owned))
+        .collect();
+    let mut turns: Vec<Value> = all
+        .into_iter()
+        .filter(|v| {
+            v["kind"].as_str() != Some("received")
+                || !answered.contains(v["task_id"].as_str().unwrap_or(""))
+        })
         .collect();
     turns.sort_by(|a, b| a["ts"].as_str().cmp(&b["ts"].as_str()));
     let start = turns.len().saturating_sub(limit);
     let turns: Vec<Value> = turns[start..]
         .iter()
         .map(|t| {
-            json!({"ts": t["ts"], "message": t["message"], "response": t["response"],
+            json!({"ts": t["ts"], "kind": t["kind"].as_str().unwrap_or("answered"),
+                   "task_id": t["task_id"], "message": t["message"],
+                   "response": t["response"], "error": t["error"],
                    "latency_ms": t["latency_ms"], "tool_calls": t["tool_calls"],
                    "route": t["route"]})
         })
@@ -379,5 +420,93 @@ mod tests {
         assert!(!valid_subject(""));
         assert!(!valid_subject("--dir"));
         assert!(!valid_subject("a b"));
+    }
+
+    /// A resident whose `runtime_binary` is a shell script, so `talk`
+    /// runs end to end without a real runtime.
+    #[cfg(unix)]
+    fn shared_with_runtime(dir: &std::path::Path, script_body: &str) -> (Shared, DialogueConfig) {
+        let rt = dir.join("rt");
+        std::fs::create_dir_all(&rt).expect("rt dir");
+        std::fs::write(rt.join("kamimusuhi.sqlite"), b"").expect("db marker");
+        let bin = dir.join("fake-runtime");
+        std::fs::write(&bin, format!("#!/bin/sh\n{script_body}\n")).expect("script");
+        let mut perms = std::fs::metadata(&bin).expect("meta").permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        std::fs::set_permissions(&bin, perms).expect("chmod");
+        let config: crate::config::Config = serde_json::from_value(json!({
+            "node": {"id": "pi", "role": "continuity", "listen": "127.0.0.1:0"},
+            "paths": {"root": dir},
+            "dialogue": {"runtime_binary": bin, "dir": rt, "timeout_secs": 5},
+        }))
+        .expect("config");
+        config.validate().expect("valid");
+        let spool = crate::spool::Spool::new(dir.join("spool"), "pi").expect("spool");
+        let shared = Shared::new(config, spool, 1, None);
+        let dialogue = shared.config.dialogue.clone().expect("dialogue");
+        (shared, dialogue)
+    }
+
+    /// The dialogue journal records for one subject, in file order.
+    #[cfg(unix)]
+    fn journal_records(shared: &Shared) -> Vec<Value> {
+        let path = shared
+            .spool
+            .root()
+            .join("conversations/dialogue/pi")
+            .join(format!(
+                "{}.jsonl",
+                crate::util::utc_date(crate::util::unix_now())
+            ));
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_successful_turn_journals_intake_then_answer() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (shared, cfg) = shared_with_runtime(
+            dir.path(),
+            "printf '%s\\n' '{\"response\":\"pong\",\"turn_id\":\"t1\",\"session_id\":\"s1\",\"individual_id\":\"mio\"}'",
+        );
+        let (status, body) = talk(&shared, &cfg, &json!({"subject": "t", "message": "ping"}));
+        assert_eq!(status, 200, "{body}");
+        let records = journal_records(&shared);
+        assert_eq!(records.len(), 2, "{records:?}");
+        assert_eq!(records[0]["kind"], json!("received"));
+        assert_eq!(records[1]["kind"], json!("answered"));
+        assert_eq!(records[0]["task_id"], records[1]["task_id"]);
+        // History folds intake into its outcome.
+        let (_, body) = history(&shared, &json!({"subject": "t"}));
+        let turns = body["turns"].as_array().expect("turns");
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0]["kind"], json!("answered"));
+        assert_eq!(turns[0]["response"], json!("pong"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_turn_still_leaves_the_received_message() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (shared, cfg) = shared_with_runtime(dir.path(), "echo broken >&2; exit 1");
+        let (status, _) = talk(&shared, &cfg, &json!({"subject": "t", "message": "ping"}));
+        assert_eq!(status, 502);
+        let records = journal_records(&shared);
+        assert_eq!(records.len(), 2, "{records:?}");
+        assert_eq!(records[0]["kind"], json!("received"));
+        assert_eq!(records[0]["message"], json!("ping"));
+        assert_eq!(records[1]["kind"], json!("failed"));
+        assert_eq!(records[1]["error"], json!("generation_failed"));
+        // History shows the heard-but-unanswered message.
+        let (_, body) = history(&shared, &json!({"subject": "t"}));
+        let turns = body["turns"].as_array().expect("turns");
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0]["kind"], json!("failed"));
+        assert_eq!(turns[0]["message"], json!("ping"));
+        assert!(turns[0]["response"].is_null());
     }
 }

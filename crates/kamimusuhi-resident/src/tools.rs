@@ -32,7 +32,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         function(
             "task_create",
-            "Add a task you plan to work on (shown to the operator on the task board). Use depends_on to link it after existing task ids.",
+            "Add a task you plan to work on (shown to the operator on the task board). Use depends_on to link it after existing task ids. For a goal you want the engine to keep pursuing on its own — retries, replanning, verification, across restarts — use commit_create instead.",
             json!({"type": "object", "properties": {
                 "title": {"type": "string"},
                 "status": {"type": "string", "enum": ["in_progress", "waiting", "on_hold"]},
@@ -115,14 +115,26 @@ fn action_for(name: &str) -> Option<&'static str> {
     })
 }
 
-fn post_peer(url: &str, suffix: &str, body: &Value, token: Option<&str>) -> Option<(u16, Value)> {
+/// Listing a peer's tools is turn metadata, not the work itself; a peer
+/// that accepts a connection but never answers must not hold it open.
+const PEER_LIST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// A forwarded call is real work (browser driving, builds): give it room.
+const PEER_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+pub(crate) fn post_peer(
+    url: &str,
+    suffix: &str,
+    body: &Value,
+    token: Option<&str>,
+    timeout: std::time::Duration,
+) -> Option<(u16, Value)> {
     use kamimusuhi_resource_http::{Endpoint, TrustAnchors, http};
     let endpoint = Endpoint::parse(url, suffix).ok()?;
     let response = http::post_json(
         &endpoint,
         &body.to_string(),
         &crate::client::auth(token),
-        std::time::Duration::from_secs(300),
+        timeout,
         &TrustAnchors::Webpki,
     )
     .ok()?;
@@ -146,6 +158,12 @@ pub fn list_with(shared: &Shared, local_only: bool) -> Value {
     if shared.task_plane.is_some() {
         tools.extend(crate::task_orchestrator::definitions());
     }
+    if shared.config.commitments.enabled {
+        tools.extend(crate::commitments::definitions());
+    }
+    if shared.config.intercom.enabled {
+        tools.extend(crate::intercom::definitions());
+    }
     tools.extend(local_mcp(shared));
     let mut seen: std::collections::HashSet<String> = tools
         .iter()
@@ -163,11 +181,18 @@ pub fn list_with(shared: &Shared, local_only: bool) -> Value {
         .collect();
     if !local_only {
         for peer in &shared.config.peers {
+            // A peer that fails health probes is unreachable or wedged;
+            // contacting it would only stall the listing past callers'
+            // timeouts.
+            if !shared.peer_healthy(&peer.id) {
+                continue;
+            }
             if let Some((200, v)) = post_peer(
                 &shared.peer_url(peer),
                 "/v1/tools/list",
                 &json!({"local_only": true}),
                 shared.token.as_deref(),
+                PEER_LIST_TIMEOUT,
             ) {
                 for tool in v["tools"].as_array().into_iter().flatten() {
                     let name = tool["function"]["name"].as_str().unwrap_or("").to_owned();
@@ -199,7 +224,8 @@ fn executing_node(shared: &Shared, name: &str, arguments: &Value) -> String {
         shared
             .config
             .peers
-            .first()
+            .iter()
+            .find(|p| shared.peer_healthy(&p.id))
             .map_or_else(|| shared.config.node.id.clone(), |p| p.id.clone())
     };
     if action_for(name).is_some() {
@@ -223,7 +249,8 @@ fn executing_node(shared: &Shared, name: &str, arguments: &Value) -> String {
     shared
         .config
         .peers
-        .first()
+        .iter()
+        .find(|p| shared.peer_healthy(&p.id))
         .map_or_else(|| shared.config.node.id.clone(), |p| p.id.clone())
 }
 
@@ -306,11 +333,15 @@ fn task_plane_tool(
         let mut forwarded = request.clone();
         forwarded["local_only"] = Value::Bool(true);
         for peer in &shared.config.peers {
+            if !shared.peer_healthy(&peer.id) {
+                continue;
+            }
             if let Some((200, v)) = post_peer(
                 &shared.peer_url(peer),
                 "/v1/tools/call",
                 &forwarded,
                 shared.token.as_deref(),
+                PEER_CALL_TIMEOUT,
             ) && v["error"] != json!("no task plane")
             {
                 return (200, v);
@@ -328,6 +359,16 @@ pub fn call(shared: &Shared, request: &Value, turn: Option<&str>) -> (u16, Value
     let name = request["name"].as_str().unwrap_or("");
     if crate::task_orchestrator::TOOL_NAMES.contains(&name) {
         return task_plane_tool(shared, name, request, turn);
+    }
+    // Commitments live in this node's durable store; they are never
+    // forwarded to a peer.
+    if crate::commitments::TOOL_NAMES.contains(&name) {
+        return crate::commitments::tool(shared, name, request);
+    }
+    // Intercom sends mail between the individuals on peer nodes; it is
+    // local bookkeeping on this node, not work to forward.
+    if crate::intercom::TOOL_NAMES.contains(&name) {
+        return crate::intercom::tool(shared, name, request);
     }
     if name.starts_with("task_") {
         return task_tool(shared, name, request, turn);
@@ -465,6 +506,38 @@ fn call_inner(shared: &Shared, request: &Value) -> (u16, Value) {
     }
 }
 
+/// Queue a gated call for the operator instead of running it now —
+/// `approval_required` calls always, `judge_required` calls when the judge
+/// model escalates or cannot answer (per `tool_judge.on_unavailable`).
+fn enqueue_for_approval(
+    shared: &Shared,
+    server: &crate::mcp::McpServer,
+    tool: &crate::mcp::McpTool,
+    arguments: &Value,
+    note: &str,
+) -> (u16, Value) {
+    match shared.approvals.enqueue(
+        &server.config.name,
+        &tool.original,
+        &tool.exposed,
+        arguments.clone(),
+        None,
+    ) {
+        Ok(a) => {
+            let _ = shared.spool.append_sync(
+                "logs/approvals",
+                json!({"event": "requested", "note": note, "approval": a.view()}),
+            );
+            (
+                200,
+                json!({"ok": false, "pending_approval": true, "approval_id": a.id,
+                       "message": "操作者の承認待ちです。まだ実行されていません。承認IDを操作者に伝えてください。"}),
+            )
+        }
+        Err(e) => (200, json!({"ok": false, "error": e})),
+    }
+}
+
 fn call_mcp(shared: &Shared, name: &str, request: &Value) -> (u16, Value) {
     let arguments = match &request["arguments"] {
         Value::String(text) => serde_json::from_str(text).unwrap_or_else(|_| json!({})),
@@ -474,26 +547,31 @@ fn call_mcp(shared: &Shared, name: &str, request: &Value) -> (u16, Value) {
     for server in &shared.mcp {
         if let Some(tool) = server.tools().into_iter().find(|t| t.exposed == name) {
             if server.requires_approval(&tool.original) {
-                return match shared.approvals.enqueue(
+                return enqueue_for_approval(shared, server, &tool, &arguments, "operator gate");
+            }
+            if server.requires_judgment(&tool.original) {
+                let description = tool.definition["function"]["description"]
+                    .as_str()
+                    .unwrap_or("");
+                match crate::judge::check(
+                    shared,
                     &server.config.name,
                     &tool.original,
-                    &tool.exposed,
-                    arguments.clone(),
-                    None,
+                    description,
+                    &arguments,
                 ) {
-                    Ok(a) => {
-                        let _ = shared.spool.append(
-                            "logs/approvals",
-                            json!({"event": "requested", "approval": a.view()}),
-                        );
-                        (
+                    crate::judge::Verdict::Allow => {}
+                    crate::judge::Verdict::Deny(reason) => {
+                        return (
                             200,
-                            json!({"ok": false, "pending_approval": true, "approval_id": a.id,
-                                   "message": "操作者の承認待ちです。まだ実行されていません。承認IDを操作者に伝えてください。"}),
-                        )
+                            json!({"ok": false, "error":
+                                   format!("判定モデルが拒否しました: {reason}")}),
+                        );
                     }
-                    Err(e) => (200, json!({"ok": false, "error": e})),
-                };
+                    crate::judge::Verdict::Escalate(reason) => {
+                        return enqueue_for_approval(shared, server, &tool, &arguments, &reason);
+                    }
+                }
             }
             let started = std::time::Instant::now();
             let outcome = server
@@ -522,11 +600,15 @@ fn call_mcp(shared: &Shared, name: &str, request: &Value) -> (u16, Value) {
         let mut forwarded = request.clone();
         forwarded["local_only"] = Value::Bool(true);
         for peer in &shared.config.peers {
+            if !shared.peer_healthy(&peer.id) {
+                continue;
+            }
             if let Some((status, v)) = post_peer(
                 &shared.peer_url(peer),
                 "/v1/tools/call",
                 &forwarded,
                 shared.token.as_deref(),
+                PEER_CALL_TIMEOUT,
             ) && status != 400
             {
                 return (status, v);
@@ -630,5 +712,121 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(result["hits"].as_array().expect("hits").len(), 100);
         assert_eq!(result["truncated"], true);
+    }
+
+    /// A node with one peer (`peerbox`) at `url`.
+    fn peer_shared(url: &str) -> (Shared, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = serde_json::from_value(json!({
+            "node": {"id": "test", "role": "continuity", "listen": "127.0.0.1:0"},
+            "paths": {"root": dir.path()},
+            "peers": [{"id": "peerbox", "role": "cognition", "url": url}]
+        }))
+        .expect("config");
+        let spool = crate::spool::Spool::new(dir.path().join("spool"), "test").expect("spool");
+        (Shared::new(config, spool, 1, None), dir)
+    }
+
+    fn raw_json(body: &Value) -> kamimusuhi_testkit::FixtureResponse {
+        let body = body.to_string();
+        kamimusuhi_testkit::FixtureResponse::RawHttp {
+            response: format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            ),
+        }
+    }
+
+    fn mark_healthy(shared: &Shared, peer: &str) {
+        shared
+            .peers
+            .write()
+            .expect("peers")
+            .entry(peer.to_owned())
+            .or_default()
+            .record(Ok(json!({"ok": true})), 1);
+    }
+
+    #[test]
+    fn an_unhealthy_peer_is_neither_listed_nor_called() {
+        // A peer failing health probes is not contacted: its socket may
+        // accept a connection and still never answer, which is what used to
+        // stall every /v1/tools listing for minutes while llm_master was
+        // down.
+        let server = kamimusuhi_testkit::FixtureServer::always(
+            kamimusuhi_testkit::FixtureResponse::ok("unused"),
+        )
+        .expect("fixture");
+        let url = format!("http://127.0.0.1:{}", server.port());
+        let (shared, _dir) = peer_shared(&url);
+
+        let listed = list_with(&shared, false);
+        assert_eq!(server.request_count(), 0, "unhealthy peer was contacted");
+        let names: Vec<&str> = listed["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str())
+            .collect();
+        assert!(names.contains(&"json_get"));
+        assert!(!names.iter().any(|n| n.starts_with("mcp__")));
+
+        let (status, reply) = call(
+            &shared,
+            &json!({"name": "mcp__peerbox__echo", "arguments": {}}),
+            None,
+        );
+        assert_eq!(status, 400);
+        assert!(
+            reply["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("unavailable")
+        );
+        assert_eq!(server.request_count(), 0, "unhealthy peer was called");
+    }
+
+    #[test]
+    fn a_healthy_peers_tools_are_listed_and_calls_forward() {
+        let listing = raw_json(&json!({
+            "tools": [{"type": "function", "function": {
+                "name": "mcp__peerbox__echo", "description": "echo",
+                "parameters": {"type": "object"}}}],
+            "mcp_servers": [{"name": "peerbox", "node": "peerbox",
+                             "state": "running", "tools": 1}]}));
+        let server = kamimusuhi_testkit::FixtureServer::always(listing).expect("fixture");
+        let url = format!("http://127.0.0.1:{}", server.port());
+        let (shared, _dir) = peer_shared(&url);
+        mark_healthy(&shared, "peerbox");
+
+        let listed = list_with(&shared, false);
+        let names: Vec<&str> = listed["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str())
+            .collect();
+        assert!(names.contains(&"mcp__peerbox__echo"));
+        assert!(
+            listed["mcp_servers"]
+                .as_array()
+                .expect("mcp_servers")
+                .iter()
+                .any(|s| s["name"] == "peerbox")
+        );
+
+        let (status, _reply) = call(
+            &shared,
+            &json!({"name": "mcp__peerbox__echo", "arguments": {}}),
+            None,
+        );
+        assert_eq!(status, 200);
+        let requests = server.requests();
+        // tools/list, the library catalog inside the same listing, then the
+        // forwarded call itself.
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[2].path, "/v1/tools/call");
+        assert!(requests[2].body.contains("\"local_only\":true"));
     }
 }

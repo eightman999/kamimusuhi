@@ -17,6 +17,14 @@
       "id": "pi",
       "role": "continuity",
       "url": "http://PI_HOST:7860"
+    },
+    {
+      "id": "mac",
+      "role": "cognition",
+      "url": "http://MAC_HOST:7860",
+      "alt_urls": [
+        "http://MAC_TAILNET_HOST:7860"
+      ]
     }
   ],
   "tiers": [
@@ -180,6 +188,44 @@
       ],
       "call_timeout_secs": 180,
       "description": "ヘッドレス Chromium による Web 閲覧（llm_master のみ, 隔離プロファイル）"
+    },
+    {
+      "name": "computer_llm",
+      "command": "/srv/kamimusuhi/mcp/computer/bin/computer-mcp",
+      "call_timeout_secs": 30,
+      "description": "llm_master上のXvfb仮想デスクトップ(:99)へのGUI操作。観測系は直接、操作系はtool_judgeモデル審査。install-computer-mcp.shで配置。",
+      "judge_required": [
+        "mouse_move",
+        "click",
+        "key_press",
+        "type_text",
+        "scroll",
+        "activate",
+        "open_application"
+      ]
     }
-  ]
+  ],
+  "dialogue": {
+    "runtime_binary": "/srv/kamimusuhi/runtime/bin/kamimusuhi-runtime",
+    "dir": "/srv/kamimusuhi/runtime/individual-llm",
+    "privacy": "unconstrained",
+    "timeout_secs": 600
+  },
+  "intercom": {
+    "enabled": true,
+    "sisters": {
+      "pi": {
+        "label": "次女",
+        "note": "Pi上の姉妹（continuity ノードの個体）"
+      },
+      "mac": {
+        "label": "長女",
+        "note": "Mac上の姉（cognition ノードの個体）"
+      }
+    }
+  },
+  "tool_judge": {
+    "model": "local",
+    "on_unavailable": "approval"
+  }
 }

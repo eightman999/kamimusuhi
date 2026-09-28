@@ -308,14 +308,25 @@ fn describe(lib: &LibraryConfig, node: &str) -> Value {
     })
 }
 
-fn post(url: &str, body: &Value, token: Option<&str>) -> Result<(u16, Value), String> {
+/// Listing a peer's libraries is catalog metadata; a stalled peer must not
+/// hold it open past the caller's own deadline.
+const PEER_LIST_TIMEOUT: Duration = Duration::from_secs(5);
+/// A forwarded read/search is real work; keep the original allowance.
+const PEER_CALL_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn post(
+    url: &str,
+    body: &Value,
+    token: Option<&str>,
+    timeout: Duration,
+) -> Result<(u16, Value), String> {
     use kamimusuhi_resource_http::{Endpoint, TrustAnchors, http};
     let endpoint = Endpoint::parse(url, "/v1/library")?;
     let response = http::post_json(
         &endpoint,
         &body.to_string(),
         &auth(token),
-        Duration::from_secs(60),
+        timeout,
         &TrustAnchors::Webpki,
     )
     .map_err(|e| crate::probes::describe(&e))?;
@@ -338,7 +349,10 @@ pub fn handle(shared: &Shared, request: &Value) -> (u16, Value) {
         if !local_only {
             let ask = json!({"action": "list", "local_only": true});
             for peer in &shared.config.peers {
-                if let Ok((200, v)) = post(&shared.peer_url(peer), &ask, token)
+                if !shared.peer_healthy(&peer.id) {
+                    continue;
+                }
+                if let Ok((200, v)) = post(&shared.peer_url(peer), &ask, token, PEER_LIST_TIMEOUT)
                     && let Some(list) = v["libraries"].as_array()
                 {
                     all.extend(list.iter().cloned());
@@ -354,8 +368,12 @@ pub fn handle(shared: &Shared, request: &Value) -> (u16, Value) {
             let mut forwarded = request.clone();
             forwarded["local_only"] = Value::Bool(true);
             for peer in &shared.config.peers {
+                if !shared.peer_healthy(&peer.id) {
+                    continue;
+                }
                 // The holder's answer (including its errors) is the answer.
-                if let Ok((status, v)) = post(&shared.peer_url(peer), &forwarded, token)
+                if let Ok((status, v)) =
+                    post(&shared.peer_url(peer), &forwarded, token, PEER_CALL_TIMEOUT)
                     && status != 404
                 {
                     return (status, v);
@@ -513,5 +531,84 @@ mod tests {
         )
         .expect("find");
         assert_eq!(by_name["items"][0]["_key"], "8015");
+    }
+
+    /// A node holding `demo` with one peer (`peerbox`) at `url`.
+    fn shared_with_peer(url: &str) -> (Shared, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let library = dir.path().join("demo-lib");
+        fs::create_dir(&library).expect("library");
+        let config = serde_json::from_value(json!({
+            "node": {"id": "test", "role": "continuity", "listen": "127.0.0.1:0"},
+            "paths": {"root": dir.path()},
+            "libraries": [{"name": "demo", "path": library}],
+            "peers": [{"id": "peerbox", "role": "cognition", "url": url}]
+        }))
+        .expect("config");
+        let spool = crate::spool::Spool::new(dir.path().join("spool"), "test").expect("spool");
+        (Shared::new(config, spool, 1, None), dir)
+    }
+
+    #[test]
+    fn a_down_peer_contributes_no_libraries_and_is_not_called() {
+        // A peer failing health probes is skipped: contacting it would only
+        // stall the catalog past the caller's deadline.
+        let server = kamimusuhi_testkit::FixtureServer::always(
+            kamimusuhi_testkit::FixtureResponse::ok("unused"),
+        )
+        .expect("fixture");
+        let (shared, _dir) = shared_with_peer(&format!("http://127.0.0.1:{}", server.port()));
+
+        let (status, value) = handle(&shared, &json!({"action": "list"}));
+        assert_eq!(status, 200);
+        let names: Vec<&str> = value["libraries"]
+            .as_array()
+            .expect("libraries")
+            .iter()
+            .filter_map(|l| l["name"].as_str())
+            .collect();
+        assert_eq!(names, ["demo"]);
+        assert_eq!(server.request_count(), 0, "unhealthy peer was contacted");
+
+        let (status, _) = handle(
+            &shared,
+            &json!({"action": "file", "library": "remote", "path": "x"}),
+        );
+        assert_eq!(status, 404);
+        assert_eq!(server.request_count(), 0, "unhealthy peer was called");
+    }
+
+    #[test]
+    fn a_healthy_peer_contributes_its_libraries() {
+        let body = json!({"libraries": [{"name": "remote", "node": "peerbox"}]}).to_string();
+        let server = kamimusuhi_testkit::FixtureServer::always(
+            kamimusuhi_testkit::FixtureResponse::RawHttp {
+                response: format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                ),
+            },
+        )
+        .expect("fixture");
+        let (shared, _dir) = shared_with_peer(&format!("http://127.0.0.1:{}", server.port()));
+        shared
+            .peers
+            .write()
+            .expect("peers")
+            .entry("peerbox".to_owned())
+            .or_default()
+            .record(Ok(json!({"ok": true})), 1);
+
+        let (status, value) = handle(&shared, &json!({"action": "list"}));
+        assert_eq!(status, 200);
+        let names: Vec<&str> = value["libraries"]
+            .as_array()
+            .expect("libraries")
+            .iter()
+            .filter_map(|l| l["name"].as_str())
+            .collect();
+        assert_eq!(names, ["demo", "remote"]);
+        assert_eq!(server.requests()[0].path, "/v1/library");
     }
 }

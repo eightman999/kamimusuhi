@@ -280,6 +280,16 @@ fn handle(shared: &Shared, stream: TcpStream) {
             let (status, reply) = crate::tools::call(shared, &body, turn.as_deref());
             json_response(stream, status, &reply, &[]);
         }
+        ("GET", "/v1/commitments") => {
+            let (status, reply) =
+                crate::commitments::handle(shared, &json!({"action": "list"}), "operator");
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/commitments") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            let (status, reply) = crate::commitments::handle(shared, &body, "operator");
+            json_response(stream, status, &reply, &[]);
+        }
         ("GET", "/v1/agents") => {
             let (status, reply) =
                 crate::task_orchestrator::handle(shared, &json!({"action": "health"}), "operator");
@@ -288,6 +298,18 @@ fn handle(shared: &Shared, stream: TcpStream) {
         ("POST", "/v1/agents") => {
             let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
             let (status, reply) = crate::task_orchestrator::handle(shared, &body, "operator");
+            json_response(stream, status, &reply, &[]);
+        }
+        ("GET", "/v1/intercom") => {
+            let (status, reply) =
+                crate::intercom::handle(shared, &json!({"action": "status"}), "operator");
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/intercom") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            // A body carrying `from`/`to` is a peer envelope; anything else
+            // is an operator action (see intercom::handle).
+            let (status, reply) = crate::intercom::handle(shared, &body, "operator");
             json_response(stream, status, &reply, &[]);
         }
         ("POST", "/v1/library") => {

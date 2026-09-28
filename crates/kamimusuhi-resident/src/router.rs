@@ -398,13 +398,13 @@ fn completion_finish_reason(value: &Value) -> &'static str {
     }
 }
 
-struct GuardedReply {
-    body: Value,
+pub(crate) struct GuardedReply {
+    pub body: Value,
     cost_usd: Option<f64>,
     cost_kind: Option<&'static str>,
 }
 
-fn call_tier_guarded(
+pub(crate) fn call_tier_guarded(
     shared: &Shared,
     tier: &TierConfig,
     model: &str,
@@ -637,7 +637,7 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
     match result {
         Some((tier, body, _model, ..)) => {
             if shared.config.routing.log_conversations && !request.local_only {
-                let _ = shared.spool.append(
+                let _ = shared.spool.append_sync(
                     "conversations",
                     json!({
                         "tier": tier.name,

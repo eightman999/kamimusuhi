@@ -54,7 +54,7 @@ impl TaskStatus {
         })
     }
 
-    const fn finished(self) -> bool {
+    pub const fn finished(self) -> bool {
         matches!(self, Self::Done | Self::Failed | Self::Cancelled)
     }
 }
@@ -134,12 +134,15 @@ impl TaskBoard {
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
         // Anything still "running" after a restart was interrupted; a
-        // delegated task still queued lost its worker too.
+        // delegated task still queued lost its worker too. Commitment
+        // tracks are exempt: the commitment engine owns them and decides
+        // itself what survived (its own interrupted/resume semantics).
         let now = unix_now();
         for task in &mut tasks {
             let running = task.status == TaskStatus::InProgress
                 && task.kind != "manual"
-                && task.kind != "agent";
+                && task.kind != "agent"
+                && task.kind != "commitment";
             let orphaned = task.kind == "delegated" && !task.status.finished();
             if running || orphaned {
                 task.status = TaskStatus::Failed;
@@ -193,7 +196,7 @@ impl TaskBoard {
         tasks.push(task);
         self.persist(&mut tasks);
         drop(tasks);
-        let _ = spool.append("logs/tasks", json!({"event": "created", "task": view}));
+        let _ = spool.append_sync("logs/tasks", json!({"event": "created", "task": view}));
         id
     }
 
@@ -235,7 +238,7 @@ impl TaskBoard {
         let updated = task.clone();
         self.persist(&mut tasks);
         drop(tasks);
-        let _ = spool.append(
+        let _ = spool.append_sync(
             "logs/tasks",
             json!({"event": "updated", "task": updated.view()}),
         );

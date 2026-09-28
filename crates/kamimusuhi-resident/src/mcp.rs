@@ -61,6 +61,11 @@ pub struct McpServerConfig {
     /// approves each call (see `approvals.rs`).
     #[serde(default)]
     pub approval_required: Vec<String>,
+    /// Tools screened by the judge model before each execution (see
+    /// `judge.rs` and `tool_judge` in the node config). A tool in both
+    /// this and `approval_required` goes to the operator directly.
+    #[serde(default)]
+    pub judge_required: Vec<String>,
     /// Command + args run after an approved call succeeds; `{id}` and
     /// `{tool}` are substituted (e.g. commit and push the change).
     #[serde(default)]
@@ -321,11 +326,14 @@ impl McpServer {
                 }
                 let exposed = exposed_name(&self.config.name, original);
                 let gated = self.config.approval_required.iter().any(|a| a == original);
+                let judged = self.config.judge_required.iter().any(|a| a == original);
                 let mut description = format!(
                     "[MCP {}]{} {}",
                     self.config.name,
                     if gated {
                         " [要承認: 呼ぶと操作者の承認待ちになり、承認されるまで実行されない]"
+                    } else if judged {
+                        " [要判定: 実行前に判定モデルが可否を判断し、拒否または操作者へ回すことがある]"
                     } else {
                         ""
                     },
@@ -417,6 +425,11 @@ impl McpServer {
     /// Whether calls to `original` must wait for operator approval.
     pub fn requires_approval(&self, original: &str) -> bool {
         self.config.approval_required.iter().any(|a| a == original)
+    }
+
+    /// Whether calls to `original` are screened by the judge model first.
+    pub fn requires_judgment(&self, original: &str) -> bool {
+        self.config.judge_required.iter().any(|a| a == original)
     }
 
     /// Execute a call the operator has approved.
@@ -816,6 +829,7 @@ for line in sys.stdin:
             call_timeout_secs: 10,
             description: Some("Use the documented public search fallback.".to_owned()),
             approval_required: Vec::new(),
+            judge_required: Vec::new(),
             after_approved: None,
         };
         let server = McpServer::new(config, dir.path().to_path_buf());

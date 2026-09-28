@@ -117,6 +117,9 @@ sudo ~/src/kamimusuhi/deploy/resident/install-root.sh pi          # llm_master �
 deploy/resident/push-secrets.sh <host>
 # 4) ビルド・配置・起動 (ノード上, 要 rustup)
 ~/src/kamimusuhi/deploy/resident/install-node.sh pi
+#    rsync -a は送信側の mtime を保存するため、古い target の rlib/rmeta が
+#    新ソースより「新鮮」と誤判定されて新旧混在のコンパイルエラーになることがある。
+#    その場合はノード上で `find crates -name '*.rs' -exec touch {} +` してから再実行する。
 # 5) NAS 初回だけ: マーカーとディレクトリ
 mkdir -p /mnt/kamimusuhi/{memory,conversations,logs,artifacts,experiments,datasets,models,checkpoints}
 touch /mnt/kamimusuhi/.kamimusuhi-nas
@@ -138,6 +141,27 @@ kamimusuhi chat --subject <id> --url http://PI_HOST:7860
 ```
 
 token は `$KAMIMUSUHI_NODE_TOKEN` または `~/.config/kamimusuhi/node_token`（`push-secrets.sh` が生成）。`--subject` は会話履歴の区別であって認証ではない。
+
+## Intercom（姉妹個体どうしの会話）
+
+各ノードが `dialogue` を持つ場合、そこに住む個体は別個体（姉妹）同士として扱われる。`intercom` 設定を有効にすると、姉妹間で envelope（手紙）をやり取りできる。
+
+- 受信: `POST /v1/intercom`（peer からの envelope, bearer 認証）→ 冪等に受理 → `sister@<from>` subject の対話ターンとして個体へ届く。`dialogue` の無いノードは受理しない（送信側は dead-letter）。
+- 送信: 個体の `peer_say` tool、または operator の `kamimusuhi say <peer> <text…>` / `intercom send`。永続 outbox（`current_state/intercom.json`）に載り、直接配送 → 失敗時は `relay` 経由 → 指数バックオフで `max_attempts` まで再送。
+- 返信は本人の能動行為（`peer_say`）。例外は operator が `intercom open <peer> [turns] [text…]` で開いた会話だけ — 各ターンの応答がそのまま転送され、`auto_left` が envelope と共に減り、`max_hops` が無人連鎖の上限になる。個体は応答中の `[end]` 行で会話を閉じられる。
+- 重複は `seen` id で排除され、直接配送と relay 経由の二重到着は無害。inbound/outbox/conversations は再起動をまたいで保持される。
+- `sisters` マップは姉妹の表示名（長女=Mac, 次女=Pi, 三女=llm_master）。キーは `peers` の id でなければならない。
+- relay: 直接到達できない向きの中継。[relay/](../../relay/README.md)（Cloudflare Worker + Durable Object）。既定は無し — tailnet/LAN が張れていれば不要。
+
+```bash
+kamimusuhi intercom                 # status: outbox/inbox/conversations/relay
+kamimusuhi intercom list [--all]    # 会話一覧（--all で閉じたものも）
+kamimusuhi intercom show <conv>     # 会話と未配送分
+kamimusuhi say mac 今日の調子は？    # 最新の開いた会話へ（無ければ新規）
+kamimusuhi intercom open mac 6 相談がある # 自動返信6往復で会話を開始
+kamimusuhi intercom close <conv> [最後の一言…]
+kamimusuhi intercom retry [id]      # dead-letter の再送
+```
 
 ## Discord Bot
 
@@ -188,6 +212,7 @@ GUI の `set_language_provider` で追加した言語器官には tools は付�
 
 resident は stdio の MCP サーバーを子プロセスとして常駐・監視し（落ちたら backoff で再起動）、tool を `mcp__<server>__<tool>` として `/v1/tools` に載せる。
 自ノードに無い tool は peer へ転送されるので、Pi からも llm_master の Playwright を呼べる。呼び出しは `logs/mcp/<node>/` に記録。
+peer への一覧・転送は health probe が通っている peer に限る（probe 不通の peer への接続は呼び出しを数分間ブロックするだけなので除外）。一覧の fan-out は 5 秒で打ち切る。
 npm パッケージは `/srv/kamimusuhi/mcp` にバージョン固定で入れる（起動時にネットワーク不要）。
 
 | server | ノード | 範囲・制限 |
@@ -199,6 +224,9 @@ npm パッケージは `/srv/kamimusuhi/mcp` にバージョン固定で入れ�
 | `netdata` (nd-mcp) | 両方（各ノード自身） | 読み取り専用。Netdata は localhost bind、キーは secrets.env の `NETDATA_MCP_KEY` |
 | `playwright` | llm_master | headless Chromium・隔離プロファイル。`browser_run_code_unsafe` / `browser_evaluate` / `browser_file_upload` は除外 |
 | `github` (github-mcp-server v1.12.2) | 両方 | `--read-only --lockdown-mode`、toolsets=context,repos,issues,pull_requests,actions。token は secrets.env の `GITHUB_PERSONAL_ACCESS_TOKEN` |
+| `computer_mac` / `computer_llm` / `computer_pi` ([computer-mcp](computer-mcp.md)) | 各ノード | GUI の computer use。Mac は実画面(Aqua)、Linux はノード所有の Xvfb `:99`。観測系は自由、操作系（click/type/key_press/…）は `judge_required` で判定モデル審査、判断不能は operator 承認へ |
+
+`judge_required` の審査は resident 設定の `tool_judge`（既定: `hai` tier、回答不能時は承認キュー）が担う。`approval_required` と併記した tool は審査を経ず直接 operator 承認になる。
 
 個体へ見せる tool は `runtime.json` の `tools.allowed`（`*` で前方一致）で絞る（例: `runtime-reference.example.json`, 47 個）。
 `tools.core`（同じ構文, 省略時は `mcp__` 以外の組み込み tool）だけが毎ターン最初から提示され、残りの allowed は `tool_catalog`（一覧）→ `tool_enable`（有効化）で必要時に取り出す。定義は送信前に圧縮する（description 200 字・引数 description 120 字・`title`/`examples`/`additionalProperties` 除去、名前順で固定）。
@@ -210,6 +238,7 @@ cd /srv/kamimusuhi/mcp && npm install --prefix . @modelcontextprotocol/server-fi
   @upstash/context7-mcp@4.1.1 @bitbonsai/mcpvault@0.16.0 [@playwright/mcp@0.0.82]
 ./node_modules/.bin/playwright-mcp install-browser chrome-for-testing   # llm_master のみ
 sudo deploy/resident/install-netdata.sh                                 # Netdata + NETDATA_MCP_KEY
+deploy/resident/install-computer-mcp.sh                                 # computer use (Linux: Xvfb :99 + xdotool/scrot)
 ```
 
 GitHub MCP のバイナリは公式 release を checksums.txt で検証して `/srv/kamimusuhi/mcp/github/` に置く。token は `GITHUB_TOKEN_FILE=<file> deploy/resident/push-secrets.sh <host>` で配布（fine-grained・read-only・期限付きを推奨）。

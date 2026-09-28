@@ -17,6 +17,14 @@
       "id": "llm_master",
       "role": "cognition",
       "url": "http://LLM_MASTER_HOST:7860"
+    },
+    {
+      "id": "mac",
+      "role": "cognition",
+      "url": "http://MAC_HOST:7860",
+      "alt_urls": [
+        "http://MAC_TAILNET_HOST:7860"
+      ]
     }
   ],
   "tiers": [
@@ -43,7 +51,9 @@
       "privacy_ok_for_private_memory": true,
       "reasoning_suppression": true,
       "context_limit_tokens": 65536,
-      "prefer_lanes": ["FAST_CHAT"]
+      "prefer_lanes": [
+        "FAST_CHAT"
+      ]
     }
   ],
   "routing": {
@@ -79,6 +89,19 @@
     "privacy": "unconstrained",
     "timeout_secs": 600,
     "max_concurrent": 2
+  },
+  "intercom": {
+    "enabled": true,
+    "sisters": {
+      "mac": {
+        "label": "長女",
+        "note": "Mac上の姉（cognition ノードの個体）"
+      },
+      "llm_master": {
+        "label": "三女",
+        "note": "llm_master上の妹（cognition ノードの個体）"
+      }
+    }
   },
   "mcp_servers": [
     {
@@ -175,6 +198,21 @@
       ],
       "call_timeout_secs": 25,
       "description": "公開Webの検索と本文取得。Googleはこの環境でCAPTCHAを確認したため、公開情報の調べ物にはfetch_urlでhttps://www.bing.com/search?q=<検索語をURLエンコード>をformat=markdown,char_limit=4000で取得する。検索ページのAI要約は根拠にせず、本文またはfollow_up_linksの公式候補URLをfetch_url(format=markdown,char_limit=6000)で開き、確認した出典URLを添える。GoogleのCAPTCHAを繰り返し再試行しない。非公開資料・会話履歴・認証情報を検索語に含めない。"
+    },
+    {
+      "name": "computer_pi",
+      "command": "/srv/kamimusuhi/mcp/computer/bin/computer-mcp",
+      "call_timeout_secs": 30,
+      "description": "Pi上のXvfb仮想デスクトップ(:99)へのGUI操作。health_check/list_windows/screenshot/wait等の観測系は直接、mouse_move/click/key_press/type_text/scroll/activate/open_applicationは実行前にtool_judgeモデルが審査する。install-computer-mcp.shで配置。",
+      "judge_required": [
+        "mouse_move",
+        "click",
+        "key_press",
+        "type_text",
+        "scroll",
+        "activate",
+        "open_application"
+      ]
     }
   ],
   "jobs": [
@@ -188,5 +226,9 @@
       "timeout_secs": 600,
       "run_at_start": true
     }
-  ]
+  ],
+  "tool_judge": {
+    "model": "llm_master",
+    "on_unavailable": "approval"
+  }
 }

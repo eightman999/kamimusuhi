@@ -10,9 +10,12 @@
 
 pub mod approvals;
 pub mod client;
+pub mod commitments;
 pub mod config;
 pub mod dialogue;
+pub mod intercom;
 pub mod jobs;
+pub mod judge;
 pub mod kcore;
 pub mod library;
 pub mod mcp;

@@ -32,6 +32,21 @@ mkdir -p "$ROOT"/{runtime/bin,config,current_state,cache,spool,logs,worktrees}
 install -m 755 "$REPO/target/release/kamimusuhi" "$ROOT/runtime/bin/kamimusuhi.new"
 mv -f "$ROOT/runtime/bin/kamimusuhi.new" "$ROOT/runtime/bin/kamimusuhi"
 
+# computer-use MCP: osascript/screencapture backend, nothing to build. The
+# launcher pins COMPUTER_DIR under the node root; Accessibility and Screen
+# Recording consent for the responsible process are granted by the operator
+# in System Settings (health_check reports when missing).
+COMPUTER_DIR="$ROOT/mcp/computer"
+install -d "$COMPUTER_DIR/state"
+install -m 644 "$REPO/deploy/resident/computer-mcp.py" "$COMPUTER_DIR/computer-mcp.py"
+cat > "$COMPUTER_DIR/computer-mcp" <<LAUNCHER
+#!/bin/zsh
+set -euo pipefail
+export COMPUTER_DIR="$COMPUTER_DIR/state"
+exec /usr/bin/env python3 "$COMPUTER_DIR/computer-mcp.py" "\$@"
+LAUNCHER
+chmod 700 "$COMPUTER_DIR/computer-mcp"
+
 if [[ ! -f "$ROOT/config/resident.json" ]]; then
   # Site-specific hosts live in deploy/resident/local/ (not in git).
   TEMPLATE="$REPO/deploy/resident/local/mac.resident.json"

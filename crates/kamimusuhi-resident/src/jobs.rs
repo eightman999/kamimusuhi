@@ -99,7 +99,7 @@ pub fn spawn_all(shared: &Arc<Shared>) {
                         None => json!({"job": job.name, "ok": false, "latency_ms": latency_ms,
                                        "error": "timed out or could not start"}),
                     };
-                    let _ = shared.spool.append("logs/jobs", record.clone());
+                    let _ = shared.spool.append_sync("logs/jobs", record.clone());
                     let ok = record["ok"].as_bool().unwrap_or(false);
                     let line = record["stdout_tail"]
                         .as_array()
