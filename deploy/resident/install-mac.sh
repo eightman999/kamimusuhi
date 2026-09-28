@@ -25,12 +25,14 @@ if [[ "${1:-}" == "--uninstall" ]]; then
   exit 0
 fi
 
-echo "building kamimusuhi (release) from $REPO"
-cargo build --release --manifest-path "$REPO/Cargo.toml" -p kamimusuhi-resident
+echo "building kamimusuhi + kamimusuhi-runtime (release) from $REPO"
+cargo build --release --manifest-path "$REPO/Cargo.toml" -p kamimusuhi-resident -p kamimusuhi-runtime
 
 mkdir -p "$ROOT"/{runtime/bin,config,current_state,cache,spool,logs,worktrees}
-install -m 755 "$REPO/target/release/kamimusuhi" "$ROOT/runtime/bin/kamimusuhi.new"
-mv -f "$ROOT/runtime/bin/kamimusuhi.new" "$ROOT/runtime/bin/kamimusuhi"
+for b in kamimusuhi kamimusuhi-runtime; do
+  install -m 755 "$REPO/target/release/$b" "$ROOT/runtime/bin/$b.new"
+  mv -f "$ROOT/runtime/bin/$b.new" "$ROOT/runtime/bin/$b"
+done
 
 # computer-use MCP: osascript/screencapture backend, nothing to build. The
 # launcher pins COMPUTER_DIR under the node root; Accessibility and Screen
@@ -69,6 +71,11 @@ ROOT="${0:A:h:h:h}"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 if [[ -r "$HOME/.config/kamimusuhi/node_token" ]]; then
   export KAMIMUSUHI_NODE_TOKEN="$(tr -d '[:space:]' < "$HOME/.config/kamimusuhi/node_token")"
+fi
+# Optional KEY=value secrets (e.g. KAMIMUSUHI_RELAY_TOKEN), same contract as
+# the systemd unit's EnvironmentFile.
+if [[ -r "$ROOT/config/secrets.env" ]]; then
+  set -a; . "$ROOT/config/secrets.env"; set +a
 fi
 exec "$ROOT/runtime/bin/kamimusuhi" serve --config "$ROOT/config/resident.json"
 RUN

@@ -6,7 +6,8 @@
 #
 # Builds release binaries, installs them under /srv/kamimusuhi/runtime/bin,
 # installs the node config (keeping an existing one unless --force-config),
-# and on the Pi initializes the individual ONLY if no canonical store exists.
+# and initializes the individual (canonical on pi, sister on llm_master)
+# ONLY when the config enables dialogue and no store exists yet.
 set -euo pipefail
 
 NODE="${1:?usage: $0 <pi|llm_master> [--force-config]}"
@@ -20,10 +21,9 @@ case "$NODE" in pi|llm_master) ;; *) echo "node must be pi or llm_master" >&2; e
 [[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
 cd "$SRC"
 echo "==> build (release)"
-bins=(--bin kamimusuhi)
-[[ "$NODE" == pi ]] && bins+=(--bin k-core --bin kamimusuhi-runtime)
-pkgs=(-p kamimusuhi-resident)
-[[ "$NODE" == pi ]] && pkgs+=(-p kamimusuhi-runtime)
+bins=(--bin kamimusuhi --bin kamimusuhi-runtime)
+[[ "$NODE" == pi ]] && bins+=(--bin k-core)
+pkgs=(-p kamimusuhi-resident -p kamimusuhi-runtime)
 cargo build --release "${pkgs[@]}" "${bins[@]}"
 
 echo "==> binaries"
@@ -49,7 +49,7 @@ if [[ ! -f "$ROOT/config/secrets.env" ]]; then
   echo "    WARNING: $ROOT/config/secrets.env missing (push it with push-secrets.sh)"
 fi
 
-if [[ "$NODE" == pi ]]; then
+if grep -q '"dialogue"[[:space:]]*:' "$ROOT/config/resident.json"; then
   IND="$ROOT/runtime/individual"
   if [[ -e "$IND/kamimusuhi.sqlite" || -e "$IND/runtime.json" ]]; then
     echo "==> individual exists at $IND (never reinitialized)"
