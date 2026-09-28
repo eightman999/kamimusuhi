@@ -146,7 +146,7 @@ token は `$KAMIMUSUHI_NODE_TOKEN` または `~/.config/kamimusuhi/node_token`�
 
 各ノードが `dialogue` を持つ場合、そこに住む個体は別個体（姉妹）同士として扱われる。`intercom` 設定を有効にすると、姉妹間で envelope（手紙）をやり取りできる。
 
-- 受信: `POST /v1/intercom`（peer からの envelope, bearer 認証）→ 冪等に受理 → `sister@<from>` subject の対話ターンとして個体へ届く。`dialogue` の無いノードは受理しない（送信側は dead-letter）。
+- 受信: `POST /v1/intercom`（peer からの envelope, bearer 認証）→ 冪等に受理 → `sister-<from>` subject の対話ターンとして個体へ届く。`dialogue` の無いノードは受理しない（送信側は dead-letter）。
 - 送信: 個体の `peer_say` tool、または operator の `kamimusuhi say <peer> <text…>` / `intercom send`。永続 outbox（`current_state/intercom.json`）に載り、直接配送 → 失敗時は `relay` 経由 → 指数バックオフで `max_attempts` まで再送。
 - 返信は本人の能動行為（`peer_say`）。例外は operator が `intercom open <peer> [turns] [text…]` で開いた会話だけ — 各ターンの応答がそのまま転送され、`auto_left` が envelope と共に減り、`max_hops` が無人連鎖の上限になる。個体は応答中の `[end]` 行で会話を閉じられる。
 - 重複は `seen` id で排除され、直接配送と relay 経由の二重到着は無害。inbound/outbox/conversations は再起動をまたいで保持される。

@@ -203,7 +203,7 @@ impl Default for CommitmentsConfig {
 /// Sister-to-sister messaging between the individuals hosted on peer
 /// nodes. Each node that hosts an individual (`dialogue` configured)
 /// accepts envelopes over `POST /v1/intercom` and turns them into dialogue
-/// turns under the subject `sister@<from>`. Replies are active — the
+/// turns under the subject `sister-<from>`. Replies are active — the
 /// individual calls `peer_say` — except in conversations the operator
 /// opened with an auto-reply budget, where each turn's response is
 /// forwarded until the budget or the hop limit runs out.

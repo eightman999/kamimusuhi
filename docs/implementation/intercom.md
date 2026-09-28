@@ -11,13 +11,13 @@
   → 指数バックオフで再送、max_attempts で dead-letter
 受信（POST /v1/intercom または relay ポーリング）
   → envelope 検証 + seen による冪等受理
-  → inbound キュー → dialogue::talk(subject="sister@<from>") で通常の対話ターンとして個体へ届く
+  → inbound キュー → dialogue::talk(subject="sister-<from>") で通常の対話ターンとして個体へ届く
 ```
 
 ## 不変条件
 
 1. 受理済みの手紙は再起動を生き残る。inbound・outbox・conversations・seen・relay cursor は `current_state/intercom.json`（atomic write）に保持し、遷移ごとに `conversations/intercom` へ `append_sync` でジャーナルする。
-2. 姉妹の発話は個体の通常 intake を通る —— memory gate・writer epoch・タスクボードを迂回しない。件名は `sister@<from>` で、発言者は姉妹個体と明記される（Peer の言葉が self の記録と混ざらない）。
+2. 姉妹の発話は個体の通常 intake を通る —— memory gate・writer epoch・タスクボードを迂回しない。件名は `sister-<from>` で、発言者は姉妹個体と明記される（Peer の言葉が self の記録と混ざらない）。
 3. 返信は個体の能動行為（`peer_say`）。唯一の例外は operator が `intercom open <peer> <turns>` で開いた会話の自動返信モード —— `auto_left` が envelope と共に減り、受信側は自ノードの `auto_reply_turns` を超えて委譲されず、`max_hops` が無人連鎖の絶対上限。個体は `[end]` 行で会話を閉じられる。
 4. 直接配送と relay 経由の二重到着は無害（envelope id で dedup）。`accepted:false` は恒久拒否（hop 超過・宛先違い・個体不在）で dead-letter し、輸送失敗だけが再送対象。
 5. `per_peer_daily_limit`（既定200/日）が送信量を上限化する —— tool でも operator でも同じ枠。

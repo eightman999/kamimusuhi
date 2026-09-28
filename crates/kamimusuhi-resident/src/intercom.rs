@@ -7,7 +7,7 @@
 //! the mail system between them: it carries envelopes, journals both ends
 //! of every exchange under `conversations/intercom`, and hands each
 //! message to the receiving individual as a normal dialogue turn on the
-//! subject `sister@<from-node>`.
+//! subject `sister-<from-node>`.
 //!
 //! Delivery:
 //!
@@ -644,7 +644,7 @@ impl Intercom {
                     None => break,
                 }
             };
-            let subject = format!("sister@{}", env.from);
+            let subject = format!("sister-{}", env.from);
             let framed = {
                 let s = self.state.lock().unwrap_or_else(|p| p.into_inner());
                 self.frame_incoming(&s, &env)
