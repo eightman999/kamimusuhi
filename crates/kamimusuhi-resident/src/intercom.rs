@@ -614,8 +614,9 @@ impl Intercom {
                 ));
             } else {
                 line.push_str(&format!(
-                    "\n返信する場合は peer_say(to=\"{}\", conversation=\"{conv_id}\", body=\"…\") を呼んでください。\
-                     会話を閉じるときは end=true を付けます。",
+                    "\n返信する場合は peer_say ツールを呼び出してください（応答テキストに構文を書かないでください）。\
+                     引数 to は \"{}\"、conversation は \"{conv_id}\"、body に返信文を入れます。\
+                     会話を閉じるときは引数 end を true にします。",
                     env.from
                 ));
             }

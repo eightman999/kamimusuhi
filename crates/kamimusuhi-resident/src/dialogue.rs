@@ -97,6 +97,8 @@ const MAX_MESSAGE_BYTES: usize = 32 * 1024;
 
 pub(crate) fn valid_subject(subject: &str) -> bool {
     // Must start alphanumeric so it can never be parsed as a CLI flag.
+    // Charset matches kamimusuhi-runtime's --subject rule (A-Za-z0-9._-,
+    // 1-80) — anything wider was accepted here then failed at spawn.
     subject
         .bytes()
         .next()
@@ -104,7 +106,7 @@ pub(crate) fn valid_subject(subject: &str) -> bool {
         && subject.len() <= 64
         && subject
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"-_.@".contains(&b))
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
 }
 
 /// Returns (HTTP status, body).
@@ -120,7 +122,7 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
     if !valid_subject(subject) {
         return (
             400,
-            json!({"error": "subject must be 1-64 chars of [A-Za-z0-9-_.@]"}),
+            json!({"error": "subject must be 1-64 chars of [A-Za-z0-9._-]"}),
         );
     }
     if !config.dir.join("kamimusuhi.sqlite").is_file() {
@@ -416,8 +418,10 @@ mod tests {
     #[test]
     fn subjects_are_restricted() {
         assert!(valid_subject("eightman"));
-        assert!(valid_subject("a.b@c-d_e"));
+        assert!(valid_subject("a.b-c_d"));
+        assert!(valid_subject("sister-mac"));
         assert!(!valid_subject(""));
+        assert!(!valid_subject("sister@mac"));
         assert!(!valid_subject("--dir"));
         assert!(!valid_subject("a b"));
     }
