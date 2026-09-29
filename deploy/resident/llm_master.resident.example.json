@@ -2,7 +2,10 @@
   "node": {
     "id": "llm_master",
     "role": "cognition",
-    "listen": "0.0.0.0:7860"
+    "listen": "0.0.0.0:7860",
+    "capabilities": [
+      "llm.generate"
+    ]
   },
   "paths": {
     "root": "/srv/kamimusuhi",
@@ -16,7 +19,8 @@
     {
       "id": "pi",
       "role": "continuity",
-      "url": "http://PI_HOST:7860"
+      "url": "http://PI_HOST:7860",
+      "priority": 100
     },
     {
       "id": "mac",
@@ -24,7 +28,8 @@
       "url": "http://MAC_HOST:7860",
       "alt_urls": [
         "http://MAC_TAILNET_HOST:7860"
-      ]
+      ],
+      "priority": 50
     }
   ],
   "tiers": [
@@ -227,5 +232,15 @@
   "tool_judge": {
     "model": "local",
     "on_unavailable": "approval"
+  },
+  "delegation": {
+    "enabled": true,
+    "workers": 4,
+    "max_attempts": 6,
+    "retry_secs": 15,
+    "poll_ms": 1500,
+    "default_timeout_ms": 120000,
+    "max_timeout_ms": 900000,
+    "max_queue": 256
   }
 }

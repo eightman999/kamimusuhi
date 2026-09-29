@@ -319,6 +319,38 @@ journalctl -u kamimusuhi-resident -f
 
 `status` は Pi / llm_master（peer の /health とGPU）/ routing tier / NAS（書込probe・spool backlog・最終同期）/ HAI（API疎通・残高）/ K-CORE / snapshot を表示する。
 
+## Node Task（Light/Heavy 委譲プロトコル）
+
+Pi (light) ↔ llm_master (heavy) 間の typed task 委譲。詳細は
+`docs/light-heavy-node-architecture.md`。
+
+- `POST /task` — `{task_id?, type, requires[], payload, timeout_ms?, target_node?, wait_ms?}`
+  を受理。`task_id` は冪等キー（再送は既存レコードを返す）。認証は node token。
+- `GET /task/<id>` — タスクの現状態・結果を取得。
+- `GET /capabilities` — `{"node_id","role","mode","capabilities":[...]}`（無認証、
+  `/health` にも同じ capabilities が載るので既存 probe が discovery を兼ねる）。
+- `GET /v1/delegations` / `POST /v1/delegations` — 一覧 / show / retry / cancel。
+- `kamimusuhi node` — spec形状の node_state。`kamimusuhi task …` — submit/status/list/retry/cancel。
+
+分類は LOCAL / DELEGATE / QUEUE / REJECT の rule-based（`delegation::decide`）。
+`node.*`/`state.*` は常に local。`requires` と各ノードの advertised capability で
+宛先を決めるので、将来の GPU/V100/cloud API ノードも同一プロトコルに載る。
+light node は healthy な capable peer を優先し、heavy node は local を優先する。
+
+queue は `current_state/delegations.sqlite` (WAL)。再起動で in-flight は
+`retry_pending` に倒れて再送される。payload/result は node-local のみ —
+NAS journal/board に載るのは id/type/state/latency だけ。
+
+```jsonc
+// pi.resident.json 追加例
+"peers": [{"id": "llm_master", "url": "http://…:7860",
+           "capabilities": ["llm.generate"], "priority": 100}],
+"delegation": {"enabled": true, "workers": 2, "max_attempts": 6,
+               "retry_secs": 30, "poll_ms": 1500,
+               "default_timeout_ms": 120000, "max_timeout_ms": 900000,
+               "max_queue": 128}
+```
+
 ## 障害時の挙動
 
 | 事象 | 挙動 | 復帰 |
@@ -328,3 +360,4 @@ journalctl -u kamimusuhi-resident -f
 | llm_master 再起動 | resident・llama-master とも自動起動 | 自動 |
 | NAS 断 / ハング | spool に蓄積、probe は別スレッドで timeout | マーカー確認後に自動配送 |
 | HAI 断 | 他tierのみ。全滅なら 503 | probe 成功で自動 |
+| heavy node 停止中の委譲 | task は `retry_pending` で待機（Pi側 event loop は止まらない） | peer 復帰で冪等再送、attempts 上限超過で `failed` |
