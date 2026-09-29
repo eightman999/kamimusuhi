@@ -28,6 +28,11 @@ kamimusuhi commit [list [--all] | show <id> | new <goal…> | note <id> <text…
 kamimusuhi intercom [status | list [--all] | show <conv> | send <peer> <text…>
                    | open <peer> [turns] [text…] | close <conv> [text…] | retry [id]]
 kamimusuhi say <peer> <text…>   send a message to the sister individual on <peer>
+kamimusuhi node [--url <node-url>]        light/heavy node state (mode, goal, queue, peers)
+kamimusuhi task list | show <id> | retry <id> | cancel <id>
+kamimusuhi task submit <type> [payload-json] [--url <node-url>]
+          e.g. kamimusuhi task submit node.ping
+               kamimusuhi task submit llm.generate '{\"messages\":[...],\"requires\":[\"llm.generate\"]}'
 kamimusuhi check-config [--config <path>]
 
 Default config: /srv/kamimusuhi/config/resident.json (or $KAMIMUSUHI_CONFIG).
@@ -134,6 +139,7 @@ fn serve(args: &Args) -> Result<(), String> {
     kamimusuhi_resident::task_orchestrator::spawn(&shared);
     kamimusuhi_resident::commitments::spawn(&shared);
     kamimusuhi_resident::intercom::spawn(&shared);
+    kamimusuhi_resident::delegation::spawn(&shared);
     if role == NodeRole::Continuity
         && let Some(k) = kcore_config
     {
@@ -364,6 +370,63 @@ fn run() -> Result<ExitCode, String> {
                 _ => return Err(USAGE.to_owned()),
             };
             let reply = client::intercom(&url, token.as_deref(), &body)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&reply).unwrap_or_default()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        "node" => {
+            use kamimusuhi_resident::client;
+            let url = match &args.url {
+                Some(u) => u.clone(),
+                None if args.config.is_file() => local_url(&args.config)?,
+                None => client::discover(&client::candidates(None))?,
+            };
+            let doc = status::fetch(&url, token.as_deref())?;
+            let node = doc.get("node_state").cloned().unwrap_or(Value::Null);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&node).unwrap_or_default()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        "task" => {
+            use kamimusuhi_resident::client;
+            let url = match &args.url {
+                Some(u) => u.clone(),
+                None if args.config.is_file() => local_url(&args.config)?,
+                None => client::discover(&client::candidates(None))?,
+            };
+            let t = |i: usize| args.text.get(i).cloned().unwrap_or_default();
+            let reply = match args.text.first().map_or("list", String::as_str) {
+                "list" => client::delegations(&url, token.as_deref(), &json!({"action": "list"}))?,
+                "show" | "status" => client::task_record(&url, token.as_deref(), &t(1))?,
+                "retry" => client::delegations(
+                    &url,
+                    token.as_deref(),
+                    &json!({"action": "retry", "task_id": t(1)}),
+                )?,
+                "cancel" => client::delegations(
+                    &url,
+                    token.as_deref(),
+                    &json!({"action": "cancel", "task_id": t(1)}),
+                )?,
+                "submit" => {
+                    let task_type = t(1);
+                    if task_type.is_empty() {
+                        return Err("task submit needs a type".to_owned());
+                    }
+                    let mut body: Value = match t(2).as_str() {
+                        "" => json!({}),
+                        text => serde_json::from_str(text)
+                            .map_err(|e| format!("payload is not JSON: {e}"))?,
+                    };
+                    body["type"] = json!(task_type);
+                    client::submit_task(&url, token.as_deref(), &body)?
+                }
+                _ => return Err(USAGE.to_owned()),
+            };
             println!(
                 "{}",
                 serde_json::to_string_pretty(&reply).unwrap_or_default()

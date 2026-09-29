@@ -304,6 +304,45 @@ pub fn render(status: &Value) -> (String, bool) {
             );
         }
     }
+    // Node-task delegation (light/heavy split): queue depth, outcomes and
+    // the few most recent records — ids and states only, never payloads.
+    let delegations = &status["delegations"];
+    let pending = delegations["pending"].as_u64().unwrap_or(0);
+    let recent = delegations["recent"].as_array();
+    if delegations["enabled"].as_bool().unwrap_or(false)
+        && (pending > 0 || recent.is_some_and(|r| !r.is_empty()))
+    {
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "DELEGATIONS  pending={} completed={} failed={} timeouts={} retries={} last={}ms",
+            pending,
+            s(delegations.get("completed")),
+            s(delegations.get("failed")),
+            s(delegations.get("timeouts")),
+            s(delegations.get("retries")),
+            s(delegations.get("last_latency_ms")),
+        );
+        for t in recent.into_iter().flatten().take(5) {
+            let terminal = ["completed", "failed", "timeout", "cancelled"]
+                .contains(&t["state"].as_str().unwrap_or(""));
+            let _ = writeln!(
+                out,
+                "  [{}] {:<14} {:<20} {} {}",
+                mark(!terminal || t["state"] == "completed"),
+                s(t.get("state")),
+                s(t.get("task_id")),
+                s(t.get("type")),
+                t.get("node")
+                    .map(|n| format!("→ {}", s(Some(n))))
+                    .unwrap_or_default(),
+            );
+        }
+        if let Some(e) = delegations.get("last_error").filter(|v| !v.is_null()) {
+            let _ = writeln!(out, "  last_error: {}", s(Some(e)));
+        }
+    }
+
     if let Some(pending) = status["approvals_pending"]
         .as_array()
         .filter(|p| !p.is_empty())
