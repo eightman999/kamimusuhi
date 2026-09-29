@@ -75,6 +75,105 @@ pub struct Config {
     /// `judge_required` (see judge.rs).
     #[serde(default)]
     pub tool_judge: ToolJudgeConfig,
+    /// Typed node-task delegation (`POST /task`): queueing, retries and
+    /// deadlines for work this node hands to a peer — and for work peers
+    /// hand to this node (see delegation.rs).
+    #[serde(default)]
+    pub delegation: DelegationConfig,
+}
+
+/// Delegation lifecycle bounds. Defaults are sized for a light node on a
+/// Raspberry Pi: a couple of workers, generous retries, tight queue caps.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DelegationConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Worker threads running tasks (inbound and outbound share the pool).
+    /// Local LLM calls block the worker for the call's duration; keep this
+    /// small on the Pi so delegated work never saturates the CPU.
+    #[serde(default = "default_delegation_workers")]
+    pub workers: usize,
+    /// Submit attempts before a delegation fails permanently.
+    #[serde(default = "default_delegation_attempts")]
+    pub max_attempts: u32,
+    /// Backoff between submit attempts, seconds.
+    #[serde(default = "default_delegation_retry_secs")]
+    pub retry_secs: u64,
+    /// Poll interval while a task runs remotely, milliseconds.
+    #[serde(default = "default_delegation_poll_ms")]
+    pub poll_ms: u64,
+    /// Consecutive poll transport failures before the task goes back to
+    /// `retry_pending` (the peer may have restarted and still hold the
+    /// record — the idempotent re-submit reconciles).
+    #[serde(default = "default_poll_error_limit")]
+    pub poll_error_limit: u32,
+    /// Deadline applied when a submission sets none, milliseconds.
+    #[serde(default = "default_task_timeout_ms")]
+    pub default_timeout_ms: u64,
+    /// Cap on a submission's `timeout_ms`.
+    #[serde(default = "default_task_max_timeout_ms")]
+    pub max_timeout_ms: u64,
+    /// Open outbound delegations allowed before new submissions are
+    /// refused with `queue_full`.
+    #[serde(default = "default_delegation_queue")]
+    pub max_queue: usize,
+    /// Connect+read bound for submit/poll calls to peers, seconds.
+    #[serde(default = "default_delegation_http_timeout")]
+    pub http_timeout_secs: u64,
+}
+
+const fn default_delegation_workers() -> usize {
+    2
+}
+
+const fn default_delegation_attempts() -> u32 {
+    6
+}
+
+const fn default_delegation_retry_secs() -> u64 {
+    15
+}
+
+const fn default_delegation_poll_ms() -> u64 {
+    1500
+}
+
+const fn default_poll_error_limit() -> u32 {
+    3
+}
+
+const fn default_task_timeout_ms() -> u64 {
+    120_000
+}
+
+const fn default_task_max_timeout_ms() -> u64 {
+    900_000
+}
+
+const fn default_delegation_queue() -> usize {
+    256
+}
+
+const fn default_delegation_http_timeout() -> u64 {
+    10
+}
+
+impl Default for DelegationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            workers: default_delegation_workers(),
+            max_attempts: default_delegation_attempts(),
+            retry_secs: default_delegation_retry_secs(),
+            poll_ms: default_delegation_poll_ms(),
+            poll_error_limit: default_poll_error_limit(),
+            default_timeout_ms: default_task_timeout_ms(),
+            max_timeout_ms: default_task_max_timeout_ms(),
+            max_queue: default_delegation_queue(),
+            http_timeout_secs: default_delegation_http_timeout(),
+        }
+    }
 }
 
 /// Which model screens `judge_required` tool calls before they run, and
@@ -411,6 +510,12 @@ pub struct NodeConfig {
     /// for every non-loopback request except `/health`.
     #[serde(default = "default_token_env")]
     pub token_env: String,
+    /// Extra capability ids this node advertises on `/capabilities` and in
+    /// `/health` (e.g. `"vision"`, `"embedding"` once an adapter exists).
+    /// Capabilities derived from the config merge with these — see
+    /// capabilities.rs.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 fn default_token_env() -> String {
@@ -478,6 +583,21 @@ pub struct PeerConfig {
     /// probe tries them in order and requests go to whichever answered.
     #[serde(default)]
     pub alt_urls: Vec<String>,
+    /// Static capability declaration for delegation routing. The live
+    /// `/health` probe carries the peer's advertised capabilities and
+    /// overrides this list once a probe has succeeded; the static list is
+    /// the fallback for peers that have never been reached (needed so a
+    /// task can queue for a peer that is down rather than be rejected).
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    /// Delegation preference among capable peers; higher wins, ties keep
+    /// config order.
+    #[serde(default = "default_peer_priority")]
+    pub priority: u32,
+}
+
+const fn default_peer_priority() -> u32 {
+    50
 }
 
 impl PeerConfig {
@@ -931,6 +1051,29 @@ impl Config {
                 kamimusuhi_resource_http::Endpoint::parse(url, "/health")
                     .map_err(|e| format!("peer {}: {e}", peer.id))?;
             }
+            for cap in &peer.capabilities {
+                if !kamimusuhi_node::valid_id(cap) {
+                    return Err(format!("peer {}: capability {cap:?} is invalid", peer.id));
+                }
+            }
+        }
+        for cap in &self.node.capabilities {
+            if !kamimusuhi_node::valid_id(cap) {
+                return Err(format!("node.capabilities {cap:?} is invalid"));
+            }
+        }
+        let d = &self.delegation;
+        if d.workers == 0
+            || d.workers > 8
+            || d.max_attempts == 0
+            || d.poll_ms < 50
+            || d.poll_error_limit == 0
+            || d.default_timeout_ms > d.max_timeout_ms
+            || d.max_timeout_ms > kamimusuhi_node::MAX_TIMEOUT_MS
+            || d.max_queue == 0
+            || d.http_timeout_secs == 0
+        {
+            return Err("delegation limits are invalid".to_owned());
         }
         let mut mcp_names = std::collections::HashSet::new();
         for server in &self.mcp_servers {
