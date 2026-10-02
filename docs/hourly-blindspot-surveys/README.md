@@ -24,6 +24,8 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 
 | Date / time (JST) | Survey | Main blind spots | 反映判断 |
 |---|---|---|---|
+| 2026-10-02 18:57:37 | [2026-10-02-18-57-37.md](./2026-10-02-18-57-37.md) | structural-root retention / cross-agent wait-cycle closure / migration-revision attestation / signed-identity enrichment / model-switch projection conservation / microtask organ eligibility | 未判定 |
+| 2026-10-02 13:00:59 | [2026-10-02-13-00-59.md](./2026-10-02-13-00-59.md) | observation omission provenance / organ code-state ownership / owner-scoped retention / first-turn readiness / principal-scoped discovery materialization / sensor incarnation rebinding | 未判定 |
 | 2026-09-27 12:57:40 | [2026-09-27-12-57-40.md](./2026-09-27-12-57-40.md) | application-semantic backup attestation / branch-lineage receipt parity / failure-domain circuit breaker + upgrade cohort gate / migration sanitizer non-interference / projection-repair source coverage | 未判定 |
 | 2026-09-26 07:01:13 | [2026-09-26-07-01-13.md](./2026-09-26-07-01-13.md) | causal-origin vs conversational-relation typing / active-turn recovery dependency horizon / corruption-preserving publication / final-utterance reconciliation / producer-complete health | 未判定 |
 | 2026-09-26 01:00:06 | [2026-09-26-01-00-06.md](./2026-09-26-01-00-06.md) | authoritative lifecycle resolver / resolved runtime identity reuse / effect-surface preflight / storage-semantic transfer / resource-envelope domains / NNV3 / LLM4PDR | 未判定 |
