@@ -24,6 +24,7 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 
 | Date / time (JST) | Survey | Main blind spots | 反映判断 |
 |---|---|---|---|
+| 2026-10-03 00:57:53 | [2026-10-03-00-57-53.md](./2026-10-03-00-57-53.md) | clock-domain semantics / pre-admission input capture / maintenance occupancy handoff / grounded capability self-description / schedule-revision fencing / outcome-evidence precedence / offline-cognition advancement | 未判定 |
 | 2026-10-02 18:57:37 | [2026-10-02-18-57-37.md](./2026-10-02-18-57-37.md) | structural-root retention / cross-agent wait-cycle closure / migration-revision attestation / signed-identity enrichment / model-switch projection conservation / microtask organ eligibility | 未判定 |
 | 2026-10-02 13:00:59 | [2026-10-02-13-00-59.md](./2026-10-02-13-00-59.md) | observation omission provenance / organ code-state ownership / owner-scoped retention / first-turn readiness / principal-scoped discovery materialization / sensor incarnation rebinding | 未判定 |
 | 2026-09-27 12:57:40 | [2026-09-27-12-57-40.md](./2026-09-27-12-57-40.md) | application-semantic backup attestation / branch-lineage receipt parity / failure-domain circuit breaker + upgrade cohort gate / migration sanitizer non-interference / projection-repair source coverage | 未判定 |
