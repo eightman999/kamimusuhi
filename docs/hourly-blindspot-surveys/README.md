@@ -24,7 +24,9 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 
 | Date / time (JST) | Survey | Main blind spots | 反映判断 |
 |---|---|---|---|
+| 2026-10-06 07:01:54 | [2026-10-06-07-01-54.md](./2026-10-06-07-01-54.md) | semantic interaction constituency / route-generation-qualified quota holds / scoped provider identifiers / fallback outcome-health factorization / scheduled-vs-live participation context | 未判定 |
 | 2026-10-05 07:03:24 | [2026-10-05-07-03-24.md](./2026-10-05-07-03-24.md) | order-bearing config serialization / semantic-order domain across debounce partitions / typed control-frame replay isolation / operation-scoped security evidence / downstream token audience boundaries | 未判定 |
+| 2026-10-05 12:59:03 | [2026-10-05-12-59-03.md](./2026-10-05-12-59-03.md) | retention-vs-recovery materialization / memory displacement receipts / articulable-vs-tacit preference / relationship-memory + peer-influence watch | 未判定 |
 | 2026-10-04 12:55:52 | [2026-10-04-12-55-52.md](./2026-10-04-12-55-52.md) | retention-utility identifiability / human-principal deprovisioning / uncertain external-resource reconciliation / executor saturation / natural-rate memory need / namespace-bound existence / supply-chain metadata unknown | 未判定 |
 | 2026-10-03 19:01:19 | [2026-10-03-19-01-19.md](./2026-10-03-19-01-19.md) | recursive structure/cycle budgets / request-scoped bridge authority / semantic authority-policy backup / layered policy composition / tool-result completeness / MCP annotation projection / driver-qualified calibration | 未判定 |
 | 2026-10-03 00:57:53 | [2026-10-03-00-57-53.md](./2026-10-03-00-57-53.md) | clock-domain semantics / pre-admission input capture / maintenance occupancy handoff / grounded capability self-description / schedule-revision fencing / outcome-evidence precedence / offline-cognition advancement | 未判定 |
