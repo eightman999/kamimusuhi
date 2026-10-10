@@ -24,6 +24,7 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 
 | Date / time (JST) | Survey | Main blind spots | 反映判断 |
 |---|---|---|---|
+| 2026-10-10 19:00:10 | [2026-10-10-19-00-10.md](./2026-10-10-19-00-10.md) | admission-after-auth dedup / dependency-aware skill retention / MCP orphan generation / nested state restore / diagnostic-probe credential poisoning / autonomous-organ retirement / reversible tool-result forgetting / human self authorship / checkpoint synthesis limits | 未判定 |
 | 2026-10-05 07:03:24 | [2026-10-05-07-03-24.md](./2026-10-05-07-03-24.md) | order-bearing config serialization / semantic-order domain across debounce partitions / typed control-frame replay isolation / operation-scoped security evidence / downstream token audience boundaries | 未判定 |
 | 2026-10-04 12:55:52 | [2026-10-04-12-55-52.md](./2026-10-04-12-55-52.md) | retention-utility identifiability / human-principal deprovisioning / uncertain external-resource reconciliation / executor saturation / natural-rate memory need / namespace-bound existence / supply-chain metadata unknown | 未判定 |
 | 2026-10-03 19:01:19 | [2026-10-03-19-01-19.md](./2026-10-03-19-01-19.md) | recursive structure/cycle budgets / request-scoped bridge authority / semantic authority-policy backup / layered policy composition / tool-result completeness / MCP annotation projection / driver-qualified calibration | 未判定 |
