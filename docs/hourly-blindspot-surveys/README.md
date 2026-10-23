@@ -24,6 +24,7 @@ Kamimusuhi の通常の分野横断 daily survey では拾いにくい、隣接�
 
 | Date / time (JST) | Survey | Main blind spots | 反映判断 |
 |---|---|---|---|
+| 2026-10-24 01:02:16 | [2026-10-24-01-02-16.md](./2026-10-24-01-02-16.md) | causal-mask bypass / action-conditioned memory verification / dynamic visual state / fading safety margin / shifted privacy audit / compositional exposure / microVM quiescence / live runtime patch activation / LR-boundary forgetting / path-wise action learning | 未判定 |
 | 2026-10-23 19:00:51 | [2026-10-23-19-00-51.md](./2026-10-23-19-00-51.md) | memory-use preference / human deference calibration / release-work accountability / educational offloading / simulated control evals / conservative canary / N3 graph-terms / interaction preference / metacognitive scaffolding / ephemeral storage | 未判定 |
 | 2026-10-05 07:03:24 | [2026-10-05-07-03-24.md](./2026-10-05-07-03-24.md) | order-bearing config serialization / semantic-order domain across debounce partitions / typed control-frame replay isolation / operation-scoped security evidence / downstream token audience boundaries | 未判定 |
 | 2026-10-04 12:55:52 | [2026-10-04-12-55-52.md](./2026-10-04-12-55-52.md) | retention-utility identifiability / human-principal deprovisioning / uncertain external-resource reconciliation / executor saturation / natural-rate memory need / namespace-bound existence / supply-chain metadata unknown | 未判定 |
