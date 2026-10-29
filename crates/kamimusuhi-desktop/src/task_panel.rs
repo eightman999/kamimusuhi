@@ -7,6 +7,7 @@
 use std::sync::mpsc::Sender;
 
 use eframe::egui::{self, Color32, RichText, Stroke};
+use kamimusuhi_runtime::agent_exec::catalog;
 use serde_json::{Value, json};
 
 use crate::app::{AMBER, BLUE, BORDER, GREEN, MUTED, PANEL, PANEL_RAISED, TEXT};
@@ -261,8 +262,16 @@ impl AgentsPanel {
                                 send(json!({"action": "feedback", "id": id, "verdict": verdict}));
                             }
                         }
+                        let (label, color) = review_label(&t["detail"]["review"]);
+                        chip(ui, &label, color);
                     }
                 });
+                if let Some(note) = t["detail"]["review"]["note"]
+                    .as_str()
+                    .filter(|n| !n.is_empty())
+                {
+                    ui.label(RichText::new(format!("澪: {note}")).small().color(MUTED));
+                }
                 if is_finished(t)
                     && t["result"]["session_id"]
                         .as_str()
@@ -369,7 +378,8 @@ fn executor_strip(ui: &mut egui::Ui, executors: &Value) {
         );
         return;
     }
-    ui.horizontal_wrapped(|ui| {
+    let row = egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true);
+    ui.with_layout(row, |ui| {
         for e in list {
             let (state, color) = executor_state(e);
             egui::Frame::new()
@@ -400,11 +410,16 @@ fn executor_strip(ui: &mut egui::Ui, executors: &Value) {
                         Value::Object(o) => o.len().to_string(),
                         other => num_or_dash(other),
                     };
+                    // Billing is per model; the executor-wide fallback only
+                    // matters when it is declared.
+                    let billing = match e["default_billing"].as_str() {
+                        None | Some("unknown") => "課金はモデル別".to_owned(),
+                        Some(b) => b.to_owned(),
+                    };
                     ui.label(
                         RichText::new(format!(
-                            "モデル {models} · 既定 {} · {}",
+                            "モデル {models} · 既定 {} · {billing}",
                             text_or_dash(&e["default_model"]),
-                            text_or_dash(&e["default_billing"]),
                         ))
                         .small()
                         .color(MUTED),
@@ -437,15 +452,26 @@ fn executor_strip(ui: &mut egui::Ui, executors: &Value) {
                         )
                         .on_hover_text(text_or_dash(&sup["detail"]));
                     }
-                    for (key, prefix) in [("detail", ""), ("catalog_error", "カタログ: ")] {
-                        if let Some(msg) = e[key].as_str().filter(|s| !s.is_empty()) {
-                            ui.label(
-                                RichText::new(format!("{prefix}{}", clip(msg, 90)))
-                                    .small()
-                                    .color(if key == "catalog_error" { RED } else { MUTED }),
-                            )
+                    if let Some(msg) = e["detail"].as_str().filter(|s| !s.is_empty()) {
+                        ui.label(RichText::new(clip(msg, 90)).small().color(MUTED))
                             .on_hover_text(msg);
-                        }
+                    }
+                    if let Some(msg) = e["catalog_error"].as_str().filter(|s| !s.is_empty()) {
+                        let (text, color) = if needs_login(e) {
+                            (
+                                format!(
+                                    "ログインが必要（{} のホストで一度ログイン）。それまで自動選択されません",
+                                    text_or_dash(&e["name"])
+                                ),
+                                AMBER,
+                            )
+                        } else if msg == catalog::NO_DISCOVERY {
+                            ("モデル一覧なし（harness の既定モデルで実行）".to_owned(), MUTED)
+                        } else {
+                            (format!("モデル一覧: {}", clip(msg, 90)), AMBER)
+                        };
+                        ui.label(RichText::new(text).small().color(color))
+                            .on_hover_text(msg);
                     }
                 });
         }
@@ -565,7 +591,7 @@ fn result_block(ui: &mut egui::Ui, id: &str, result: &Value) {
         ("証跡".into(), text_or_dash(&result["evidence_id"])),
         ("評価".into(), text_or_dash(&result["eval"])),
         (
-            "フィードバック".into(),
+            "あなたの採否".into(),
             match result["feedback"].as_str() {
                 Some("accept") => "採用".into(),
                 Some("reject") => "不採用".into(),
@@ -751,13 +777,45 @@ fn status_color(status: &str) -> Color32 {
     }
 }
 
+/// Whether the executor waits for the operator to log in. Older nodes do
+/// not send `needs_login`, so the discovery error is read as well.
+fn needs_login(e: &Value) -> bool {
+    e["needs_login"].as_bool().unwrap_or(false)
+        || e["catalog_error"]
+            .as_str()
+            .is_some_and(catalog::needs_login)
+}
+
+/// A discovery error that means more than "no model list".
+fn catalog_problem(e: &Value) -> Option<&str> {
+    e["catalog_error"]
+        .as_str()
+        .filter(|m| !m.is_empty() && *m != catalog::NO_DISCOVERY)
+}
+
+/// The individual's review of a finished task (`detail.review`).
+fn review_label(review: &Value) -> (String, Color32) {
+    if review.is_null() {
+        return ("澪の評価: 待ち".to_owned(), MUTED);
+    }
+    match review["verdict"].as_str() {
+        Some("accept") => ("澪の評価: 採用".to_owned(), GREEN),
+        Some("reject") => ("澪の評価: 不採用".to_owned(), RED),
+        _ => ("澪の評価: 保留".to_owned(), AMBER),
+    }
+}
+
 fn executor_state(e: &Value) -> (&'static str, Color32) {
     if e["enabled"].as_bool() == Some(false) {
         ("無効", MUTED)
-    } else if e["ok"].as_bool() == Some(true) {
-        ("OK", GREEN)
-    } else {
+    } else if e["ok"].as_bool() != Some(true) {
         ("未検出", RED)
+    } else if needs_login(e) {
+        ("要ログイン", AMBER)
+    } else if catalog_problem(e).is_some() {
+        ("一覧取得失敗", AMBER)
+    } else {
+        ("OK", GREEN)
     }
 }
 
@@ -906,6 +964,28 @@ fn sum_usage(per_executor: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signed_out_and_listless_harnesses_are_told_apart() {
+        let ok = json!({"enabled": true, "ok": true});
+        assert_eq!(executor_state(&ok).0, "OK");
+        let listless = json!({"enabled": true, "ok": true,
+                              "catalog_error": "no model discovery configured"});
+        assert_eq!(executor_state(&listless).0, "OK");
+        let devin = json!({"enabled": true, "ok": true, "catalog_error":
+            "discovery Exited exit Some(1): Error: Not logged in. Run `devin auth login`"});
+        assert_eq!(executor_state(&devin).0, "要ログイン");
+        let agy = json!({"enabled": true, "ok": true, "catalog_error":
+            "Error: Please sign in to view available models."});
+        assert_eq!(executor_state(&agy).0, "要ログイン");
+        let broken = json!({"enabled": true, "ok": true, "catalog_error": "timeout"});
+        assert_eq!(executor_state(&broken).0, "一覧取得失敗");
+        assert_eq!(executor_state(&json!({"enabled": false})).0, "無効");
+        assert_eq!(
+            executor_state(&json!({"enabled": true, "ok": false})).0,
+            "未検出"
+        );
+    }
 
     #[test]
     fn unknown_cost_is_never_zero() {

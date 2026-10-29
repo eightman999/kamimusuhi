@@ -1,5 +1,5 @@
 {
-  "_comment": "Task plane executors. Copy to /srv/kamimusuhi/config/agent-executors.json (task_plane.executors_file). The resident re-reads this file when it changes: add, remove or disable (enabled:false) a harness without restarting. adapter = devin_cli | opencode | command_code | generic (generic needs command/run/permission_args; see docs/implementation/task-plane.md). Billing is per model: rules first, then a price the harness lists (>0 = metered), else default_billing (unknown unless declared). Only local/free_tier/subscription/included_credit are picked automatically; metered needs allow_metered and an explicit request. protocol: cli (process per task) | acp (long-lived Agent Client Protocol server; needed to continue Devin sessions). serve: true keeps `opencode serve` running and attaches runs to it. quota: max_tasks_per_day/month, max_usd_per_day/month, max_tokens_per_day (metered models need a usd limit).",
+  "_comment": "Task plane executors. Copy to /srv/kamimusuhi/config/agent-executors.json (task_plane.executors_file). The resident re-reads this file when it changes: add, remove or disable (enabled:false) a harness without restarting. llm_master に置く標準構成: opencode / commandcode / devin / agy / codex / claude（Pi は task plane を持たず、澪の task tool と GUI の /v1/agents を peers 先頭の llm_master へ転送する）。adapter = devin_cli | opencode | command_code | generic (generic needs command/run/permission_args; see docs/implementation/task-plane.md). Billing is per model: rules first, then a price the harness lists (>0 = metered), else default_billing (unknown unless declared). Only local/free_tier/subscription/included_credit are picked automatically; metered needs allow_metered and an explicit request. protocol: cli (process per task) | acp (long-lived Agent Client Protocol server; needed to continue Devin sessions). serve: true keeps `opencode serve` running and attaches runs to it. quota: max_tasks_per_day/month, max_usd_per_day/month, max_tokens_per_day (metered models need a usd limit).",
   "executors": [
     {
       "name": "opencode",
@@ -89,6 +89,91 @@
       "default_billing": "subscription",
       "prefer_for": [
         "research"
+      ],
+      "timeout_secs": 1800,
+      "quota": {
+        "max_tasks_per_day": 30
+      }
+    },
+    {
+      "name": "codex",
+      "adapter": "generic",
+      "command": "codex",
+      "description": "OpenAI Codex CLI（ChatGPT プラン内。コード読解・レビュー・デバッグ向け）。ログインは llm_master 上で `codex login` を一度行う",
+      "run": {
+        "prefix": [
+          "exec",
+          "--skip-git-repo-check",
+          "--color",
+          "never"
+        ],
+        "args": [
+          "{prompt}"
+        ],
+        "model_args": [
+          "-m",
+          "{model}"
+        ],
+        "output": "text"
+      },
+      "permission_args": {
+        "read_only": [
+          "-s",
+          "read-only"
+        ],
+        "workspace_write": [
+          "-s",
+          "workspace-write"
+        ]
+      },
+      "default_billing": "subscription",
+      "prefer_for": [
+        "coding",
+        "review",
+        "debug"
+      ],
+      "timeout_secs": 1800,
+      "quota": {
+        "max_tasks_per_day": 30
+      }
+    },
+    {
+      "name": "claude",
+      "adapter": "generic",
+      "command": "claude",
+      "description": "Claude Code（Claude プラン内。設計・調査・長文読解・レビュー向け）。ログインは llm_master 上で `claude` を一度対話起動して /login する",
+      "run": {
+        "prefix": [
+          "-p",
+          "--output-format",
+          "text"
+        ],
+        "args": [
+          "{prompt}"
+        ],
+        "model_args": [
+          "--model",
+          "{model}"
+        ],
+        "output": "text"
+      },
+      "permission_args": {
+        "read_only": [
+          "--permission-mode",
+          "default",
+          "--disallowedTools=Bash,Edit,Write,NotebookEdit"
+        ],
+        "workspace_write": [
+          "--permission-mode",
+          "acceptEdits",
+          "--disallowedTools=Bash"
+        ]
+      },
+      "default_billing": "subscription",
+      "prefer_for": [
+        "research",
+        "planning",
+        "review"
       ],
       "timeout_secs": 1800,
       "quota": {

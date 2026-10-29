@@ -52,6 +52,16 @@ pub const TOOL_CATALOG: &str = "tool_catalog";
 /// Synthetic tool: add discoverable tools' full definitions to this turn.
 pub const TOOL_ENABLE: &str = "tool_enable";
 
+/// Task-plane tool that hands work to an outside agent and returns at once.
+pub const TASK_DELEGATE: &str = "task_delegate";
+
+/// Whether a task was delegated (or continued) successfully in `records`.
+pub fn delegated(records: &[ToolCallRecord]) -> bool {
+    records
+        .iter()
+        .any(|r| r.ok && matches!(r.name.as_str(), TASK_DELEGATE | "task_continue"))
+}
+
 /// Longest tool description sent to the model, in characters.
 pub const TOOL_DESCRIPTION_CHARS: usize = 200;
 /// Longest parameter description sent to the model, in characters.
@@ -172,6 +182,11 @@ impl ToolOffer {
                     "names": {"type": "array", "items": {"type": "string"},
                               "description": "有効化するツール名"}}}}}),
         ]
+    }
+
+    /// Whether `name` is offered from the first round.
+    pub fn offers(&self, name: &str) -> bool {
+        self.core.iter().any(|d| d["function"]["name"] == name)
     }
 
     /// Tools offered from the first round.
@@ -473,6 +488,118 @@ pub fn requested_calls(message: &Value) -> Vec<(Option<String>, String, Value)> 
         .unwrap_or_default()
 }
 
+/// A call the model wrote out as its whole reply instead of making it —
+/// `task_delegate(executor="devin", objective="…")` or `json_get({…})` —
+/// as the assistant message it should have sent (call id `call_id`).
+/// Only a reply that is nothing but one call to an offered tool with
+/// literal arguments qualifies; anything with surrounding prose does not.
+/// The call then runs through the same checks as any other.
+pub fn prose_call(text: &str, offered: &[String], call_id: &str) -> Option<Value> {
+    let mut body = text.trim();
+    if let Some(fenced) = body.strip_prefix("```") {
+        let fenced = fenced.strip_suffix("```")?;
+        // Drop an info string such as ```python.
+        body = fenced
+            .split_once('\n')
+            .map_or(fenced, |(_, code)| code)
+            .trim();
+    } else if let Some(ticked) = body.strip_prefix('`') {
+        body = ticked.strip_suffix('`')?.trim();
+    }
+    let open = body.find('(')?;
+    let name = body[..open].trim();
+    if !offered.iter().any(|o| o == name) {
+        return None;
+    }
+    let inner = body[open + 1..].strip_suffix(')')?.trim();
+    let arguments = if inner.starts_with('{') {
+        serde_json::from_str::<Value>(inner)
+            .ok()
+            .filter(Value::is_object)?
+    } else {
+        keyword_arguments(inner)?
+    };
+    Some(
+        json!({"role": "assistant", "content": null, "tool_calls": [{
+        "id": call_id, "type": "function",
+        "function": {"name": name, "arguments": arguments.to_string()}}]}),
+    )
+}
+
+/// `key="value", n=3, flags=["a", "b"]` as a JSON object (Python-style
+/// literals: quoted strings, numbers, True/False/None, lists of them).
+fn keyword_arguments(text: &str) -> Option<Value> {
+    let mut rest = text.trim_start();
+    let mut arguments = serde_json::Map::new();
+    while !rest.is_empty() {
+        let end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len());
+        let key = &rest[..end];
+        if key.is_empty() || key.starts_with(|c: char| c.is_ascii_digit()) {
+            return None;
+        }
+        rest = rest[end..].trim_start().strip_prefix('=')?.trim_start();
+        let (value, after) = literal(rest)?;
+        if arguments.insert(key.to_owned(), value).is_some() {
+            return None;
+        }
+        rest = after.trim_start();
+        match rest.strip_prefix(',') {
+            Some(next) => rest = next.trim_start(),
+            None if rest.is_empty() => {}
+            None => return None,
+        }
+    }
+    Some(Value::Object(arguments))
+}
+
+/// One literal at the start of `text`, and what follows it.
+fn literal(text: &str) -> Option<(Value, &str)> {
+    let first = text.chars().next()?;
+    if first == '"' || first == '\'' {
+        let mut out = String::new();
+        let mut chars = text[1..].char_indices();
+        while let Some((i, c)) = chars.next() {
+            match c {
+                '\\' => match chars.next()?.1 {
+                    'n' => out.push('\n'),
+                    't' => out.push('\t'),
+                    other => out.push(other),
+                },
+                c if c == first => return Some((Value::String(out), &text[1 + i + 1..])),
+                c => out.push(c),
+            }
+        }
+        return None;
+    }
+    if let Some(mut rest) = text.strip_prefix('[') {
+        let mut items = Vec::new();
+        loop {
+            rest = rest.trim_start();
+            if let Some(after) = rest.strip_prefix(']') {
+                return Some((Value::Array(items), after));
+            }
+            let (item, after) = literal(rest)?;
+            items.push(item);
+            rest = after.trim_start();
+            rest = rest.strip_prefix(',').unwrap_or(rest);
+        }
+    }
+    let end = text
+        .find(|c: char| matches!(c, ',' | ']' | ')') || c.is_whitespace())
+        .unwrap_or(text.len());
+    let value = match &text[..end] {
+        "True" | "true" => Value::Bool(true),
+        "False" | "false" => Value::Bool(false),
+        "None" | "null" => Value::Null,
+        number => serde_json::from_str::<serde_json::Number>(number)
+            .ok()
+            .map(Value::Number)?,
+    };
+    Some((value, &text[end..]))
+}
+
 /// The `tool` message that carries a record back to the model.
 pub fn tool_message(record: &ToolCallRecord) -> Value {
     let content = json!({"ok": record.ok, "result": record.result}).to_string();
@@ -486,6 +613,55 @@ pub fn tool_message(record: &ToolCallRecord) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reply_that_is_only_a_written_call_becomes_that_call() {
+        let offered = vec!["task_delegate".to_owned(), "json_get".to_owned()];
+        let made = |text: &str| {
+            prose_call(text, &offered, "p1").map(|m| {
+                let calls = requested_calls(&m);
+                assert_eq!(calls[0].0.as_deref(), Some("p1"));
+                let args: Value =
+                    serde_json::from_str(calls[0].2.as_str().expect("string")).expect("json");
+                (calls[0].1.clone(), args)
+            })
+        };
+        // Written by the local Gemma tier in production turns.
+        assert_eq!(
+            made(
+                r#"task_delegate(executor="devin", kind="research", objective="忘却の導入を調べる")"#
+            ),
+            Some((
+                "task_delegate".to_owned(),
+                json!({"executor": "devin", "kind": "research", "objective": "忘却の導入を調べる"})
+            ))
+        );
+        assert_eq!(
+            made("`task_delegate(executor='Devin', objective='it\\'s \"x\"', success_criteria=['a', 'b'])`")
+                .map(|(_, a)| a),
+            Some(json!({"executor": "Devin", "objective": "it's \"x\"", "success_criteria": ["a", "b"]}))
+        );
+        assert_eq!(
+            made("```python\njson_get({\"library\": \"m\", \"pointer\": \"/a\"})\n```")
+                .map(|(n, _)| n),
+            Some("json_get".to_owned())
+        );
+        assert_eq!(
+            made("json_get(limit=3, strict=True, cursor=None)").map(|(_, a)| a),
+            Some(json!({"limit": 3, "strict": true, "cursor": null}))
+        );
+        for prose in [
+            "では task_delegate(objective=\"x\") を呼びます。",
+            "task_status(id=\"t1\")",
+            "task_delegate(objective=x)",
+            "task_delegate(objective=\"x\", objective=\"y\")",
+            "task_delegate(objective=\"unterminated)",
+            "task_delegate（objective=\"x\"）",
+            "調べてみますね。",
+        ] {
+            assert_eq!(made(prose), None, "{prose}");
+        }
+    }
 
     #[test]
     fn parses_openai_tool_calls() {

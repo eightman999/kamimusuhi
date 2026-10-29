@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import suppress
 import os
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -9,21 +10,27 @@ import aiohttp
 from aiohttp import web
 import discord
 
-from discord_bot import Config, DialogueBridge, MioClient, Resident, ResidentError, subject_for
+from discord_bot import (Config, DialogueBridge, MioClient, NoticeState, Notifier, Resident,
+                         ResidentError, subject_for)
 
 CONFIG = Config('fake-token', 10, frozenset({20}), frozenset({30}))
+NOTIFYING = Config('fake-token', 10, frozenset({20}), frozenset({30}), None, 20, 30)
+
+
+def reply(text, background=None):
+    return {'response': text, 'background': background}
 
 
 def message(id=1, guild=10, channel=30, user=20, bot=False, text='<@99> こんにちは', webhook=None):
     return SimpleNamespace(id=id, guild=None if guild is None else SimpleNamespace(id=guild),
                            channel=SimpleNamespace(id=channel),
                            author=SimpleNamespace(id=user, bot=bot), content=text,
-                           webhook_id=webhook, reply=AsyncMock())
+                           webhook_id=webhook, reply=AsyncMock(return_value=SimpleNamespace(id=500 + id)))
 
 
 class BridgeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.backend = SimpleNamespace(talk=AsyncMock(return_value='澪です'))
+        self.backend = SimpleNamespace(talk=AsyncMock(return_value=reply('澪です')))
         self.bridge = DialogueBridge(CONFIG, self.backend)
         self.worker = asyncio.create_task(self.bridge.run())
 
@@ -68,7 +75,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                 await finish.wait()
             await asyncio.sleep(0)
             active -= 1
-            return text
+            return reply(text)
         self.backend.talk.side_effect = talk
         first = message(text='<@99> first')
         await self.bridge.handle(first, 99)
@@ -96,7 +103,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                 both.set()
             await finish.wait()
             active -= 1
-            return text
+            return reply(text)
         self.backend.talk.side_effect = talk
         try:
             for i, user in enumerate([20, 21, 22], 1):
@@ -130,7 +137,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(2, bridge.seen)
 
     async def test_failed_item_does_not_block_next_or_retry(self):
-        self.backend.talk.side_effect = [ResidentError('private-body'), asyncio.TimeoutError(), 'done']
+        self.backend.talk.side_effect = [ResidentError('private-body'), asyncio.TimeoutError(), reply('done')]
         events = [message(id=i) for i in range(3)]
         for event in events:
             await self.bridge.handle(event, 99)
@@ -142,13 +149,13 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_long_reply_is_complete_attachment(self):
         text = '😀' * 1800 + '\n日本語'
-        self.backend.talk.return_value = text
+        self.backend.talk.return_value = reply(text)
         files = []
-        async def reply(*args, **kwargs):
+        async def capture(*args, **kwargs):
             if 'file' in kwargs:
                 files.append(kwargs['file'].fp.read().decode())
         event = message()
-        event.reply.side_effect = reply
+        event.reply.side_effect = capture
         await self.bridge.handle(event, 99)
         await self.drain()
         self.assertEqual(files, [text])
@@ -191,6 +198,145 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(client.session.closed)
 
 
+class TaskNoticeTests(unittest.IsolatedAsyncioTestCase):
+    """Decisions the operator must make reach them with a mention."""
+
+    def backend(self, **kwargs):
+        return SimpleNamespace(talk=AsyncMock(), tasks=AsyncMock(return_value=[]),
+                               delegated=AsyncMock(return_value=[]),
+                               task_action=AsyncMock(return_value=(200, {})), **kwargs)
+
+    async def run_turn(self, bridge, event):
+        worker = asyncio.create_task(bridge.run())
+        try:
+            await bridge.handle(event, 99)
+            await asyncio.wait_for(bridge.queue.join(), timeout=2)
+        finally:
+            worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker
+
+    async def test_an_unstarted_promise_mentions_the_operator_in_the_reply(self):
+        backend = self.backend()
+        backend.talk.return_value = reply('調べてみますね。', {'state': 'unstarted', 'task_id': 'tc0ffee1'})
+        bridge = DialogueBridge(NOTIFYING, backend)
+        event = message(text='<@99> Devinで調べて')
+        await self.run_turn(bridge, event)
+        answer = event.reply.call_args_list[1]
+        self.assertIn('調べてみますね。', answer.args[0])
+        self.assertIn('<@20>', answer.args[0])
+        self.assertIn('@澪 開始 tc0ffee1', answer.args[0])
+        self.assertEqual(answer.kwargs['allowed_mentions'].to_dict(), {'parse': [], 'users': [20]})
+        # The poller will not announce it a second time.
+        self.assertEqual(bridge.notices.attention['tc0ffee1']['message'], 501)
+
+    async def test_started_work_is_shown_without_pinging_anyone(self):
+        backend = self.backend()
+        backend.talk.return_value = reply('Devinに回しました。', {'state': 'started',
+                                          'tasks': [{'id': 'td1', 'executor': 'devin'}]})
+        bridge = DialogueBridge(NOTIFYING, backend)
+        event = message()
+        await self.run_turn(bridge, event)
+        answer = event.reply.call_args_list[1]
+        self.assertIn('裏で実行中：td1（devin）', answer.args[0])
+        self.assertEqual(answer.kwargs['allowed_mentions'].to_dict(), {'parse': []})
+
+    async def test_start_and_cancel_commands_skip_the_dialogue(self):
+        backend = self.backend()
+        backend.task_action.return_value = (200, {'node': 'llm_master',
+                                                  'delegated': {'task_id': 'td9', 'executor': 'devin'}})
+        bridge = DialogueBridge(NOTIFYING, backend)
+        bridge.notices.claim('t1a0dc0000c1', 700, 'commitment')
+        start = message(id=2, text='<@99> 開始 t1a0dc0000c1 Devin')
+        await bridge.handle(start, 99)
+        backend.task_action.assert_awaited_with({'action': 'start', 'id': 't1a0dc0000c1', 'executor': 'devin'})
+        self.assertIn('td9', start.reply.call_args.args[0])
+        # Replying to the notice needs no ID.
+        answer = message(id=3, text='<@99> 取消')
+        answer.reference = SimpleNamespace(message_id=700)
+        backend.tasks.return_value = [{'id': 't1a0dc0000c1', 'kind': 'commitment', 'status': 'awaiting_operator'}]
+        await bridge.handle(answer, 99)
+        self.assertEqual(backend.task_action.call_args.args[0]['status'], 'cancelled')
+        self.assertIn('取り消しました', answer.reply.call_args.args[0])
+        backend.talk.assert_not_awaited()
+        self.assertEqual(bridge.queue.qsize(), 0)
+
+    async def test_commands_never_touch_other_kinds_and_errors_stay_private(self):
+        backend = self.backend()
+        bridge = DialogueBridge(NOTIFYING, backend)
+        bridge.notices.claim('t1a0dc0000a1', 701, 'approval')
+        event = message(id=4, text='<@99> 開始 t1a0dc0000a1')
+        await bridge.handle(event, 99)
+        backend.task_action.assert_not_awaited()
+        backend.task_action.return_value = (404, {'error': 'private detail'})
+        event = message(id=5, text='<@99> 開始 t1a0dc0000c2')
+        await bridge.handle(event, 99)
+        self.assertIn('できませんでした', event.reply.call_args.args[0])
+        self.assertNotIn('private detail', str(event.reply.call_args))
+        event = message(id=6, text='<@99> 開始')
+        await bridge.handle(event, 99)
+        self.assertIn('どのタスクか', event.reply.call_args.args[0])
+
+    async def test_poller_announces_each_decision_once_and_waits_for_reviews(self):
+        now = 10_000
+        backend = self.backend()
+        backend.tasks.return_value = [
+            {'id': 't1a0dc0000c1', 'kind': 'commitment', 'status': 'awaiting_operator', 'created_at': now - 3600,
+             'detail': {'message': '何か分かったら教えてね', 'response': 'お伝えしますね。'}},
+            {'id': 't1a0dc0000c2', 'kind': 'commitment', 'status': 'awaiting_operator', 'created_at': now - 5},
+            {'id': 't1a0dc0000a1', 'kind': 'approval', 'status': 'awaiting_operator', 'title': '承認待ち: fs/write_file',
+             'created_at': now - 5},
+            {'id': 'td0', 'kind': 'dialogue', 'status': 'done'},
+        ]
+        sent = []
+        async def send(text):
+            sent.append(text)
+            return 800 + len(sent)
+        state = NoticeState()
+        notifier = Notifier(NOTIFYING, backend, send, state, clock=lambda: now)
+        await notifier.poll()
+        self.assertEqual(len(sent), 2, sent)
+        self.assertTrue(all(text.startswith('<@20>') for text in sent))
+        self.assertIn('何か分かったら教えてね', sent[0])
+        self.assertIn('@澪 開始 t1a0dc0000c1', sent[0])
+        self.assertIn('承認待ち', sent[1])
+        self.assertEqual(state.delegated_since, now)
+        await notifier.poll()
+        self.assertEqual(len(sent), 2, 'nothing twice')
+
+        backend.delegated.return_value = [
+            {'id': 'tx1', 'status': 'done', 'finished_at': now + 10, 'title': '委譲: 忘却の調査',
+             'detail': {'executor': 'devin'}, 'result': {'summary': '減衰係数の導入を提案'}},
+            {'id': 'tx2', 'status': 'failed', 'finished_at': now + 20, 'title': '委譲: 実験モジュール'},
+            {'id': 'tx0', 'status': 'done', 'finished_at': now - 100, 'title': '委譲: 以前の仕事'},
+            {'id': 'tx3', 'status': 'running', 'title': '委譲: 実行中'},
+        ]
+        notifier.clock = lambda: now + 30
+        await notifier.poll()
+        self.assertEqual(len(sent), 3)
+        self.assertIn('失敗', sent[2])
+        backend.delegated.return_value[0]['detail']['review'] = {'verdict': 'accept', 'note': '依頼を満たす'}
+        await notifier.poll()
+        self.assertEqual(len(sent), 4)
+        self.assertIn('澪の評価：採用', sent[3])
+        self.assertIn('減衰係数', sent[3])
+        self.assertIn('(tx1 · devin)'.replace('(', '（').replace(')', '）'), sent[3])
+
+    async def test_notice_state_survives_a_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'notices.json')
+            state = NoticeState(path)
+            state.claim('t1a0dc0000c1', 900, 'commitment')
+            state.delegated_since = 5
+            state.save()
+            again = NoticeState(path)
+            self.assertEqual(again.task_for_message(900), 't1a0dc0000c1')
+            self.assertEqual(again.delegated_since, 5)
+            with open(path, 'w') as f:
+                f.write('{broken')
+            self.assertEqual(NoticeState(path).attention, {})
+
+
 class ConfigTests(unittest.TestCase):
     def test_missing_and_bad_allowlists_fail_closed(self):
         valid = {'DISCORD_BOT_TOKEN': 'fake', 'DISCORD_GUILD_ID': '10',
@@ -222,6 +368,25 @@ class ConfigTests(unittest.TestCase):
         with patch.dict(os.environ, {**base, 'DISCORD_ALLOWED_USER_IDS': '20,21',
                                      'DISCORD_OPERATOR_SUBJECT': 'eightman'}, clear=True):
             self.assertRaises(ValueError, Config.from_env)
+
+    def test_notices_go_to_the_operator_in_an_allowed_channel(self):
+        base = {'DISCORD_BOT_TOKEN': 't', 'DISCORD_GUILD_ID': '10',
+                'DISCORD_ALLOWED_USER_IDS': '20', 'DISCORD_ALLOWED_CHANNEL_IDS': '30'}
+        with patch.dict(os.environ, base, clear=True):
+            config = Config.from_env()
+            self.assertEqual((config.notify_user, config.notify_channel), (20, 30))
+            self.assertTrue(config.notifies)
+        with patch.dict(os.environ, {**base, 'DISCORD_NOTIFY': 'off'}, clear=True):
+            self.assertFalse(Config.from_env().notifies)
+        with patch.dict(os.environ, {**base, 'DISCORD_ALLOWED_CHANNEL_IDS': '30,31'}, clear=True):
+            self.assertFalse(Config.from_env().notifies, 'no channel chosen')
+        with patch.dict(os.environ, {**base, 'DISCORD_ALLOWED_CHANNEL_IDS': '30,31',
+                                     'DISCORD_NOTIFY_CHANNEL_ID': '31'}, clear=True):
+            self.assertEqual(Config.from_env().notify_channel, 31)
+        for key, value in [('DISCORD_NOTIFY_CHANNEL_ID', '32'), ('DISCORD_NOTIFY_USER_ID', '21'),
+                           ('DISCORD_NOTIFY_USER_ID', '20,21'), ('DISCORD_NOTIFY_USER_ID', 'x')]:
+            with patch.dict(os.environ, {**base, key: value}, clear=True):
+                self.assertRaises(ValueError, Config.from_env)
 
     def test_subject_is_stable_bounded_and_isolated(self):
         subjects = {subject_for(i) for i in [message(), message(guild=11),
@@ -256,7 +421,8 @@ class ResidentTests(unittest.IsolatedAsyncioTestCase):
         await self.runner.cleanup()
 
     async def test_real_http_contract(self):
-        self.assertEqual(await self.resident.talk('こんにちは', 'discord-test'), '澪です')
+        self.assertEqual(await self.resident.talk('こんにちは', 'discord-test'),
+                         {'response': '澪です', 'background': None})
         self.assertEqual(self.requests, [{'message': 'こんにちは', 'subject': 'discord-test'}])
 
     async def test_bad_status_and_schema(self):
@@ -269,7 +435,7 @@ class ResidentTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_large_chunked_response_is_complete_and_bounded(self):
         self.body = {'response': 'あ' * 50000}
-        self.assertEqual(await self.resident.talk('test', 'discord-test'), 'あ' * 50000)
+        self.assertEqual((await self.resident.talk('test', 'discord-test'))['response'], 'あ' * 50000)
         self.body = {'response': 'a' * (1024 * 1024)}
         with self.assertRaises(ResidentError):
             await self.resident.talk('test', 'discord-test')

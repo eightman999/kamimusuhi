@@ -19,6 +19,9 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 UMask=0077
+# Which task notices were already posted (survives restarts).
+StateDirectory=kamimusuhi-discord
+StateDirectoryMode=0700
 
 [Install]
 WantedBy=multi-user.target

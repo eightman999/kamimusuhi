@@ -28,6 +28,36 @@ Botは受付を返信し、FIFOキューから（subjectごとに順番を守っ
   タイムアウト後もPi側の処理は継続し得る。resident側も全クライアント合計の同時ターン数を
   `dialogue.max_concurrent`（既定2）に制限し、同じsubjectのターンは受付順に1件ずつ実行する。
 - 長文はUTF-8の`mio-response.txt`として返す。生成文からのメンション通知とリンク埋め込みを抑止する。
+- 返事の下に、そのターンが裏に残した作業を付記する。委譲したタスクは`▶ 裏で実行中：t…（devin）`、
+  「調べてみますね」と引き受けたのにタスクを作れなかった場合は操作者をメンションして
+  `⚠ 引き受けましたが、タスクはまだ作成されていません（t…）`と開始・取消の方法を示す。
+
+## 判断待ちの通知（メンション付き）
+
+操作者の判断が要るときは、通知チャンネルに**操作者だけをメンション**して投稿する
+（`@everyone`・ロール・他の利用者は鳴らさない）。約30秒ごとにローカルAPIを確認する。
+
+| 通知 | 契機 | 操作 |
+|---|---|---|
+| 未着手の引受 | 澪が作業を約束したが、再要求しても委譲しなかった（board の `commitment`） | `@澪 開始 t…` / `@澪 開始 t… devin` / `@澪 取消 t…`。通知への返信なら`@澪 開始`だけでよい |
+| 承認待ち | 書き込み系ツールが承認待ちになった | デスクトップの「承認」画面で判断する（Discordからは承認しない） |
+| 委譲タスクの終了 | 外部エージェントのタスクが完了・失敗・取消 | 澪の評価（採用／不採用／保留、最大10分待つ）と報告の要約。ブランチがあれば取り込みはデスクトップで判断 |
+
+- 宛先は`DISCORD_NOTIFY_USER_ID`／`DISCORD_NOTIFY_CHANNEL_ID`（許可リスト内のみ）。
+  未設定なら許可ユーザー・許可チャンネルが1つのときそれを使い、複数なら通知しない。
+  `DISCORD_NOTIFY=off`で無効。
+- **通知には依頼文と澪の返事の冒頭（各300字まで）が載る。** デスクトップで話した内容も
+  通知チャンネルに出るため、チャンネルは操作者専用にする。
+- 開始時に実行者を指定しなければ、依頼文に実行者名（例：`Devinで調べて`→`devin`）が
+  1つだけ書かれていればそれを使い、なければ自動選択になる。
+- 投稿済みの通知は`StateDirectory`（`/var/lib/kamimusuhi-discord/notices.json`）に残り、
+  再起動しても同じ通知を繰り返さない。委譲タスクの終了通知は通知を初めて有効にした時点
+  以降に終わったものだけが対象。
+- 開始・取消コマンドはキューを通らず即時に処理する。対象は`commitment`のみで、
+  失敗時はHTTP状態だけを返し、内部エラー本文は転送しない。
+
+## 接続
+
 - GatewayはPiからDiscordへ接続するため、公開HTTPポートやInteractions Endpoint URLは不要。
   `GUILDS` / `GUILD_MESSAGES`のみ使用。直接メンションの本文は
   [Discord公式のMessage Content Intent例外](https://support-dev.discord.com/hc/en-us/articles/6383579033751-Message-Content-Intent-Alternatives-Workarounds)
@@ -45,7 +75,7 @@ Botは受付を返信し、FIFOキューから（subjectごとに順番を守っ
 
 ## 配置・起動（承認後に実施）
 
-対象はcontinuityノードのPiのみ。residentの更新・再起動は不要。
+対象はcontinuityノードのPiのみ。返事への付記と判断待ち通知には、`background`と`commitment`を返すresident（未着手の引受・委譲レビュー対応版）が必要。
 既存ファイルがある場合は置換前にバックアップする。以下はPi上のソースディレクトリで実行する。
 
 ```bash
@@ -66,6 +96,7 @@ test -e /srv/kamimusuhi/config/discord.env || install -m 600 deploy/resident/dis
 | `DISCORD_ALLOWED_USER_IDS` | 操作者のユーザーID |
 | `DISCORD_ALLOWED_CHANNEL_IDS` | 専用チャンネルID／スレッドID |
 | `DISCORD_OPERATOR_SUBJECT` | 任意。デスクトップと同じsubject（例：`eightman`）。ペルソナ・記憶を揃える |
+| `DISCORD_NOTIFY` / `DISCORD_NOTIFY_USER_ID` / `DISCORD_NOTIFY_CHANNEL_ID` | 任意。判断待ち通知の有効化・宛先（上記「判断待ちの通知」） |
 
 residentの`secrets.env`はBotに読み込ませない。ローカルAPI接続にはnode token不要。
 配置前の設定ファイルをMacで用意する場合はGit対象外の`deploy/resident/local/`に保存する。

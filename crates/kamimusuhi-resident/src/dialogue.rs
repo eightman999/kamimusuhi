@@ -195,6 +195,25 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
                 crate::tasks::TaskStatus::Done,
                 &format!("応答 {latency_ms}ms: {preview}"),
             );
+            let tool_calls = reply
+                .get("tool_calls")
+                .cloned()
+                .unwrap_or_else(|| json!([]));
+            // Whether anything keeps running after this reply: delegated
+            // tasks, or a promise that only the operator can now start.
+            // A host-run review turn judges finished work; it takes nothing on.
+            let background = if request["purpose"] == crate::task_review::PURPOSE {
+                Value::Null
+            } else {
+                crate::commitments::background(
+                    shared,
+                    &task_id,
+                    subject,
+                    message,
+                    reply["response"].as_str().unwrap_or(""),
+                    &tool_calls,
+                )
+            };
             // The routing event the router recorded while serving this
             // turn's upstream call(s): tier, model, tokens, and the cost
             // basis. `cost_usd` is absent when the plan's price is unknown —
@@ -222,7 +241,8 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
                     "turn_id": reply.get("turn_id"),
                     "session_id": reply.get("session_id"),
                     "individual_id": reply.get("individual_id"),
-                    "tool_calls": reply.get("tool_calls"),
+                    "tool_calls": tool_calls,
+                    "background": background,
                     "route": route,
                 }),
             );
@@ -236,7 +256,8 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
                     "latency_ms": latency_ms,
                     "tier": route.as_ref().and_then(|r| r["tier"].as_str().map(str::to_owned)),
                     "route": route,
-                    "tool_calls": reply.get("tool_calls").cloned().unwrap_or_else(|| json!([])),
+                    "tool_calls": tool_calls,
+                    "background": background,
                     "reference_lookups": reply.get("reference_lookups"),
                 }),
             )
@@ -309,7 +330,7 @@ pub fn history(shared: &Shared, request: &Value) -> (u16, Value) {
         .map(|t| {
             json!({"ts": t["ts"], "message": t["message"], "response": t["response"],
                    "latency_ms": t["latency_ms"], "tool_calls": t["tool_calls"],
-                   "route": t["route"]})
+                   "background": t["background"], "route": t["route"]})
         })
         .collect();
     (200, json!({"subject": subject, "turns": turns}))

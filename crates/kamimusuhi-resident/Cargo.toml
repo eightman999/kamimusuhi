@@ -18,6 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 base64 = "0.23"
+kamimusuhi-core = { workspace = true }
 kamimusuhi-resource-http = { workspace = true }
 kamimusuhi-runtime = { path = "../kamimusuhi-runtime" }
 serde = { workspace = true }

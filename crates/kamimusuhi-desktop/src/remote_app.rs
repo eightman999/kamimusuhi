@@ -86,6 +86,10 @@ struct RemoteApp {
     status_at: Option<Instant>,
     approvals: Vec<Value>,
     announced: HashSet<String>,
+    /// Decisions (commitments) and ended delegated tasks already announced;
+    /// `None` until the first listing, which is taken as already known.
+    attention: Option<HashSet<String>>,
+    ended: Option<HashSet<String>>,
     deciding: HashSet<String>,
     last_decisions: Vec<(String, Value)>,
     tools: Option<Value>,
@@ -120,6 +124,8 @@ impl RemoteApp {
             status_at: None,
             approvals: Vec::new(),
             announced: HashSet::new(),
+            attention: None,
+            ended: None,
             deciding: HashSet::new(),
             last_decisions: Vec::new(),
             tools: None,
@@ -188,13 +194,47 @@ impl RemoteApp {
                                 text: format!("⚠ 承認待ちが追加されました: {}", approval_title(a)),
                                 color: AMBER,
                             });
+                            os_notify("澪: 承認待ち", &approval_title(a));
                         }
                     }
                     self.approvals = list;
                 }
                 RemoteEvent::Tools(tools) => self.tools = Some(tools),
-                RemoteEvent::Tasks(tasks) => self.tasks = tasks,
-                RemoteEvent::Agents(panel) => self.agents.set_panel(panel),
+                RemoteEvent::Tasks(tasks) => {
+                    let ids = tasks
+                        .iter()
+                        .filter(|t| needs_decision(t))
+                        .filter_map(|t| t["id"].as_str());
+                    for id in newly_seen(&mut self.attention, ids) {
+                        if let Some(t) = tasks.iter().find(|t| t["id"] == id.as_str()) {
+                            let text = commitment_line(t);
+                            self.entries.push(Entry::Notice {
+                                text: format!("⚠ 判断が必要です: {text}"),
+                                color: AMBER,
+                            });
+                            os_notify("澪: 判断が必要です", &text);
+                        }
+                    }
+                    self.tasks = tasks;
+                }
+                RemoteEvent::Agents(panel) => {
+                    let tasks = panel["tasks"].as_array().cloned().unwrap_or_default();
+                    let ids = tasks
+                        .iter()
+                        .filter(|t| delegation_ended(t))
+                        .filter_map(|t| t["id"].as_str());
+                    for id in newly_seen(&mut self.ended, ids) {
+                        if let Some(t) = tasks.iter().find(|t| t["id"] == id.as_str()) {
+                            let text = ended_line(t);
+                            self.entries.push(Entry::Notice {
+                                text: text.clone(),
+                                color: GREEN,
+                            });
+                            os_notify("澪: 委譲タスク", &text);
+                        }
+                    }
+                    self.agents.set_panel(panel);
+                }
                 RemoteEvent::AgentsReply(reply) => self.agents.set_reply(reply),
                 RemoteEvent::Decision { id, reply } => {
                     self.deciding.remove(&id);
@@ -248,6 +288,17 @@ impl RemoteApp {
             self.busy_since = None;
             self.error = Some("通信ワーカーが停止しています。".to_owned());
         }
+    }
+
+    /// Start an unbacked promise as a delegated task, or drop it.
+    fn commitment_action(&mut self, id: &str, start: bool) {
+        let body = if start {
+            serde_json::json!({"action": "start", "id": id})
+        } else {
+            serde_json::json!({"action": "update", "id": id, "status": "cancelled",
+                               "note": "操作者が取り消し"})
+        };
+        let _ = self.commands.send(RemoteCommand::Task(body));
     }
 
     fn decide(&mut self, id: &str, approve: bool) {
@@ -411,6 +462,7 @@ impl RemoteApp {
         let height = (ui.available_height() - composer).max(120.0);
         let width = ui.available_width();
         let mut decisions = Vec::new();
+        let mut commitment_actions = Vec::new();
         ui.allocate_ui(egui::vec2(width, height), |ui| {
             egui::ScrollArea::vertical()
                 .id_salt("remote-chat")
@@ -430,7 +482,16 @@ impl RemoteApp {
                     for entry in &self.entries {
                         match entry {
                             Entry::User { text, at } => bubble(ui, true, text, None, at.as_deref()),
-                            Entry::Assistant { text, meta } => bubble(ui, false, text, meta.as_ref(), None),
+                            Entry::Assistant { text, meta } => {
+                                bubble(ui, false, text, meta.as_ref(), None);
+                                if let Some(action) = meta
+                                    .as_ref()
+                                    .and_then(|m| background_of(m, &self.tasks))
+                                    .and_then(|bg| background_strip(ui, &bg))
+                                {
+                                    commitment_actions.push(action);
+                                }
+                            }
                             Entry::Notice { text, color } => {
                                 ui.vertical_centered(|ui| {
                                     ui.label(RichText::new(text).small().color(*color));
@@ -444,6 +505,13 @@ impl RemoteApp {
                         let id = a["id"].as_str().unwrap_or("").to_owned();
                         if let Some(approve) = approval_card(ui, a, self.deciding.contains(&id), true) {
                             decisions.push((id, approve));
+                        }
+                        ui.add_space(8.0);
+                    }
+                    // So are promises no task backs, from any surface.
+                    for t in self.tasks.iter().filter(|t| needs_decision(t)) {
+                        if let Some(action) = commitment_card(ui, t) {
+                            commitment_actions.push(action);
                         }
                         ui.add_space(8.0);
                     }
@@ -464,6 +532,9 @@ impl RemoteApp {
         });
         for (id, approve) in decisions {
             self.decide(&id, approve);
+        }
+        for (id, start) in commitment_actions {
+            self.commitment_action(&id, start);
         }
         if let Some(error) = &self.error {
             egui::Frame::new()
@@ -1068,6 +1139,216 @@ fn bubble(ui: &mut egui::Ui, user: bool, text: &str, meta: Option<&Value>, at: O
     );
 }
 
+/// What a reply left running after the turn, as the chat shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Background {
+    /// Tasks the individual delegated during the turn.
+    Started(Vec<String>),
+    /// A promise with no task behind it, waiting for the operator.
+    Unstarted {
+        id: String,
+    },
+    /// That promise, since started by the operator.
+    Delegated(String),
+    Cancelled,
+}
+
+fn task_label(task: &Value) -> String {
+    let id = task["id"].as_str().unwrap_or("?");
+    match task["executor"].as_str() {
+        Some(executor) => format!("{id} · {executor}"),
+        None => id.to_owned(),
+    }
+}
+
+/// The reply's `background`, with a promise's state taken from the board
+/// (which changes after the reply arrives).
+fn background_of(meta: &Value, tasks: &[Value]) -> Option<Background> {
+    let background = &meta["background"];
+    match background["state"].as_str()? {
+        "started" => Some(Background::Started(
+            background["tasks"]
+                .as_array()?
+                .iter()
+                .map(task_label)
+                .collect(),
+        )),
+        "unstarted" => {
+            let id = background["task_id"].as_str()?.to_owned();
+            let task = tasks.iter().find(|t| t["id"].as_str() == Some(id.as_str()));
+            Some(match task.map(|t| (t["status"].as_str(), t)) {
+                Some((Some("done"), t)) if t["detail"]["delegated"].is_object() => {
+                    Background::Delegated(task_label(&t["detail"]["delegated"]))
+                }
+                Some((Some("cancelled" | "done"), _)) => Background::Cancelled,
+                _ => Background::Unstarted { id },
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The strip under a reply. Returns (commitment id, start?) when clicked.
+fn background_strip(ui: &mut egui::Ui, background: &Background) -> Option<(String, bool)> {
+    let mut action = None;
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(12.0);
+        match background {
+            Background::Started(tasks) => {
+                for task in tasks {
+                    chip(ui, &format!("▶ 裏で実行中 {task}"), GREEN);
+                }
+                ui.label(
+                    RichText::new("進捗は「外部エージェント」で確認できます")
+                        .small()
+                        .color(MUTED),
+                );
+            }
+            Background::Unstarted { id } => {
+                chip(ui, "⚠ 引き受けたが未着手（タスク未作成）", AMBER);
+                if ui
+                    .small_button(RichText::new("▶ タスクとして開始").color(GREEN))
+                    .on_hover_text("この依頼を外部エージェントに委譲し、裏で実行します")
+                    .clicked()
+                {
+                    action = Some((id.clone(), true));
+                }
+                if ui.small_button("取り消し").clicked() {
+                    action = Some((id.clone(), false));
+                }
+            }
+            Background::Delegated(task) => chip(ui, &format!("▶ 委譲済み {task}"), GREEN),
+            Background::Cancelled => chip(ui, "✕ 未着手のまま取り消し", MUTED),
+        }
+    });
+    action
+}
+
+/// A board task only the operator can move on: a promise without a task.
+fn needs_decision(task: &Value) -> bool {
+    task["kind"] == "commitment" && task["status"] == "awaiting_operator"
+}
+
+/// A delegated task that has stopped running.
+fn delegation_ended(task: &Value) -> bool {
+    matches!(
+        task["status"].as_str(),
+        Some("done" | "failed" | "cancelled")
+    )
+}
+
+/// IDs in `ids` not seen before. The first call only records what is
+/// there: those were known before this window opened.
+fn newly_seen<'a>(
+    seen: &mut Option<HashSet<String>>,
+    ids: impl Iterator<Item = &'a str>,
+) -> Vec<String> {
+    let first = seen.is_none();
+    let seen = seen.get_or_insert_with(HashSet::new);
+    ids.filter(|id| seen.insert((*id).to_owned()))
+        .filter(|_| !first)
+        .map(str::to_owned)
+        .collect()
+}
+
+fn clip_line(text: &str, max: usize) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= max {
+        return flat;
+    }
+    let mut out: String = flat.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+fn commitment_line(task: &Value) -> String {
+    format!(
+        "澪が引き受けた作業がタスクになっていません（{}）— {}",
+        task["id"].as_str().unwrap_or("?"),
+        clip_line(task["detail"]["message"].as_str().unwrap_or(""), 80)
+    )
+}
+
+fn ended_line(task: &Value) -> String {
+    let state = match task["status"].as_str() {
+        Some("done") => "完了",
+        Some("failed") => "失敗",
+        _ => "取り消し",
+    };
+    let title = task["title"].as_str().unwrap_or("");
+    format!(
+        "▶ 委譲タスクが{state}しました（{}）— {}",
+        task["id"].as_str().unwrap_or("?"),
+        clip_line(title.strip_prefix("委譲: ").unwrap_or(title), 80)
+    )
+}
+
+/// A card for a promise no task backs. Returns (id, start?) when clicked.
+fn commitment_card(ui: &mut egui::Ui, task: &Value) -> Option<(String, bool)> {
+    let id = task["id"].as_str().unwrap_or("").to_owned();
+    let mut action = None;
+    card(
+        ui,
+        "⚠ 判断待ち: 澪が引き受けたが、タスクは作成されていません",
+        |ui| {
+            for (label, key) in [("依頼", "message"), ("澪の返事", "response")] {
+                if let Some(text) = task["detail"][key].as_str() {
+                    ui.label(
+                        RichText::new(format!("{label}: {}", clip_line(text, 200)))
+                            .small()
+                            .color(MUTED),
+                    );
+                }
+            }
+            ui.horizontal_wrapped(|ui| {
+            if ui
+                .button(RichText::new("▶ タスクとして開始").color(GREEN))
+                .on_hover_text("外部エージェントに委譲して裏で実行します（依頼文に実行者名があればそれを使います）")
+                .clicked()
+            {
+                action = Some((id.clone(), true));
+            }
+            if ui.button("取り消し").clicked() {
+                action = Some((id.clone(), false));
+            }
+        });
+        },
+    );
+    action
+}
+
+/// A system notification (macOS), so a decision is not missed while the
+/// window is in the background.
+fn os_notify(title: &str, body: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        let quote = |s: &str| {
+            format!(
+                "\"{}\"",
+                clip_line(s, 200).replace('\\', "\\\\").replace('"', "\\\"")
+            )
+        };
+        let script = format!(
+            "display notification {} with title {}",
+            quote(body),
+            quote(title)
+        );
+        if let Ok(mut child) = std::process::Command::new("osascript")
+            .args(["-e", &script])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (title, body);
+}
+
 fn approval_title(a: &Value) -> String {
     let args = &a["arguments"];
     let target = ["path", "file", "note", "oldPath", "url"]
@@ -1189,6 +1470,8 @@ fn kind_tile(kind: &str) -> (&'static str, Color32) {
         "commit" => ("反", GREEN),
         "job" => ("定", Color32::from_rgb(80, 180, 200)),
         "manual" => ("手", Color32::from_rgb(200, 150, 90)),
+        "commitment" => ("約", AMBER),
+        "delegated" => ("委", GREEN),
         _ => ("澪", Color32::from_rgb(230, 120, 170)),
     }
 }
@@ -1715,6 +1998,25 @@ impl RemoteApp {
                         .color(TEXT),
                     );
                 }
+                if t["kind"] == "commitment" && t["status"] == "awaiting_operator" {
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("澪が引き受けたが、タスクは作成されていません。")
+                            .small()
+                            .color(AMBER),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .button(RichText::new("▶ タスクとして開始").color(GREEN))
+                            .clicked()
+                        {
+                            self.commitment_action(id, true);
+                        }
+                        if ui.button("取り消し").clicked() {
+                            self.commitment_action(id, false);
+                        }
+                    });
+                }
                 let editable = matches!(t["kind"].as_str(), Some("manual" | "agent"));
                 if editable {
                     ui.add_space(8.0);
@@ -2034,6 +2336,64 @@ impl RemoteApp {
 mod map_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn only_decisions_that_appear_later_are_announced() {
+        use serde_json::json;
+        let mut seen = None;
+        let first = [json!({"id": "c1", "kind": "commitment", "status": "awaiting_operator"})];
+        let ids = |tasks: &[Value]| -> Vec<String> {
+            tasks
+                .iter()
+                .filter(|t| needs_decision(t))
+                .filter_map(|t| t["id"].as_str().map(str::to_owned))
+                .collect()
+        };
+        let first_ids = ids(&first);
+        assert!(newly_seen(&mut seen, first_ids.iter().map(String::as_str)).is_empty());
+        let later = [
+            json!({"id": "c1", "kind": "commitment", "status": "awaiting_operator"}),
+            json!({"id": "c2", "kind": "commitment", "status": "awaiting_operator"}),
+            json!({"id": "c3", "kind": "commitment", "status": "cancelled"}),
+            json!({"id": "d1", "kind": "dialogue", "status": "awaiting_operator"}),
+        ];
+        let later_ids = ids(&later);
+        assert_eq!(
+            newly_seen(&mut seen, later_ids.iter().map(String::as_str)),
+            vec!["c2".to_owned()]
+        );
+        assert!(newly_seen(&mut seen, later_ids.iter().map(String::as_str)).is_empty());
+        assert!(delegation_ended(&json!({"status": "failed"})));
+        assert!(!delegation_ended(&json!({"status": "running"})));
+    }
+
+    #[test]
+    fn a_reply_shows_what_it_left_running() {
+        use serde_json::json;
+        let started = json!({"background": {"state": "started",
+            "tasks": [{"id": "t1", "executor": "devin"}]}});
+        assert_eq!(
+            background_of(&started, &[]),
+            Some(Background::Started(vec!["t1 · devin".to_owned()]))
+        );
+        let promise = json!({"background": {"state": "unstarted", "task_id": "c1"}});
+        assert_eq!(
+            background_of(&promise, &[]),
+            Some(Background::Unstarted {
+                id: "c1".to_owned()
+            })
+        );
+        let board = [json!({"id": "c1", "status": "done",
+            "detail": {"delegated": {"id": "t2", "executor": "opencode"}}})];
+        assert_eq!(
+            background_of(&promise, &board),
+            Some(Background::Delegated("t2 · opencode".to_owned()))
+        );
+        let board = [json!({"id": "c1", "status": "cancelled"})];
+        assert_eq!(background_of(&promise, &board), Some(Background::Cancelled));
+        assert_eq!(background_of(&json!({"background": null}), &[]), None);
+        assert_eq!(background_of(&json!({}), &[]), None);
+    }
 
     #[test]
     fn prerequisites_sit_left_of_successors() {

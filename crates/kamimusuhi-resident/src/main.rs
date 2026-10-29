@@ -127,6 +127,7 @@ fn serve(args: &Args) -> Result<(), String> {
     }
     kamimusuhi_resident::jobs::spawn_all(&shared);
     kamimusuhi_resident::task_orchestrator::spawn(&shared);
+    kamimusuhi_resident::task_review::spawn(&shared);
     if role == NodeRole::Continuity
         && let Some(k) = kcore_config
     {
