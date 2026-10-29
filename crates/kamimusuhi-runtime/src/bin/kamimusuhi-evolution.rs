@@ -15,7 +15,8 @@ const USAGE: &str = "\
 kamimusuhi-evolution <command> [options]
 
 commands:
-  run --out <dir> [--env exploration|distractor|baseline] [--seed <n>]
+  run --out <dir> [--env exploration|exploration-wm-fixed|
+      exploration-explore-fixed|distractor|baseline] [--seed <n>]
       [--population <n>] [--generations <n>] [--repeats <n>] [--rate <0..1>]
       [--validation-seed <n>] [--validation-panel <n>]
       [--final-test-seed <n>] [--final-test-panel <n>]
@@ -37,7 +38,7 @@ commands:
       [--validation-seed <n>] [--validation-panel <n>]
       [--final-test-seed <n>] [--final-test-panel <n>] [--threads <n>]
                     run <replicates> independent populations (top-level seed
-                    seed-base+r), each through all three environments from
+                    seed-base+r), each through all five environments from
                     the same founders; per replicate store gen 0 → final
                     deltas per environment and Δ(env) − Δ(baseline); write
                     replicates.jsonl, batch_summary.json (mean / median /
@@ -49,6 +50,13 @@ commands:
 
 environments (survival rule = completed all selection runs + rule below):
   exploration   fact recoverable only by exploring; success_rate >= 0.25
+  exploration-wm-fixed
+                same, with cognition.working_memory_span pinned at each
+                founder's value (no mutation or inheritance change)
+  exploration-explore-fixed
+                same, with temperament.curiosity and
+                drives.novelty_seeking — the exploration_probability
+                genes — pinned at each founder's value
   distractor    fact found by baseline; exploring adds context and can
                 displace the hit; success_rate >= 0.75, mean
                 context_records <= 5

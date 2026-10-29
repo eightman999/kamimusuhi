@@ -2,7 +2,7 @@
 //!
 //! One population can fix a founder by chance, so a change seen once is not
 //! evidence of selection. A batch runs `replicates` independent populations,
-//! each from its own top-level seed, and within one replicate all three
+//! each from its own top-level seed, and within one replicate all
 //! environments start from the *same* founders. For every replicate the
 //! generation-0 → final change of each trait is computed per environment and
 //! then paired against the baseline environment (no probe, no budget):
@@ -28,9 +28,18 @@ use crate::evolution::{Environment, EvolutionConfig, Experiment, run as run_expe
 pub const REPLICATES_FILE_NAME: &str = "replicates.jsonl";
 pub const SUMMARY_FILE_NAME: &str = "batch_summary.json";
 
-/// The three environments every replicate runs, in this order. `baseline`
-/// is the drift reference the others are paired against.
-pub const ENVIRONMENTS: [&str; 3] = ["exploration-favoured", "distractor-heavy", "baseline"];
+/// The environments every replicate runs, in this order. `baseline` is
+/// the drift reference the others are paired against. The two `-*-fixed`
+/// variants rerun the exploration scenario with one causal factor pinned
+/// at the founder value, separating the `working_memory_span` confound
+/// from selection on `exploration_probability`.
+pub const ENVIRONMENTS: [&str; 5] = [
+    "exploration-favoured",
+    "exploration-wm-fixed",
+    "exploration-explore-fixed",
+    "distractor-heavy",
+    "baseline",
+];
 pub const REFERENCE_ENVIRONMENT: &str = "baseline";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -265,7 +274,7 @@ fn paired(
         .collect()
 }
 
-/// Run one replicate: the three environments, matched founders, sequentially.
+/// Run one replicate: every environment, matched founders, sequentially.
 pub fn run_replicate(
     out_dir: &Path,
     config: &BatchConfig,
@@ -423,6 +432,18 @@ pub fn expected_sign(environment: &str, quantity: &str) -> Option<i8> {
         | ("exploration-favoured", "success_rate")
         | ("exploration-favoured", "exploration_turns_attempted")
         | ("exploration-favoured", "candidates_promoted") => Some(1),
+        // With the history-window confound frozen, the hypothesis is that
+        // selection on the exploration genes still produces these.
+        ("exploration-wm-fixed", "exploration_probability")
+        | ("exploration-wm-fixed", "curiosity")
+        | ("exploration-wm-fixed", "novelty_seeking")
+        | ("exploration-wm-fixed", "success_rate")
+        | ("exploration-wm-fixed", "exploration_turns_attempted")
+        | ("exploration-wm-fixed", "candidates_promoted") => Some(1),
+        // With the exploration genes frozen, the hypothesis is that
+        // working_memory_span converging into the reachable band still
+        // improves success on its own.
+        ("exploration-explore-fixed", "success_rate") => Some(1),
         ("distractor-heavy", "context_records") | ("distractor-heavy", "candidates_promoted") => {
             Some(-1)
         }
@@ -798,10 +819,15 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(a.replicates.len(), 2);
         for r in &a.replicates {
-            assert_eq!(r.environments.len(), 3);
+            assert_eq!(r.environments.len(), ENVIRONMENTS.len());
             assert_eq!(r.founder_hashes.len(), 4);
             assert_eq!(r.seed, 300 + u64::from(r.replicate));
             assert!(r.paired_validation.contains_key("exploration-favoured"));
+            assert!(r.paired_validation.contains_key("exploration-wm-fixed"));
+            assert!(
+                r.paired_validation
+                    .contains_key("exploration-explore-fixed")
+            );
             assert!(r.paired_validation.contains_key("distractor-heavy"));
             assert!(!r.paired_validation.contains_key("baseline"));
             // baseline has no probe, so success_rate cannot be paired.

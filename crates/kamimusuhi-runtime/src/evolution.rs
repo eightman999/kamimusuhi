@@ -20,7 +20,7 @@
 //! both panels derive from the configuration, so a run is reproducible
 //! except for wall-clock time.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use kamimusuhi_core::genome::{GENE_KEYS, Genome, Phenotype, round_to_resolution};
@@ -59,6 +59,12 @@ pub struct Environment {
     pub min_success_rate: Option<f64>,
     #[serde(default)]
     pub budget: Budget,
+    /// Genes pinned at each individual's founder value: neither mutation
+    /// nor inheritance may change them, so the environment cannot select
+    /// on them within a lineage. Used to isolate which trait a scenario
+    /// actually selects for. Keys must be members of [`GENE_KEYS`].
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub fixed_genes: BTreeSet<String>,
 }
 
 impl Environment {
@@ -70,7 +76,39 @@ impl Environment {
             scenario: Scenario::exploration(),
             min_success_rate: Some(0.25),
             budget: Budget::default(),
+            fixed_genes: BTreeSet::new(),
         }
+    }
+
+    /// [`Self::exploration_favoured`] with `cognition.working_memory_span`
+    /// pinned at each founder's value. The scenario is identical, so any
+    /// remaining divergence of `exploration_probability` from the baseline
+    /// environment is selection on the exploration genes alone — the
+    /// history-window confound cannot change within a lineage.
+    pub fn exploration_wm_fixed() -> Self {
+        let mut env = Self::exploration_favoured();
+        env.name = "exploration-wm-fixed".to_owned();
+        env.fixed_genes = ["cognition.working_memory_span"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        env
+    }
+
+    /// [`Self::exploration_favoured`] with `temperament.curiosity` and
+    /// `drives.novelty_seeking` — the genes behind `exploration_probability` —
+    /// pinned at each founder's value. `working_memory_span` and every other
+    /// gene still evolve. `curiosity` also feeds `recall_breadth_scale`, so
+    /// freezing it freezes that phenotype too; the scenario's baseline hit
+    /// stays unreachable either way.
+    pub fn exploration_explore_fixed() -> Self {
+        let mut env = Self::exploration_favoured();
+        env.name = "exploration-explore-fixed".to_owned();
+        env.fixed_genes = ["temperament.curiosity", "drives.novelty_seeking"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        env
     }
 
     /// Exploration costs: the fact is found by the baseline anyway, exploring
@@ -86,6 +124,7 @@ impl Environment {
                 max_mean_persona_calls: None,
                 max_mean_tool_calls: None,
             },
+            fixed_genes: BTreeSet::new(),
         }
     }
 
@@ -97,12 +136,15 @@ impl Environment {
             scenario: Scenario::baseline(),
             min_success_rate: None,
             budget: Budget::default(),
+            fixed_genes: BTreeSet::new(),
         }
     }
 
     pub fn named(name: &str) -> Option<Self> {
         match name {
             "exploration" | "exploration-favoured" => Some(Self::exploration_favoured()),
+            "exploration-wm-fixed" => Some(Self::exploration_wm_fixed()),
+            "exploration-explore-fixed" => Some(Self::exploration_explore_fixed()),
             "distractor" | "distractor-heavy" => Some(Self::distractor_heavy()),
             "baseline" => Some(Self::baseline()),
             _ => None,
@@ -554,11 +596,18 @@ pub fn next_generation(
     while individuals.len() < config.population_size {
         let parent = parents[child_index % parents.len()];
         let mutation_seed = sub_seed(config.seed, next, child_index, ROLE_MUTATION);
-        let genome = parent.genome.mutate_with_id(
+        let mut genome = parent.genome.mutate_with_id(
             mutation_seed,
             config.mutation_rate,
             format!("gen-g{next}-{child_index:02}"),
         );
+        // Fixed genes stay at the founder value: the mutation stream is
+        // consumed identically in every environment, then the parent's —
+        // i.e. the founder's — value is restored.
+        for key in &config.environment.fixed_genes {
+            let value = parent.genome.gene(key).expect("fixed genes validated");
+            genome.set_gene(key, value).expect("fixed genes validated");
+        }
         individuals.push(Individual {
             genome,
             lineage: Lineage {
@@ -700,6 +749,14 @@ pub fn run(out_dir: &Path, config: &EvolutionConfig) -> Result<Experiment, Runti
             "population_size, generations, repeats and validation_panel must all be at least 1"
                 .to_owned(),
         ));
+    }
+    for key in &config.environment.fixed_genes {
+        if !GENE_KEYS.contains(&key.as_str()) {
+            return Err(RuntimeError::Usage(format!(
+                "environment {:?} fixes unknown gene {key:?}",
+                config.environment.name
+            )));
+        }
     }
     std::fs::create_dir_all(out_dir).map_err(|source| RuntimeError::DirectoryIo {
         path: out_dir.display().to_string(),
@@ -1258,5 +1315,84 @@ mod tests {
         assert!(table.contains("### validation panel"));
         assert!(table.contains("generation 0 → 2"));
         assert!(table.contains("### lineage, generation 2"));
+    }
+
+    /// Genes of every generation-0 individual, keyed by founder_id.
+    fn founder_genes(experiment: &Experiment) -> BTreeMap<String, BTreeMap<String, f64>> {
+        experiment
+            .lineage
+            .iter()
+            .filter(|e| e.generation == 0)
+            .map(|e| (e.founder_id.clone(), e.genes.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn fixed_genes_stay_at_the_founder_value() {
+        let config = tiny(Environment::exploration_wm_fixed());
+        let dir = tempfile::tempdir().unwrap();
+        let experiment = run(dir.path(), &config).unwrap();
+        let founders = founder_genes(&experiment);
+        assert_eq!(founders.len(), 4);
+        for entry in &experiment.lineage {
+            assert_eq!(
+                entry.genes["cognition.working_memory_span"],
+                founders[&entry.founder_id]["cognition.working_memory_span"],
+                "generation {} {}",
+                entry.generation,
+                entry.genome_id
+            );
+        }
+        // Mutation still runs on every other gene: at least one individual
+        // differs from its own founder on an unfixed key.
+        let moved = experiment.lineage.iter().any(|e| {
+            e.generation > 0
+                && GENE_KEYS.iter().any(|key| {
+                    !config.environment.fixed_genes.contains(*key)
+                        && e.genes[*key] != founders[&e.founder_id][*key]
+                })
+        });
+        assert!(moved, "no individual differed from its founder");
+    }
+
+    #[test]
+    fn fixed_exploration_genes_hold_the_phenotype_per_lineage() {
+        let config = tiny(Environment::exploration_explore_fixed());
+        let dir = tempfile::tempdir().unwrap();
+        let experiment = run(dir.path(), &config).unwrap();
+        let founders = founder_genes(&experiment);
+        let founder_p: BTreeMap<String, f64> = experiment
+            .lineage
+            .iter()
+            .filter(|e| e.generation == 0)
+            .map(|e| (e.founder_id.clone(), e.phenotype.exploration_probability))
+            .collect();
+        for entry in &experiment.lineage {
+            for key in ["temperament.curiosity", "drives.novelty_seeking"] {
+                assert_eq!(entry.genes[key], founders[&entry.founder_id][key]);
+            }
+            assert_eq!(
+                entry.phenotype.exploration_probability, founder_p[&entry.founder_id],
+                "generation {} {}",
+                entry.generation, entry.genome_id
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_environments_are_named_and_unknown_genes_rejected() {
+        assert_eq!(
+            Environment::named("exploration-wm-fixed"),
+            Some(Environment::exploration_wm_fixed())
+        );
+        assert_eq!(
+            Environment::named("exploration-explore-fixed"),
+            Some(Environment::exploration_explore_fixed())
+        );
+        let mut environment = Environment::baseline();
+        environment.fixed_genes.insert("bogus.gene".to_owned());
+        let dir = tempfile::tempdir().unwrap();
+        let error = run(dir.path(), &tiny(environment)).unwrap_err();
+        assert!(matches!(error, RuntimeError::Usage(_)), "{error:?}");
     }
 }
