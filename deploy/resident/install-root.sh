@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# One-time root setup for a Kamimusuhi resident node (Pi or llm_master).
+# One-time root setup for a Kamimusuhi resident node (pi, llm_master, 6f, tb250, ...).
 #
-#   sudo ./install-root.sh <pi|llm_master> [share-export] [kamimusuhi-export]
+#   sudo ./install-root.sh <node> [share-export] [kamimusuhi-export]
 #
 # Idempotent. It:
 #   1. creates /srv/kamimusuhi/{runtime/bin,config,current_state,cache,spool}
@@ -14,7 +14,7 @@
 # before a binary and config exist (install-node.sh does that as the user).
 set -euo pipefail
 
-NODE="${1:?usage: sudo $0 <pi|llm_master> [share-export] [kamimusuhi-export]}"
+NODE="${1:?usage: sudo $0 <node> [share-export] [kamimusuhi-export]}"
 SITE_ENV="$(cd "$(dirname "$0")" && pwd)/local/site.env"
 # shellcheck disable=SC1090
 [[ -f "$SITE_ENV" ]] && source "$SITE_ENV"
@@ -26,7 +26,7 @@ KAMI_EXPORT="${3:-${NAS_KAMIMUSUHI_EXPORT:?set NAS_KAMIMUSUHI_EXPORT in deploy/r
 KAMI_MOUNTPOINT=/mnt/kamimusuhi
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-case "$NODE" in pi|llm_master) ;; *) echo "node must be pi or llm_master" >&2; exit 64;; esac
+[[ "$NODE" =~ ^[a-z0-9_]+$ ]] || { echo "node id must match [a-z0-9_]+ (pi, llm_master, 6f, tb250, ...)" >&2; exit 64; }
 [[ $EUID -eq 0 ]] || { echo "run with sudo" >&2; exit 1; }
 id "$SERVICE_USER" >/dev/null
 

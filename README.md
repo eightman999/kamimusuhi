@@ -496,7 +496,31 @@ cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase res
 
 ## 現在の状態
 
-**Alpha / v0.1 continuity slice 実装済み。** 上記 10 項目の continuity slice は Rust + SQLite で実装され、テストで検証されています。実装範囲は W0–W7:
+**Alpha / v0.1 continuity slice 実装済み + 常設ノード構成（resident）が稼働中。**
+現在の実装は二層です。`crates/` の個体 runtime が continuity・証拠・記憶を正本 SQLite で担保し、
+その上で `kamimusuhi-resident`（バイナリ名 `kamimusuhi`）が tailnet 内の各マシンに常駐して
+**OpenAI 互換の HTTP API**・個体対話・ノード間委譲・tool/MCP・承認フローを提供します。
+
+- **常設構成**: `continuity` ノード（個体の正本・scheduler・K-CORE 監督）と `cognition` ノード
+  （local LLM・GPU・Task Plane）を HTTP+bearer token で接続。LAN と tailnet の複数アドレスを
+  `alt_urls` で自動切替し、外部サービス依存なしに tailnet で完結できます。
+- **API**: `/v1/chat/completions`（privacy/cost guard 付き自動ルーティング）・
+  `/v1/kamimusuhi/talk`（個体と話す）・`/v1/tasks` `/v1/agents` `/v1/commitments`
+  `/v1/intercom` `/v1/tools` `/v1/library` `/task` ほか。詳細は
+  [`deploy/resident/README.md`](./deploy/resident/README.md) と
+  [`deepwiki/03-api-reference.md`](./deepwiki/03-api-reference.md)。
+- **接続面**: `kamimusuhi chat`（CLI）、`kami`（TUI）、`kamimusuhi-desktop`（ネイティブ GUI /
+  macOS アプリ）、Discord bot。どの面も同じ個体・同じ subject で会話を共有します。
+- **姉妹個体**: `dialogue` を持つノード同士は別個体（intercom の envelope で会話。
+  直接配送 + Cloudflare relay の任意 fallback）。
+- **持続する目標**: Commitment Engine が checkpoint・再計画ラダー L0–L6・予算で
+  再起動・失敗を跨いだ耐久目標を追跡します（`docs/implementation/commitment-engine.md`）。
+
+**ドキュメント**: コードから逆引きした現状地図は [`deepwiki/`](./deepwiki/README.md)、
+導入の最短ルートは [`deepwiki/02-quickstart.md`](./deepwiki/02-quickstart.md)
+（tailnet 内の1台に resident を立てて API で使う手順）を参照してください。
+
+上記 10 項目の continuity slice は Rust + SQLite で実装され、テストで検証されています。実装範囲は W0–W7:
 
 - W0–W1: Cargo workspace、canonical continuity（single-writer、atomic activation、writer fencing、restart 復元、failpoint 検証）
 - W2: canonical evidence と durable episodic/relationship memory、correction/supersession、domain separation

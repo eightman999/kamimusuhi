@@ -361,3 +361,32 @@ NAS journal/board に載るのは id/type/state/latency だけ。
 | NAS 断 / ハング | spool に蓄積、probe は別スレッドで timeout | マーカー確認後に自動配送 |
 | HAI 断 | 他tierのみ。全滅なら 503 | probe 成功で自動 |
 | heavy node 停止中の委譲 | task は `retry_pending` で待機（Pi側 event loop は止まらない） | peer 復帰で冪等再送、attempts 上限超過で `failed` |
+
+## ローカル配置の例（Obsidian + 開発ディレクトリ）
+
+このマシン（Mac）では情報置き場が `~/Desktop/Obsidian`、開発ディレクトリが `~/dev`。
+resident.json では次のように接続する（`local/` 配下は git 管理外のサイト固有設定）:
+
+```jsonc
+// ~/Desktop/Obsidian を library として読み取り専用公開（/v1/library, library_* tools）
+"libraries": [
+  { "name": "obsidian", "path": "~/Desktop/Obsidian",
+    "description": "情報置き場の Obsidian vault（読み取り専用）" }
+],
+// mcpvault 経由なら検索・読み・承認制の書き込みも可（deploy/resident の MCP 節を参照）
+// ~/dev を Task Plane の workspace として委譲先に使う
+"task_plane": {
+  "workspaces": [
+    { "name": "dev", "path": "~/dev",
+      "description": "開発ディレクトリ（読み取り・explore 委譲）",
+      "allow_write": false },
+    { "name": "kamimusuhi", "path": "~/dev/sandbox/kamimusuhi",
+      "description": "Kamimusuhi リポジトリ（書き込みは worktree+apply のみ）",
+      "allow_write": true }
+  ]
+}
+```
+
+library は読み取り専用（`.git` と外のパスは返さない）。Obsidian vault の変更を
+個体に即反映させたい場合は、`mcp__obsidian__search_notes` 等の MCP tool 経路の方が向く
+（書き込み系は Pi のみ承認制）。
