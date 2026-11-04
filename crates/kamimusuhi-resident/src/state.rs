@@ -100,6 +100,9 @@ pub struct RouteEvent {
     pub completion_tokens: Option<u64>,
     /// Prompt tokens served from an upstream prefix cache, when reported.
     pub cached_tokens: Option<u64>,
+    /// Prompt tokens the upstream wrote into its prefix cache on this
+    /// request, when reported.
+    pub cache_write_tokens: Option<u64>,
     /// USD this request cost — actual when the provider billed and said
     /// so, estimate when computed from configured prices.
     pub cost_usd: Option<f64>,

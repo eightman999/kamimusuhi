@@ -228,6 +228,7 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
                     "prompt_tokens": r.prompt_tokens,
                     "completion_tokens": r.completion_tokens,
                     "cached_tokens": r.cached_tokens,
+                    "cache_write_tokens": r.cache_write_tokens,
                     "cost_usd": r.cost_usd,
                     "cost_kind": r.cost_kind,
                 })

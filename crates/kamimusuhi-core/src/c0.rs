@@ -287,6 +287,27 @@ pub struct RetrievalParams {
     pub evidence_pool: usize,
     /// Recalled raw-evidence hits surfaced into the workspace.
     pub evidence_top_k: usize,
+    /// How many link hops the declared-path recall frame may follow from a
+    /// seed record. 0 disables link traversal.
+    pub recall_link_depth: usize,
+    /// Per-hop score decay for link traversal (0.45 = each hop keeps 45% of
+    /// the incoming seed strength).
+    pub recall_hop_decay: f64,
+    /// Extra episodic candidates the declared path may offer the judge,
+    /// split links:tags in a 2:1 ratio. 0 disables the declared path.
+    pub recall_declared_budget: usize,
+    /// Records last served within this many seconds seed the link/tag frames
+    /// as "hot" with a freshness-scaled strength. 0 disables hot seeds.
+    pub recall_hot_window_secs: u64,
+    /// Per-pointer score bonus for a traversed record whose in-degree is at
+    /// least 2 (FIO's "knot": distant memories surface only when several
+    /// paths point at them). Effective multiplier is
+    /// `1 + recall_knot_bonus * min(in_degree, 5)`; 0 disables the bonus.
+    pub recall_knot_bonus: f64,
+    /// Per-hop score decay for reverse traversal — reaching a record that
+    /// *points to* the current one rather than one it points to. Weaker
+    /// than `recall_hop_decay`; 0 disables reverse traversal.
+    pub recall_reverse_decay: f64,
 }
 
 impl Default for RetrievalParams {
@@ -298,6 +319,12 @@ impl Default for RetrievalParams {
             min_score: 0.05,
             evidence_pool: 96,
             evidence_top_k: 2,
+            recall_link_depth: 3,
+            recall_hop_decay: 0.45,
+            recall_declared_budget: 6,
+            recall_hot_window_secs: 72 * 60 * 60,
+            recall_knot_bonus: 0.1,
+            recall_reverse_decay: 0.20,
         }
     }
 }
@@ -332,6 +359,12 @@ fn param_bounds(key: &str) -> Option<(f64, f64)> {
         "retrieval.min_score" => (0.0, 1.0),
         "retrieval.evidence_pool" => (8.0, 512.0),
         "retrieval.evidence_top_k" => (0.0, 16.0),
+        "retrieval.recall_link_depth" => (0.0, 8.0),
+        "retrieval.recall_hop_decay" => (0.0, 1.0),
+        "retrieval.recall_declared_budget" => (0.0, 16.0),
+        "retrieval.recall_hot_window_secs" => (0.0, 31_536_000.0),
+        "retrieval.recall_knot_bonus" => (0.0, 1.0),
+        "retrieval.recall_reverse_decay" => (0.0, 1.0),
         "conversation.max_response_chars" => (0.0, 32_000.0),
         "reflection.interval_turns" => (0.0, 10_000.0),
         _ => return None,
@@ -341,7 +374,13 @@ fn param_bounds(key: &str) -> Option<(f64, f64)> {
 /// Integer-valued parameters: fractional proposals are malformed, not
 /// truncated.
 fn param_is_integer(key: &str) -> bool {
-    !matches!(key, "retrieval.min_score")
+    !matches!(
+        key,
+        "retrieval.min_score"
+            | "retrieval.recall_hop_decay"
+            | "retrieval.recall_knot_bonus"
+            | "retrieval.recall_reverse_decay"
+    )
 }
 
 impl OperativeParams {
@@ -354,6 +393,12 @@ impl OperativeParams {
             "retrieval.min_score" => self.retrieval.min_score.into(),
             "retrieval.evidence_pool" => self.retrieval.evidence_pool.into(),
             "retrieval.evidence_top_k" => self.retrieval.evidence_top_k.into(),
+            "retrieval.recall_link_depth" => self.retrieval.recall_link_depth.into(),
+            "retrieval.recall_hop_decay" => self.retrieval.recall_hop_decay.into(),
+            "retrieval.recall_declared_budget" => self.retrieval.recall_declared_budget.into(),
+            "retrieval.recall_hot_window_secs" => self.retrieval.recall_hot_window_secs.into(),
+            "retrieval.recall_knot_bonus" => self.retrieval.recall_knot_bonus.into(),
+            "retrieval.recall_reverse_decay" => self.retrieval.recall_reverse_decay.into(),
             "conversation.max_response_chars" => self.conversation.max_response_chars.into(),
             "reflection.interval_turns" => self.reflection.interval_turns.into(),
             _ => return None,
@@ -379,6 +424,16 @@ impl OperativeParams {
             "retrieval.min_score" => self.retrieval.min_score = number,
             "retrieval.evidence_pool" => self.retrieval.evidence_pool = number as usize,
             "retrieval.evidence_top_k" => self.retrieval.evidence_top_k = number as usize,
+            "retrieval.recall_link_depth" => self.retrieval.recall_link_depth = number as usize,
+            "retrieval.recall_hop_decay" => self.retrieval.recall_hop_decay = number,
+            "retrieval.recall_declared_budget" => {
+                self.retrieval.recall_declared_budget = number as usize;
+            }
+            "retrieval.recall_hot_window_secs" => {
+                self.retrieval.recall_hot_window_secs = number as u64;
+            }
+            "retrieval.recall_knot_bonus" => self.retrieval.recall_knot_bonus = number,
+            "retrieval.recall_reverse_decay" => self.retrieval.recall_reverse_decay = number,
             "conversation.max_response_chars" => {
                 self.conversation.max_response_chars = number as usize;
             }

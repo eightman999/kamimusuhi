@@ -66,6 +66,26 @@ pub fn route_cost_label(route: &Value) -> Option<String> {
     }
 }
 
+/// Prefix-cache label for a route record: `cached=N hit=M%` where the hit
+/// rate is cached/(prompt+cached) — the same accounting as the usage
+/// rollup. `None` when the provider reported no cache reads.
+pub fn route_cache_label(route: &Value) -> Option<String> {
+    let cached = route.get("cached_tokens").and_then(Value::as_u64)?;
+    let prompt = route
+        .get("prompt_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let total = prompt.saturating_add(cached);
+    Some(if total > 0 {
+        format!(
+            "cached={cached} hit={:.0}%",
+            100.0 * cached as f64 / total as f64
+        )
+    } else {
+        format!("cached={cached}")
+    })
+}
+
 /// Render the status document. Returns the text and whether everything
 /// required for normal operation is healthy.
 pub fn render(status: &Value) -> (String, bool) {
@@ -179,15 +199,19 @@ pub fn render(status: &Value) -> (String, bool) {
             .and_then(Value::as_f64)
             .map(|c| format!(" cost=${c:.4}"))
             .unwrap_or_default();
+        let cache = route_cache_label(last)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default();
         let _ = writeln!(
             out,
-            "  last request: tier={} model={} billing={} ok={} {}ms{} attempts={}",
+            "  last request: tier={} model={} billing={} ok={} {}ms{}{} attempts={}",
             s(last.get("tier")),
             s(last.get("model")),
             s(last.get("billing")),
             s(last.get("ok")),
             s(last.get("latency_ms")),
             cost,
+            cache,
             s(last.get("attempts"))
         );
     }
@@ -439,5 +463,25 @@ mod tests {
             route_target_label(&json!({"tier": "hai"})).as_deref(),
             Some("via hai")
         );
+    }
+
+    #[test]
+    fn route_cache_label_reports_hits_only_when_reported() {
+        assert_eq!(
+            route_cache_label(&json!({"prompt_tokens": 60, "cached_tokens": 40})).as_deref(),
+            Some("cached=40 hit=40%")
+        );
+        // A reported zero hit is still information, not silence.
+        assert_eq!(
+            route_cache_label(&json!({"prompt_tokens": 100, "cached_tokens": 0})).as_deref(),
+            Some("cached=0 hit=0%")
+        );
+        // Without prompt tokens the count alone still shows.
+        assert_eq!(
+            route_cache_label(&json!({"cached_tokens": 7})).as_deref(),
+            Some("cached=7 hit=100%")
+        );
+        // Unreported → no label at all.
+        assert_eq!(route_cache_label(&json!({"prompt_tokens": 100})), None);
     }
 }

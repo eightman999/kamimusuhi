@@ -44,6 +44,7 @@ const EXPECTED_TABLES: &[&str] = &[
     "schema_meta",
     "sessions",
     "state_record_evidence",
+    "state_record_usage",
     "state_records",
     "turns",
     "writer_epochs",

@@ -43,10 +43,15 @@ const MIGRATIONS: &[Migration] = &[
         name: "c0_derived_lane",
         sql: include_str!("../migrations/0005_c0_derived_lane.sql"),
     },
+    Migration {
+        version: SchemaVersion(6),
+        name: "recall_v0",
+        sql: include_str!("../migrations/0006_recall_v0.sql"),
+    },
 ];
 
 /// Newest schema this build can read and write.
-pub const SUPPORTED_SCHEMA_VERSION: SchemaVersion = SchemaVersion(5);
+pub const SUPPORTED_SCHEMA_VERSION: SchemaVersion = SchemaVersion(6);
 
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 
