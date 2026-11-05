@@ -62,19 +62,32 @@ pub fn memory(shared: &Shared, request: &Value) -> (u16, Value) {
     let dir = config.dir.to_string_lossy().into_owned();
     let binary = config.runtime_binary.to_string_lossy().into_owned();
     let limit_arg = limit.to_string();
-    let mut args = vec!["memory", "--dir", dir.as_str(), "--limit", limit_arg.as_str()];
+    let mut args = vec![
+        "memory",
+        "--dir",
+        dir.as_str(),
+        "--limit",
+        limit_arg.as_str(),
+    ];
     if let Some(subject) = subject.as_deref() {
         args.push("--subject");
         args.push(subject);
     }
     let Some(output) = run_with_timeout_env(&binary, &args, &[], SPAWN_TIMEOUT) else {
-        return (504, json!({"error": "memory report timed out or could not start"}));
+        return (
+            504,
+            json!({"error": "memory report timed out or could not start"}),
+        );
     };
-    let report = output
-        .stdout
-        .lines()
-        .rev()
-        .find_map(|line| serde_json::from_str::<Value>(line).ok());
+    // `memory` reports are pretty-printed, so parse the whole stdout; fall
+    // back to the last JSON line in case anything else ever prints first.
+    let report = serde_json::from_str::<Value>(&output.stdout).ok().or_else(|| {
+        output
+            .stdout
+            .lines()
+            .rev()
+            .find_map(|line| serde_json::from_str::<Value>(line).ok())
+    });
     match report {
         Some(mut report) if output.success => {
             report["cached_for_secs"] = json!(CACHE_TTL.as_secs());
@@ -85,7 +98,10 @@ pub fn memory(shared: &Shared, request: &Value) -> (u16, Value) {
         _ => {
             let tail: Vec<&str> = output.stderr.lines().rev().take(5).collect();
             let tail: Vec<&str> = tail.into_iter().rev().collect();
-            (502, json!({"error": "memory report failed", "stderr_tail": tail}))
+            (
+                502,
+                json!({"error": "memory report failed", "stderr_tail": tail}),
+            )
         }
     }
 }
