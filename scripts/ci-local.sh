@@ -12,7 +12,10 @@ echo "==> cargo clippy"
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 echo "==> cargo test"
-cargo test --workspace
+# Bound the suite: a stalled test must become a loud failure here (with the
+# ci.log artifact naming the binary it stalled in), not a silent job kill.
+# The healthy gate finishes in well under ten minutes.
+timeout -k 30 900 cargo test --workspace
 
 echo "==> core dependency boundary"
 # kamimusuhi-core must not pull in storage clients, HTTP clients, provider SDKs,
