@@ -1079,6 +1079,14 @@ impl DialogueSession {
         )?;
         let (mut memories, mut recalled_evidence) = recall_pool.baseline();
         let head = runtime.head()?;
+        // The individual's own working notes: the newest `self_notes_max`
+        // from the bounded file beside the store, staged under their own
+        // domain so they arrive marked self-authored — never canonical
+        // evidence, memory or seed. The lane reads its unscaled param.
+        let self_notes = crate::self_notes::latest(
+            &runtime.paths().dir,
+            operative.view.params.retrieval.self_notes_max,
+        );
         let mut workspace = WorkspaceBuilder::new(self.individual_id, runtime.now())
             .with_continuity(&head)
             .with_current_input(&current_input)
@@ -1086,6 +1094,7 @@ impl DialogueSession {
             .with_self_state(&operative.view.self_model)
             .with_active_policy(&operative.view.params, operative.activation_seq)
             .with_recalled_evidence(&recalled_evidence)
+            .with_self_notes(&self_notes)
             .build();
         let mio = runtime
             .config()
@@ -1284,11 +1293,13 @@ impl DialogueSession {
             .with_self_state(&operative.view.self_model)
             .with_active_policy(&operative.view.params, operative.activation_seq)
             .with_recalled_evidence(&recalled_evidence)
+            .with_self_notes(&self_notes)
             .build();
         let selected = PersonaEnvelope::from_workspace(&workspace, input.envelope.session);
         input.envelope.relationship = selected.relationship;
         input.envelope.episodic = selected.episodic;
         input.envelope.recalled_evidence = selected.recalled_evidence;
+        input.envelope.self_notes = selected.self_notes;
         observed["retained_memory_records_available"] = serde_json::json!(memories.len());
         if matches!(preparation.observation, ObservationNeed::Runtime) {
             // One bounded local refresh. No sensor or cloud polling is implied.
@@ -1315,6 +1326,7 @@ impl DialogueSession {
             "recalled_evidence": input.envelope.recalled_evidence,
             "self_state": input.envelope.durable_self,
             "active_policy": input.envelope.active_policy,
+            "self_notes": input.envelope.self_notes,
             "open_threads": self.open_threads(runtime, &operative.view)?,
             "body_state": input.envelope.body_state,
             "conversation_core": input.envelope.conversation_core,

@@ -27,6 +27,7 @@ pub mod memory;
 pub mod probes;
 pub mod remote;
 pub mod router;
+pub mod self_notes;
 pub mod selfmon;
 pub mod server;
 pub mod spool;

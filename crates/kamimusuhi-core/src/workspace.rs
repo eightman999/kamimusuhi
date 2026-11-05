@@ -61,6 +61,11 @@ pub enum WorkspaceDomain {
     /// The operative policy in force for this turn, as an overlay. Derived
     /// lane content: it modulates behaviour but is not a belief.
     ActivePolicy,
+    /// A self-authored working note the individual wrote earlier (the
+    /// `self_note` tool's output). Scratch state, not canonical truth:
+    /// separate from activated self-state, from evidence and from the
+    /// operator's seed.
+    SelfNote,
 }
 
 impl WorkspaceDomain {
@@ -75,6 +80,7 @@ impl WorkspaceDomain {
             Self::SelfMemory => "SELF_MEMORY",
             Self::RecalledEvidence => "RECALLED_EVIDENCE",
             Self::ActivePolicy => "ACTIVE_POLICY",
+            Self::SelfNote => "SELF_NOTE",
         }
     }
 
@@ -93,6 +99,7 @@ impl WorkspaceDomain {
             Self::SelfMemory => 6,
             Self::RecalledEvidence => 7,
             Self::ActivePolicy => 8,
+            Self::SelfNote => 9,
         }
     }
 }
@@ -115,6 +122,10 @@ pub enum AuthorityClass {
     DirectInput,
     /// Material from outside the individual: Library text, resource output.
     ExternalMaterial,
+    /// Written by the individual itself, earlier and unreviewed — the
+    /// `self_note` lane. First-party like direct input, but scratch state:
+    /// no evidence was presented, no gate ran, nothing was activated.
+    SelfAuthored,
 }
 
 impl AuthorityClass {
@@ -123,6 +134,7 @@ impl AuthorityClass {
             Self::CanonicalState => "canonical_state",
             Self::DirectInput => "direct_input",
             Self::ExternalMaterial => "external_material",
+            Self::SelfAuthored => "self_authored",
         }
     }
 
@@ -188,6 +200,11 @@ pub enum SourceRef {
         evidence_id: EvidenceId,
         kind: EvidenceKind,
     },
+    /// A self-authored note, by the note file's own `sn-<seq>` label. The
+    /// label names a line in `self_notes.jsonl`, never a canonical record.
+    SelfNote {
+        note_id: String,
+    },
 }
 
 /// Why the assembler included an item. Deterministic and inspectable.
@@ -210,6 +227,8 @@ pub enum InclusionReason {
     OperativePolicy,
     /// A canonical record that matched this turn's recall query.
     EvidenceRecall,
+    /// A self-authored note within this turn's `self_notes_max` window.
+    SelfNote,
 }
 
 impl InclusionReason {
@@ -223,6 +242,7 @@ impl InclusionReason {
             Self::SelfState => "self_state",
             Self::OperativePolicy => "operative_policy",
             Self::EvidenceRecall => "evidence_recall",
+            Self::SelfNote => "self_note",
         }
     }
 }
@@ -292,6 +312,9 @@ pub struct WorkspaceBudget {
     /// The operative-policy overlay. One item suffices; the budget exists so
     /// the cap is an explicit choice rather than an accident.
     pub active_policy: usize,
+    /// Self-authored notes. Sized to the largest `retrieval.self_notes_max`
+    /// the lane permits, so the param — not the budget — governs in practice.
+    pub self_notes: usize,
 }
 
 impl Default for WorkspaceBudget {
@@ -304,6 +327,7 @@ impl Default for WorkspaceBudget {
             self_memory: 16,
             recalled_evidence: 8,
             active_policy: 4,
+            self_notes: 16,
         }
     }
 }
@@ -570,6 +594,32 @@ impl WorkspaceBuilder {
         self
     }
 
+    /// The individual's self-authored working notes, already ordered oldest
+    /// to newest by the reader. Their own domain and their own authority
+    /// class: a note is something the individual wrote down, not a canonical
+    /// record it can cite.
+    pub fn with_self_notes(mut self, notes: &[crate::self_note::SelfNote]) -> Self {
+        for note in notes {
+            self.staged.push((
+                WorkspaceDomain::SelfNote,
+                StagedItem {
+                    source_ref: SourceRef::SelfNote {
+                        note_id: note.note_id(),
+                    },
+                    content: WorkspaceContent::structured(serde_json::json!({
+                        "kind": note.kind,
+                        "text": note.text,
+                        "evidence_refs": note.evidence_refs,
+                    })),
+                    authority: AuthorityClass::SelfAuthored,
+                    source_time: Some(note.created_at),
+                    inclusion_reason: InclusionReason::SelfNote,
+                },
+            ));
+        }
+        self
+    }
+
     /// Emit the workspace. Stable sort by domain rank keeps each domain's
     /// caller-supplied order, so the result is a pure function of the inputs.
     pub fn build(self) -> Workspace {
@@ -613,6 +663,7 @@ struct DomainCounts {
     self_memory: usize,
     recalled_evidence: usize,
     active_policy: usize,
+    self_notes: usize,
 }
 
 impl DomainCounts {
@@ -631,6 +682,7 @@ impl DomainCounts {
                 (&mut self.recalled_evidence, budget.recalled_evidence)
             }
             WorkspaceDomain::ActivePolicy => (&mut self.active_policy, budget.active_policy),
+            WorkspaceDomain::SelfNote => (&mut self.self_notes, budget.self_notes),
             // The head and the current input are never budgeted away: a turn
             // without its own input is not a smaller turn, it is a broken one.
             WorkspaceDomain::CurrentContinuityState | WorkspaceDomain::CurrentInput => {

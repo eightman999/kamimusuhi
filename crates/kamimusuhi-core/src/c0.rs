@@ -308,6 +308,9 @@ pub struct RetrievalParams {
     /// *points to* the current one rather than one it points to. Weaker
     /// than `recall_hop_decay`; 0 disables reverse traversal.
     pub recall_reverse_decay: f64,
+    /// Self-authored notes (`self_notes.jsonl`) surfaced into the workspace
+    /// each turn. 0 disables the lane.
+    pub self_notes_max: usize,
 }
 
 impl Default for RetrievalParams {
@@ -325,6 +328,7 @@ impl Default for RetrievalParams {
             recall_hot_window_secs: 72 * 60 * 60,
             recall_knot_bonus: 0.1,
             recall_reverse_decay: 0.20,
+            self_notes_max: 5,
         }
     }
 }
@@ -348,27 +352,40 @@ pub struct ReflectionParams {
     pub interval_turns: u32,
 }
 
+/// The closed parameter vocabulary: key -> numeric bounds. One table is the
+/// single source every check draws on — a proposal cannot invent a knob, and
+/// a new knob is added here, exactly once.
+const PARAM_BOUNDS: &[(&str, f64, f64)] = &[
+    ("retrieval.history_messages", 1.0, 64.0),
+    ("retrieval.relationship_top_k", 0.0, 32.0),
+    ("retrieval.episodic_top_k", 0.0, 32.0),
+    ("retrieval.min_score", 0.0, 1.0),
+    ("retrieval.evidence_pool", 8.0, 512.0),
+    ("retrieval.evidence_top_k", 0.0, 16.0),
+    ("retrieval.recall_link_depth", 0.0, 8.0),
+    ("retrieval.recall_hop_decay", 0.0, 1.0),
+    ("retrieval.recall_declared_budget", 0.0, 16.0),
+    ("retrieval.recall_hot_window_secs", 0.0, 31_536_000.0),
+    ("retrieval.recall_knot_bonus", 0.0, 1.0),
+    ("retrieval.recall_reverse_decay", 0.0, 1.0),
+    ("retrieval.self_notes_max", 0.0, 16.0),
+    ("conversation.max_response_chars", 0.0, 32_000.0),
+    ("reflection.interval_turns", 0.0, 10_000.0),
+];
+
+/// Every settable parameter key, for error messages and tool schemas.
+pub fn param_keys() -> impl Iterator<Item = &'static str> {
+    PARAM_BOUNDS.iter().map(|(key, _, _)| *key)
+}
+
 /// A parameter target: fixed vocabulary key -> numeric bounds. Returns `None`
 /// for unknown keys — an unknown target is a rejected proposal, never a
 /// silently-dropped or clamped one.
 fn param_bounds(key: &str) -> Option<(f64, f64)> {
-    Some(match key {
-        "retrieval.history_messages" => (1.0, 64.0),
-        "retrieval.relationship_top_k" => (0.0, 32.0),
-        "retrieval.episodic_top_k" => (0.0, 32.0),
-        "retrieval.min_score" => (0.0, 1.0),
-        "retrieval.evidence_pool" => (8.0, 512.0),
-        "retrieval.evidence_top_k" => (0.0, 16.0),
-        "retrieval.recall_link_depth" => (0.0, 8.0),
-        "retrieval.recall_hop_decay" => (0.0, 1.0),
-        "retrieval.recall_declared_budget" => (0.0, 16.0),
-        "retrieval.recall_hot_window_secs" => (0.0, 31_536_000.0),
-        "retrieval.recall_knot_bonus" => (0.0, 1.0),
-        "retrieval.recall_reverse_decay" => (0.0, 1.0),
-        "conversation.max_response_chars" => (0.0, 32_000.0),
-        "reflection.interval_turns" => (0.0, 10_000.0),
-        _ => return None,
-    })
+    PARAM_BOUNDS
+        .iter()
+        .find(|(name, _, _)| *name == key)
+        .map(|(_, min, max)| (*min, *max))
 }
 
 /// Integer-valued parameters: fractional proposals are malformed, not
@@ -399,6 +416,7 @@ impl OperativeParams {
             "retrieval.recall_hot_window_secs" => self.retrieval.recall_hot_window_secs.into(),
             "retrieval.recall_knot_bonus" => self.retrieval.recall_knot_bonus.into(),
             "retrieval.recall_reverse_decay" => self.retrieval.recall_reverse_decay.into(),
+            "retrieval.self_notes_max" => self.retrieval.self_notes_max.into(),
             "conversation.max_response_chars" => self.conversation.max_response_chars.into(),
             "reflection.interval_turns" => self.reflection.interval_turns.into(),
             _ => return None,
@@ -434,6 +452,7 @@ impl OperativeParams {
             }
             "retrieval.recall_knot_bonus" => self.retrieval.recall_knot_bonus = number,
             "retrieval.recall_reverse_decay" => self.retrieval.recall_reverse_decay = number,
+            "retrieval.self_notes_max" => self.retrieval.self_notes_max = number as usize,
             "conversation.max_response_chars" => {
                 self.conversation.max_response_chars = number as usize;
             }
@@ -445,6 +464,33 @@ impl OperativeParams {
             }
         }
         Ok(())
+    }
+
+    /// Validate `value` against `key`'s bounds without applying it — the
+    /// check a proposal path runs *before* a proposal row exists, so an
+    /// unknown target or out-of-bounds value is refused to the caller with
+    /// the same error intake validation would produce. Returns the value as
+    /// validated.
+    pub fn check(key: &str, value: &serde_json::Value) -> Result<f64, C0Error> {
+        let Some((min, max)) = param_bounds(key) else {
+            return Err(C0Error::MalformedProposal {
+                reason: format!("unknown param target {key:?}"),
+            });
+        };
+        let number = value.as_f64().ok_or_else(|| C0Error::MalformedProposal {
+            reason: format!("param {key} requires a numeric value"),
+        })?;
+        if !(min..=max).contains(&number) {
+            return Err(C0Error::MalformedProposal {
+                reason: format!("value {number} outside [{min},{max}] for {key}"),
+            });
+        }
+        if param_is_integer(key) && number.fract() != 0.0 {
+            return Err(C0Error::MalformedProposal {
+                reason: format!("param {key} requires an integer, got {number}"),
+            });
+        }
+        Ok(number)
     }
 }
 
@@ -1191,5 +1237,64 @@ mod tests {
             gate_decision(&proposal, &same),
             GateDecision::Reject { .. }
         ));
+    }
+
+    #[test]
+    fn check_validates_before_any_proposal_exists() {
+        assert_eq!(
+            OperativeParams::check("retrieval.self_notes_max", &serde_json::json!(6))
+                .expect("in-bounds"),
+            6.0
+        );
+        assert!(matches!(
+            OperativeParams::check("retrieval.no_such_knob", &serde_json::json!(1)),
+            Err(C0Error::MalformedProposal { .. })
+        ));
+        assert!(matches!(
+            OperativeParams::check("retrieval.self_notes_max", &serde_json::json!(99)),
+            Err(C0Error::MalformedProposal { .. })
+        ));
+        assert!(matches!(
+            OperativeParams::check("retrieval.self_notes_max", &serde_json::json!("6")),
+            Err(C0Error::MalformedProposal { .. })
+        ));
+        assert!(matches!(
+            OperativeParams::check("retrieval.self_notes_max", &serde_json::json!(1.5)),
+            Err(C0Error::MalformedProposal { .. })
+        ));
+        // Float params accept fractions within bounds.
+        assert_eq!(
+            OperativeParams::check("retrieval.min_score", &serde_json::json!(0.25))
+                .expect("in-bounds"),
+            0.25
+        );
+        // The vocabulary the tools advertise is exactly the vocabulary the
+        // check accepts — one table feeds both.
+        for key in param_keys() {
+            assert!(param_bounds(key).is_some(), "{key}");
+        }
+        assert!(
+            !param_keys()
+                .collect::<Vec<_>>()
+                .contains(&"retrieval.made_up")
+        );
+    }
+
+    #[test]
+    fn self_notes_max_round_trips_through_get_and_set() {
+        let mut params = OperativeParams::default();
+        assert_eq!(
+            params.get("retrieval.self_notes_max"),
+            Some(serde_json::json!(5))
+        );
+        params
+            .set("retrieval.self_notes_max", serde_json::json!(9))
+            .expect("set");
+        assert_eq!(params.retrieval.self_notes_max, 9);
+        assert_eq!(
+            params.get("retrieval.self_notes_max"),
+            Some(serde_json::json!(9))
+        );
+        assert!(params.get("retrieval.made_up").is_none());
     }
 }

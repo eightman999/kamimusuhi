@@ -260,6 +260,22 @@ impl TaskBoard {
             .collect()
     }
 
+    /// How many calls of `tool` this turn has already been charged. The
+    /// board journals every tool call under its turn, so a per-turn budget
+    /// counts the journal rather than a second counter that could drift.
+    pub fn tool_calls_in(&self, turn: &str, tool: &str) -> usize {
+        self.tasks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .filter(|t| {
+                t.kind == "tool"
+                    && t.depends_on.iter().any(|d| d == turn)
+                    && t.detail["tool"].as_str() == Some(tool)
+            })
+            .count()
+    }
+
     /// The task recorded for a long-lived source (e.g. one per job).
     pub fn find_by_detail(&self, kind: &str, key: &str, value: &str) -> Option<String> {
         self.tasks

@@ -64,6 +64,8 @@
       "mcp__obsidian__write_note",
       "mcp__obsidian__patch_note",
       "mcp__obsidian__update_frontmatter",
+      "self_note",
+      "improve",
       "commit_create",
       "commit_list",
       "commit_show",

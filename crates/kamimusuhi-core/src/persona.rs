@@ -277,6 +277,11 @@ pub struct PersonaEnvelope {
     /// is not a belief about anything.
     #[serde(default)]
     pub active_policy: Vec<WorkspaceItem>,
+    /// The individual's own self-authored working notes (`self_note` tool
+    /// output). Unreviewed scratch state — not canonical evidence, not
+    /// activated self-state, and not the operator's seed.
+    #[serde(default)]
+    pub self_notes: Vec<WorkspaceItem>,
     /// Imported documents. External material: not the individual's belief.
     pub library: Vec<WorkspaceItem>,
     /// Output of delegated cognition. External material, and specifically not
@@ -361,6 +366,7 @@ impl PersonaEnvelope {
             episodic: of(WorkspaceDomain::EpisodicMemory),
             recalled_evidence: of(WorkspaceDomain::RecalledEvidence),
             active_policy: of(WorkspaceDomain::ActivePolicy),
+            self_notes: of(WorkspaceDomain::SelfNote),
             library: of(WorkspaceDomain::LibraryEvidence),
             external_results: of(WorkspaceDomain::ExternalResourceResult),
             organ_signals: Vec::new(),
@@ -436,6 +442,7 @@ impl PersonaEnvelope {
             && self.episodic.is_empty()
             && self.recalled_evidence.is_empty()
             && self.active_policy.is_empty()
+            && self.self_notes.is_empty()
             && self.library.is_empty()
             && self.external_results.is_empty()
             && self.organ_signals.is_empty()

@@ -42,6 +42,7 @@ pub mod route_gate;
 pub mod runtime;
 pub mod scenario;
 pub mod selection;
+pub mod self_notes;
 pub mod trace;
 
 pub use config::{
