@@ -81,13 +81,15 @@ pub fn memory(shared: &Shared, request: &Value) -> (u16, Value) {
     };
     // `memory` reports are pretty-printed, so parse the whole stdout; fall
     // back to the last JSON line in case anything else ever prints first.
-    let report = serde_json::from_str::<Value>(&output.stdout).ok().or_else(|| {
-        output
-            .stdout
-            .lines()
-            .rev()
-            .find_map(|line| serde_json::from_str::<Value>(line).ok())
-    });
+    let report = serde_json::from_str::<Value>(&output.stdout)
+        .ok()
+        .or_else(|| {
+            output
+                .stdout
+                .lines()
+                .rev()
+                .find_map(|line| serde_json::from_str::<Value>(line).ok())
+        });
     match report {
         Some(mut report) if output.success => {
             report["cached_for_secs"] = json!(CACHE_TTL.as_secs());
