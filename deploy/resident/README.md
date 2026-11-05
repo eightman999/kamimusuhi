@@ -330,6 +330,17 @@ journalctl -u kamimusuhi-resident -f
 
 `status` は Pi / llm_master（peer の /health とGPU）/ routing tier / NAS（書込probe・spool backlog・最終同期）/ HAI（API疎通・残高）/ K-CORE / snapshot を表示する。
 
+## Dashboard（記憶・思考・タスクの閲覧）
+
+`deploy/resident/dashboard/index.html` はビルド不要の単一ファイル SPA。resident がバイナリに埋め込んで `GET /` と `GET /dashboard` で配信するので、tailnet/LAN から `http://<pi>:7860/` を開くだけで使える（ページ自体は無認証、API 呼び出しには node token が必要。token はページ内で一度入力すると localStorage に保存される）。
+
+表示: ノード健全性/tier/peer、タスクボード（カンバン）、commitments、agents/delegations、最近の対話ターン（thoughts、`subject` 切替可）、記憶レポート。10-60 秒周期でポーリング。
+
+- `GET|POST /v1/kamimusuhi/memory` — 個体の記憶の読み取り専用ビュー。resident は `kamimusuhi-runtime memory`（writer epoch を取らない SELECT のみ）を spawn し、結果を ~20 秒キャッシュする。`{"subject": "…", "limit": n}` で絞り込み。`dialogue` 設定のあるノードのみ。
+- 全レスポンスに `Access-Control-Allow-Origin: *` を付け、OPTIONS preflight は認証の前に処理する。token 認証は変わらないので、外部オリジンに置いたページからでも token 所持者だけが読める。
+- Cloudflare Pages などへの静的デプロイ: `npx wrangler pages deploy deploy/resident/dashboard --project-name kamimusuhi-dashboard`。
+  ただし https 配信のページから `http://<pi>:7860` への fetch はブラウザの mixed content 規則でブロックされる。hosted 版を使うには API 側を https にする必要がある（例: Pi で `tailscale serve`）。**注意**: `tailscale serve` は 127.0.0.1 からの接続に見えるため loopback 扱いになり token 認証をバイパスする — tailnet 全端末が認証なしで API を読める点を許容できる場合のみ使う。Xserver 等の http 配信なら同一 LAN/tailnet 宛てのまま動く。
+
 ## Node Task（Light/Heavy 委譲プロトコル）
 
 Pi (light) ↔ llm_master (heavy) 間の typed task 委譲。詳細は

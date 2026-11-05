@@ -8,6 +8,14 @@
 //! * `GET /v1/models`, `POST /v1/chat/completions` — routing proxy
 //!   (token unless loopback). `X-Kamimusuhi-Route: local` restricts routing
 //!   to node-local tiers so the calling peer keeps its own fallback.
+//! * `GET /`, `GET /dashboard` — the read-only operator dashboard (static
+//!   HTML, unauthenticated; API calls from it still need the token).
+//! * `GET|POST /v1/kamimusuhi/memory` — read-only memory report from the
+//!   individual's store, for the dashboard (token unless loopback).
+//!
+//! All responses carry `Access-Control-Allow-Origin: *` and OPTIONS
+//! preflights are answered before authentication, so the dashboard works
+//! from any origin (Pages, Xserver, another device on the tailnet).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -28,6 +36,10 @@ use crate::util::secret_eq;
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 64;
+
+/// The operator dashboard, embedded so the resident serves it with zero
+/// deployment. The same file is what `wrangler pages deploy` publishes.
+const DASHBOARD_HTML: &str = include_str!("../../../deploy/resident/dashboard/index.html");
 
 struct Request {
     method: String,
@@ -130,6 +142,7 @@ fn respond(
 ) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
+        204 => "No Content",
         400 => "Bad Request",
         401 => "Unauthorized",
         404 => "Not Found",
@@ -138,8 +151,11 @@ fn respond(
         503 => "Service Unavailable",
         _ => "Error",
     };
+    // Permissive CORS on every response: the bearer token still gates all
+    // privileged endpoints, so a cross-origin page (the dashboard hosted
+    // anywhere) can only read what the token it was given allows.
     let mut head = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n",
         body.len()
     );
     for (k, v) in extra {
@@ -191,7 +207,38 @@ fn handle(shared: &Shared, stream: TcpStream) {
     };
     let path = request.path.split('?').next().unwrap_or_default();
     match (request.method.as_str(), path) {
+        // Browser preflight: cross-origin fetches carrying Authorization
+        // (and Private Network Access fetches to a LAN/Tailnet address)
+        // land here before any auth check.
+        ("OPTIONS", _) => {
+            let _ = respond(
+                stream,
+                204,
+                "text/plain",
+                b"",
+                &[
+                    ("Access-Control-Allow-Methods", "GET, POST, OPTIONS".into()),
+                    (
+                        "Access-Control-Allow-Headers",
+                        "Authorization, Content-Type, X-Kamimusuhi-Route, X-Kamimusuhi-Turn".into(),
+                    ),
+                    ("Access-Control-Allow-Private-Network", "true".into()),
+                    ("Access-Control-Max-Age", "86400".into()),
+                ],
+            );
+        }
         ("GET", "/health") => json_response(stream, 200, &shared.health(), &[]),
+        // The read-only operator dashboard. The page is static and carries
+        // no secrets; API calls from it still need the bearer token.
+        ("GET", "/") | ("GET", "/dashboard") | ("GET", "/dashboard/") => {
+            let _ = respond(
+                stream,
+                200,
+                "text/html; charset=utf-8",
+                DASHBOARD_HTML.as_bytes(),
+                &[("Cache-Control", "no-store".into())],
+            );
+        }
         ("GET", "/capabilities") => json_response(
             stream,
             200,
@@ -273,6 +320,15 @@ fn handle(shared: &Shared, stream: TcpStream) {
         ("POST", "/v1/kamimusuhi/history") => {
             let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
             let (status, reply) = crate::dialogue::history(shared, &body);
+            json_response(stream, status, &reply, &[]);
+        }
+        ("GET", "/v1/kamimusuhi/memory") => {
+            let (status, reply) = crate::memory::memory(shared, &json!({}));
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/kamimusuhi/memory") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            let (status, reply) = crate::memory::memory(shared, &body);
             json_response(stream, status, &reply, &[]);
         }
         ("GET", "/v1/tools") => json_response(stream, 200, &crate::tools::list(shared), &[]),
@@ -613,6 +669,64 @@ mod usage_tests {
             assert!(response.contains(needle));
             if status == "200 OK" {
                 assert!(response.contains("Cache-Control: no-store"));
+            }
+        }
+    }
+
+    #[test]
+    fn dashboard_and_cors_preflight_are_answered_before_auth() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = serde_json::from_value(json!({
+            "node": {"id": "test", "role": "cognition", "listen": "127.0.0.1:0"},
+            "paths": {"root": dir.path()},
+        }))
+        .unwrap();
+        let spool = crate::spool::Spool::new(dir.path().join("spool"), "test").unwrap();
+        // A token is configured: the dashboard page itself is still public,
+        // and the preflight must never demand credentials.
+        let shared = Arc::new(Shared::new(config, spool, 1, Some("tok".into())));
+        for (request, status, needles) in [
+            (
+                "OPTIONS /v1/tasks HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                "204 No Content",
+                vec!["Access-Control-Allow-Headers", "Access-Control-Allow-Private-Network"],
+            ),
+            (
+                "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                "200 OK",
+                vec!["text/html", "Access-Control-Allow-Origin: *", "kamimusuhi"],
+            ),
+            (
+                "GET /dashboard HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                "200 OK",
+                vec!["text/html"],
+            ),
+            (
+                // Loopback bypasses auth, so this is 200 — the point is the
+                // CORS header rides on ordinary JSON API responses too.
+                "GET /v1/tasks HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                "200 OK",
+                vec!["Access-Control-Allow-Origin: *", "\"tasks\""],
+            ),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let s = Arc::clone(&shared);
+            let worker = thread::spawn(move || handle(&s, listener.accept().unwrap().0));
+            let mut client = TcpStream::connect(addr).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            client.write_all(request.as_bytes()).unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            worker.join().unwrap();
+            assert!(
+                response.starts_with(&format!("HTTP/1.1 {status}")),
+                "{request} → {response}"
+            );
+            for needle in needles {
+                assert!(response.contains(needle), "{request} → {response}");
             }
         }
     }
