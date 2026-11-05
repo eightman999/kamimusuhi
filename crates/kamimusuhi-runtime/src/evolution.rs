@@ -1261,7 +1261,12 @@ mod tests {
         e
     }
 
+    // Full experiment runs: each scenario run boots a real runtime, so these
+    // are harness soak checks, not unit tests. CI runs them via
+    // `cargo test -p kamimusuhi-runtime -- --ignored` or, for real studies,
+    // the `kamimusuhi-evolution` binary — not on every push.
     #[test]
+    #[ignore = "statistical harness check; run with --ignored or kamimusuhi-evolution"]
     fn experiment_is_reproducible_and_logs_both_panels() {
         let config = tiny(Environment::exploration_favoured());
         let dir_a = tempfile::tempdir().unwrap();
@@ -1332,6 +1337,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "statistical harness check; run with --ignored or kamimusuhi-evolution"]
     fn fixed_genes_stay_at_the_founder_value() {
         let config = tiny(Environment::exploration_wm_fixed());
         let dir = tempfile::tempdir().unwrap();
@@ -1360,6 +1366,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "statistical harness check; run with --ignored or kamimusuhi-evolution"]
     fn fixed_exploration_genes_hold_the_phenotype_per_lineage() {
         let config = tiny(Environment::exploration_explore_fixed());
         let dir = tempfile::tempdir().unwrap();

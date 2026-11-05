@@ -806,7 +806,13 @@ mod tests {
         assert_eq!(expected_sign("baseline", "context_records"), None);
     }
 
+    // Whole-batch reproducibility check: two complete batch runs, each one
+    // booting a real runtime per scenario run. That is a harness soak check
+    // — kept out of the default suite so CI stays within its timeout; run it
+    // with `cargo test -p kamimusuhi-runtime -- --ignored` or the
+    // `kamimusuhi-evolution` binary.
     #[test]
+    #[ignore = "statistical harness check; run with --ignored or kamimusuhi-evolution"]
     fn batch_is_reproducible_matched_and_thread_independent() {
         let config = tiny();
         let dir_a = tempfile::tempdir().unwrap();
