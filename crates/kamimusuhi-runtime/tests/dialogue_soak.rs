@@ -38,7 +38,13 @@ fn percentile(sorted: &[u64], p: f64) -> u64 {
     sorted[index.min(sorted.len() - 1)]
 }
 
+// A soak, not a unit test: 1,000 real dialogue turns take minutes on a fast
+// disk and can overrun the hosted CI job timeout on a slow one. Kept out of
+// the default suite — run deliberately with
+// `cargo test -p kamimusuhi-runtime --test dialogue_soak -- --ignored`
+// (optionally `KAMIMUSUHI_SOAK_TURNS=10000`).
 #[test]
+#[ignore = "soak test; run with --ignored (KAMIMUSUHI_SOAK_TURNS to scale)"]
 fn seeded_dialogue_soak() {
     let turns: usize = std::env::var("KAMIMUSUHI_SOAK_TURNS")
         .ok()
