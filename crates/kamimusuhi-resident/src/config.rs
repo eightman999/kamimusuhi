@@ -920,6 +920,22 @@ pub struct DialogueConfig {
     /// subject still run one at a time, in arrival order.
     #[serde(default = "default_dialogue_concurrency")]
     pub max_concurrent: usize,
+    /// How long a subject's persistent dialogue host (`chat --quiet`
+    /// child) stays alive without a turn before it is reaped.
+    #[serde(default = "default_session_idle_secs")]
+    pub session_idle_secs: u64,
+    /// Dialogue hosts kept warm at once, across all subjects; a new
+    /// subject evicts the least recently used host.
+    #[serde(default = "default_host_max")]
+    pub host_max: usize,
+}
+
+const fn default_session_idle_secs() -> u64 {
+    1800
+}
+
+const fn default_host_max() -> usize {
+    8
 }
 
 const fn default_dialogue_concurrency() -> usize {

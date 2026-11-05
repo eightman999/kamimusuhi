@@ -1,25 +1,26 @@
 //! `POST /v1/kamimusuhi/talk`: one turn with the individual.
 //!
-//! Each turn runs `kamimusuhi-runtime talk` against the canonical runtime
-//! directory, so the reply comes from the Persona Core with the individual's
-//! memory and continuity, and the turn is recorded by the runtime itself.
+//! Each turn runs on the subject's persistent `kamimusuhi-runtime chat
+//! --quiet` host (see `dialogue_host.rs`): one long-lived process keeps
+//! the `DialogueSession` warm across turns against the canonical runtime
+//! directory, so the reply comes from the Persona Core with the
+//! individual's memory and continuity, and the turn is recorded by the
+//! runtime itself.
 //!
-//! Up to `max_concurrent` turns run at once, each in its own runtime
-//! process; the runtime serializes the part that writes to the individual
-//! (writer claim and draft submission) behind its own directory lock. Turns
-//! for the same subject run one at a time, in arrival order, so each sees
-//! the previous one's reply in its context.
+//! Up to `max_concurrent` turns run at once across hosts; the runtime
+//! serializes the part that writes to the individual (writer claim and
+//! draft submission) behind its own directory lock. Turns for the same
+//! subject run one at a time, in arrival order, on the same host, so
+//! each sees the previous one's reply in its context.
 
 use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use kamimusuhi_resource_http::http::TURN_ENV;
 use serde_json::{Value, json};
 
 use crate::config::DialogueConfig;
 use crate::state::Shared;
-use crate::util::run_with_timeout_env;
 
 /// Admission for dialogue turns: a global limit plus one turn per subject.
 struct TurnGate {
@@ -168,43 +169,64 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
         );
     };
     let started = Instant::now();
-    let dir = config.dir.to_string_lossy().into_owned();
-    let binary = config.runtime_binary.to_string_lossy().into_owned();
-    let output = run_with_timeout_env(
-        &binary,
-        &[
-            "talk",
-            "--dir",
-            &dir,
-            "--subject",
-            subject,
-            "--privacy",
-            &config.privacy,
-            "--message",
-            message,
-        ],
-        &[(TURN_ENV, &task_id)],
+    // The turn runs on the subject's persistent `chat --quiet` host:
+    // one process keeps the DialogueSession warm across turns, so the
+    // individual's relationship memory and session continuity carry over
+    // instead of being born and dying per turn.
+    let outcome = shared.dialogue_hosts.turn(
+        &crate::dialogue_host::HostSpec {
+            runtime_binary: config.runtime_binary.clone(),
+            dir: config.dir.clone(),
+            subject: subject.to_owned(),
+            privacy: config.privacy.clone(),
+            env: Vec::new(),
+        },
+        message,
+        &task_id,
         Duration::from_secs(config.timeout_secs),
     );
     // This turn's own routing event, not whichever turn routed last.
     let turn_route = shared.end_turn(&task_id);
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    let Some(output) = output else {
-        finish(crate::tasks::TaskStatus::Failed, "時間切れ");
-        let _ = shared.spool.append_sync(
-            "conversations/dialogue",
-            json!({"kind": "failed", "subject": subject, "task_id": task_id,
-                   "message": message, "error": "timeout", "latency_ms": latency_ms}),
-        );
-        return (504, json!({"error": "talk timed out or could not start"}));
+    let reply = match outcome {
+        Ok(outcome) => Some((outcome.reply, outcome.turns_on_host)),
+        Err(crate::dialogue_host::HostError::Timeout) => {
+            finish(crate::tasks::TaskStatus::Failed, "時間切れ");
+            let _ = shared.spool.append_sync(
+                "conversations/dialogue",
+                json!({"kind": "failed", "subject": subject, "task_id": task_id,
+                       "message": message, "error": "timeout", "latency_ms": latency_ms}),
+            );
+            return (504, json!({"error": "talk timed out or could not start"}));
+        }
+        Err(crate::dialogue_host::HostError::Spawn(error))
+        | Err(crate::dialogue_host::HostError::Io(error)) => {
+            finish(crate::tasks::TaskStatus::Failed, "時間切れ");
+            let _ = shared.spool.append_sync(
+                "conversations/dialogue",
+                json!({"kind": "failed", "subject": subject, "task_id": task_id,
+                       "message": message, "error": "host_unavailable",
+                       "detail": error, "latency_ms": latency_ms}),
+            );
+            return (504, json!({"error": "talk timed out or could not start"}));
+        }
+        Err(crate::dialogue_host::HostError::Dead(_, tail))
+        | Err(crate::dialogue_host::HostError::Child(_, tail)) => {
+            // Generation failed but the host spoke (or died): the error and
+            // the child's stderr tail go to the journal and the client,
+            // matching the old per-turn `talk` failure shape.
+            finish(crate::tasks::TaskStatus::Failed, "応答生成に失敗");
+            let _ = shared.spool.append_sync(
+                "conversations/dialogue",
+                json!({"kind": "failed", "subject": subject, "task_id": task_id,
+                       "message": message, "error": "generation_failed",
+                       "stderr_tail": tail, "latency_ms": latency_ms}),
+            );
+            return (502, json!({"error": "talk failed", "stderr_tail": tail}));
+        }
     };
-    let reply = output
-        .stdout
-        .lines()
-        .rev()
-        .find_map(|line| serde_json::from_str::<Value>(line).ok());
     match reply {
-        Some(reply) if output.success => {
+        Some((reply, _turns_on_host)) => {
             let preview: String = reply["response"]
                 .as_str()
                 .unwrap_or("")
@@ -285,18 +307,7 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
                 }),
             )
         }
-        _ => {
-            finish(crate::tasks::TaskStatus::Failed, "応答生成に失敗");
-            let tail: Vec<&str> = output.stderr.lines().rev().take(5).collect();
-            let tail: Vec<&str> = tail.into_iter().rev().collect();
-            let _ = shared.spool.append_sync(
-                "conversations/dialogue",
-                json!({"kind": "failed", "subject": subject, "task_id": task_id,
-                       "message": message, "error": "generation_failed",
-                       "stderr_tail": tail, "latency_ms": latency_ms}),
-            );
-            (502, json!({"error": "talk failed", "stderr_tail": tail}))
-        }
+        None => unreachable!("every host error returns above"),
     }
 }
 
@@ -448,15 +459,20 @@ mod tests {
         assert!(!valid_subject("a b"));
     }
 
-    /// A resident whose `runtime_binary` is a shell script, so `talk`
-    /// runs end to end without a real runtime.
+    /// A resident whose `runtime_binary` is a shell script that speaks the
+    /// `chat --quiet` protocol — a read loop emitting one JSON line per
+    /// input line — so a turn runs end to end without a real runtime.
     #[cfg(unix)]
     fn shared_with_runtime(dir: &std::path::Path, script_body: &str) -> (Shared, DialogueConfig) {
         let rt = dir.join("rt");
         std::fs::create_dir_all(&rt).expect("rt dir");
         std::fs::write(rt.join("kamimusuhi.sqlite"), b"").expect("db marker");
         let bin = dir.join("fake-runtime");
-        std::fs::write(&bin, format!("#!/bin/sh\n{script_body}\n")).expect("script");
+        std::fs::write(
+            &bin,
+            format!("#!/bin/sh\nwhile IFS= read -r line; do\n{script_body}\ndone\n"),
+        )
+        .expect("script");
         let mut perms = std::fs::metadata(&bin).expect("meta").permissions();
         std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
         std::fs::set_permissions(&bin, perms).expect("chmod");
@@ -518,7 +534,7 @@ mod tests {
     #[test]
     fn a_failed_turn_still_leaves_the_received_message() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (shared, cfg) = shared_with_runtime(dir.path(), "echo broken >&2; exit 1");
+        let (shared, cfg) = shared_with_runtime(dir.path(), "echo broken >&2\nexit 1");
         let (status, _) = talk(&shared, &cfg, &json!({"subject": "t", "message": "ping"}));
         assert_eq!(status, 502);
         let records = journal_records(&shared);
@@ -534,5 +550,32 @@ mod tests {
         assert_eq!(turns[0]["kind"], json!("failed"));
         assert_eq!(turns[0]["message"], json!("ping"));
         assert!(turns[0]["response"].is_null());
+    }
+
+    /// Two turns on one subject reuse the same host process — the second
+    /// turn does not pay process spawn, and one spawn happens in total.
+    #[cfg(unix)]
+    #[test]
+    fn consecutive_turns_reuse_the_subjects_host() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (shared, cfg) = shared_with_runtime(
+            dir.path(),
+            "printf '%s\\n' '{\"response\":\"pong\",\"session_id\":\"s1\"}'",
+        );
+        let (s1, _) = talk(&shared, &cfg, &json!({"subject": "t", "message": "one"}));
+        let (s2, _) = talk(&shared, &cfg, &json!({"subject": "t", "message": "two"}));
+        assert_eq!(s1, 200);
+        assert_eq!(s2, 200);
+        assert_eq!(
+            shared.dialogue_hosts.total_spawns(),
+            1,
+            "second turn reused the warm host"
+        );
+        assert_eq!(shared.dialogue_hosts.host_count(), 1);
+        // A different subject gets its own host, not s1's.
+        let (s3, _) = talk(&shared, &cfg, &json!({"subject": "u", "message": "hi"}));
+        assert_eq!(s3, 200);
+        assert_eq!(shared.dialogue_hosts.total_spawns(), 2);
+        assert_eq!(shared.dialogue_hosts.host_count(), 2);
     }
 }

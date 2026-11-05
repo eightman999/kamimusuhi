@@ -16,6 +16,7 @@ pub mod commitments;
 pub mod config;
 pub mod delegation;
 pub mod dialogue;
+pub mod dialogue_host;
 pub mod intercom;
 pub mod jobs;
 pub mod judge;

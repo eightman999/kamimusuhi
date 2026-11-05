@@ -248,6 +248,85 @@ fn piped_chat_emits_two_responses_and_quit_prevents_a_third_turn() {
     assert_eq!(counts(dir.path()), [1, 2, 6, 0]);
 }
 
+/// `--quiet` is the resident's protocol mode: JSON lines in, one complete
+/// JSON reply line out per turn — and the JSON framing carries messages
+/// raw lines could not (newlines, a leading `/`).
+#[test]
+fn quiet_chat_speaks_one_json_reply_per_input_line() {
+    let dir = initialized();
+    let server = FixtureServer::start(vec![
+        FixtureResponse::ok("最初の返事。"),
+        FixtureResponse::ok("次の返事。"),
+        FixtureResponse::ok("三番目。"),
+    ])
+    .unwrap();
+    let stdin = concat!(
+        "{\"message\": \"一行目\"}\n",
+        "{\"message\": \"改行を\\n含む入力\"}\n",
+        "{\"message\": \"/help ではなく本文\"}\n",
+        "not-json\n",
+        "{\"message\": \"\"}\n",
+    );
+    let output = success(run(
+        dir.path(),
+        "chat",
+        &[
+            "--quiet",
+            "--subject",
+            "alice",
+            "--persona",
+            "openai-compatible",
+            "--persona-url",
+            &server.base_url(),
+            "--persona-model",
+            "cli-fixture",
+            "--persona-locality",
+            "local-host",
+        ],
+        Some(stdin),
+    ));
+    let lines: Vec<serde_json::Value> = output
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("every output line is JSON"))
+        .collect();
+    assert_eq!(lines.len(), 5, "{lines:?}");
+    assert_eq!(lines[0]["response"], "最初の返事。");
+    assert_eq!(lines[1]["response"], "次の返事。");
+    assert_eq!(lines[2]["response"], "三番目。");
+    assert!(
+        lines[3]["error"].as_str().is_some(),
+        "invalid line got an error doc"
+    );
+    assert!(
+        lines[4]["error"].as_str().is_some(),
+        "empty message got an error doc"
+    );
+    // All three turns shared one session — the whole point of the host.
+    assert_eq!(lines[0]["session_id"], lines[2]["session_id"]);
+    assert_eq!(server.request_count(), 3);
+    // The "/"-leading message reached the model as text, not as a command.
+    let third = prompt(&server, 2);
+    let input: String = serde_json::from_str(section(&third, "CURRENT_INPUT").unwrap()).unwrap();
+    assert_eq!(input, "/help ではなく本文");
+    // And the multi-line message kept its newline.
+    let second = prompt(&server, 1);
+    let input: String = serde_json::from_str(section(&second, "CURRENT_INPUT").unwrap()).unwrap();
+    assert_eq!(input, "改行を\n含む入力");
+}
+
+#[test]
+fn quiet_is_rejected_for_talk() {
+    let dir = initialized();
+    let rejected = run(
+        dir.path(),
+        "talk",
+        &["--quiet", "--message", "こんにちは", "--persona", "fake"],
+        None,
+    );
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("--quiet"));
+}
+
 #[test]
 fn debug_trace_exposes_decisions_and_latency_without_provider_secrets() {
     let dir = initialized();

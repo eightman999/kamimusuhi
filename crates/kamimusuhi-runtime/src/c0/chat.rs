@@ -166,20 +166,43 @@ pub fn reflection_due(runtime: &Runtime, session: &DialogueSession) -> bool {
 /// The interactive loop. `input`/`output` are the operator's terminal — or a
 /// pipe, in which case prompts are suppressed and only responses/commands
 /// print.
+///
+/// `quiet` is the resident's protocol mode: every input line must be a JSON
+/// object `{"message": "<text>"}` and every output line is one complete JSON
+/// document — a turn reply, or `{"error": ...}` for an input that is not a
+/// valid turn. Interactive chrome and `/` commands are not part of the
+/// protocol.
+#[derive(Debug, Default)]
+pub struct ReplOptions {
+    /// Attached to a real terminal: banner, prompts and plain-text replies.
+    pub terminal: bool,
+    /// Emit the assembled workspace context to stderr.
+    pub debug_context: bool,
+    /// Emit the secret-free turn trace to stderr.
+    pub debug_trace: bool,
+    /// JSON-lines protocol mode (see `run_repl`).
+    pub quiet: bool,
+}
+
 pub fn run_repl(
     runtime: &mut Runtime,
     session: &mut DialogueSession,
     input: &mut impl BufRead,
     output: &mut impl Write,
-    terminal: bool,
-    debug_context: bool,
-    debug_trace: bool,
+    options: ReplOptions,
 ) -> Result<(), RuntimeError> {
-    if terminal {
+    let ReplOptions {
+        terminal,
+        debug_context,
+        debug_trace,
+        quiet,
+    } = options;
+    let interactive = terminal && !quiet;
+    if interactive {
         eprintln!("かみむすび — テキスト対話。終了: /quit、コマンド一覧: /help");
     }
     loop {
-        if terminal {
+        if interactive {
             eprint!("あなた > ");
             std::io::stderr().flush().map_err(io_error)?;
         }
@@ -204,6 +227,72 @@ pub fn run_repl(
             )));
         }
         if text.trim().is_empty() {
+            continue;
+        }
+        if quiet {
+            // Protocol mode: one JSON turn in, one JSON reply out — a message
+            // may itself contain newlines or start with '/', which raw-line
+            // framing could not carry.
+            let request = serde_json::from_str::<serde_json::Value>(text);
+            let message = request
+                .as_ref()
+                .ok()
+                .and_then(|v| v.get("message"))
+                .and_then(serde_json::Value::as_str);
+            match message {
+                Some(message) if !message.trim().is_empty() && message.len() <= MAX_INPUT_BYTES => {
+                    // An optional "turn" names the resident's task id for
+                    // this turn, so the model/tool calls the session makes
+                    // back to the resident are attributed per turn even
+                    // though the process env is fixed at spawn.
+                    if let Some(turn) = request
+                        .as_ref()
+                        .ok()
+                        .and_then(|v| v.get("turn"))
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        // One turn at a time on this thread: the slot is
+                        // read only by this process's own HTTP calls during
+                        // the turn below.
+                        kamimusuhi_resource_http::http::set_turn(Some(turn));
+                    }
+                    let reply = session.turn(runtime, message, |reply| {
+                        serde_json::to_writer(&mut *output, reply)?;
+                        writeln!(output)?;
+                        output.flush()
+                    })?;
+                    if debug_context && let Some(context) = session.last_context() {
+                        serde_json::to_writer_pretty(std::io::stderr(), context)
+                            .map_err(json_error)?;
+                        writeln!(std::io::stderr()).map_err(io_error)?;
+                    }
+                    if debug_trace && let Some(trace) = reply.llm_jev {
+                        let value = serde_json::to_value(trace).map_err(json_error)?;
+                        emit_json(&mut std::io::stderr(), &value)?;
+                    }
+                    // Reflection runs on cadence but never prints: one reply
+                    // line per turn keeps the protocol one-to-one.
+                    if reflection_due(runtime, session) {
+                        let subject = session.subject().to_owned();
+                        reflection::run(
+                            runtime,
+                            &subject,
+                            Some(session.session_id()),
+                            None,
+                            session.writer_cache(),
+                        )?;
+                    }
+                }
+                _ => {
+                    writeln!(
+                        output,
+                        "{}",
+                        serde_json::json!({"error": "quiet mode expects one JSON object per line: {\"message\": \"<text>\"}"})
+                    )
+                    .map_err(io_error)?;
+                    output.flush().map_err(io_error)?;
+                }
+            }
             continue;
         }
         if let Some(command) = text.strip_prefix('/') {
