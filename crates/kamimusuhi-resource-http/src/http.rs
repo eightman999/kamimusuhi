@@ -215,11 +215,27 @@ pub const TURN_ENV: &str = "KAMIMUSUHI_TURN";
 /// to a remote or TLS endpoint, which has no use for a local turn id.
 pub const TURN_HEADER: &str = "X-Kamimusuhi-Turn";
 
+/// Process-global turn attribution, settable at runtime. Unlike `TURN_ENV`
+/// (fixed at spawn), a long-lived child — the resident's per-subject
+/// dialogue hosts — names a new turn for each request it serves. The REPL
+/// serves one turn at a time, so a plain lock-free read is never torn.
+static TURN: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Set the turn id this process attributes its loopback calls to. `None`
+/// falls back to [`TURN_ENV`] — the spawn-time mechanism `talk` uses.
+pub fn set_turn(turn: Option<&str>) {
+    *TURN.write().unwrap_or_else(|p| p.into_inner()) = turn.map(str::to_owned);
+}
+
 fn turn_header(socket: &TcpStream) -> Option<String> {
     if !socket.peer_addr().is_ok_and(|a| a.ip().is_loopback()) {
         return None;
     }
-    let turn = std::env::var(TURN_ENV).ok()?;
+    let turn = TURN
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .or_else(|| std::env::var(TURN_ENV).ok())?;
     (!turn.is_empty()
         && turn.len() <= 128
         && turn

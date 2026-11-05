@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
+use std::time::Duration;
 
 use kamimusuhi_runtime::provider_bench::{CostCaps, CostGuard};
 use kamimusuhi_runtime::route_gate::ProviderStateBook;
@@ -153,6 +154,10 @@ pub struct Shared {
     /// Sister-to-sister messaging between this node's individual and the
     /// individuals hosted on peer nodes.
     pub intercom: crate::intercom::Intercom,
+    /// Per-subject persistent `chat --quiet` children serving dialogue
+    /// turns (see dialogue_host.rs). Sized from `dialogue` config; an
+    /// unconfigured dialogue still gets an empty pool.
+    pub dialogue_hosts: crate::dialogue_host::HostPool,
 }
 
 fn read<T: Clone>(lock: &RwLock<T>) -> T {
@@ -224,6 +229,16 @@ impl Shared {
                 config.paths.current_state().join("intercom.json"),
                 config.intercom.clone(),
                 config.node.id.clone(),
+            ),
+            dialogue_hosts: crate::dialogue_host::HostPool::new(
+                Duration::from_secs(
+                    config
+                        .dialogue
+                        .as_ref()
+                        .map(|d| d.session_idle_secs)
+                        .unwrap_or(1800),
+                ),
+                config.dialogue.as_ref().map(|d| d.host_max).unwrap_or(8),
             ),
             turns: std::sync::Mutex::new(BTreeMap::new()),
             jobs: crate::jobs::JobStatus::default(),
@@ -360,6 +375,7 @@ impl Shared {
             "nas": self.nas_healthy(),
             "kcore": read(&self.kcore).get("state").cloned().unwrap_or(Value::Null),
             "gpu": read(&self.gpu).map(|g| g.detail),
+            "dialogue_hosts": self.dialogue_hosts.host_count(),
             "pending_tasks": self.delegations.pending_count(),
         })
     }

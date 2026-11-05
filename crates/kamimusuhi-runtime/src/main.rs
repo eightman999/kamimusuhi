@@ -91,6 +91,10 @@ options:
   --persona-model <m>  model name to ask the persona endpoint for
   --persona-auth-env <name>  environment variable holding the API key (never its value)
   --persona-locality <l>  local-host | local-network | external (default: external)
+  --quiet           chat only: JSON-lines protocol — each input line is
+                    {\"message\": \"<text>\"}, each output line one complete
+                    JSON document (a turn reply or {\"error\": ...}); for
+                    hosts that drive the session over pipes
   --debug-context   talk/chat: emit the assembled workspace context
                     (stderr in chat; a `debug_context` field in talk's JSON)
   --debug           talk/chat: emit secret-free K-CORE, Jev and LLM trace
@@ -243,6 +247,11 @@ fn run_dialogue(command: &str, options: &Options) -> Result<String, RuntimeError
             "--message is only supported by talk".to_owned(),
         ));
     }
+    if options.quiet && command != "chat" {
+        return Err(RuntimeError::Usage(
+            "--quiet is only supported by chat".to_owned(),
+        ));
+    }
     if let Some(message) = &options.message
         && (message.trim().is_empty() || message.len() > MAX_INPUT_BYTES)
     {
@@ -324,16 +333,18 @@ fn run_dialogue(command: &str, options: &Options) -> Result<String, RuntimeError
             .map(|_| ())
     } else {
         let stdin = std::io::stdin();
-        let terminal = stdin.is_terminal();
         let mut input = stdin.lock();
         kamimusuhi_runtime::c0::chat::run_repl(
             &mut runtime,
             &mut session,
             &mut input,
             &mut output,
-            terminal,
-            options.debug_context,
-            options.debug,
+            kamimusuhi_runtime::c0::chat::ReplOptions {
+                terminal: stdin.is_terminal(),
+                debug_context: options.debug_context,
+                debug_trace: options.debug,
+                quiet: options.quiet,
+            },
         )
     };
     runtime.stopping();
@@ -442,6 +453,7 @@ struct Options {
     persona_locality: Option<LocalityClass>,
     debug_context: bool,
     debug: bool,
+    quiet: bool,
     proposal_id: Option<String>,
     limit: Option<usize>,
     json: bool,
@@ -529,6 +541,7 @@ impl Options {
                 }
                 "--debug-context" => options.debug_context = true,
                 "--debug" => options.debug = true,
+                "--quiet" => options.quiet = true,
                 "--proposal-id" => options.proposal_id = Some(value()?),
                 "--limit" => {
                     let raw = value()?;
