@@ -11,7 +11,8 @@ use kamimusuhi_core::digest::{content_digest, json_digest};
 use kamimusuhi_core::evidence::{
     EvidenceKind, EvidenceSource, EvidenceStore, NewEvidence, NewSession, NewTurn, RetentionClass,
 };
-use kamimusuhi_core::ids::{EvidenceId, IndividualId, SessionId, TurnId};
+use kamimusuhi_core::ids::{EvidenceId, IndividualId, MemoryId, SessionId, TurnId};
+use kamimusuhi_core::memory::MemoryUsage;
 use kamimusuhi_core::mutation::OriginClass;
 use kamimusuhi_core::persona::{
     ConversationMessage, ConversationRole, CurrentInput, PersonaBackendDescriptor, PersonaEnvelope,
@@ -25,6 +26,7 @@ use serde::Serialize;
 use crate::c0::{self, eval};
 use crate::config::validate_language_provider_id;
 use crate::dialogue_recall::RecallPool;
+use crate::dialogue_recall_links::used_ids;
 use crate::dialogue_setup::{
     language_provider_auth_available, language_provider_kind, public_endpoint_origin,
 };
@@ -137,6 +139,16 @@ pub struct TurnC0 {
     /// Canonical drafts submitted and how many were activated.
     pub drafts_submitted: usize,
     pub drafts_activated: usize,
+    /// In-scope records the recall layer skipped because their declared
+    /// validity window does not cover this turn.
+    pub recall_expired_skipped: usize,
+    /// Declared-path candidates offered via link traversal / shared tags.
+    pub recall_link_hits: usize,
+    /// Link-frame hits at least two distinct records point at (the "knot").
+    pub recall_knot_hits: usize,
+    pub recall_tag_hits: usize,
+    /// Surfaced records the reply actually referenced (`mark_used` count).
+    pub used_marked: usize,
     /// Turn metrics recorded by the deterministic evaluator.
     pub metrics: kamimusuhi_core::c0::TurnMetrics,
 }
@@ -967,6 +979,7 @@ impl DialogueSession {
             text,
             &operative.view.params,
             &exclude,
+            runtime.now(),
         )?;
         let (mut memories, mut recalled_evidence) = recall_pool.baseline();
         let head = runtime.head()?;
@@ -1143,6 +1156,19 @@ impl DialogueSession {
             .into());
         }
         (memories, recalled_evidence) = recall_pool.apply(&preparation.recall)?;
+        let recall_stats = recall_pool.stats();
+        runtime.trace().record_with(
+            TraceEventKind::MemoryRetrieved,
+            TraceCorrelation::default(),
+            serde_json::json!({
+                "memories_surfaced": memories.len(),
+                "evidence_recalled": recalled_evidence.len(),
+                "expired_skipped": recall_stats.expired_skipped,
+                "declared_link_hits": recall_stats.link_hits,
+                "declared_knot_hits": recall_stats.knot_hits,
+                "declared_tag_hits": recall_stats.tag_hits,
+            }),
+        );
         // Rebuild the actual language workspace from the chosen original
         // records, preserving their types and provenance. No memory is written.
         workspace = WorkspaceBuilder::new(self.individual_id, runtime.now())
@@ -1190,6 +1216,13 @@ impl DialogueSession {
             "decision_evidence_digest": assessment_evidence.snapshot_digest,
             "generation_input_digest": context_digest,
             "workspace_digest": workspace.digest(),
+            "recall": {
+                "expired_skipped": recall_stats.expired_skipped,
+                "link_hits": recall_stats.link_hits,
+                "knot_hits": recall_stats.knot_hits,
+                "tag_hits": recall_stats.tag_hits,
+                "used_marked": 0,
+            },
         });
         self.last_context = Some(workspace_context.clone());
         runtime.trace().record_with(
@@ -1497,6 +1530,27 @@ impl DialogueSession {
         let language_model = language_result.model.clone();
         let language_latency_ms = language_result.latency_ms;
         let result = language_result.persona;
+        // FIO rule: a record warms only when the reply actually referenced
+        // it — its 32-hex id must appear in the response text or in a tool
+        // call's serialized arguments/result. Injected-but-unreferenced
+        // items are never warmed, matching FIO's measured frozen-attractor
+        // failure where prompt injection itself re-warmed memories. The mark
+        // is usage bookkeeping on a side table, never canonical record
+        // content, so it does not go through the Continuity Kernel.
+        let surfaced_ids: Vec<MemoryId> = memories
+            .iter()
+            .map(|memory| memory.record.state_record_id)
+            .collect();
+        let mut haystack = result.response_intent.clone();
+        for call in &result.tool_calls {
+            haystack.push_str(&call.arguments.to_string());
+            haystack.push_str(&call.result.to_string());
+        }
+        let used = used_ids(&haystack, &surfaced_ids);
+        let used_marked = used.len();
+        runtime.store().mark_used(&used, runtime.now());
+        workspace_context["recall"]["used_marked"] = serde_json::json!(used_marked);
+        self.last_context = Some(workspace_context.clone());
         // Tool use is recorded as external results, one record per call, so
         // what was consulted stays auditable next to what was said.
         let mut tool_evidence_ids = Vec::new();
@@ -1529,6 +1583,7 @@ impl DialogueSession {
             serde_json::json!({
                 "draft_count": draft_outcomes.len(),
                 "drafts_activated": drafts_activated,
+                "used_marked": used_marked,
                 "invocation_gate": invocation_gate,
                 "provider_selection": provider_selection_trace,
                 "provider_candidates": conversation_trace.provider_candidates.clone(),
@@ -1659,6 +1714,11 @@ impl DialogueSession {
                 memories_surfaced: metrics.memories_surfaced,
                 drafts_submitted: draft_outcomes.len(),
                 drafts_activated,
+                recall_expired_skipped: recall_stats.expired_skipped,
+                recall_link_hits: recall_stats.link_hits,
+                recall_knot_hits: recall_stats.knot_hits,
+                recall_tag_hits: recall_stats.tag_hits,
+                used_marked,
                 metrics,
             }),
             debug_context: self.debug_context.then_some(workspace_context),

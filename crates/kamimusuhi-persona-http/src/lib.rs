@@ -1187,6 +1187,12 @@ Reply with ONE JSON object, no prose around it: \
 \"target\": string, \"target_key\": string|null, \"proposed_value\": value, \
 \"evidence_refs\": [\"<evidence_id>\"], \"expected_effect\": string|null, \
 \"risk\": string|null, \"confidence\": number|null}]}. \
+A canonical_drafts \"candidate\" may also declare recall metadata: \"tags\" \
+holds up to 8 free-form topic labels; \"links\" holds \
+\"evidence:<evidence_id>\" or \"state:<state_record_id>\" refs to related \
+records shown in the input; \"valid_from\"/\"valid_to\" are unix-second \
+bounds — set \"valid_to\" only when the fact is genuinely time-bounded \
+(most facts are unbounded: omit it). \
 Rules: cite only evidence_ids and state_record_ids that appear in the input; \
 confidence is in [0,1]; improvement targets must come from the parameter and \
 self-field vocabulary shown in the input; a self_update may only cite the \

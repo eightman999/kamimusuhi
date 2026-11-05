@@ -206,7 +206,7 @@ def attention_text(task, user):
     """A notice for a task waiting on the operator."""
     task_id = task.get("id", "?")
     detail = task.get("detail") if isinstance(task.get("detail"), dict) else {}
-    if task.get("kind") == "commitment":
+    if task.get("kind") == "promise":
         return (f"<@{user}> 判断が必要です：澪が引き受けた作業がタスクになっていません（{task_id}）\n"
                 f"依頼：{clip(detail.get('message'), 300)}\n"
                 f"澪の返事：{clip(detail.get('response'), 300)}\n"
@@ -292,7 +292,7 @@ class Notifier:
     """Tells the operator, with a mention, when a task needs their decision
     or delegated work has ended. Polls the resident; sends nothing else."""
     EVERY = 30
-    # A commitment made in a Discord turn is announced in that turn's reply.
+    # A promise made in a Discord turn is announced in that turn's reply.
     GRACE = 90
     # How long a finished delegated task waits for the individual's review.
     REVIEW_WAIT = 600
@@ -322,7 +322,7 @@ class Notifier:
             if (task.get("status") != "awaiting_operator" or not isinstance(task_id, str)
                     or task_id in self.state.attention):
                 continue
-            if task.get("kind") == "commitment" and now - float(task.get("created_at") or 0) < self.GRACE:
+            if task.get("kind") == "promise" and now - float(task.get("created_at") or 0) < self.GRACE:
                 continue
             message_id = await self.send(attention_text(task, self.config.notify_user))
             if message_id is not None:
@@ -429,7 +429,7 @@ class DialogueBridge:
             await self.reply(message, "どのタスクか分かりませんでした。通知に返信するか、`@澪 開始 t…` のようにIDを付けてください。")
             return
         entry = self.notices.attention.get(task_id)
-        if entry is not None and entry.get("kind") not in (None, "commitment"):
+        if entry is not None and entry.get("kind") not in (None, "promise"):
             await self.reply(message, f"{task_id} は開始・取消できる引受ではありません。")
             return
         if start:
@@ -442,7 +442,7 @@ class DialogueBridge:
             except (ResidentError, aiohttp.ClientError, asyncio.TimeoutError):
                 tasks = None
             task = next((t for t in tasks or [] if t.get("id") == task_id), None)
-            if task is None or task.get("kind") != "commitment" or task.get("status") != "awaiting_operator":
+            if task is None or task.get("kind") != "promise" or task.get("status") != "awaiting_operator":
                 await self.reply(message, f"{task_id} は未着手の引受として見つかりませんでした（既に処理済みかもしれません）。")
                 return
             body = {"action": "update", "id": task_id, "status": "cancelled",
@@ -521,7 +521,7 @@ class DialogueBridge:
                 finally:
                     file.close()
             if commitment and getattr(sent, "id", None) is not None:
-                self.notices.claim(commitment, sent.id, "commitment")
+                self.notices.claim(commitment, sent.id, "promise")
                 self.notices.save()
         except Exception as exc:
             # A failed item must not kill the worker or leak private bodies.

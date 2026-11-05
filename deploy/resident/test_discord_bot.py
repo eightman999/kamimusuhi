@@ -246,7 +246,7 @@ class TaskNoticeTests(unittest.IsolatedAsyncioTestCase):
         backend.task_action.return_value = (200, {'node': 'llm_master',
                                                   'delegated': {'task_id': 'td9', 'executor': 'devin'}})
         bridge = DialogueBridge(NOTIFYING, backend)
-        bridge.notices.claim('t1a0dc0000c1', 700, 'commitment')
+        bridge.notices.claim('t1a0dc0000c1', 700, 'promise')
         start = message(id=2, text='<@99> 開始 t1a0dc0000c1 Devin')
         await bridge.handle(start, 99)
         backend.task_action.assert_awaited_with({'action': 'start', 'id': 't1a0dc0000c1', 'executor': 'devin'})
@@ -254,7 +254,7 @@ class TaskNoticeTests(unittest.IsolatedAsyncioTestCase):
         # Replying to the notice needs no ID.
         answer = message(id=3, text='<@99> 取消')
         answer.reference = SimpleNamespace(message_id=700)
-        backend.tasks.return_value = [{'id': 't1a0dc0000c1', 'kind': 'commitment', 'status': 'awaiting_operator'}]
+        backend.tasks.return_value = [{'id': 't1a0dc0000c1', 'kind': 'promise', 'status': 'awaiting_operator'}]
         await bridge.handle(answer, 99)
         self.assertEqual(backend.task_action.call_args.args[0]['status'], 'cancelled')
         self.assertIn('取り消しました', answer.reply.call_args.args[0])
@@ -281,9 +281,9 @@ class TaskNoticeTests(unittest.IsolatedAsyncioTestCase):
         now = 10_000
         backend = self.backend()
         backend.tasks.return_value = [
-            {'id': 't1a0dc0000c1', 'kind': 'commitment', 'status': 'awaiting_operator', 'created_at': now - 3600,
+            {'id': 't1a0dc0000c1', 'kind': 'promise', 'status': 'awaiting_operator', 'created_at': now - 3600,
              'detail': {'message': '何か分かったら教えてね', 'response': 'お伝えしますね。'}},
-            {'id': 't1a0dc0000c2', 'kind': 'commitment', 'status': 'awaiting_operator', 'created_at': now - 5},
+            {'id': 't1a0dc0000c2', 'kind': 'promise', 'status': 'awaiting_operator', 'created_at': now - 5},
             {'id': 't1a0dc0000a1', 'kind': 'approval', 'status': 'awaiting_operator', 'title': '承認待ち: fs/write_file',
              'created_at': now - 5},
             {'id': 'td0', 'kind': 'dialogue', 'status': 'done'},
@@ -326,7 +326,7 @@ class TaskNoticeTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, 'notices.json')
             state = NoticeState(path)
-            state.claim('t1a0dc0000c1', 900, 'commitment')
+            state.claim('t1a0dc0000c1', 900, 'promise')
             state.delegated_since = 5
             state.save()
             again = NoticeState(path)

@@ -3,6 +3,13 @@
 Raspberry Pi と llm_master の両方で `kamimusuhi-resident`（バイナリ名 `kamimusuhi`）を systemd 常駐させる。
 自己改善・自動実験はこの構成が安定してから追加する。
 
+運用補助も Rust workspace に含める。Computer MCP は `kamimusuhi-computer-mcp`、
+Discord 連携は `kamimusuhi-discord`、Grafana JSON 生成は `kamimusuhi-monitoring`。
+起動・導入方法はそれぞれ [computer-mcp.md](computer-mcp.md)、[discord.md](discord.md)、
+[monitoring/README.md](monitoring/README.md) を参照。
+旧 Python 実装は移植照合用に保持する。研究・学習コード、外部 MCP の依存、
+インストール補助スクリプトは別途扱い、Cloudflare Relay は TypeScript を維持する。
+
 ```text
              NAS (NFS export → /mnt/kamimusuhi, 共有全体は /mnt/nas-share)
           ↗       ↖
@@ -117,6 +124,9 @@ sudo ~/src/kamimusuhi/deploy/resident/install-root.sh pi          # llm_master �
 deploy/resident/push-secrets.sh <host>
 # 4) ビルド・配置・起動 (ノード上, 要 rustup)
 ~/src/kamimusuhi/deploy/resident/install-node.sh pi
+#    rsync -a は送信側の mtime を保存するため、古い target の rlib/rmeta が
+#    新ソースより「新鮮」と誤判定されて新旧混在のコンパイルエラーになることがある。
+#    その場合はノード上で `find crates -name '*.rs' -exec touch {} +` してから再実行する。
 # 5) NAS 初回だけ: マーカーとディレクトリ
 mkdir -p /mnt/kamimusuhi/{memory,conversations,logs,artifacts,experiments,datasets,models,checkpoints}
 touch /mnt/kamimusuhi/.kamimusuhi-nas
@@ -138,6 +148,27 @@ kamimusuhi chat --subject <id> --url http://PI_HOST:7860
 ```
 
 token は `$KAMIMUSUHI_NODE_TOKEN` または `~/.config/kamimusuhi/node_token`（`push-secrets.sh` が生成）。`--subject` は会話履歴の区別であって認証ではない。
+
+## Intercom（姉妹個体どうしの会話）
+
+各ノードが `dialogue` を持つ場合、そこに住む個体は別個体（姉妹）同士として扱われる。`intercom` 設定を有効にすると、姉妹間で envelope（手紙）をやり取りできる。
+
+- 受信: `POST /v1/intercom`（peer からの envelope, bearer 認証）→ 冪等に受理 → `sister-<from>` subject の対話ターンとして個体へ届く。`dialogue` の無いノードは受理しない（送信側は dead-letter）。
+- 送信: 個体の `peer_say` tool、または operator の `kamimusuhi say <peer> <text…>` / `intercom send`。永続 outbox（`current_state/intercom.json`）に載り、直接配送 → 失敗時は `relay` 経由 → 指数バックオフで `max_attempts` まで再送。
+- 返信は本人の能動行為（`peer_say`）。例外は operator が `intercom open <peer> [turns] [text…]` で開いた会話だけ — 各ターンの応答がそのまま転送され、`auto_left` が envelope と共に減り、`max_hops` が無人連鎖の上限になる。個体は応答中の `[end]` 行で会話を閉じられる。
+- 重複は `seen` id で排除され、直接配送と relay 経由の二重到着は無害。inbound/outbox/conversations は再起動をまたいで保持される。
+- `sisters` マップは姉妹の表示名（長女=Mac, 次女=Pi, 三女=llm_master）。キーは `peers` の id でなければならない。
+- relay: 直接到達できない向きの中継。[relay/](../../relay/README.md)（Cloudflare Worker + Durable Object）。既定は無し — tailnet/LAN が張れていれば不要。
+
+```bash
+kamimusuhi intercom                 # status: outbox/inbox/conversations/relay
+kamimusuhi intercom list [--all]    # 会話一覧（--all で閉じたものも）
+kamimusuhi intercom show <conv>     # 会話と未配送分
+kamimusuhi say mac 今日の調子は？    # 最新の開いた会話へ（無ければ新規）
+kamimusuhi intercom open mac 6 相談がある # 自動返信6往復で会話を開始
+kamimusuhi intercom close <conv> [最後の一言…]
+kamimusuhi intercom retry [id]      # dead-letter の再送
+```
 
 ## Discord Bot
 
@@ -188,6 +219,7 @@ GUI の `set_language_provider` で追加した言語器官には tools は付�
 
 resident は stdio の MCP サーバーを子プロセスとして常駐・監視し（落ちたら backoff で再起動）、tool を `mcp__<server>__<tool>` として `/v1/tools` に載せる。
 自ノードに無い tool は peer へ転送されるので、Pi からも llm_master の Playwright を呼べる。呼び出しは `logs/mcp/<node>/` に記録。
+peer への一覧・転送は health probe が通っている peer に限る（probe 不通の peer への接続は呼び出しを数分間ブロックするだけなので除外）。一覧の fan-out は 5 秒で打ち切る。
 npm パッケージは `/srv/kamimusuhi/mcp` にバージョン固定で入れる（起動時にネットワーク不要）。
 
 | server | ノード | 範囲・制限 |
@@ -199,6 +231,9 @@ npm パッケージは `/srv/kamimusuhi/mcp` にバージョン固定で入れ�
 | `netdata` (nd-mcp) | 両方（各ノード自身） | 読み取り専用。Netdata は localhost bind、キーは secrets.env の `NETDATA_MCP_KEY` |
 | `playwright` | llm_master | headless Chromium・隔離プロファイル。`browser_run_code_unsafe` / `browser_evaluate` / `browser_file_upload` は除外 |
 | `github` (github-mcp-server v1.12.2) | 両方 | `--read-only --lockdown-mode`、toolsets=context,repos,issues,pull_requests,actions。token は secrets.env の `GITHUB_PERSONAL_ACCESS_TOKEN` |
+| `computer_mac` / `computer_llm` / `computer_pi` ([computer-mcp](computer-mcp.md)) | 各ノード | GUI の computer use。Mac は実画面(Aqua)、Linux はノード所有の Xvfb `:99`。観測系は自由、操作系（click/type/key_press/…）は `judge_required` で判定モデル審査、判断不能は operator 承認へ |
+
+`judge_required` の審査は resident 設定の `tool_judge`（既定: `hai` tier、回答不能時は承認キュー）が担う。`approval_required` と併記した tool は審査を経ず直接 operator 承認になる。
 
 個体へ見せる tool は `runtime.json` の `tools.allowed`（`*` で前方一致）で絞る（例: `runtime-reference.example.json`, 47 個）。
 `tools.core`（同じ構文, 省略時は `mcp__` 以外の組み込み tool）だけが毎ターン最初から提示され、残りの allowed は `tool_catalog`（一覧）→ `tool_enable`（有効化）で必要時に取り出す。定義は送信前に圧縮する（description 200 字・引数 description 120 字・`title`/`examples`/`additionalProperties` 除去、名前順で固定）。
@@ -210,6 +245,7 @@ cd /srv/kamimusuhi/mcp && npm install --prefix . @modelcontextprotocol/server-fi
   @upstash/context7-mcp@4.1.1 @bitbonsai/mcpvault@0.16.0 [@playwright/mcp@0.0.82]
 ./node_modules/.bin/playwright-mcp install-browser chrome-for-testing   # llm_master のみ
 sudo deploy/resident/install-netdata.sh                                 # Netdata + NETDATA_MCP_KEY
+deploy/resident/install-computer-mcp.sh                                 # computer use (Linux: Xvfb :99 + xdotool/scrot)
 ```
 
 GitHub MCP のバイナリは公式 release を checksums.txt で検証して `/srv/kamimusuhi/mcp/github/` に置く。token は `GITHUB_TOKEN_FILE=<file> deploy/resident/push-secrets.sh <host>` で配布（fine-grained・read-only・期限付きを推奨）。
@@ -241,11 +277,11 @@ resident（Pi）は並列に進む作業をタスクとして記録する（`cur
 | 承認後の反映 commit/push（`commit`） | 承認 |
 | 定期ジョブ（`job`, ジョブごとに 1 枚を更新） | — |
 | 外部エージェントへの委譲（`delegated`, Task Plane） | 委譲した対話ターン |
-| 未着手の引受（`commitment`, 状態=あなたの判断待ち） | 対話ターン |
+| 未着手の引受（`promise`, 状態=あなたの判断待ち） | 対話ターン |
 
 - 操作者: `GET /v1/tasks`, `POST /v1/tasks {"action":"create"|"update",...}`（GUI のタスク画面）。
 - 澪（個体）: tool `task_list` / `task_create` / `task_update` で自分の計画を載せる。自動記録タスクは澪からは変更不可。
-- 澪が「調べてみますね」のように作業を引き受けたのに `task_delegate` を呼ばなかった場合、ホストが一度だけ「今タスクにするか、約束せずに答え直すか」を差し戻す。それでも委譲されなければ `commitment` タスクとして残し、GUI の返答の下に「⚠ 引き受けたが未着手」と「タスクとして開始」「取り消し」を出す。開始は `POST /v1/tasks {"action":"start","id":…}`（操作者のみ、Task Plane を持つ自ノードか最初の peer に委譲）。委譲できた返答には「▶ 裏で実行中 task_id · executor」が付く。
+- 澪が「調べてみますね」のように作業を引き受けたのに `task_delegate` を呼ばなかった場合、ホストが一度だけ「今タスクにするか、約束せずに答え直すか」を差し戻す。それでも委譲されなければ `promise` タスクとして残し、GUI の返答の下に「⚠ 引き受けたが未着手」と「タスクとして開始」「取り消し」を出す。開始は `POST /v1/tasks {"action":"start","id":…}`（操作者のみ、Task Plane を持つ自ノードか最初の peer に委譲）。委譲できた返答には「▶ 裏で実行中 task_id · executor」が付く。
 - 再起動時に進行中だった自動記録タスクは「失敗（中断）」になる。完了は 3 日表示、400 件を保持。
 
 ## Task Plane（外部エージェント）
@@ -294,6 +330,38 @@ journalctl -u kamimusuhi-resident -f
 
 `status` は Pi / llm_master（peer の /health とGPU）/ routing tier / NAS（書込probe・spool backlog・最終同期）/ HAI（API疎通・残高）/ K-CORE / snapshot を表示する。
 
+## Node Task（Light/Heavy 委譲プロトコル）
+
+Pi (light) ↔ llm_master (heavy) 間の typed task 委譲。詳細は
+`docs/light-heavy-node-architecture.md`。
+
+- `POST /task` — `{task_id?, type, requires[], payload, timeout_ms?, target_node?, wait_ms?}`
+  を受理。`task_id` は冪等キー（再送は既存レコードを返す）。認証は node token。
+- `GET /task/<id>` — タスクの現状態・結果を取得。
+- `GET /capabilities` — `{"node_id","role","mode","capabilities":[...]}`（無認証、
+  `/health` にも同じ capabilities が載るので既存 probe が discovery を兼ねる）。
+- `GET /v1/delegations` / `POST /v1/delegations` — 一覧 / show / retry / cancel。
+- `kamimusuhi node` — spec形状の node_state。`kamimusuhi task …` — submit/status/list/retry/cancel。
+
+分類は LOCAL / DELEGATE / QUEUE / REJECT の rule-based（`delegation::decide`）。
+`node.*`/`state.*` は常に local。`requires` と各ノードの advertised capability で
+宛先を決めるので、将来の GPU/V100/cloud API ノードも同一プロトコルに載る。
+light node は healthy な capable peer を優先し、heavy node は local を優先する。
+
+queue は `current_state/delegations.sqlite` (WAL)。再起動で in-flight は
+`retry_pending` に倒れて再送される。payload/result は node-local のみ —
+NAS journal/board に載るのは id/type/state/latency だけ。
+
+```jsonc
+// pi.resident.json 追加例
+"peers": [{"id": "llm_master", "url": "http://…:7860",
+           "capabilities": ["llm.generate"], "priority": 100}],
+"delegation": {"enabled": true, "workers": 2, "max_attempts": 6,
+               "retry_secs": 30, "poll_ms": 1500,
+               "default_timeout_ms": 120000, "max_timeout_ms": 900000,
+               "max_queue": 128}
+```
+
 ## 障害時の挙動
 
 | 事象 | 挙動 | 復帰 |
@@ -303,3 +371,33 @@ journalctl -u kamimusuhi-resident -f
 | llm_master 再起動 | resident・llama-master とも自動起動 | 自動 |
 | NAS 断 / ハング | spool に蓄積、probe は別スレッドで timeout | マーカー確認後に自動配送 |
 | HAI 断 | 他tierのみ。全滅なら 503 | probe 成功で自動 |
+| heavy node 停止中の委譲 | task は `retry_pending` で待機（Pi側 event loop は止まらない） | peer 復帰で冪等再送、attempts 上限超過で `failed` |
+
+## ローカル配置の例（Obsidian + 開発ディレクトリ）
+
+このマシン（Mac）では情報置き場が `~/Desktop/Obsidian`、開発ディレクトリが `~/dev`。
+resident.json では次のように接続する（`local/` 配下は git 管理外のサイト固有設定）:
+
+```jsonc
+// ~/Desktop/Obsidian を library として読み取り専用公開（/v1/library, library_* tools）
+"libraries": [
+  { "name": "obsidian", "path": "~/Desktop/Obsidian",
+    "description": "情報置き場の Obsidian vault（読み取り専用）" }
+],
+// mcpvault 経由なら検索・読み・承認制の書き込みも可（deploy/resident の MCP 節を参照）
+// ~/dev を Task Plane の workspace として委譲先に使う
+"task_plane": {
+  "workspaces": [
+    { "name": "dev", "path": "~/dev",
+      "description": "開発ディレクトリ（読み取り・explore 委譲）",
+      "allow_write": false },
+    { "name": "kamimusuhi", "path": "~/dev/sandbox/kamimusuhi",
+      "description": "Kamimusuhi リポジトリ（書き込みは worktree+apply のみ）",
+      "allow_write": true }
+  ]
+}
+```
+
+library は読み取り専用（`.git` と外のパスは返さない）。Obsidian vault の変更を
+個体に即反映させたい場合は、`mcp__obsidian__search_notes` 等の MCP tool 経路の方が向く
+（書き込み系は Pi のみ承認制）。

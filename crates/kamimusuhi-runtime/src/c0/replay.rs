@@ -12,13 +12,16 @@ use kamimusuhi_core::c0::{
     ImprovementProposal, OperativeView, ReplayReport, apply_proposal, compare_replay,
 };
 use kamimusuhi_core::evidence::EvidenceKind;
-use kamimusuhi_core::ids::EvidenceId;
+use kamimusuhi_core::ids::{EvidenceId, MemoryId};
+use kamimusuhi_core::memory::{MemoryQuery, MemoryRepository, StateRecord};
+use kamimusuhi_core::mutation::MutationDomain;
 use kamimusuhi_core::persona::{
     ConversationRole, CurrentInput, PersonaTurnInput, SessionWorkingState, TurnContext,
 };
 use kamimusuhi_core::workspace::WorkspaceBuilder;
 
 use crate::c0::{self as lane, eval};
+use crate::dialogue_recall_links::select_declared;
 use crate::{Runtime, RuntimeError};
 
 /// Assemble the workspace a replayed input would see under `view`, without
@@ -68,13 +71,65 @@ fn assemble_replay(
     }
     history.reverse();
 
-    let memories = lane::retrieve_memories(
+    let mut memories = lane::retrieve_memories(
         runtime.store(),
         runtime.individual_id(),
         subject,
         input_text,
         params,
     )?;
+    // Declared-path expansion, mirroring the turn path: the same lexical
+    // seeds grow through links/tags under the same budget and the same
+    // validity window. A replay has no judge, so hits join the injected
+    // memories as unjudged extras — and nothing is marked used, because
+    // the model never ran.
+    let now = runtime.now();
+    memories.retain(|memory| memory.record.is_valid_at(now));
+    if params.retrieval.episodic_top_k > 0 && params.retrieval.recall_declared_budget > 0 {
+        let pool = MemoryRepository::retrieve(
+            runtime.store(),
+            &MemoryQuery::current(runtime.individual_id())
+                .in_domain(MutationDomain::Episodic)
+                .about(subject)
+                .limited(64),
+        )?;
+        let admissible: Vec<_> = pool
+            .into_iter()
+            .filter(|memory| memory.record.is_valid_at(now))
+            .collect();
+        let individual_id = runtime.individual_id();
+        let declared = select_declared(
+            runtime.store(),
+            runtime.store(),
+            &admissible,
+            |record: &StateRecord| {
+                record.individual_id == individual_id
+                    && record.subject_key.as_deref() == Some(subject)
+                    && record.lifecycle_state.is_current()
+                    && record.is_valid_at(now)
+            },
+            input_text,
+            &params.retrieval,
+            now,
+        );
+        let mut injected: BTreeSet<MemoryId> = memories
+            .iter()
+            .map(|memory| memory.record.state_record_id)
+            .collect();
+        for hit in declared.link.into_iter().chain(declared.tag) {
+            if !injected.insert(hit.record.record.state_record_id) {
+                continue;
+            }
+            let mut memory = hit.record;
+            // `via` rides inside the staged payload — the same label the
+            // turn path puts on offered candidates. It never reaches the
+            // store: a replay writes nothing.
+            if let Some(payload) = memory.record.payload.as_object_mut() {
+                payload.insert("via".to_owned(), serde_json::Value::String(hit.via));
+            }
+            memories.push(memory);
+        }
+    }
     let exclude: BTreeSet<EvidenceId> = history.iter().map(|m| m.evidence_id).collect();
     let recalled = lane::recall_evidence(
         runtime.store(),

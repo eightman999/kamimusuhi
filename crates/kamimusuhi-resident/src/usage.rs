@@ -34,6 +34,10 @@ pub struct UsageRecord {
     pub prompt_tokens: Option<u64>,
     pub completion_tokens: Option<u64>,
     pub cached_tokens: Option<u64>,
+    /// Prompt tokens written into the provider's prefix cache. Defaults so
+    /// records persisted before the field existed still deserialize.
+    #[serde(default)]
+    pub cache_write_tokens: Option<u64>,
     pub cost_usd: Option<f64>,
     pub cost_kind: Option<String>,
 }
@@ -63,6 +67,7 @@ impl UsageRecord {
             prompt_tokens: event.prompt_tokens,
             completion_tokens: event.completion_tokens,
             cached_tokens: event.cached_tokens,
+            cache_write_tokens: event.cache_write_tokens,
             cost_usd,
             cost_kind: cost_usd.and(cost_kind).map(str::to_owned),
         }
@@ -78,8 +83,8 @@ struct Aggregate {
     count: u64,
     seconds: f64,
     buckets: [u64; 10],
-    tokens: [u64; 3],
-    unknown_tokens: [u64; 3],
+    tokens: [u64; 4],
+    unknown_tokens: [u64; 4],
     cost: [f64; 2],
     reported_costs: [u64; 2],
     unknown_cost: u64,
@@ -185,6 +190,7 @@ impl UsageStore {
             record.prompt_tokens,
             record.completion_tokens,
             record.cached_tokens,
+            record.cache_write_tokens,
         ]
         .into_iter()
         .enumerate()
@@ -286,7 +292,10 @@ impl UsageStore {
             "kind": kind, "tier": tier, "model": model, "outcome": outcome,
             "count": a.count, "latency_seconds_sum": a.seconds,
             "prompt_tokens_known": a.tokens[0], "completion_tokens_known": a.tokens[1], "cached_tokens_known": a.tokens[2],
+            "cache_write_tokens_known": a.tokens[3],
             "prompt_tokens_unknown": a.unknown_tokens[0], "completion_tokens_unknown": a.unknown_tokens[1], "cached_tokens_unknown": a.unknown_tokens[2],
+            "cache_write_tokens_unknown": a.unknown_tokens[3],
+            "cache_hit_ratio": cache_hit_ratio(a.tokens[0], a.tokens[2]),
             "actual_cost_usd_known": a.cost[0], "estimated_cost_usd_known": a.cost[1], "cost_unknown": a.unknown_cost,
             "actual_cost_reports": a.reported_costs[0], "estimated_cost_reports": a.reported_costs[1],
             "last_at": a.last_at,
@@ -319,6 +328,11 @@ impl UsageStore {
                 "tokens_unknown_total",
                 "counter",
                 "Observations without a reported token count.",
+            ),
+            (
+                "cache_hit_ratio",
+                "gauge",
+                "Cumulative cached/(prompt+cached) share of input tokens served from the provider's prefix cache.",
             ),
             (
                 "cost_usd_total",
@@ -388,7 +402,10 @@ impl UsageStore {
                 ",le=\"+Inf\"",
                 a.count.to_string(),
             );
-            for (i, name) in ["prompt", "completion", "cached"].iter().enumerate() {
+            for (i, name) in ["prompt", "completion", "cached", "cache_write"]
+                .iter()
+                .enumerate()
+            {
                 let label = format!(",token_type=\"{name}\"");
                 metric("tokens_total", &label, a.tokens[i].to_string());
                 metric(
@@ -410,10 +427,24 @@ impl UsageStore {
                 );
             }
             metric("cost_unknown_total", "", a.unknown_cost.to_string());
+            if let Some(ratio) = cache_hit_ratio(a.tokens[0], a.tokens[2]) {
+                metric("cache_hit_ratio", "", ratio.to_string());
+            }
             metric("last_request_timestamp_seconds", "", a.last_at.to_string());
         }
         out
     }
+}
+
+/// `cached / (prompt + cached)`: share of input tokens the provider
+/// served from its prefix cache, matching the RDSH harness input
+/// accounting (input = inputTokens + cacheRead + cacheWrite). Providers
+/// that fold cache reads into `prompt_tokens` make this under-read —
+/// erring low is the safe direction for a capacity metric. `None` while
+/// no input tokens were reported, so an absent report never looks like 0%.
+fn cache_hit_ratio(prompt: u64, cached: u64) -> Option<f64> {
+    let total = prompt.saturating_add(cached);
+    (total > 0).then(|| cached as f64 / total as f64)
 }
 
 fn sql_timestamp(value: u64) -> i64 {
@@ -514,6 +545,56 @@ mod tests {
         assert_eq!(after["series"][0]["estimated_cost_reports"], 0);
         assert_eq!(after["series"][0]["cost_unknown"], 1);
         assert!(store.prometheus().contains("kamimusuhi_usage_cost_reports_total{kind=\"request\",tier=\"local\",model=\"tiny\",outcome=\"success\",cost_kind=\"actual\"} 1"));
+    }
+
+    #[test]
+    fn usage_aggregates_cache_read_and_write_tokens_with_hit_ratio() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = UsageStore::open(dir.path().join("usage.sqlite"));
+        let mut e = event();
+        e.prompt_tokens = Some(60);
+        e.completion_tokens = Some(10);
+        e.cached_tokens = Some(40);
+        e.cache_write_tokens = Some(20);
+        store.record_request(&e, false);
+        let series = &store.snapshot()["series"][0];
+        assert_eq!(series["cached_tokens_known"], 40);
+        assert_eq!(series["cache_write_tokens_known"], 20);
+        assert_eq!(series["cache_hit_ratio"], 0.4); // 40 / (60 + 40)
+        let metrics = store.prometheus();
+        assert!(metrics.contains("token_type=\"cached\"} 40"));
+        assert!(metrics.contains("token_type=\"cache_write\"} 20"));
+        assert!(metrics.contains(
+            "kamimusuhi_usage_cache_hit_ratio{kind=\"request\",tier=\"local\",model=\"tiny\",outcome=\"success\"} 0.4"
+        ));
+    }
+
+    #[test]
+    fn usage_hit_ratio_is_absent_until_input_tokens_are_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = UsageStore::open(dir.path().join("usage.sqlite"));
+        store.record_request(&event(), false);
+        assert_eq!(
+            store.snapshot()["series"][0]["cache_hit_ratio"],
+            Value::Null
+        );
+        assert!(
+            !store
+                .prometheus()
+                .contains("kamimusuhi_usage_cache_hit_ratio{")
+        );
+    }
+
+    #[test]
+    fn usage_record_deserializes_records_written_before_cache_write() {
+        let old = json!({"at": 1, "kind": "request", "tier": null,
+            "model": null, "billing": null, "outcome": "success",
+            "ok": true, "latency_ms": 5, "prompt_tokens": 10,
+            "completion_tokens": 2, "cached_tokens": 4,
+            "cost_usd": null, "cost_kind": null});
+        let record: UsageRecord = serde_json::from_value(old).unwrap();
+        assert_eq!(record.cached_tokens, Some(4));
+        assert_eq!(record.cache_write_tokens, None);
     }
 
     #[test]

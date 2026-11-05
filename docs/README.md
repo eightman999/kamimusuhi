@@ -32,6 +32,20 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 
 ### Implementation plans and results
 
+常設ノード構成（resident）の運用仕様は [`../deploy/resident/README.md`](../deploy/resident/README.md)、
+コードから逆引きした現状地図は [`../deepwiki/`](../deepwiki/README.md) を参照。
+
+- [`implementation/recall-v0.md`](./implementation/recall-v0.md) — **Recall v0（宣言リンク＋タグ想起・使用追跡）**。FIO 実測由来の想起機構。宣言 `links` の outbound BFS（depth 3・×0.45）＋共有タグ枠を 2:1 で Jev 候補へ、`valid_to` 期限フィルタ、`state_record_usage` 別テーブルによる「応答で id を名指した分だけ温める」規則（凍結アトラクタ回避）。宣言リンク recall は `recall-eval` CLI が時点再現で計測（FIO recall_lab 相当）。
+- [`implementation/commitment-engine.md`](./implementation/commitment-engine.md) — **Commitment Engine**。再起動・失敗・別タスク割り込みを跨ぐ耐久目標の機構。`current_state/commitments.json` 正本・checkpoint・再計画ラダー L0–L6・成功条件検証・ピア委譲・`notify_subject` 通知・PersistenceScore 評価指標。
+- [`implementation/intercom.md`](./implementation/intercom.md) — **Intercom（姉妹個体どうしの会話）**。別 continuity root を持つ個体間の envelope 配送。outbox 永続化・直接配送→relay fallback・seen 冪等受理・`sister-<from>` subject・`peer_say` 能動返信・`auto_left`/`max_hops` の無人連鎖上限。
+- [`implementation/task-plane.md`](./implementation/task-plane.md) — **Task Plane（外部エージェント委譲）**。Devin / OpenCode / Command Code / generic CLI を個体の作業器官として使う構造。executor は設定データで `executors_file` は再起動なし再読込、実績 routing、worktree 書き込みと `agents apply`、課金 unknown の非自動選択。
+- [`implementation/text-dialogue-v0.md`](./implementation/text-dialogue-v0.md) — **Text dialogue v0**。API 自由入力・相手ごとの原文履歴と再開・実測状態と MIO 完了評価の入力・環境変数による API 認証の設定と検証結果。
+- [`implementation/research-integration-v0.md`](./implementation/research-integration-v0.md) — **実験成果の反映 v0**。`knowledge/experiment-findings.json` の結論・限界・出典カードを Library へ蓄積し、質問と MIO 状態に関連する最大4カードを対話開始時に想起する経路。
+- [`implementation/experimental-organ-integration.md`](./implementation/experimental-organ-integration.md) — **実験器官の runtime 昇格境界**。experiments/ の器官候補（H0/R0/S0/T0/O0 等）を active transient ORGAN_SIGNALS として Persona へ渡す接続と、promotion manifest・shadow/FAIL 除外の規則。
+- [`implementation/anatomical-fly-core-v0.md`](./implementation/anatomical-fly-core-v0.md) — **anatomical fly core v0**。fly connectome 由来の低次制御核を runtime へ接続する実装記録。
+- [`implementation/neuron-activity-v0.md`](./implementation/neuron-activity-v0.md) — **neuron activity v0**。神経活動の観測・注入面の実装記録。
+- [`implementation/persona-seed-v0.md`](./implementation/persona-seed-v0.md) — **persona seed v0**。operator 作成の傾向（口調・距離・エピステミクス）の構造・digest・不変境界。
+- [`light-heavy-node-architecture.md`](./light-heavy-node-architecture.md) — **Light/Heavy ノード分離**。`POST /task` typed task 委譲、LOCAL/DELEGATE/QUEUE/REJECT 分類、delegations.sqlite(WAL) キュー、capability discovery。
 - [`implementation/2026-09-10-spec-implementation-audit.md`](./implementation/2026-09-10-spec-implementation-audit.md) — **仕様対実装の監査と修正結果**。Persona privacy、HTTP framing/size、safe diagnostics、完全な input provenance、logical-call deadline の修正。実行した CI と mutation test、実モデル未検証、残る制約を区別する。
 
 - [`implementation/w7-persona-core-plan.md`](./implementation/w7-persona-core-plan.md) — **W7 計画と実装結果**。Persona Core 境界の強化と OpenAI-compatible backend（自動検証は scripted endpoint）。external material と user-facing expression の分離、typed input envelope、Persona backend と cognitive resource の役割分離、失敗時の canonical state 不変性。W8 以降へ進まない境界を明記する。
@@ -98,6 +112,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 
 - [`technology-watchlist.md`](./technology-watchlist.md) — OpenLife, Tebasaki_lab/MagicDelta, artificial nervous systems, llama.cpp, MLX-LM, continuity research, social-cognition benchmarks.
 - [`fio-system-reference-analysis.md`](./fio-system-reference-analysis.md) — FIO's long-running persistence discipline: canonical evidence vs derived renderings, layered/verbatim memory, internal-thought boundaries, background-cognition freshness, chokepoint routing, and silent-defect detection; mapped to Kamimusuhi with adoption hypotheses and experiments.
+- [`fio-memory-architecture-measurements-2026-11-03.md`](./fio-memory-architecture-measurements-2026-11-03.md) — **FIO 記憶アーキテクチャ実測（2026-11-03）の蒸留**。三層記憶・意識層の「使った分だけ温まる」・METADATA 書き戻し・宣言リンク解決表（2,311 本で実連結 0→解決表 ~78%）・想起実測（ベクトル起点の寄与ほぼゼロ、BFS+段減衰が PPR/融合に総合勝ち）・supersede/書き込みの門・既知の穴（valid_from/to 無し）を、Kamimusuhi の MutationProposal/domain separation/型付き ID 参照への対応付けと想起実験案（EXP-FIO-R1〜R3）付きで整理する。
 - [`research/fio-system-architecture-2026-09-09.md`](./research/fio-system-architecture-2026-09-09.md) — FIO / SerialExperiments' measured 2026-09-09 architecture snapshot: conscious/unconscious process split, 0.25-second nervous heartbeat, two-tier memory, sensory gating, local adaptive nerves, embodiment as observability, replaceable inference vessels, and a Kamimusuhi mapping to K-Fast / FlyBrain-inspired multi-timescale control.
 
 ## Normative project documents

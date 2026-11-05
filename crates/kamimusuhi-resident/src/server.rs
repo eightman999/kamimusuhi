@@ -47,6 +47,12 @@ impl Request {
 
 pub fn serve(shared: &Arc<Shared>) -> std::io::Result<()> {
     let listener = TcpListener::bind(&shared.config.node.listen)?;
+    serve_listener(shared, listener)
+}
+
+/// Accept loop on an already-bound listener. Tests bind an ephemeral
+/// port (`127.0.0.1:0`) and still get the real request path.
+pub fn serve_listener(shared: &Arc<Shared>, listener: TcpListener) -> std::io::Result<()> {
     let active = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
@@ -186,6 +192,12 @@ fn handle(shared: &Shared, stream: TcpStream) {
     let path = request.path.split('?').next().unwrap_or_default();
     match (request.method.as_str(), path) {
         ("GET", "/health") => json_response(stream, 200, &shared.health(), &[]),
+        ("GET", "/capabilities") => json_response(
+            stream,
+            200,
+            &serde_json::to_value(crate::capabilities::doc(shared)).unwrap_or_default(),
+            &[],
+        ),
         _ if !authorized(shared, &stream, &request) => json_response(
             stream,
             401,
@@ -280,6 +292,16 @@ fn handle(shared: &Shared, stream: TcpStream) {
             let (status, reply) = crate::tools::call(shared, &body, turn.as_deref());
             json_response(stream, status, &reply, &[]);
         }
+        ("GET", "/v1/commitments") => {
+            let (status, reply) =
+                crate::commitments::handle(shared, &json!({"action": "list"}), "operator");
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/commitments") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            let (status, reply) = crate::commitments::handle(shared, &body, "operator");
+            json_response(stream, status, &reply, &[]);
+        }
         ("GET", "/v1/agents") => {
             let (status, reply, _) = crate::task_orchestrator::handle_or_forward(
                 shared,
@@ -294,9 +316,46 @@ fn handle(shared: &Shared, stream: TcpStream) {
                 crate::task_orchestrator::handle_or_forward(shared, &body, "operator");
             json_response(stream, status, &reply, &[]);
         }
+        ("GET", "/v1/intercom") => {
+            let (status, reply) =
+                crate::intercom::handle(shared, &json!({"action": "status"}), "operator");
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/intercom") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            // A body carrying `from`/`to` is a peer envelope; anything else
+            // is an operator action (see intercom::handle).
+            let (status, reply) = crate::intercom::handle(shared, &body, "operator");
+            json_response(stream, status, &reply, &[]);
+        }
         ("POST", "/v1/library") => {
             let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
             let (status, reply) = crate::library::handle(shared, &body);
+            json_response(stream, status, &reply, &[]);
+        }
+        // Typed node tasks: the light/heavy delegation protocol. See
+        // delegation.rs and docs/light-heavy-node-architecture.md.
+        ("POST", "/task") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            let (status, reply) = crate::delegation::submit(shared, &body);
+            json_response(stream, status, &reply, &[]);
+        }
+        ("GET", p) if p.starts_with("/task/") => {
+            let task_id = &p["/task/".len()..];
+            if !kamimusuhi_node::valid_id(task_id) {
+                json_response(stream, 400, &json!({"error": "invalid_task_id"}), &[]);
+                return;
+            }
+            let (status, reply) = crate::delegation::show(shared, task_id);
+            json_response(stream, status, &reply, &[]);
+        }
+        ("GET", "/v1/delegations") => {
+            let (status, reply) = crate::delegation::handle(shared, &json!({"action": "list"}));
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/delegations") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            let (status, reply) = crate::delegation::handle(shared, &body);
             json_response(stream, status, &reply, &[]);
         }
         _ => json_response(stream, 404, &json!({"error": "not found"}), &[]),

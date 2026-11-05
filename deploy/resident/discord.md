@@ -5,6 +5,8 @@ Botは受付を返信し、FIFOキューから（subjectごとに順番を守っ
 `POST http://127.0.0.1:7860/v1/kamimusuhi/talk` へ渡す。
 返事は元メッセージへの返信になる。既存のPi上の個体・Persona・記憶を使い、別個体は作らない。
 
+実装は `crates/kamimusuhi-discord` のRustバイナリ。Python/venvは不要です。旧`discord_bot.py`とそのテストは移植比較用に保持しています。
+
 ## 挙動
 
 - サーバー・チャンネル・利用者IDをすべて照合する。空のallowlistでは起動しない。
@@ -39,7 +41,7 @@ Botは受付を返信し、FIFOキューから（subjectごとに順番を守っ
 
 | 通知 | 契機 | 操作 |
 |---|---|---|
-| 未着手の引受 | 澪が作業を約束したが、再要求しても委譲しなかった（board の `commitment`） | `@澪 開始 t…` / `@澪 開始 t… devin` / `@澪 取消 t…`。通知への返信なら`@澪 開始`だけでよい |
+| 未着手の引受 | 澪が作業を約束したが、再要求しても委譲しなかった（board の `promise`） | `@澪 開始 t…` / `@澪 開始 t… devin` / `@澪 取消 t…`。通知への返信なら`@澪 開始`だけでよい |
 | 承認待ち | 書き込み系ツールが承認待ちになった | デスクトップの「承認」画面で判断する（Discordからは承認しない） |
 | 委譲タスクの終了 | 外部エージェントのタスクが完了・失敗・取消 | 澪の評価（採用／不採用／保留、最大10分待つ）と報告の要約。ブランチがあれば取り込みはデスクトップで判断 |
 
@@ -53,7 +55,7 @@ Botは受付を返信し、FIFOキューから（subjectごとに順番を守っ
 - 投稿済みの通知は`StateDirectory`（`/var/lib/kamimusuhi-discord/notices.json`）に残り、
   再起動しても同じ通知を繰り返さない。委譲タスクの終了通知は通知を初めて有効にした時点
   以降に終わったものだけが対象。
-- 開始・取消コマンドはキューを通らず即時に処理する。対象は`commitment`のみで、
+- 開始・取消コマンドはキューを通らず即時に処理する。対象は`promise`のみで、
   失敗時はHTTP状態だけを返し、内部エラー本文は転送しない。
 
 ## 接続
@@ -75,13 +77,12 @@ Botは受付を返信し、FIFOキューから（subjectごとに順番を守っ
 
 ## 配置・起動（承認後に実施）
 
-対象はcontinuityノードのPiのみ。返事への付記と判断待ち通知には、`background`と`commitment`を返すresident（未着手の引受・委譲レビュー対応版）が必要。
+対象はcontinuityノードのPiのみ。返事への付記と判断待ち通知には、`background`と`promise`を返すresident（未着手の引受・委譲レビュー対応版）が必要。
 既存ファイルがある場合は置換前にバックアップする。以下はPi上のソースディレクトリで実行する。
 
 ```bash
-python3 -m venv /srv/kamimusuhi/runtime/discord-venv
-/srv/kamimusuhi/runtime/discord-venv/bin/python -m pip install -r deploy/resident/discord-requirements.txt
-install -m 755 deploy/resident/discord_bot.py /srv/kamimusuhi/runtime/bin/discord_bot.py
+cargo build --release --locked -p kamimusuhi-discord
+install -m 755 target/release/kamimusuhi-discord /srv/kamimusuhi/runtime/bin/kamimusuhi-discord
 # 初回のみ。既存のdiscord.envを上書きしない。
 test -e /srv/kamimusuhi/config/discord.env || install -m 600 deploy/resident/discord.env.example /srv/kamimusuhi/config/discord.env
 ```
@@ -118,9 +119,16 @@ journalctl -u kamimusuhi-discord -n 30 --no-pager
 ローカル（Discord接続なし・一時HTTPサーバー）：
 
 ```bash
-python3 -m venv .venv-discord
-.venv-discord/bin/python -m pip install -r deploy/resident/discord-requirements.txt
-.venv-discord/bin/python -m unittest discover -s deploy/resident -p 'test_discord_bot.py' -v
+cargo test --locked -p kamimusuhi-discord
+cargo clippy --locked -p kamimusuhi-discord --all-targets -- -D warnings
+```
+
+既存の `DISCORD_*` 環境変数を読み込んだ端末では、投稿や対話をせずに
+実Gatewayへの認証・READY・設定されたサーバーへの所属を確認できる（30秒上限）。
+稼働Botとは独立した短時間の接続であり、residentや個体DBにはアクセスしない。
+
+```bash
+cargo run --locked -p kamimusuhi-discord --example check_gateway
 ```
 
 実接続後は専用チャンネルで2つのメンションを送り、受付→順番どおりの返信、

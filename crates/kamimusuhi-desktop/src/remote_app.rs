@@ -1227,7 +1227,7 @@ fn background_strip(ui: &mut egui::Ui, background: &Background) -> Option<(Strin
 
 /// A board task only the operator can move on: a promise without a task.
 fn needs_decision(task: &Value) -> bool {
-    task["kind"] == "commitment" && task["status"] == "awaiting_operator"
+    task["kind"] == "promise" && task["status"] == "awaiting_operator"
 }
 
 /// A delegated task that has stopped running.
@@ -1470,7 +1470,8 @@ fn kind_tile(kind: &str) -> (&'static str, Color32) {
         "commit" => ("反", GREEN),
         "job" => ("定", Color32::from_rgb(80, 180, 200)),
         "manual" => ("手", Color32::from_rgb(200, 150, 90)),
-        "commitment" => ("約", AMBER),
+        "commitment" => ("目", AMBER),
+        "promise" => ("約", AMBER),
         "delegated" => ("委", GREEN),
         _ => ("澪", Color32::from_rgb(230, 120, 170)),
     }
@@ -1998,7 +1999,7 @@ impl RemoteApp {
                         .color(TEXT),
                     );
                 }
-                if t["kind"] == "commitment" && t["status"] == "awaiting_operator" {
+                if t["kind"] == "promise" && t["status"] == "awaiting_operator" {
                     ui.add_space(8.0);
                     ui.label(
                         RichText::new("澪が引き受けたが、タスクは作成されていません。")
@@ -2341,7 +2342,7 @@ mod map_tests {
     fn only_decisions_that_appear_later_are_announced() {
         use serde_json::json;
         let mut seen = None;
-        let first = [json!({"id": "c1", "kind": "commitment", "status": "awaiting_operator"})];
+        let first = [json!({"id": "c1", "kind": "promise", "status": "awaiting_operator"})];
         let ids = |tasks: &[Value]| -> Vec<String> {
             tasks
                 .iter()
@@ -2352,9 +2353,9 @@ mod map_tests {
         let first_ids = ids(&first);
         assert!(newly_seen(&mut seen, first_ids.iter().map(String::as_str)).is_empty());
         let later = [
-            json!({"id": "c1", "kind": "commitment", "status": "awaiting_operator"}),
-            json!({"id": "c2", "kind": "commitment", "status": "awaiting_operator"}),
-            json!({"id": "c3", "kind": "commitment", "status": "cancelled"}),
+            json!({"id": "c1", "kind": "promise", "status": "awaiting_operator"}),
+            json!({"id": "c2", "kind": "promise", "status": "awaiting_operator"}),
+            json!({"id": "c3", "kind": "promise", "status": "cancelled"}),
             json!({"id": "d1", "kind": "dialogue", "status": "awaiting_operator"}),
         ];
         let later_ids = ids(&later);

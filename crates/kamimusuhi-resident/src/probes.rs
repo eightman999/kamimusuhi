@@ -258,6 +258,11 @@ pub fn spawn_all(shared: &Arc<Shared>) {
                     sync.in_progress_since = now;
                     sync.last_run = now;
                 }
+                // Stage the node's working state for whole-file delivery:
+                // commitments/tasks/approvals reach `state/<node>/` on the
+                // NAS within one sync interval, so an SSD loss is covered
+                // by the latest copy, not just by the event journals.
+                stage_state(&s);
                 // Blocking here is acceptable: this thread does nothing else.
                 let report = s.spool.deliver(&root);
                 let mut sync = s.sync.write().unwrap_or_else(|p| p.into_inner());
@@ -297,6 +302,30 @@ pub fn spawn_all(shared: &Arc<Shared>) {
                 *s.snapshot.write().unwrap_or_else(|p| p.into_inner()) = value;
             },
         );
+    }
+}
+
+/// Copy `current_state/*.json` into the spool under `state/<node>/` so the
+/// sync loop's whole-file delivery carries them to the NAS. Staged copies
+/// replace whatever is waiting, so at most one interval of changes can be
+/// pending and the NAS always holds the newest version that was healthy
+/// at delivery time.
+fn stage_state(s: &Shared) {
+    let dir = s.config.paths.current_state();
+    let node = &s.config.node.id;
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if path.extension().is_some_and(|e| e == "json")
+            && let Ok(staged) = s.spool.stage_file(&format!("state/{node}/{name}"))
+        {
+            let _ = std::fs::copy(&path, &staged);
+        }
     }
 }
 

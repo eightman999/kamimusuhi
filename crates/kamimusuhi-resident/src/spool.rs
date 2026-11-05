@@ -65,7 +65,25 @@ impl Spool {
     ///
     /// `category` is a relative path such as `logs/heartbeat` or
     /// `conversations`. The record gets `id`, `ts` and `node` if absent.
-    pub fn append(&self, category: &str, mut record: Value) -> io::Result<()> {
+    ///
+    /// The line is in the page cache when this returns — it survives a
+    /// process crash but not necessarily a power loss. Records that the
+    /// system must not lose across power failure (conversation intake,
+    /// commitment and board journals, approvals) should use
+    /// [`Spool::append_sync`] instead.
+    pub fn append(&self, category: &str, record: Value) -> io::Result<()> {
+        self.append_inner(category, record, false)
+    }
+
+    /// [`Spool::append`] plus `sync_all` before returning: the record is
+    /// on stable storage even if the host loses power. Use for
+    /// low-frequency records whose loss is unacceptable; keep it off
+    /// the heartbeat path.
+    pub fn append_sync(&self, category: &str, record: Value) -> io::Result<()> {
+        self.append_inner(category, record, true)
+    }
+
+    fn append_inner(&self, category: &str, mut record: Value, sync: bool) -> io::Result<()> {
         let now = unix_now();
         if let Value::Object(map) = &mut record {
             let seq = self.seq.fetch_add(1, Ordering::Relaxed);
@@ -93,7 +111,11 @@ impl Spool {
             fs::create_dir_all(parent)?;
         }
         let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-        file.write_all(line.as_bytes())
+        file.write_all(line.as_bytes())?;
+        if sync {
+            file.sync_all()?;
+        }
+        Ok(())
     }
 
     /// Place a whole file for delivery at NAS-relative `relative`.

@@ -7,6 +7,7 @@
 //!                                    [--resource <impl>] [--seed <n>]
 //! kamimusuhi-runtime chat           --dir <path> [--subject <id>]
 //! kamimusuhi-runtime talk           --dir <path> --message <text>
+//! kamimusuhi-runtime recall-eval     --dir <path> [--limit <n>] [--json]
 //! ```
 //!
 //! Reports go to stdout as JSON so a harness can read them; a phase run by one
@@ -54,6 +55,7 @@ commands:
   rollback          move the derived lane back one activation; JSON on stdout
   activate          gate + apply a pending C0 proposal (--proposal-id <hex>)
   research-check    verify bundled research source files; no runtime writes
+  recall-eval       read-only declared-link recall evaluation over the store
 
 options:
   --dir <path>      runtime directory (required)
@@ -90,6 +92,9 @@ options:
                     (stderr in chat; a `debug_context` field in talk's JSON)
   --debug           talk/chat: emit secret-free K-CORE, Jev and LLM trace
   --proposal-id <hex>  activate only: the pending C0 proposal to gate+apply
+  --limit <n>       recall-eval only: evaluate at most the newest N
+                    link-declaring episodic records
+  --json            recall-eval only: JSON report on stdout (the default)
 ";
 
 fn main() -> ExitCode {
@@ -123,6 +128,11 @@ fn run() -> Result<String, RuntimeError> {
             "--source-root is only supported by research-check".to_owned(),
         ));
     }
+    if (options.limit.is_some() || options.json) && command != "recall-eval" {
+        return Err(RuntimeError::Usage(
+            "--limit and --json are only supported by recall-eval".to_owned(),
+        ));
+    }
     if !matches!(command.as_str(), "talk" | "chat" | "reflect" | "activate")
         && (options.message.is_some() || options.subject.is_some() || options.mio_options_present())
     {
@@ -153,6 +163,13 @@ fn run() -> Result<String, RuntimeError> {
             // Opened without claiming a writer epoch: inspection is a read.
             let runtime = Runtime::open(options.dir()?, options.runtime_options())?;
             let report = inspect::inspect(&runtime)?;
+            runtime.stopping();
+            encode(&report)
+        }
+        "recall-eval" => {
+            // Same read-only open as inspect: no writer epoch, only SELECTs.
+            let runtime = Runtime::open(options.dir()?, options.runtime_options())?;
+            let report = kamimusuhi_runtime::recall_eval::evaluate(&runtime, options.limit)?;
             runtime.stopping();
             encode(&report)
         }
@@ -406,6 +423,8 @@ struct Options {
     debug_context: bool,
     debug: bool,
     proposal_id: Option<String>,
+    limit: Option<usize>,
+    json: bool,
 }
 
 impl Options {
@@ -491,6 +510,13 @@ impl Options {
                 "--debug-context" => options.debug_context = true,
                 "--debug" => options.debug = true,
                 "--proposal-id" => options.proposal_id = Some(value()?),
+                "--limit" => {
+                    let raw = value()?;
+                    options.limit = Some(raw.parse().map_err(|_| {
+                        RuntimeError::Usage(format!("--limit {raw:?} is not a number"))
+                    })?);
+                }
+                "--json" => options.json = true,
                 "--privacy" => {
                     let raw = value()?;
                     // Hyphens on the command line, underscores on the wire.

@@ -96,6 +96,57 @@ pub fn approvals(url: &str, token: Option<&str>) -> Result<Vec<Value>, String> {
     Ok(v["approvals"].as_array().cloned().unwrap_or_default())
 }
 
+/// Submit a typed node task (`POST /task`) — the light/heavy delegation
+/// entry point. `wait_ms` in the body long-polls for a settled result.
+pub fn submit_task(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/task")?;
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        // Bounded a little past the protocol's long-poll cap so a waiting
+        // submit never hangs forever on a wedged receiver.
+        Duration::from_secs(70),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
+}
+
+/// `GET /task/<id>` — the task record, including its result when settled.
+pub fn task_record(url: &str, token: Option<&str>, task_id: &str) -> Result<Value, String> {
+    get_json(
+        url,
+        &format!("/task/{task_id}"),
+        &auth(token),
+        Duration::from_secs(15),
+    )
+}
+
+/// `POST /v1/delegations` — operator actions on the node-task queue.
+pub fn delegations(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/v1/delegations")?;
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        Duration::from_secs(15),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
+}
+
 pub fn decide(url: &str, token: Option<&str>, id: &str, approve: bool) -> Result<Value, String> {
     let endpoint = Endpoint::parse(url, "/v1/approvals/decide")?;
     let body = json!({"id": id, "decision": if approve { "approve" } else { "reject" }});
@@ -245,9 +296,47 @@ pub fn library(url: &str, token: Option<&str>, body: &Value) -> Result<Value, St
     }
 }
 
+/// `POST /v1/commitments` (commitment engine).
+pub fn commitments(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/v1/commitments")?;
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        Duration::from_secs(60),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
+}
+
 /// `POST /v1/agents` (task plane).
 pub fn agents(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
     let endpoint = Endpoint::parse(url, "/v1/agents")?;
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        Duration::from_secs(60),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
+}
+
+/// `POST /v1/intercom` (sister-to-sister messaging between peer individuals).
+pub fn intercom(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/v1/intercom")?;
     let response = http::post_json(
         &endpoint,
         &body.to_string(),

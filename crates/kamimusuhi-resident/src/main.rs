@@ -23,6 +23,16 @@ kamimusuhi agents [health | models [query] | refresh | status <task> | cancel <t
                    | apply <task> | discard <task>
                    | continue <task> <instruction…> | accept <task> | reject <task>
                    | stats | eval <workspace> <executor[:model]>… | eval-report <run>]
+kamimusuhi commit [list [--all] | show <id> | new <goal…> | note <id> <text…>
+                   | resume <id> [answer…] | close <id> | abandon <id> [reason…] | metrics]
+kamimusuhi intercom [status | list [--all] | show <conv> | send <peer> <text…>
+                   | open <peer> [turns] [text…] | close <conv> [text…] | retry [id]]
+kamimusuhi say <peer> <text…>   send a message to the sister individual on <peer>
+kamimusuhi node [--url <node-url>]        light/heavy node state (mode, goal, queue, peers)
+kamimusuhi task list | show <id> | retry <id> | cancel <id>
+kamimusuhi task submit <type> [payload-json] [--url <node-url>]
+          e.g. kamimusuhi task submit node.ping
+               kamimusuhi task submit llm.generate '{\"messages\":[...],\"requires\":[\"llm.generate\"]}'
 kamimusuhi check-config [--config <path>]
 
 Default config: /srv/kamimusuhi/config/resident.json (or $KAMIMUSUHI_CONFIG).
@@ -116,7 +126,7 @@ fn serve(args: &Args) -> Result<(), String> {
     let kcore_config = config.kcore.clone();
     let role = config.node.role;
     let shared = Arc::new(Shared::new(config, spool, epoch, token));
-    let _ = shared.spool.append(
+    let _ = shared.spool.append_sync(
         "logs/lifecycle",
         json!({"event": "start", "boot_epoch": epoch, "version": env!("CARGO_PKG_VERSION"),
                "role": role.as_str(), "unix": unix_now()}),
@@ -127,6 +137,9 @@ fn serve(args: &Args) -> Result<(), String> {
     }
     kamimusuhi_resident::jobs::spawn_all(&shared);
     kamimusuhi_resident::task_orchestrator::spawn(&shared);
+    kamimusuhi_resident::commitments::spawn(&shared);
+    kamimusuhi_resident::intercom::spawn(&shared);
+    kamimusuhi_resident::delegation::spawn(&shared);
     kamimusuhi_resident::task_review::spawn(&shared);
     if role == NodeRole::Continuity
         && let Some(k) = kcore_config
@@ -283,6 +296,138 @@ fn run() -> Result<ExitCode, String> {
                 _ => return Err(USAGE.to_owned()),
             };
             let reply = client::agents(&url, token.as_deref(), &body)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&reply).unwrap_or_default()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        "commit" | "commitments" => {
+            use kamimusuhi_resident::client;
+            let url = match &args.url {
+                Some(u) => u.clone(),
+                None if args.config.is_file() => local_url(&args.config)?,
+                None => client::discover(&client::candidates(None))?,
+            };
+            let t = |i: usize| args.text.get(i).cloned().unwrap_or_default();
+            let rest = |from: usize| args.text.get(from..).unwrap_or_default().join(" ");
+            let body = match args.text.first().map_or("list", String::as_str) {
+                "list" => json!({"action": "list", "all": args.json}),
+                "show" => json!({"action": "show", "id": t(1)}),
+                "new" => json!({"action": "create", "goal": rest(1)}),
+                "note" => json!({"action": "update", "id": t(1), "note": rest(2)}),
+                "resume" => json!({"action": "resume", "id": t(1), "note": rest(2)}),
+                "close" => json!({"action": "close", "id": t(1)}),
+                "abandon" => json!({"action": "abandon", "id": t(1), "reason": rest(2)}),
+                "metrics" => json!({"action": "metrics"}),
+                _ => return Err(USAGE.to_owned()),
+            };
+            let reply = client::commitments(&url, token.as_deref(), &body)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&reply).unwrap_or_default()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        "intercom" | "say" => {
+            use kamimusuhi_resident::client;
+            let url = match &args.url {
+                Some(u) => u.clone(),
+                None if args.config.is_file() => local_url(&args.config)?,
+                None => client::discover(&client::candidates(None))?,
+            };
+            let t = |i: usize| args.text.get(i).cloned().unwrap_or_default();
+            let rest = |from: usize| args.text.get(from..).unwrap_or_default().join(" ");
+            // `say <peer> <text…>` is `intercom send <peer> <text…>`.
+            let offset = usize::from(args.command != "say");
+            let action = if args.command == "say" {
+                "send".to_owned()
+            } else {
+                t(0)
+            };
+            let body = match action.as_str() {
+                "" | "status" => json!({"action": "status"}),
+                "list" => json!({"action": "list", "all": args.json}),
+                "show" => json!({"action": "show", "id": t(offset)}),
+                "send" | "say" => json!({"action": "send", "to": t(offset),
+                                        "body": rest(offset + 1)}),
+                "open" => {
+                    // `open <peer> [turns] [text…]` — turns only when the
+                    // word after the peer parses as a number.
+                    let (turns, body_at) = match t(offset + 1).parse::<u64>() {
+                        Ok(n) => (json!(n), offset + 2),
+                        Err(_) => (Value::Null, offset + 1),
+                    };
+                    let mut o = json!({"action": "open", "peer": t(offset),
+                                       "body": rest(body_at)});
+                    if !turns.is_null() {
+                        o["turns"] = turns;
+                    }
+                    o
+                }
+                "close" => json!({"action": "close", "id": t(offset),
+                                  "body": rest(offset + 1)}),
+                "retry" => json!({"action": "retry", "id": t(offset)}),
+                _ => return Err(USAGE.to_owned()),
+            };
+            let reply = client::intercom(&url, token.as_deref(), &body)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&reply).unwrap_or_default()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        "node" => {
+            use kamimusuhi_resident::client;
+            let url = match &args.url {
+                Some(u) => u.clone(),
+                None if args.config.is_file() => local_url(&args.config)?,
+                None => client::discover(&client::candidates(None))?,
+            };
+            let doc = status::fetch(&url, token.as_deref())?;
+            let node = doc.get("node_state").cloned().unwrap_or(Value::Null);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&node).unwrap_or_default()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        "task" => {
+            use kamimusuhi_resident::client;
+            let url = match &args.url {
+                Some(u) => u.clone(),
+                None if args.config.is_file() => local_url(&args.config)?,
+                None => client::discover(&client::candidates(None))?,
+            };
+            let t = |i: usize| args.text.get(i).cloned().unwrap_or_default();
+            let reply = match args.text.first().map_or("list", String::as_str) {
+                "list" => client::delegations(&url, token.as_deref(), &json!({"action": "list"}))?,
+                "show" | "status" => client::task_record(&url, token.as_deref(), &t(1))?,
+                "retry" => client::delegations(
+                    &url,
+                    token.as_deref(),
+                    &json!({"action": "retry", "task_id": t(1)}),
+                )?,
+                "cancel" => client::delegations(
+                    &url,
+                    token.as_deref(),
+                    &json!({"action": "cancel", "task_id": t(1)}),
+                )?,
+                "submit" => {
+                    let task_type = t(1);
+                    if task_type.is_empty() {
+                        return Err("task submit needs a type".to_owned());
+                    }
+                    let mut body: Value = match t(2).as_str() {
+                        "" => json!({}),
+                        text => serde_json::from_str(text)
+                            .map_err(|e| format!("payload is not JSON: {e}"))?,
+                    };
+                    body["type"] = json!(task_type);
+                    client::submit_task(&url, token.as_deref(), &body)?
+                }
+                _ => return Err(USAGE.to_owned()),
+            };
             println!(
                 "{}",
                 serde_json::to_string_pretty(&reply).unwrap_or_default()

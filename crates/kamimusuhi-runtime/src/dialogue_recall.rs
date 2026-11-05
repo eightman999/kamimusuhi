@@ -8,12 +8,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use kamimusuhi_core::c0::OperativeParams;
 use kamimusuhi_core::evidence::{EvidenceKind, EvidenceRecord};
-use kamimusuhi_core::ids::{EvidenceId, IndividualId};
-use kamimusuhi_core::memory::{AttributedMemory, MemoryQuery, MemoryRepository};
+use kamimusuhi_core::ids::{EvidenceId, IndividualId, MemoryId};
+use kamimusuhi_core::memory::{AttributedMemory, MemoryQuery, MemoryRepository, StateRecord};
 use kamimusuhi_core::mutation::MutationDomain;
+use kamimusuhi_core::time::UtcTimestamp;
 use kamimusuhi_store_sqlite::SqliteStore;
 use serde_json::{Value, json};
 
+use crate::dialogue_recall_links::{
+    DeclaredHit, DeclaredSelection, KNOT_MIN_IN_DEGREE, select_declared,
+};
 use crate::llm_jev::{ConversationError, RecallCandidate, RecallRelevance};
 use crate::{RuntimeError, c0};
 
@@ -38,6 +42,21 @@ struct RecallGroup<T> {
     top_k: usize,
 }
 
+/// What one turn's recall pass observed, surfaced for inspection.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RecallStats {
+    /// In-scope records rejected because their declared `valid_to`/`valid_from`
+    /// window does not cover the turn's `now`.
+    pub expired_skipped: usize,
+    /// Declared-path candidates offered through link traversal.
+    pub link_hits: usize,
+    /// Offered link-frame hits at least two distinct records point at —
+    /// the FIO "knot" degree.
+    pub knot_hits: usize,
+    /// Declared-path candidates offered through shared tags.
+    pub tag_hits: usize,
+}
+
 /// One turn's immutable retrieval snapshot. Provider answers refer only to
 /// the IDs returned by [`Self::candidates`], not arbitrary store records.
 #[derive(Debug)]
@@ -45,6 +64,7 @@ pub struct RecallPool {
     relationships: Vec<AttributedMemory>,
     episodic: RecallGroup<AttributedMemory>,
     evidence: RecallGroup<EvidenceRecord>,
+    stats: RecallStats,
 }
 
 struct RecallScope<'a> {
@@ -52,13 +72,26 @@ struct RecallScope<'a> {
     subject: &'a str,
     source_id: &'a str,
     exclude: &'a BTreeSet<EvidenceId>,
+    now: UtcTimestamp,
 }
 
 impl RecallScope<'_> {
+    /// Individual/subject/lifecycle gates — everything but the declared
+    /// validity window.
+    fn in_scope(&self, record: &StateRecord) -> bool {
+        record.individual_id == self.individual_id
+            && record.subject_key.as_deref() == Some(self.subject)
+            && record.lifecycle_state.is_current()
+    }
+
+    /// The scope plus the producer-declared validity window: a record whose
+    /// `valid_to` has passed is treated as absent for this turn.
+    fn admits_record(&self, record: &StateRecord) -> bool {
+        self.in_scope(record) && record.is_valid_at(self.now)
+    }
+
     fn admits_memory(&self, memory: &AttributedMemory) -> bool {
-        memory.record.individual_id == self.individual_id
-            && memory.record.subject_key.as_deref() == Some(self.subject)
-            && memory.is_current()
+        self.admits_record(&memory.record)
     }
 
     fn admits_evidence(&self, record: &EvidenceRecord) -> bool {
@@ -77,6 +110,13 @@ impl RecallPool {
     /// Read the existing lexical baseline and a bounded, identically scoped
     /// pool. The additional records need no lexical overlap, so a paraphrase
     /// that the baseline misses can still reach the relevance judge.
+    ///
+    /// `now` gates producer-declared validity windows (`valid_from`/
+    /// `valid_to`): a record whose window does not cover `now` is skipped and
+    /// counted in [`RecallStats::expired_skipped`]. The declared-path
+    /// selector expands the admissible pool through `links`/`tags`/usage
+    /// into extra episodic candidates — judged, never injected directly.
+    #[allow(clippy::too_many_arguments)]
     pub fn load(
         store: &SqliteStore,
         individual_id: IndividualId,
@@ -85,6 +125,7 @@ impl RecallPool {
         query: &str,
         params: &OperativeParams,
         exclude: &BTreeSet<EvidenceId>,
+        now: UtcTimestamp,
     ) -> Result<Self, RuntimeError> {
         let baseline_memories =
             c0::retrieve_memories(store, individual_id, subject, query, params)?;
@@ -106,21 +147,42 @@ impl RecallPool {
         } else {
             store.c0_evidence_pool(individual_id, params.retrieval.evidence_pool)?
         };
+        let scope = RecallScope {
+            individual_id,
+            subject,
+            source_id,
+            exclude,
+            now,
+        };
+        // Declared-path expansion runs over the records this turn's scope
+        // admits; `admits_record` keeps out-of-pool link targets inside the
+        // same gates.
+        let admissible: Vec<AttributedMemory> = episodic_pool
+            .iter()
+            .filter(|memory| scope.admits_memory(memory))
+            .cloned()
+            .collect();
+        let declared = select_declared(
+            store,
+            store,
+            &admissible,
+            |record| scope.admits_record(record),
+            query,
+            &params.retrieval,
+            now,
+        );
         Self::from_records(
             baseline_memories,
             baseline_evidence,
             episodic_pool,
             evidence_pool,
-            &RecallScope {
-                individual_id,
-                subject,
-                source_id,
-                exclude,
-            },
+            &scope,
             params,
+            declared,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn from_records(
         baseline_memories: Vec<AttributedMemory>,
         baseline_evidence: Vec<EvidenceRecord>,
@@ -128,11 +190,21 @@ impl RecallPool {
         evidence_pool: Vec<EvidenceRecord>,
         scope: &RecallScope<'_>,
         params: &OperativeParams,
+        declared: DeclaredSelection,
     ) -> Result<Self, RuntimeError> {
         let mut seen_memories = BTreeSet::new();
+        // Records in scope except for the declared validity window: they are
+        // what `is_valid_at` filtered out, distinct from scope rejections.
+        let mut expired = BTreeSet::new();
+        let mut count_expired = |memory: &AttributedMemory| {
+            if scope.in_scope(&memory.record) && !memory.record.is_valid_at(scope.now) {
+                expired.insert(memory.record.state_record_id);
+            }
+        };
         let memories: Vec<_> = baseline_memories
             .into_iter()
             .filter(|memory| {
+                count_expired(memory);
                 scope.admits_memory(memory) && seen_memories.insert(memory.record.state_record_id)
             })
             .collect();
@@ -154,6 +226,7 @@ impl RecallPool {
             .into_iter()
             .take(EPISODIC_POOL_LIMIT)
             .filter(|memory| {
+                count_expired(memory);
                 scope.admits_memory(memory)
                     && memory.record.domain == MutationDomain::Episodic
                     && !relationship_ids.contains(&memory.record.state_record_id)
@@ -168,20 +241,57 @@ impl RecallPool {
             .take(params.retrieval.evidence_pool)
             .filter(|record| scope.admits_evidence(record))
             .collect();
-        Ok(Self {
-            relationships,
-            episodic: RecallGroup::build(
-                episodic_baseline,
-                episodic_pool,
-                params.retrieval.episodic_top_k,
+        // Declared-path hits are additional candidates beyond the regular
+        // offer set. The via label rides inside the candidate content so the
+        // judge — and the turn stats — can tell how each record arrived.
+        let mut episodic = RecallGroup::build(
+            episodic_baseline,
+            episodic_pool,
+            params.retrieval.episodic_top_k,
+            |memory| format!("memory_{}", memory.record.state_record_id),
+            |memory| {
+                Ok(json!({
+                    "source_type": "durable_episodic_memory",
+                    "memory": memory,
+                }))
+            },
+        )?;
+        let declared_offer = |hits: Vec<DeclaredHit>,
+                              episodic: &mut RecallGroup<AttributedMemory>|
+         -> Result<usize, RuntimeError> {
+            episodic.extend_offered(
+                hits.into_iter().map(|hit| (hit.record, hit.via)).collect(),
                 |memory| format!("memory_{}", memory.record.state_record_id),
-                |memory| {
+                |memory, via| {
                     Ok(json!({
-                        "source_type": "durable_episodic_memory",
+                        "source_type": match memory.record.domain {
+                            MutationDomain::Episodic => "durable_episodic_memory",
+                            _ => "durable_memory",
+                        },
+                        "via": via,
                         "memory": memory,
                     }))
                 },
-            )?,
+            )
+        };
+        // Knot count covers hits actually offered — dedup against the
+        // baseline/pool inside `extend_offered` may have dropped some.
+        let knot_ids: BTreeSet<MemoryId> = declared
+            .link
+            .iter()
+            .filter(|hit| hit.in_degree >= KNOT_MIN_IN_DEGREE)
+            .map(|hit| hit.record.record.state_record_id)
+            .collect();
+        let offered_before = episodic.offered.len();
+        let link_hits = declared_offer(declared.link, &mut episodic)?;
+        let knot_hits = episodic.offered[offered_before..]
+            .iter()
+            .filter(|offered| knot_ids.contains(&offered.record.record.state_record_id))
+            .count();
+        let tag_hits = declared_offer(declared.tag, &mut episodic)?;
+        Ok(Self {
+            relationships,
+            episodic,
             evidence: RecallGroup::build(
                 baseline_evidence,
                 evidence_pool,
@@ -200,7 +310,18 @@ impl RecallPool {
                     }))
                 },
             )?,
+            stats: RecallStats {
+                expired_skipped: expired.len(),
+                link_hits,
+                knot_hits,
+                tag_hits,
+            },
         })
+    }
+
+    /// This turn's recall counters: expired skips and declared-path offers.
+    pub fn stats(&self) -> RecallStats {
+        self.stats
     }
 
     /// Existing retrieval, including records too large to send for judgment.
@@ -337,6 +458,42 @@ impl<T: Clone> RecallGroup<T> {
         })
     }
 
+    /// Additional offers beyond [`CANDIDATES_PER_DOMAIN`], used by the
+    /// declared path. Extras never displace baseline or pool candidates and
+    /// dedup against both by candidate id; the same byte bound applies.
+    /// Returns how many were actually offered.
+    fn extend_offered(
+        &mut self,
+        records: Vec<(T, String)>,
+        id_of: impl Fn(&T) -> String,
+        content_of: impl Fn(&T, &str) -> Result<Value, RuntimeError>,
+    ) -> Result<usize, RuntimeError> {
+        let mut seen: BTreeSet<String> = self
+            .baseline
+            .iter()
+            .map(|(id, _)| id.clone())
+            .chain(self.offered.iter().map(|record| record.id.clone()))
+            .collect();
+        let mut added = 0;
+        for (record, via) in records {
+            let id = id_of(&record);
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            let content = content_of(&record, &via)?;
+            if content.to_string().len() <= MAX_CANDIDATE_BYTES {
+                self.offered.push(OfferedRecord {
+                    id,
+                    content,
+                    baseline: false,
+                    record,
+                });
+                added += 1;
+            }
+        }
+        Ok(added)
+    }
+
     fn apply(&self, relevance: &BTreeMap<String, RecallRelevance>) -> Vec<T> {
         let offered_ids: BTreeSet<_> = self
             .offered
@@ -452,6 +609,27 @@ mod tests {
         evidence: Vec<EvidenceRecord>,
         params: &OperativeParams,
     ) -> RecallPool {
+        pool_with(
+            baseline_memories,
+            baseline_evidence,
+            episodic,
+            evidence,
+            params,
+            UtcTimestamp::from_unix_millis(0),
+            DeclaredSelection::default(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn pool_with(
+        baseline_memories: Vec<AttributedMemory>,
+        baseline_evidence: Vec<EvidenceRecord>,
+        episodic: Vec<AttributedMemory>,
+        evidence: Vec<EvidenceRecord>,
+        params: &OperativeParams,
+        now: UtcTimestamp,
+        declared: DeclaredSelection,
+    ) -> RecallPool {
         RecallPool::from_records(
             baseline_memories,
             baseline_evidence,
@@ -462,8 +640,10 @@ mod tests {
                 subject: "alice",
                 source_id: "text-chat:alice",
                 exclude: &BTreeSet::from([EvidenceId::from_u128(99)]),
+                now,
             },
             params,
+            declared,
         )
         .unwrap()
     }
@@ -758,5 +938,115 @@ mod tests {
                 )]))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn records_outside_the_declared_validity_window_are_skipped_and_counted() {
+        let now = UtcTimestamp::from_unix_millis(1_000_000);
+        let mut expired = episode(10, "no longer valid");
+        expired.record.payload = json!({"text": "no longer valid", "valid_to": 500});
+        let mut future = episode(11, "not yet valid");
+        future.record.payload = json!({"text": "not yet valid", "valid_from": 2_000});
+        let current = episode(12, "valid episode");
+        let pool = pool_with(
+            vec![expired.clone(), future.clone(), current.clone()],
+            Vec::new(),
+            vec![expired, future, current.clone()],
+            Vec::new(),
+            &OperativeParams::default(),
+            now,
+            DeclaredSelection::default(),
+        );
+        assert_eq!(pool.stats().expired_skipped, 2);
+        assert_eq!(pool.baseline(), (vec![current], Vec::new()));
+        // Only the valid record is offered, as the baseline candidate.
+        assert_eq!(pool.candidates().len(), 1);
+        assert_eq!(
+            pool.apply(&uncertain(&pool)).unwrap(),
+            (vec![episode(12, "valid episode")], Vec::new())
+        );
+    }
+
+    #[test]
+    fn declared_path_items_are_extra_candidates_with_via_labels() {
+        let baseline = episode(10, "lexical baseline");
+        let linked = episode(50, "reached through a state link");
+        let tagged = episode(51, "reached through a shared tag");
+        let declared = DeclaredSelection {
+            link: vec![DeclaredHit {
+                record: linked.clone(),
+                via: "link_hop_1".to_owned(),
+                in_degree: KNOT_MIN_IN_DEGREE,
+            }],
+            tag: vec![DeclaredHit {
+                record: tagged.clone(),
+                via: "tag".to_owned(),
+                in_degree: 0,
+            }],
+        };
+        let pool = pool_with(
+            vec![baseline.clone()],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            &OperativeParams::default(),
+            UtcTimestamp::from_unix_millis(0),
+            declared,
+        );
+        assert_eq!(pool.stats().link_hits, 1);
+        // The link hit is a knot (in-degree 2); the tag hit is not.
+        assert_eq!(pool.stats().knot_hits, 1);
+        assert_eq!(pool.stats().tag_hits, 1);
+        let candidates = pool.candidates();
+        // The regular baseline offer plus the two declared extras.
+        assert_eq!(candidates.len(), 3);
+        let by_id: BTreeMap<_, _> = candidates
+            .iter()
+            .map(|candidate| (candidate.id.as_str(), candidate))
+            .collect();
+        let link_id = format!("memory_{}", linked.record.state_record_id);
+        let tag_id = format!("memory_{}", tagged.record.state_record_id);
+        assert_eq!(by_id[link_id.as_str()].content["via"], "link_hop_1");
+        assert_eq!(by_id[tag_id.as_str()].content["via"], "tag");
+        assert!(!by_id[link_id.as_str()].baseline);
+        // The judge gates them like any other candidate.
+        let mut relevance = uncertain(&pool);
+        relevance.insert(link_id, RecallRelevance::Relevant);
+        assert_eq!(
+            pool.apply(&relevance).unwrap(),
+            (vec![linked, baseline], Vec::new())
+        );
+    }
+
+    #[test]
+    fn declared_path_items_dedup_against_existing_candidates() {
+        let baseline = episode(10, "lexical baseline");
+        let declared = DeclaredSelection {
+            link: vec![
+                DeclaredHit {
+                    record: baseline.clone(),
+                    via: "link_hop_1".to_owned(),
+                    in_degree: 0,
+                },
+                DeclaredHit {
+                    record: episode(50, "new declared record"),
+                    via: "link_hop_2".to_owned(),
+                    in_degree: 0,
+                },
+            ],
+            tag: Vec::new(),
+        };
+        let pool = pool_with(
+            vec![baseline.clone()],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            &OperativeParams::default(),
+            UtcTimestamp::from_unix_millis(0),
+            declared,
+        );
+        // The baseline record is not offered twice; only the new one is.
+        assert_eq!(pool.stats().link_hits, 1);
+        assert_eq!(pool.candidates().len(), 2);
     }
 }

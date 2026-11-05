@@ -63,7 +63,20 @@
       "mcp__github__*",
       "mcp__obsidian__write_note",
       "mcp__obsidian__patch_note",
-      "mcp__obsidian__update_frontmatter"
+      "mcp__obsidian__update_frontmatter",
+      "commit_create",
+      "commit_list",
+      "commit_show",
+      "commit_update",
+      "commit_resume",
+      "commit_close",
+      "commit_abandon",
+      "peer_say",
+      "peer_list",
+      "mcp__computer_mac__*",
+      "mcp__computer_llm__*",
+      "mcp__computer_pi__*",
+      "mcp__colab__*"
     ]
   },
   "reference": {

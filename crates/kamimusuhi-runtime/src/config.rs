@@ -704,9 +704,11 @@ impl RuntimeConfig {
     /// persona setting, so the default needs no extra configuration.
     pub fn build_reflector(&self) -> Result<Box<dyn kamimusuhi_core::c0::Reflector>, RuntimeError> {
         match self.c0.reflector.backend {
-            ReflectorBackend::Fake => Ok(Box::new(kamimusuhi_testkit::FakeReflector)),
+            ReflectorBackend::Fake => Ok(Box::new(kamimusuhi_testkit::FakeReflector::default())),
             ReflectorBackend::Mirror => match self.persona.backend {
-                PersonaBackendKind::Fake => Ok(Box::new(kamimusuhi_testkit::FakeReflector)),
+                PersonaBackendKind::Fake => {
+                    Ok(Box::new(kamimusuhi_testkit::FakeReflector::default()))
+                }
                 PersonaBackendKind::OpenaiCompatible => {
                     let provider = self.persona.provider.as_ref().ok_or_else(|| {
                         RuntimeError::PersonaConfig {

@@ -283,7 +283,7 @@ impl TaskPlane {
             .clone()
     }
 
-    fn catalog_snapshot(&self) -> ModelCatalog {
+    pub(crate) fn catalog_snapshot(&self) -> ModelCatalog {
         self.catalog
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -297,7 +297,7 @@ impl TaskPlane {
             .any(|w| w.name == name && w.allow_write)
     }
 
-    fn workspace(&self, name: Option<&str>) -> Result<(String, PathBuf), String> {
+    pub(crate) fn workspace(&self, name: Option<&str>) -> Result<(String, PathBuf), String> {
         let spaces = &self.config.workspaces;
         let ws = match name.filter(|n| !n.is_empty()) {
             Some(n) => spaces.iter().find(|w| w.name == n).ok_or_else(|| {
@@ -404,7 +404,7 @@ impl TaskPlane {
         self.results_dir.join(format!("{task_id}.json"))
     }
 
-    fn load_result(&self, task_id: &str) -> Option<Value> {
+    pub(crate) fn load_result(&self, task_id: &str) -> Option<Value> {
         std::fs::read(self.result_path(task_id))
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
@@ -417,7 +417,7 @@ impl TaskPlane {
             &self.result_path(id),
             &serde_json::to_vec_pretty(record).unwrap_or_default(),
         );
-        let _ = spool.append("logs/task-results", record.clone());
+        let _ = spool.append_sync("logs/task-results", record.clone());
         // Keep the newest results locally.
         if let Ok(dir) = std::fs::read_dir(&self.results_dir) {
             let mut files: Vec<(SystemTime, PathBuf)> = dir
@@ -872,16 +872,20 @@ pub fn continue_task(shared: &Shared, args: &Value, by: &str) -> (u16, Value) {
             json!({"error": format!("{} はまだ終わっていない", original.id)}),
         );
     }
-    let Some(result) = plane.load_result(&original.id) else {
-        return (409, json!({"error": "結果が見つからない"}));
-    };
-    let Some(session) = result["session_id"].as_str().filter(|s| !s.is_empty()) else {
+    let detail = &original.detail;
+    // The session id comes from the run's result; a task cut before its
+    // result was written (restart) still carries `external_session_id`.
+    let session = plane
+        .load_result(&original.id)
+        .and_then(|r| r["session_id"].as_str().map(str::to_owned))
+        .or_else(|| detail["external_session_id"].as_str().map(str::to_owned))
+        .filter(|s| !s.is_empty());
+    let Some(session) = session else {
         return (
             409,
             json!({"error": "外部セッション id がないため続けられない（Devin は protocol: acp が必要）"}),
         );
     };
-    let detail = &original.detail;
     let executor_name = detail["executor"].as_str().unwrap_or("");
     let Some(executor) = plane.registry().get(executor_name) else {
         return (
@@ -925,7 +929,7 @@ pub fn continue_task(shared: &Shared, args: &Value, by: &str) -> (u16, Value) {
         constraints: Vec::new(),
         permissions,
         model,
-        resume_session: Some(session.to_owned()),
+        resume_session: Some(session),
     };
     // A write task continues in its own worktree, one task at a time.
     let reuse_worktree = match (
@@ -1248,7 +1252,7 @@ fn run_job(job: Job) {
             shadow_choice: shadow_choice.clone(),
         };
         plane.history.record(&history);
-        let _ = spool.append(
+        let _ = spool.append_sync(
             "logs/task-history",
             serde_json::to_value(&history).unwrap_or(Value::Null),
         );
@@ -1316,6 +1320,7 @@ pub fn status(shared: &Shared, args: &Value) -> (u16, Value) {
         "title": task.title,
         "executor": view["detail"]["executor"],
         "model": view["detail"]["model"],
+        "external_session_id": view["detail"]["external_session_id"],
         "billing": view["detail"]["billing"],
         "created": view["created"],
         "duration_secs": view["duration_secs"],
@@ -1353,6 +1358,14 @@ pub fn cancel(shared: &Shared, args: &Value, by: &str) -> (u16, Value) {
         Ok(t) => t,
         Err(e) => return e,
     };
+    // The board status is the durable truth — `running` lags a finished
+    // task by a few instructions, so check this first.
+    if task.status.finished() {
+        return (
+            409,
+            json!({"error": format!("{} はすでに {:?} です", task.id, task.status)}),
+        );
+    }
     let flag = plane
         .running
         .lock()
@@ -1980,6 +1993,9 @@ pub fn handle_or_forward(shared: &Shared, request: &Value, by: &str) -> (u16, Va
             "/v1/agents",
             &forwarded,
             shared.token.as_deref(),
+            // Task-plane actions are admission/status checks, not the
+            // work itself; do not hang the caller on a wedged peer.
+            Duration::from_secs(60),
         ) {
             // No task plane (or no resident) there: try the next peer.
             None | Some((404, _)) => {}
@@ -2206,7 +2222,7 @@ mod tests {
     #[test]
     fn an_unbacked_promise_is_started_as_a_delegated_task_once() {
         let (shared, _dir) = fixture(false);
-        let bg = crate::commitments::background(
+        let bg = crate::background::background(
             &shared,
             "turn",
             "me",
@@ -2215,7 +2231,7 @@ mod tests {
             &json!([]),
         );
         let id = bg["task_id"].as_str().expect("commitment").to_owned();
-        let (status, reply) = crate::commitments::start(&shared, &json!({"id": id}), "operator");
+        let (status, reply) = crate::background::start(&shared, &json!({"id": id}), "operator");
         assert_eq!(status, 200, "{reply}");
         let delegated = reply["delegated"]["task_id"].as_str().expect("task id");
         let commitment = shared.tasks.get(&id).expect("commitment");
@@ -2228,7 +2244,7 @@ mod tests {
             "{}",
             task.title
         );
-        let (status, _) = crate::commitments::start(&shared, &json!({"id": id}), "operator");
+        let (status, _) = crate::background::start(&shared, &json!({"id": id}), "operator");
         assert_eq!(status, 409, "a commitment starts once");
     }
 

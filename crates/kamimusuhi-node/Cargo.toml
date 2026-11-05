@@ -1,0 +1,10 @@
+[package]
+name = "kamimusuhi-node"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared light/heavy node task protocol (wire types only)"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

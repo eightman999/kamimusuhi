@@ -398,13 +398,13 @@ fn completion_finish_reason(value: &Value) -> &'static str {
     }
 }
 
-struct GuardedReply {
-    body: Value,
+pub(crate) struct GuardedReply {
+    pub body: Value,
     cost_usd: Option<f64>,
     cost_kind: Option<&'static str>,
 }
 
-fn call_tier_guarded(
+pub(crate) fn call_tier_guarded(
     shared: &Shared,
     tier: &TierConfig,
     model: &str,
@@ -539,6 +539,7 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
                     prompt_tokens: usage.prompt_tokens,
                     completion_tokens: usage.completion_tokens,
                     cached_tokens: usage.cached_tokens,
+                    cache_write_tokens: usage.cache_write_tokens,
                     cost_usd,
                     cost_kind: cost_kind.map(str::to_owned),
                     ..RouteEvent::default()
@@ -569,6 +570,7 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
                             "prompt_tokens": usage.prompt_tokens,
                             "completion_tokens": usage.completion_tokens,
                             "cached_tokens": usage.cached_tokens,
+                            "cache_write_tokens": usage.cache_write_tokens,
                             "attempts": attempts.clone(),
                         }),
                     );
@@ -624,6 +626,9 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
             .as_ref()
             .and_then(|(.., u, _, _)| u.completion_tokens),
         cached_tokens: result.as_ref().and_then(|(.., u, _, _)| u.cached_tokens),
+        cache_write_tokens: result
+            .as_ref()
+            .and_then(|(.., u, _, _)| u.cache_write_tokens),
         cost_usd: result.as_ref().and_then(|(.., c, _)| *c),
         cost_kind: result.as_ref().and_then(|(.., k)| k.map(str::to_owned)),
     };
@@ -637,7 +642,7 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
     match result {
         Some((tier, body, _model, ..)) => {
             if shared.config.routing.log_conversations && !request.local_only {
-                let _ = shared.spool.append(
+                let _ = shared.spool.append_sync(
                     "conversations",
                     json!({
                         "tier": tier.name,
@@ -679,8 +684,12 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
 pub struct TurnUsage {
     pub prompt_tokens: Option<u64>,
     pub completion_tokens: Option<u64>,
-    /// Prompt tokens served from the provider's prefix cache.
+    /// Prompt tokens served from the provider's prefix cache (a cache
+    /// *read* hit — never a cache write).
     pub cached_tokens: Option<u64>,
+    /// Prompt tokens the provider wrote into its prefix cache on this
+    /// call (Anthropic `cache_creation_input_tokens`), when reported.
+    pub cache_write_tokens: Option<u64>,
     /// Billed cost the upstream reported on the response, when present.
     pub actual_cost_usd: Option<f64>,
 }
@@ -692,13 +701,29 @@ fn usage_of(body: &Value) -> TurnUsage {
         .get("cost_usd")
         .or_else(|| usage.get("cost"))
         .and_then(Value::as_f64);
+    // Cache-read hits, first non-null wins, most specific shape first:
+    //   1. OpenAI/Groq `prompt_tokens_details.cached_tokens`
+    //   2. Anthropic-compat `cache_read_input_tokens`
+    //   3. DeepSeek `prompt_cache_hit_tokens` and the `input_cache_hit`
+    //      spelling some compat shims use
+    //   4. A bare `usage.cached_tokens` for providers that flatten the
+    //      detail object onto the usage record
+    // Miss counters (`prompt_cache_miss_tokens`, `input_cache_miss`) are
+    // deliberately ignored: they are ordinary prompt tokens, already
+    // counted by `prompt_tokens` — `cached_tokens` means *served from
+    // cache*, matching `cacheReadTokens` in the RDSH harness.
+    let cached_tokens = usage
+        .pointer("/prompt_tokens_details/cached_tokens")
+        .and_then(Value::as_u64)
+        .or_else(|| num("cache_read_input_tokens"))
+        .or_else(|| num("prompt_cache_hit_tokens"))
+        .or_else(|| num("input_cache_hit"))
+        .or_else(|| num("cached_tokens"));
     TurnUsage {
         prompt_tokens: num("prompt_tokens"),
         completion_tokens: num("completion_tokens"),
-        cached_tokens: usage
-            .pointer("/prompt_tokens_details/cached_tokens")
-            .and_then(Value::as_u64)
-            .or_else(|| num("prompt_cache_hit_tokens")),
+        cached_tokens,
+        cache_write_tokens: num("cache_creation_input_tokens"),
         actual_cost_usd: cost,
     }
 }
@@ -943,6 +968,48 @@ mod tests {
         let (cost, kind) = cost_of(&tier, &usage);
         assert_eq!(cost, None);
         assert_eq!(kind, None);
+    }
+
+    #[test]
+    fn usage_of_reads_each_provider_cache_field_shape() {
+        // OpenAI/Groq: nested prompt_tokens_details.
+        let u = usage_of(&json!({"usage": {"prompt_tokens": 100,
+            "prompt_tokens_details": {"cached_tokens": 64}}}));
+        assert_eq!(u.cached_tokens, Some(64));
+
+        // Anthropic-style compat names: reads are cache hits, creations
+        // are writes — never merged into each other.
+        let u = usage_of(&json!({"usage": {"prompt_tokens": 100,
+            "cache_read_input_tokens": 80,
+            "cache_creation_input_tokens": 20}}));
+        assert_eq!(u.cached_tokens, Some(80));
+        assert_eq!(u.cache_write_tokens, Some(20));
+
+        // DeepSeek counters, both spellings; the miss counter is input,
+        // not a hit, and must not inflate cached_tokens.
+        let u = usage_of(&json!({"usage": {"prompt_tokens": 100,
+            "prompt_cache_hit_tokens": 40,
+            "prompt_cache_miss_tokens": 60}}));
+        assert_eq!(u.cached_tokens, Some(40));
+        let u = usage_of(&json!({"usage": {"prompt_tokens": 100,
+            "input_cache_hit": 30, "input_cache_miss": 70}}));
+        assert_eq!(u.cached_tokens, Some(30));
+
+        // A flat usage.cached_tokens is the last-resort shape.
+        let u = usage_of(&json!({"usage": {"prompt_tokens": 100,
+            "cached_tokens": 12}}));
+        assert_eq!(u.cached_tokens, Some(12));
+
+        // The nested details object wins when several shapes coexist.
+        let u = usage_of(&json!({"usage": {"prompt_tokens": 100,
+            "prompt_tokens_details": {"cached_tokens": 5},
+            "cache_read_input_tokens": 9}}));
+        assert_eq!(u.cached_tokens, Some(5));
+
+        // Nothing reported → None, never a fabricated zero.
+        let u = usage_of(&json!({"usage": {"prompt_tokens": 3}}));
+        assert_eq!(u.cached_tokens, None);
+        assert_eq!(u.cache_write_tokens, None);
     }
 
     #[test]

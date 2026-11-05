@@ -18,16 +18,23 @@ flowchart TB
 
     ROOT --> CRATES["crates/ — Rust workspace"]
     CRATES --> CORE["kamimusuhi-core\n中核の型・状態・ポリシー\n+ CognitiveOrgan contract"]
-    CRATES --> RUNTIME["kamimusuhi-runtime\n実行時オーケストレーション\n+ OrganSupervisor / process adapter"]
+    CRATES --> RUNTIME["kamimusuhi-runtime\n実行時オーケストレーション\n+ OrganSupervisor / process adapter\n+ agent_exec (Task Plane 下側)"]
     CRATES --> STORE["kamimusuhi-store-sqlite\n永続化"]
     CRATES --> PERSONA["kamimusuhi-persona-http\nPersona model HTTP adapter"]
     CRATES --> RESOURCE["kamimusuhi-resource-http\n外部 resource HTTP adapter"]
+    CRATES --> RESIDENT["kamimusuhi-resident\n常設デーモン+CLI (kamimusuhi)\nHTTP API / router / dialogue /\nintercom / delegation / tasks /\ncommitments / MCP tools"]
+    CRATES --> NODE["kamimusuhi-node\nノード間 task wire 契約（型のみ）"]
     CRATES --> TESTKIT["kamimusuhi-testkit\n検証支援"]
     CRATES --> DESKTOP["kamimusuhi-desktop\nネイティブ対話 GUI (eframe)"]
+    CRATES --> TUI["kamimusuhi-tui\nkami 端末 UI"]
+
+    ROOT --> RELAY["relay/ — intercom メールボックス\nCloudflare Worker + Durable Object"]
+    ROOT --> DEPLOY["deploy/resident/ — 常設構成\ninstall スクリプト / 設定テンプレート /\nsystemd / Discord bot / 監視"]
+    ROOT --> WIKI["deepwiki/ — コードから逆引きの現状地図"]
 
     ROOT --> EXP["experiments/ — 仮説検証"]
     EXP --> MIOBA["mioba/"]
-    EXP --> SERIES["g0 / h0 / o0 / p0 / r0 / s0 / t0"]
+    EXP --> SERIES["g0 / h0 / o0 / p0 / r0 / s0 / t0 / u0 / x0 / fi*"]
 
     ROOT --> DATA["data/ — 実験・評価用データ"]
     ROOT --> DOCS["docs/ — 設計・調査・運用記録"]
@@ -102,9 +109,11 @@ flowchart LR
 
 ## Where to start
 
+- **コードから逆引きした現状地図**: `deepwiki/`（導入は `deepwiki/02-quickstart.md`）
 - **人格・連続性・全体思想**: `architecture.md`
 - **規範的な要求**: `spec.md`
-- **現在の Rust 実装**: `crates/`
+- **現在の Rust 実装**: `crates/`（常設ノードは `kamimusuhi-resident`、個体は `kamimusuhi-runtime`）
+- **常設構成の運用**: `deploy/resident/README.md`
 - **実験→runtime organ の昇格境界**: `docs/implementation/experimental-organ-integration.md`
 - **MIOBA を含む探索的実験**: `experiments/`
 - **調査知見の蒸留**: `RESEARCH_SYNTHESIS.md`
