@@ -1,0 +1,13 @@
+# Merge this item into the EXISTING scrape_configs; do not replace the file.
+# Grafana/Prometheus on the Pi use host networking, so loopback needs no token.
+scrape_configs:
+  - job_name: kamimusuhi-resident
+    scrape_interval: 15s
+    scrape_timeout: 5s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:7860"]
+        labels:
+          node: pi
+# Additional resident nodes require the existing bearer authentication and a
+# reachable address. Do not expose unauthenticated /metrics to the network.

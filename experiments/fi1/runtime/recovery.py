@@ -30,7 +30,7 @@ Policy (explicit):
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from ..persistence.store import Store
 from ..persistence.wal import WalEvent, WalWriter

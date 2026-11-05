@@ -7,8 +7,7 @@ import torch
 
 from ..config import ModelConfig
 from ..models import MODEL_REGISTRY, build_model
-from ..representations.base import (KMeansRep, PCARep, RawRep, TorchRep,
-                                    WindowRep)
+from ..representations.base import KMeansRep, PCARep, RawRep, WindowRep
 
 
 def _batch(e=3, t=12, d=16):

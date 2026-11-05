@@ -12,13 +12,11 @@ The optimizer is seeded random search inside physiological bounds
 """
 from __future__ import annotations
 
-import json
 
 import numpy as np
 
 from .fly_overlay import FLY_PROFILES, FLY_PROFILES_V11
-from .benchmark import (eval_profile, measure_rest, measure_rin_tau,
-                        measure_rheobase, measure_fi, spike_shape)
+from .benchmark import measure_rest, measure_rin_tau, measure_rheobase, measure_fi, spike_shape
 
 CALIBRATION_VERSION = "calib-v1"
 

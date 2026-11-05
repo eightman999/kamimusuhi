@@ -27,7 +27,7 @@ stateless probe can still answer ctrl queries but must fail post queries.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 

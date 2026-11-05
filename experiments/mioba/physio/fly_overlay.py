@@ -21,7 +21,6 @@ from pathlib import Path
 import pandas as pd
 
 from ..anatomy.provenance import Provenance
-from .compiler import E_EXC_MV, E_INH_MV
 from .fly_channels import FLY_CHANNEL_MODEL_VERSION, FLY_MODEL_NOTE
 
 OVERLAY_VERSION_FLY = "physio-overlay-fly-v1"

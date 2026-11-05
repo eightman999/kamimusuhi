@@ -9,7 +9,7 @@ import sys
 import numpy as np
 import torch
 from .controls import PCAControl, raw_encode, temporal_readout
-from .protocol import METHODS, PROTOCOL, REQUIRED_METRICS, sha, same_metrics, pilot_gate, verify_lock
+from .protocol import METHODS, REQUIRED_METRICS, sha, same_metrics, pilot_gate, verify_lock
 
 ROOT = Path(__file__).resolve().parents[1]
 

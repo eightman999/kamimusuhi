@@ -9,7 +9,8 @@
 use std::io::{BufRead, Write};
 
 use kamimusuhi_core::c0::ProposalStatus;
-use kamimusuhi_core::memory::{MemoryQuery, MemoryRepository};
+use kamimusuhi_core::ids::MemoryId;
+use kamimusuhi_core::memory::{MemoryQuery, MemoryRepository, MemoryUsage, RecordUsage};
 use kamimusuhi_core::mutation::MutationDomain;
 
 use crate::c0::{self as lane, reflection};
@@ -74,16 +75,36 @@ fn memory(runtime: &Runtime, session: &DialogueSession) -> Result<serde_json::Va
                 .about(session.subject())
                 .limited(32),
         )?;
+        let ids: Vec<MemoryId> = memories.iter().map(|m| m.record.state_record_id).collect();
+        let usages: std::collections::BTreeMap<MemoryId, RecordUsage> =
+            runtime.store().usages(&ids).into_iter().collect();
         let rows: Vec<serde_json::Value> = memories
             .iter()
             .map(|m| {
-                serde_json::json!({
+                let mut row = serde_json::json!({
                     "state_record_id": m.record.state_record_id,
                     "subject_key": m.record.subject_key,
                     "payload": m.record.payload,
                     "evidence_refs": m.record.evidence_refs,
                     "created_at": m.record.created_at.to_rfc3339(),
-                })
+                });
+                // Declared metadata and usage bookkeeping surface only when
+                // present — a record without them renders exactly as before.
+                let tags = m.record.tags();
+                if !tags.is_empty() {
+                    row["tags"] = serde_json::json!(tags);
+                }
+                let links = m.record.links();
+                if !links.is_empty() {
+                    row["links"] = serde_json::json!(links);
+                }
+                if let Some(usage) = usages.get(&m.record.state_record_id) {
+                    row["use_count"] = serde_json::json!(usage.use_count);
+                }
+                if let Some(valid_to) = m.record.valid_to() {
+                    row["valid_to"] = serde_json::json!(valid_to.to_rfc3339());
+                }
+                row
             })
             .collect();
         records.insert(domain.as_str().to_owned(), serde_json::json!(rows));

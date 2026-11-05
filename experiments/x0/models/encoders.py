@@ -21,7 +21,7 @@ timestamp/position shortcut is impossible by construction.
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict
 
 import torch
 from torch import nn

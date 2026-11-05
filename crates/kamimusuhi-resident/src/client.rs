@@ -8,9 +8,12 @@ use serde_json::{Value, json};
 
 use crate::probes::{describe, get_json};
 
-/// Tried in order when neither `--url` nor `$KAMIMUSUHI_URL` is given:
-/// the Pi on the home LAN, then over Tailscale.
-pub const DEFAULT_NODES: [&str; 2] = ["http://192.168.40.147:7860", "http://100.111.150.4:7860"];
+/// Site-local list of resident URLs, one per line, tried in order when
+/// neither `--url` nor `$KAMIMUSUHI_URL` is given. Kept outside the
+/// repository so host addresses are never committed.
+pub fn nodes_file() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|h| std::path::Path::new(&h).join(".config/kamimusuhi/nodes"))
+}
 
 /// `$KAMIMUSUHI_NODE_TOKEN`, else `~/.config/kamimusuhi/node_token`.
 pub fn token() -> Option<String> {
@@ -93,6 +96,57 @@ pub fn approvals(url: &str, token: Option<&str>) -> Result<Vec<Value>, String> {
     Ok(v["approvals"].as_array().cloned().unwrap_or_default())
 }
 
+/// Submit a typed node task (`POST /task`) — the light/heavy delegation
+/// entry point. `wait_ms` in the body long-polls for a settled result.
+pub fn submit_task(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/task")?;
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        // Bounded a little past the protocol's long-poll cap so a waiting
+        // submit never hangs forever on a wedged receiver.
+        Duration::from_secs(70),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
+}
+
+/// `GET /task/<id>` — the task record, including its result when settled.
+pub fn task_record(url: &str, token: Option<&str>, task_id: &str) -> Result<Value, String> {
+    get_json(
+        url,
+        &format!("/task/{task_id}"),
+        &auth(token),
+        Duration::from_secs(15),
+    )
+}
+
+/// `POST /v1/delegations` — operator actions on the node-task queue.
+pub fn delegations(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/v1/delegations")?;
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        Duration::from_secs(15),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
+}
+
 pub fn decide(url: &str, token: Option<&str>, id: &str, approve: bool) -> Result<Value, String> {
     let endpoint = Endpoint::parse(url, "/v1/approvals/decide")?;
     let body = json!({"id": id, "decision": if approve { "approve" } else { "reject" }});
@@ -162,6 +216,12 @@ pub fn auth(token: Option<&str>) -> Vec<Header> {
 
 /// First candidate whose `/health` answers.
 pub fn discover(candidates: &[String]) -> Result<String, String> {
+    if candidates.is_empty() {
+        return Err(
+            "no resident URL: pass --url, set KAMIMUSUHI_URL or list URLs in ~/.config/kamimusuhi/nodes"
+                .to_owned(),
+        );
+    }
     let mut errors = Vec::new();
     for url in candidates {
         match get_json(url, "/health", &[], Duration::from_secs(3)) {
@@ -187,7 +247,16 @@ pub fn candidates(explicit: Option<&str>) -> Vec<String> {
             return urls;
         }
     }
-    DEFAULT_NODES.iter().map(|s| (*s).to_owned()).collect()
+    nodes_file()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|text| {
+            text.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub fn talk(url: &str, token: Option<&str>, subject: &str, message: &str) -> Result<Value, String> {
@@ -216,6 +285,63 @@ pub fn library(url: &str, token: Option<&str>, body: &Value) -> Result<Value, St
         &body.to_string(),
         &auth(token),
         Duration::from_secs(120),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
+}
+
+/// `POST /v1/commitments` (commitment engine).
+pub fn commitments(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/v1/commitments")?;
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        Duration::from_secs(60),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
+}
+
+/// `POST /v1/agents` (task plane).
+pub fn agents(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/v1/agents")?;
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        Duration::from_secs(60),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
+}
+
+/// `POST /v1/intercom` (sister-to-sister messaging between peer individuals).
+pub fn intercom(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/v1/intercom")?;
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        Duration::from_secs(60),
         &TrustAnchors::Webpki,
     )
     .map_err(|e| describe(&e))?;

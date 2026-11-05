@@ -68,6 +68,8 @@ fn persona_provider(base_url: String) -> PersonaProviderConfig {
         timeout_ms: 2_000,
         tls_root_ca_path: None,
         system_instruction: None,
+        reasoning: Default::default(),
+        extra_body: None,
     }
 }
 

@@ -23,16 +23,12 @@ from pathlib import Path
 import numpy as np
 
 from ..anatomy import compartments as C
-from ..anatomy.provenance import Provenance
 from ..physio.calibrate import (BOUNDS, TARGETS, calibrate_profile,
                                 single_node_phys)
-from ..physio.benchmark import (eval_profile, measure_fi,
-                                measure_rest, sim_single)
+from ..physio.benchmark import eval_profile, sim_single
 from ..physio.compiler import compile_reduced_graph_v3
 from ..physio.fly_compiler import AIS, compile_reduced_graph_v4
-from ..physio.fly_overlay import (FLY_PROFILES, build_fly_overlay,
-                                  load_fly_overlay,
-                                  resolve_fly_entity_params)
+from ..physio.fly_overlay import build_fly_overlay, load_fly_overlay, resolve_fly_entity_params
 from ..physio.overlay import (build_overlay, load_overlay,
                               resolve_entity_params)
 from .a3_active_graft import _run

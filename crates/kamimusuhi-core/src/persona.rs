@@ -24,8 +24,164 @@ use serde::{Deserialize, Serialize};
 use crate::ids::{EvidenceId, IndividualId, MemoryId, PersonaBackendId, SessionId, TurnId};
 use crate::mutation::{MutationDomain, MutationOperation, OriginClass};
 use crate::organs::OrganSignal;
-use crate::persona_seed::PersonaSeed;
-use crate::workspace::{Workspace, WorkspaceDomain, WorkspaceItem};
+use crate::persona_seed::{PersonaSeed, TraitKind};
+use crate::workspace::{AuthorityClass, Workspace, WorkspaceDomain, WorkspaceItem};
+
+/// A bounded, typed disposition projection for language organs.
+///
+/// Combines operator-configured disposition ([`PersonaSeed`]), C0 derived state,
+/// and read-only MIOBA developmental phenotype observations into a non-canonical,
+/// typed envelope.
+///
+/// **Boundaries:**
+/// - `authority` is strictly [`AuthorityClass::ExternalMaterial`] (zero write authority).
+/// - Non-heritable: lifetime plasticity and phenotype states do not flow back into genome.
+/// - Deterministic degradation: when MIOBA observation is unavailable, stale, missing,
+///   or lacks a required metric, it degrades strictly to `canonical_baseline`
+///   (seed + canonical state). Metrics are never filled with neutral placeholders.
+/// - Raw genome values / IR strings are never copied verbatim into prompts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DevelopmentalDisposition {
+    pub projection_source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seed_digest: Option<String>,
+    pub homeostasis_register: String,
+    pub adaptability_bias: String,
+    pub activity_level: String,
+    pub register_traits: Vec<String>,
+    pub stance_traits: Vec<String>,
+    pub instructions: Vec<String>,
+    pub authority: AuthorityClass,
+}
+
+impl DevelopmentalDisposition {
+    /// Project a bounded disposition from the supplied envelope.
+    pub fn project(envelope: &PersonaEnvelope) -> Self {
+        let seed = envelope.persona_seed.as_ref();
+        let seed_digest = seed.map(|s| s.content_digest.clone());
+
+        let register_traits = seed
+            .map(|s| {
+                s.traits_of(TraitKind::Register)
+                    .iter()
+                    .map(|t| t.statement.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let stance_traits = seed
+            .map(|s| {
+                s.traits_of(TraitKind::Stance)
+                    .iter()
+                    .map(|t| t.statement.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let instructions = seed.map(|s| s.instructions.clone()).unwrap_or_default();
+
+        // Extract MIOBA observation if valid and fresh.
+        let raw_obs = envelope
+            .mio_observation
+            .as_ref()
+            .and_then(|val| val.get("observation").or(Some(val)));
+
+        let is_connected = raw_obs
+            .and_then(|o| o.get("connection"))
+            .and_then(|c| c.as_str())
+            == Some("connected");
+
+        let is_fresh = raw_obs
+            .and_then(|o| o.get("evaluation_freshness"))
+            .and_then(|f| f.as_str())
+            == Some("recent_record");
+
+        let snapshot = if is_connected && is_fresh {
+            raw_obs.and_then(|o| o.get("snapshot"))
+        } else {
+            None
+        };
+
+        if let Some(snapshot) = snapshot {
+            let metrics = snapshot.pointer("/evaluation/metrics");
+            let summary = snapshot.pointer("/evaluation/summary");
+
+            // Every projected signal requires a real observed value. A
+            // missing or malformed metric — including a legitimately
+            // absent `disturbance_recovery_score` on an undisturbed
+            // episode — degrades the whole projection to the canonical
+            // baseline; fabricating a neutral score would present an
+            // unobserved temperament as measured. Bounds mirror
+            // `MioSnapshot` validation: these metrics are [0, 1] shares.
+            let fraction = |value: Option<&serde_json::Value>| -> Option<f64> {
+                value
+                    .and_then(serde_json::Value::as_f64)
+                    .filter(|v| (0.0..=1.0).contains(v))
+            };
+
+            let homeostasis_score = fraction(metrics.and_then(|m| m.get("homeostasis_score")));
+            let recovery_score =
+                fraction(metrics.and_then(|m| m.get("disturbance_recovery_score")));
+            let active_fraction = fraction(summary.and_then(|s| s.get("active_fraction")));
+
+            if let (Some(homeostasis_score), Some(recovery_score), Some(active_fraction)) =
+                (homeostasis_score, recovery_score, active_fraction)
+            {
+                let homeostasis_register = if homeostasis_score > 0.7 {
+                    "homeostatic_equilibrium"
+                } else if homeostasis_score < 0.4 {
+                    "homeostatic_strain"
+                } else {
+                    "homeostatic_transient"
+                }
+                .to_owned();
+
+                let adaptability_bias = if recovery_score > 0.7 {
+                    "high_resilience"
+                } else if recovery_score < 0.4 {
+                    "low_resilience"
+                } else {
+                    "moderate_resilience"
+                }
+                .to_owned();
+
+                let activity_level = if active_fraction > 0.8 {
+                    "elevated_activity"
+                } else if active_fraction < 0.3 {
+                    "subdued_activity"
+                } else {
+                    "steady_activity"
+                }
+                .to_owned();
+
+                return Self {
+                    projection_source: "mio_phenotype_projected".to_owned(),
+                    seed_digest,
+                    homeostasis_register,
+                    adaptability_bias,
+                    activity_level,
+                    register_traits,
+                    stance_traits,
+                    instructions,
+                    authority: AuthorityClass::ExternalMaterial,
+                };
+            }
+        }
+
+        // Deterministic degradation to baseline when unavailable or stale
+        Self {
+            projection_source: "canonical_baseline".to_owned(),
+            seed_digest,
+            homeostasis_register: "baseline".to_owned(),
+            adaptability_bias: "baseline".to_owned(),
+            activity_level: "baseline".to_owned(),
+            register_traits,
+            stance_traits,
+            instructions,
+            authority: AuthorityClass::ExternalMaterial,
+        }
+    }
+}
 
 /// Correlation IDs for one cognitive turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -266,6 +422,11 @@ impl PersonaEnvelope {
             .iter()
             .chain(self.external_results.iter())
             .collect()
+    }
+
+    /// Project a bounded, non-canonical disposition for language organs.
+    pub fn developmental_disposition(&self) -> DevelopmentalDisposition {
+        DevelopmentalDisposition::project(self)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -635,6 +796,153 @@ mod tests {
         assert!(restored.mio_observation.is_none());
         assert!(restored.research_findings.is_none());
         assert!(restored.is_empty());
+    }
+
+    #[test]
+    fn developmental_disposition_projection_and_degradation() {
+        let seed = v0_seed(V0_SEED_ID);
+        let mut envelope = PersonaEnvelope::default().with_seed(seed.clone());
+
+        // 1. Unseeded / no observation -> degrades to canonical_baseline
+        let baseline = DevelopmentalDisposition::project(&envelope);
+        assert_eq!(baseline.projection_source, "canonical_baseline");
+        assert_eq!(baseline.seed_digest, Some(seed.content_digest.clone()));
+        assert_eq!(baseline.homeostasis_register, "baseline");
+        assert_eq!(baseline.adaptability_bias, "baseline");
+        assert_eq!(baseline.activity_level, "baseline");
+        assert_eq!(baseline.authority, AuthorityClass::ExternalMaterial);
+        assert!(!baseline.register_traits.is_empty());
+
+        // 2. Connected + recent MIOBA observation -> projects phenotype disposition
+        envelope.mio_observation = Some(serde_json::json!({
+            "observation": {
+                "connection": "connected",
+                "evaluation_freshness": "recent_record",
+                "snapshot": {
+                    "evaluation": {
+                        "metrics": {
+                            "homeostasis_score": 0.85,
+                            "disturbance_recovery_score": 0.75
+                        },
+                        "summary": {
+                            "active_fraction": 0.82
+                        }
+                    }
+                }
+            }
+        }));
+
+        let projected = DevelopmentalDisposition::project(&envelope);
+        assert_eq!(projected.projection_source, "mio_phenotype_projected");
+        assert_eq!(projected.homeostasis_register, "homeostatic_equilibrium");
+        assert_eq!(projected.adaptability_bias, "high_resilience");
+        assert_eq!(projected.activity_level, "elevated_activity");
+        assert_eq!(projected.authority, AuthorityClass::ExternalMaterial);
+
+        // 3. Stale MIOBA observation -> degrades deterministically to canonical_baseline
+        envelope.mio_observation = Some(serde_json::json!({
+            "observation": {
+                "connection": "connected",
+                "evaluation_freshness": "stale_record",
+                "snapshot": {
+                    "evaluation": {
+                        "metrics": { "homeostasis_score": 0.85 }
+                    }
+                }
+            }
+        }));
+
+        let stale_degraded = DevelopmentalDisposition::project(&envelope);
+        assert_eq!(stale_degraded.projection_source, "canonical_baseline");
+        assert_eq!(stale_degraded.homeostasis_register, "baseline");
+
+        // 4. Unavailable MIOBA observation -> degrades deterministically to canonical_baseline
+        envelope.mio_observation = Some(serde_json::json!({
+            "observation": {
+                "connection": "unavailable"
+            }
+        }));
+
+        let unavail_degraded = DevelopmentalDisposition::project(&envelope);
+        assert_eq!(unavail_degraded.projection_source, "canonical_baseline");
+        assert_eq!(unavail_degraded.homeostasis_register, "baseline");
+    }
+
+    #[test]
+    fn missing_or_invalid_mio_metrics_degrade_to_baseline() {
+        let seed = v0_seed(V0_SEED_ID);
+        let mut envelope = PersonaEnvelope::default().with_seed(seed.clone());
+        let observation = |metrics: serde_json::Value, summary: serde_json::Value| {
+            serde_json::json!({
+                "observation": {
+                    "connection": "connected",
+                    "evaluation_freshness": "recent_record",
+                    "snapshot": {
+                        "evaluation": { "metrics": metrics, "summary": summary }
+                    }
+                }
+            })
+        };
+        let assert_baseline = |envelope: &PersonaEnvelope| {
+            let degraded = DevelopmentalDisposition::project(envelope);
+            assert_eq!(degraded.projection_source, "canonical_baseline");
+            assert_eq!(degraded.homeostasis_register, "baseline");
+            assert_eq!(degraded.adaptability_bias, "baseline");
+            assert_eq!(degraded.activity_level, "baseline");
+            // Degradation keeps the operator-configured disposition.
+            assert_eq!(degraded.seed_digest, Some(seed.content_digest.clone()));
+            assert!(!degraded.register_traits.is_empty());
+            assert!(!degraded.stance_traits.is_empty());
+            assert_eq!(degraded.authority, AuthorityClass::ExternalMaterial);
+        };
+
+        let metrics = serde_json::json!({
+            "homeostasis_score": 0.85,
+            "disturbance_recovery_score": 0.75,
+        });
+        let summary = serde_json::json!({ "active_fraction": 0.5 });
+
+        // Each required metric missing — including a legitimate absence
+        // like an undisturbed episode's `disturbance_recovery_score`.
+        for incomplete in [
+            serde_json::json!({"disturbance_recovery_score": 0.75}),
+            serde_json::json!({"homeostasis_score": 0.85}),
+            serde_json::json!({}),
+        ] {
+            envelope.mio_observation = Some(observation(incomplete, summary.clone()));
+            assert_baseline(&envelope);
+        }
+        envelope.mio_observation = Some(observation(metrics.clone(), serde_json::json!({})));
+        assert_baseline(&envelope);
+
+        // Null, wrong type, and out-of-domain values are not observations
+        // either — none may be turned into a neutral temperament.
+        for bad in [
+            serde_json::json!(null),
+            serde_json::json!("high"),
+            serde_json::json!([0.7]),
+            serde_json::json!(-0.1),
+            serde_json::json!(1.5),
+        ] {
+            let mut broken = metrics.clone();
+            broken["disturbance_recovery_score"] = bad;
+            envelope.mio_observation = Some(observation(broken, summary.clone()));
+            assert_baseline(&envelope);
+        }
+
+        // Boundary values are real observations and project normally.
+        envelope.mio_observation = Some(observation(
+            serde_json::json!({
+                "homeostasis_score": 1.0,
+                "disturbance_recovery_score": 0.0,
+            }),
+            serde_json::json!({ "active_fraction": 0.0 }),
+        ));
+        let projected = DevelopmentalDisposition::project(&envelope);
+        assert_eq!(projected.projection_source, "mio_phenotype_projected");
+        assert_eq!(projected.homeostasis_register, "homeostatic_equilibrium");
+        assert_eq!(projected.adaptability_bias, "low_resilience");
+        assert_eq!(projected.activity_level, "subdued_activity");
     }
 
     #[test]

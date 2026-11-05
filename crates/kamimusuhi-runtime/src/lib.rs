@@ -19,10 +19,12 @@
 //! loses nothing that matters. Process B is handed a directory and no
 //! transcript, and rebuilds the individual from canonical state alone.
 
+pub mod agent_exec;
 pub mod c0;
 pub mod config;
 pub mod dialogue;
 pub mod dialogue_recall;
+pub(crate) mod dialogue_recall_links;
 pub mod dialogue_setup;
 pub mod error;
 pub mod evolution;
@@ -32,8 +34,11 @@ pub mod kcore;
 pub mod llm_jev;
 pub mod mio;
 pub mod organs;
+pub mod provider_bench;
+pub mod recall_eval;
 pub mod reference;
 pub mod research;
+pub mod route_gate;
 pub mod runtime;
 pub mod scenario;
 pub mod selection;

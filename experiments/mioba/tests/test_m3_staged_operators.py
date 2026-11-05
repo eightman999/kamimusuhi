@@ -5,7 +5,6 @@ from __future__ import annotations
 import random
 from collections import Counter
 
-import pytest
 
 from experiments.mioba.genome import mutation as mut
 from experiments.mioba.genome.mutation import (SUBSTRATE_OPERATORS,

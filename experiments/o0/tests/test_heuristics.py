@@ -2,7 +2,6 @@
 
 import numpy as np
 
-from experiments.o0.analysis import metrics as metrics_mod
 from experiments.o0.env import dynamics as dyn
 from experiments.o0.evaluate import evaluate_heuristic
 

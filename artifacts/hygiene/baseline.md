@@ -1,0 +1,80 @@
+# Hygiene baseline (rebased) — 2026-09-21
+
+## Environment
+
+- Base commit: `a83e711` (origin/master, fetched 2026-09-21)
+- Cleanup branch: `chore/repo-hygiene-rebased`
+- Worktree: `/Users/eightman/dev/sandbox/kamimusuhi-hygiene-rebased`
+- Source branch being ported: `chore/repo-hygiene-overnight` (left
+  unmodified as audit trail)
+- OS: macOS (Darwin 25.6.0)
+- Toolchain: rustc/cargo 1.92.0 (pinned via rust-toolchain.toml);
+  Python 3.12.11 via `../kamimusuhi/.venv` (read-only pytest runs)
+
+## Baseline gate results at base commit (before any change)
+
+Unlike the previous overnight run, current master **compiles cleanly** —
+the Arc/Box mismatch and the `""fixture""` syntax error were fixed upstream
+(`aba9f19` series), and PR #59 (K-Core dialogue hardening) is merged.
+
+| Gate | Result |
+|---|---|
+| `cargo fmt --all -- --check` | PASS — no drift |
+| `cargo clippy --workspace --all-targets --all-features -D warnings` | PASS — 0 warnings |
+| `cargo build --workspace` | PASS |
+| `cargo test --workspace --no-fail-fast` | 1 failure (pre-existing, see below) |
+| `python3 -m compileall -q experiments` | PASS |
+
+## Pre-existing failure at base (verified)
+
+1. `research_catalog::bundled_catalog_has_valid_source_hashes_and_line_ranges`
+   — `knowledge/experiment-findings.json` entry `u0-need-guided-memory`
+   cites `experiments/u0/artifacts/results/summary.csv`, which is gitignored
+   (`/experiments/u0/artifacts/`). Deterministic failure on any clean
+   checkout. Unchanged from the previous report; still a provenance-design
+   question, not touched.
+
+## Previously failing — now passing at base
+
+- `llm_jev_loop::accept_never_bypasses_an_unsuitable_selected_candidate` —
+  PASS (19/19 tests in suite)
+- `llm_jev_loop::retry_replaces_one_candidate_and_reselects_without_a_third_generation`
+  — PASS
+
+Both were reconciled upstream with the intended Jev rejudge semantics.
+
+## Environmental limitation
+
+PyQt5 is not installed in the available venv; `test_gui.py` in
+`k0_e2_active_info`, `k0_f_interoception`, and
+`k0_f2_interoception_confirmatory` cannot be collected. Same limitation as
+the previous run; tests were excluded, not modified.
+
+
+## Post-baseline upstream resolutions
+
+This file preserves the state of `a83e711` at the moment the rebased hygiene
+audit began. Two later upstream developments are intentionally recorded here
+rather than rewriting that historical baseline:
+
+1. **U0 catalog provenance** — PR #60 (`fix/u0-catalog-provenance`) was
+   merged into master as `a8f1a60`. It replaces the clean-clone-invalid
+   reference to an ignored `summary.csv` with tracked
+   `experiments/u0/reports/U0_COMPACT_RESULTS.md`. The source digest and
+   catalog values were recomputed, catalog tests pass 8/8 without ignored
+   artifacts, and the workspace test suite was green on the repair branch.
+   Master `a8f1a60` was subsequently synchronized into the hygiene branch
+   by merge commit `5d5dc3b`.
+
+2. **Hosted Ubuntu Rust CI** — while validating PR #60, the GitHub-hosted
+   runner exposed an independent pre-existing platform-feature defect:
+   `eframe` disabled default features but selected neither X11 nor Wayland,
+   so `winit 0.30.13` failed before repository tests. PR #61 enabled the X11
+   backend and raised the unchanged hosted full-gate budget from 15 to 30
+   minutes after the repaired job outlived the old budget. PR #61 was merged
+   into master as `5598d36` and synchronized into this hygiene branch by
+   merge commit `28cc023`. This hosted-CI issue was not present in the macOS
+   local baseline above and is not caused by the hygiene changes.
+
+The two former `llm_jev_loop` failures remained passing throughout these
+later changes.

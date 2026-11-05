@@ -52,6 +52,10 @@ pub const HAI_QWEN_MODEL: &str = "qwen3.8-27b-uncensored";
 pub const HAI_LLM_JP_MODEL: &str = "llm-jp-4-vl-9b";
 pub const HAI_QWEN_PROVIDER_ID: &str = "hai-qwen3.8-27b-uncensored";
 pub const HAI_LLM_JP_PROVIDER_ID: &str = "hai-llm-jp-4-vl-9b";
+pub const GEMMA_12B_MODEL: &str = "gemma-4-12b-it";
+pub const GEMMA_PROVIDER_ID: &str = "gemma-4-12b";
+pub const GEMMA_API_KEY_ENV: &str = "GEMMA_API_KEY";
+pub const DEFAULT_GEMMA_BASE_URL: &str = "http://127.0.0.1:8080/v1";
 pub const PRIMARY_LANGUAGE_PROVIDER_ID: &str = "primary";
 /// Maximum eligible response size. Oversized candidates are excluded rather
 /// than showing Jev a truncated version of text that could be delivered.
@@ -456,6 +460,29 @@ impl LanguageProvider for GrokbotProvider {
     }
 }
 
+pub struct GemmaProvider(PersonaLanguageProvider);
+
+impl GemmaProvider {
+    pub fn new(persona: Box<dyn PersonaCore>, model: impl Into<String>) -> Self {
+        Self(PersonaLanguageProvider::with_id(
+            persona,
+            GEMMA_PROVIDER_ID,
+            "gemma",
+            model,
+        ))
+    }
+}
+
+impl LanguageProvider for GemmaProvider {
+    fn generate(&self, request: &LanguageRequest) -> Result<LanguageResult, ConversationError> {
+        self.0.generate(request)
+    }
+
+    fn descriptor(&self) -> PersonaBackendDescriptor {
+        self.0.descriptor()
+    }
+}
+
 pub struct HaiProvider(PersonaLanguageProvider);
 
 impl HaiProvider {
@@ -532,6 +559,7 @@ pub fn configured_language_provider(
     match provider.to_ascii_lowercase().as_str() {
         "grokbot" => Ok(Box::new(GrokbotProvider::new(persona, model))),
         "hai" => Ok(Box::new(HaiProvider::new(persona, model))),
+        "gemma" | "gemma-4-12b" => Ok(Box::new(GemmaProvider::new(persona, model))),
         "mock" => Ok(Box::new(MockLanguageProvider)),
         "openai-compatible" => Ok(Box::new(PersonaLanguageProvider::with_id(
             persona,

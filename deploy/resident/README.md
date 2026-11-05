@@ -3,8 +3,15 @@
 Raspberry Pi と llm_master の両方で `kamimusuhi-resident`（バイナリ名 `kamimusuhi`）を systemd 常駐させる。
 自己改善・自動実験はこの構成が安定してから追加する。
 
+運用補助も Rust workspace に含める。Computer MCP は `kamimusuhi-computer-mcp`、
+Discord 連携は `kamimusuhi-discord`、Grafana JSON 生成は `kamimusuhi-monitoring`。
+起動・導入方法はそれぞれ [computer-mcp.md](computer-mcp.md)、[discord.md](discord.md)、
+[monitoring/README.md](monitoring/README.md) を参照。
+旧 Python 実装は移植照合用に保持する。研究・学習コード、外部 MCP の依存、
+インストール補助スクリプトは別途扱い、Cloudflare Relay は TypeScript を維持する。
+
 ```text
-             NAS (192.168.40.124:/mnt/Share/kamimusuhi → /mnt/kamimusuhi, Share全体は /mnt/nas-share)
+             NAS (NFS export → /mnt/kamimusuhi, 共有全体は /mnt/nas-share)
           ↗       ↖
         Pi ←────→ llm_master            peer: Tailscale IP :7860 (/health)
         │            │
@@ -28,14 +35,43 @@ Raspberry Pi と llm_master の両方で `kamimusuhi-resident`（バイナリ名
 
 ## Routing
 
-各ノードの `tiers` を上から順に試す。probe（`/v1/models`）で healthy なものだけを使い、全滅時のみ unhealthy も試す。
-リクエスト失敗したtierは即 unhealthy になり、probe が成功した時点で自動的に元の優先順へ戻る（llm_master 復旧で自動復帰）。
+自動 routing（`kamimusuhi` / `auto`）は、設定順をそのまま試すのではなく
+runtime と共通の `RouteGate` で候補を絞ってから実行する。判定順は
+**privacy → context/TPM → live health → billing class → latency**。
+persona / memory を含む通常の対話は既定で private とし、
+`privacy_ok_for_private_memory=true` を明示した tier だけに送る。
 
-- Pi: `llm_master`（peer resident 経由、`X-Kamimusuhi-Route: local` で llm_master 側の HAI fallback を抑止）→ `hai`
-- llm_master: `local`（llama-master :8080）→ `hai`
-- `condition: small_request` の tier は短い要求（既定1200文字以下）か `model: "k0"` のときのみ使う（K0/local 枠）。
-- model 名: `kamimusuhi` / `auto` / `k0` は自動、`hai` や `hai/glm-5.3` はtier強制。
+- FAST_CHAT の production latency ceiling は既定 **4,000ms**。resident は非streaming upstreamを使うため、ここでは実リクエストの全応答時間をTTFTの保守的proxyとしてEWMAに戻す。4秒を継続して超えた経路はFAST_CHAT候補から外れる。
+- FreeTier がprivate条件を満たす場合は先行し、Local / Subscription は同じ zero-marginal-cost band で実測 latency（未計測なら設定順）を使う。Metered は最後の fallback。
+- probe（`/v1/models`）の healthy/unhealthy も併用し、known-down tier は healthy 候補がない場合だけ試す。実リクエスト失敗も即 health に反映し、429 は cooldown 対象になる。
+- Pi の既定 zero-marginal 経路: `hai`（`qwen3.8-27b-uncensored`）と `llm_master`（peer resident 経由、`X-Kamimusuhi-Route: local` で peer 側 fallback を抑止）。未計測時は設定順、観測後は同band内で latency が効く。
+- llm_master の既定 zero-marginal 経路: `local`（llama-master :8080）と `hai`。
+- `condition: small_request` の tier は短い要求（既定1200文字以下）か `model: "k0"` のときのみ使う。 `k0` と `X-Kamimusuhi-Route: local` は LocalChat として local tier のみに制限する。
+- model 名で `hai` や `hai/glm-5.3` のようにtierを強制できるが、local-only / privacy wall / production cost guard は迂回できない。
 - `stream: true` は完成応答を SSE として返す（逐次生成ではない）。
+- lane はヒント（`kamimusuhi_route_lane`）がなければ要求の形で決まる: 最後が tool 結果 → `TOOL_TASK`、推定16kトークン以上 → `MEMORY_HEAVY`、最後の発言が `routing.fast_chat_max_input_chars`（既定200字）を超える → `DEEP_REASONING`、それ以外（即答で済む日常会話）→ `FAST_CHAT`。lane は routing ログに残る。
+- 未計測・計測が15分以上古い tier は同じ band 内で先に試す（片方だけ計測されて他方が永久に選ばれない状態を防ぐ）。
+- tier の `prefer_lanes`（例 `["FAST_CHAT"]`）は、その lane で billing class より前に置く。privacy / health / cost guard はそのまま効く。
+- tier の `extra_body` はプロバイダ固有の項目を足し（例 gpt-oss の `reasoning_effort`）、`strip_fields` は未知の項目を拒否するAPI向けに項目を消す（例 `chat_template_kwargs`）。`model` / `stream` / `messages` は変えられない。
+
+### 追加プロバイダ（Groq / Cerebras / OpenAI / Gemini / OpenRouter）
+
+定義は `provider-tiers.example.json`。`privacy_ok_for_private_memory` は各社の一次情報で
+「API入力を学習に使わない」と明記されているものだけ true（2026-09-24確認: Groq・Cerebras・OpenAI）。
+Gemini の無料枠と OpenRouter の `:free` は学習に使われ得るので false（非private要求のみ）。
+日常会話（FAST_CHAT）は llm_master（Gemma 4, `prefer_lanes: ["FAST_CHAT"]`）を最優先にする。gpt-oss（Groq/Cerebras）は速い（約0.5秒）が敬語の接客調になりペルソナが崩れるため、llm_master がスリープ・遅延時の予備にしている。Gemma の実ターンは約5秒かかり得るので、Pi の `fast_chat_latency_ceiling_ms` は 12000。長い依頼は HAI / llm_master が先。
+
+1. キーを Mac のファイル（mode 600）に置き、secrets.env へ送る（値は ssh stdin のみ）:
+   `KEY_FILES="GROQ_API_KEY=<file>,CEREBRAS_API_KEY=<file>" deploy/resident/push-secrets.sh <host>`
+2. キーを入れた tier だけを `resident.json` の `tiers` に追加し、`kamimusuhi check-config` 後に resident を再起動する。
+3. Cerebras/OpenAI は従量。上の CostGuard 上限（既定 $0.10/day）に達すると次の tier に落ちる。
+
+従量 tier は送信前に production `CostGuard` を通る。既定上限は
+**$0.02/request / $0.50/daemon session / $0.10/day / $2.00/month**。
+daily/monthly ledger は `current_state/routing-cost-ledger.json` に保存され、
+再起動後も継続する。従量 tier は input/output の単価宣言が必須で、
+未宣言なら起動時設定検証で拒否する。これは設定された単価に基づくローカル上限なので、
+provider側の価格変更まで請求額を保証するものではない。従量provider側の spending limit も併用する。
 
 OpenAI互換で使う例（ノード上では token 不要、他ホストからは `Authorization: Bearer $KAMIMUSUHI_NODE_TOKEN`）:
 
@@ -45,13 +81,19 @@ curl http://127.0.0.1:7860/v1/chat/completions -d '{"model":"kamimusuhi","messag
 
 既存 runtime の対話も resident 経由にできる: `kamimusuhi-runtime chat --persona openai-compatible --persona-url http://127.0.0.1:7860/v1 --persona-model kamimusuhi ...`
 
+## モデル利用の監視
+
+Grafanaでモデル別の呼び出し、成功率、応答時間、トークン、料金と利用推移を確認できる。
+ダッシュボードとPrometheus収集設定は [monitoring/README.md](monitoring/README.md) を参照。
+個別履歴は認証付き `/v1/usage/history`、監視メトリクスは `/metrics` で取得する。
+
 ## ストレージ
 
 ```text
 /srv/kamimusuhi/            (ローカルSSD)
   runtime/bin/              kamimusuhi, k-core, kamimusuhi-runtime
   runtime/individual/       個体の正本 (Piのみ)
-  config/resident.json      構成 (Git管理の deploy/resident/*.resident.json から)
+  config/resident.json      構成 (deploy/resident/local/<node>.resident.json から, git 管理外)
   config/secrets.env        mode 600, Git外
   current_state/            state.json, boot_epoch
   cache/
@@ -69,7 +111,9 @@ curl http://127.0.0.1:7860/v1/chat/completions -d '{"model":"kamimusuhi","messag
 
 ## 導入手順
 
-前提: 両ノードとも eightman (uid 1000)。TrueNAS で `/mnt/Share` を NFS export（Maproot=uid/gid 1000, 許可: 192.168.40.0/24）済み。`Share/kamimusuhi` データセットも別 NFS 共有として export（Maproot 同じ）。NFSv3 は親 export から子データセットの中身が見えないため、resident は `/mnt/Share/kamimusuhi` を `/mnt/kamimusuhi` に直接マウントする。
+前提: 両ノードとも同じサービスユーザー（uid 1000）。NAS 側で共有全体と kamimusuhi 用ディレクトリをそれぞれ NFS export し（Maproot=uid/gid 1000）、resident 用は `/mnt/kamimusuhi` に直接マウントする（子データセットは親 export から見えないため）。ホスト・export パスは `deploy/resident/local/site.env`（`site.env.example` 参照, git 管理外）に書く。
+
+**サイト固有の設定（ホスト/IP・NAS・private リポジトリ名）は `deploy/resident/local/`（git 管理外）に置く。** 追跡されるのは `*.example.json` と `site.env.example` のテンプレートのみ。Mac などのクライアントは `~/.config/kamimusuhi/nodes` に resident の URL を 1 行ずつ書く。
 
 ```bash
 # 1) ソースをノードへ (Mac から)
@@ -80,6 +124,9 @@ sudo ~/src/kamimusuhi/deploy/resident/install-root.sh pi          # llm_master �
 deploy/resident/push-secrets.sh <host>
 # 4) ビルド・配置・起動 (ノード上, 要 rustup)
 ~/src/kamimusuhi/deploy/resident/install-node.sh pi
+#    rsync -a は送信側の mtime を保存するため、古い target の rlib/rmeta が
+#    新ソースより「新鮮」と誤判定されて新旧混在のコンパイルエラーになることがある。
+#    その場合はノード上で `find crates -name '*.rs' -exec touch {} +` してから再実行する。
 # 5) NAS 初回だけ: マーカーとディレクトリ
 mkdir -p /mnt/kamimusuhi/{memory,conversations,logs,artifacts,experiments,datasets,models,checkpoints}
 touch /mnt/kamimusuhi/.kamimusuhi-nas
@@ -90,17 +137,43 @@ llm_master の local LLM は既存の user unit `llama-master.service`（linger 
 ## 対話（個体と話す）
 
 `POST /v1/kamimusuhi/talk`（Pi のみ, `dialogue` 設定）は Pi の個体ディレクトリに対して `kamimusuhi-runtime talk` を1ターンずつ実行する。
-Persona Core・記憶・連続性を持つ個体として応答し、ターンは runtime 自身が記録する（同時実行は直列化）。LLM は resident の routing（llm_master → HAI）を使う。
+Persona Core・記憶・連続性を持つ個体として応答し、ターンは runtime 自身が記録する。デスクトップやDiscordなど複数クライアントの対話は合計 `dialogue.max_concurrent`（既定2）件まで並行し、同じ subject のターンは受付順に1件ずつ実行する。個体への書き込み（writer epoch の取得と記憶更新の提出）は runtime ディレクトリの `writer.lock` で直列化される。LLM は resident の routing（HAI → llm_master）を使う。
 
 Mac などから:
 
 ```bash
 cargo build --release -p kamimusuhi-resident && install -m 755 target/release/kamimusuhi ~/.local/bin/
-kamimusuhi chat                  # Pi(LAN 192.168.40.147) → Tailscale の順に自動接続。/status, /quit
-kamimusuhi chat --subject eightman --url http://100.111.150.4:7860
+kamimusuhi chat                  # ~/.config/kamimusuhi/nodes の URL を順に試す。/status, /quit
+kamimusuhi chat --subject <id> --url http://PI_HOST:7860
 ```
 
 token は `$KAMIMUSUHI_NODE_TOKEN` または `~/.config/kamimusuhi/node_token`（`push-secrets.sh` が生成）。`--subject` は会話履歴の区別であって認証ではない。
+
+## Intercom（姉妹個体どうしの会話）
+
+各ノードが `dialogue` を持つ場合、そこに住む個体は別個体（姉妹）同士として扱われる。`intercom` 設定を有効にすると、姉妹間で envelope（手紙）をやり取りできる。
+
+- 受信: `POST /v1/intercom`（peer からの envelope, bearer 認証）→ 冪等に受理 → `sister-<from>` subject の対話ターンとして個体へ届く。`dialogue` の無いノードは受理しない（送信側は dead-letter）。
+- 送信: 個体の `peer_say` tool、または operator の `kamimusuhi say <peer> <text…>` / `intercom send`。永続 outbox（`current_state/intercom.json`）に載り、直接配送 → 失敗時は `relay` 経由 → 指数バックオフで `max_attempts` まで再送。
+- 返信は本人の能動行為（`peer_say`）。例外は operator が `intercom open <peer> [turns] [text…]` で開いた会話だけ — 各ターンの応答がそのまま転送され、`auto_left` が envelope と共に減り、`max_hops` が無人連鎖の上限になる。個体は応答中の `[end]` 行で会話を閉じられる。
+- 重複は `seen` id で排除され、直接配送と relay 経由の二重到着は無害。inbound/outbox/conversations は再起動をまたいで保持される。
+- `sisters` マップは姉妹の表示名（長女=Mac, 次女=Pi, 三女=llm_master）。キーは `peers` の id でなければならない。
+- relay: 直接到達できない向きの中継。[relay/](../../relay/README.md)（Cloudflare Worker + Durable Object）。既定は無し — tailnet/LAN が張れていれば不要。
+
+```bash
+kamimusuhi intercom                 # status: outbox/inbox/conversations/relay
+kamimusuhi intercom list [--all]    # 会話一覧（--all で閉じたものも）
+kamimusuhi intercom show <conv>     # 会話と未配送分
+kamimusuhi say mac 今日の調子は？    # 最新の開いた会話へ（無ければ新規）
+kamimusuhi intercom open mac 6 相談がある # 自動返信6往復で会話を開始
+kamimusuhi intercom close <conv> [最後の一言…]
+kamimusuhi intercom retry [id]      # dead-letter の再送
+```
+
+## Discord Bot
+
+Discordから同じ個体を呼び出すには [Discord Botの導入手順](discord.md) を参照。
+許可したチャンネルで `@澪 こんにちは` と呼び出すと、FIFOキューから（subjectごとに順番を守って最大2件並行で）対話APIへ渡し、元メッセージへ返信する。
 
 ## Library（参照用データ）
 
@@ -108,7 +181,7 @@ token は `$KAMIMUSUHI_NODE_TOKEN` または `~/.config/kamimusuhi/node_token`�
 
 | name | 実体 | 内容 |
 |---|---|---|
-| `jp_market_vis` | llm_master `/mnt/sda1/kamimusuhi/library/JP_Market_Vis`（git clone） | 日本の上場企業間の資本・取引・提携・役員兼任・グループ関係 |
+| `jp_market_vis` | llm_master 上の library ディレクトリ（git clone, パスはローカル設定） | 日本の上場企業間の資本・取引・提携・役員兼任・グループ関係 |
 
 ```bash
 kamimusuhi library list
@@ -119,7 +192,7 @@ kamimusuhi library search jp_market_vis トヨタ自動車 [dir]
 ```
 
 `.git` と library 外のパスは返さない。file は最大 2MiB ずつ（`offset` で続き）、search は 64MiB 以下のテキストファイルから最大100件。
-更新は llm_master で `git -C /mnt/sda1/kamimusuhi/library/JP_Market_Vis pull`。
+更新は llm_master で該当 clone を `git pull`。
 
 ## Tools（MCP 的な tool surface）と個体からの参照
 
@@ -141,8 +214,12 @@ GUI の `set_language_provider` で追加した言語器官には tools は付�
 
 ## MCP サーバー
 
+公開情報のDB検索が空振りした場合は [chrome-web-mcp](chrome-web-mcp.md) を利用できる。
+対話用 `library_search` は既定8件・最大20件に絞り、出典を保持してモデルへ返す。
+
 resident は stdio の MCP サーバーを子プロセスとして常駐・監視し（落ちたら backoff で再起動）、tool を `mcp__<server>__<tool>` として `/v1/tools` に載せる。
 自ノードに無い tool は peer へ転送されるので、Pi からも llm_master の Playwright を呼べる。呼び出しは `logs/mcp/<node>/` に記録。
+peer への一覧・転送は health probe が通っている peer に限る（probe 不通の peer への接続は呼び出しを数分間ブロックするだけなので除外）。一覧の fan-out は 5 秒で打ち切る。
 npm パッケージは `/srv/kamimusuhi/mcp` にバージョン固定で入れる（起動時にネットワーク不要）。
 
 | server | ノード | 範囲・制限 |
@@ -150,12 +227,17 @@ npm パッケージは `/srv/kamimusuhi/mcp` にバージョン固定で入れ�
 | `nas` (filesystem) | 両方 | `/mnt/kamimusuhi` 全体を**読み取り専用**（readOnlyHint の tool のみ） |
 | `fs` (filesystem) | 両方 | `workspace/ artifacts/ experiments/ datasets/` のみ読み書き。ログ・記憶・snapshot は不可 |
 | `context7` | 両方 | 外部サービス context7.com でライブラリ文書検索 |
-| `obsidian` (mcpvault) | 両方 | `/mnt/kamimusuhi/knowledge/obsidian`（GitHub `eightman999/Obsidian` の clone）。読み取りは自由。Pi のみ `write_note`/`patch_note`/`update_frontmatter` を**承認制**で提供 |
+| `obsidian` (mcpvault) | 両方 | `/mnt/kamimusuhi/knowledge/obsidian`（操作者の private vault リポジトリの clone）。読み取りは自由。Pi のみ `write_note`/`patch_note`/`update_frontmatter` を**承認制**で提供 |
 | `netdata` (nd-mcp) | 両方（各ノード自身） | 読み取り専用。Netdata は localhost bind、キーは secrets.env の `NETDATA_MCP_KEY` |
 | `playwright` | llm_master | headless Chromium・隔離プロファイル。`browser_run_code_unsafe` / `browser_evaluate` / `browser_file_upload` は除外 |
 | `github` (github-mcp-server v1.12.2) | 両方 | `--read-only --lockdown-mode`、toolsets=context,repos,issues,pull_requests,actions。token は secrets.env の `GITHUB_PERSONAL_ACCESS_TOKEN` |
+| `computer_mac` / `computer_llm` / `computer_pi` ([computer-mcp](computer-mcp.md)) | 各ノード | GUI の computer use。Mac は実画面(Aqua)、Linux はノード所有の Xvfb `:99`。観測系は自由、操作系（click/type/key_press/…）は `judge_required` で判定モデル審査、判断不能は operator 承認へ |
 
-個体へ見せる tool は `runtime.json` の `tools.allowed`（`*` で前方一致）で絞る（例: `runtime-reference.example.json`, 32 個）。
+`judge_required` の審査は resident 設定の `tool_judge`（既定: `hai` tier、回答不能時は承認キュー）が担う。`approval_required` と併記した tool は審査を経ず直接 operator 承認になる。
+
+個体へ見せる tool は `runtime.json` の `tools.allowed`（`*` で前方一致）で絞る（例: `runtime-reference.example.json`, 47 個）。
+`tools.core`（同じ構文, 省略時は `mcp__` 以外の組み込み tool）だけが毎ターン最初から提示され、残りの allowed は `tool_catalog`（一覧）→ `tool_enable`（有効化）で必要時に取り出す。定義は送信前に圧縮する（description 200 字・引数 description 120 字・`title`/`examples`/`additionalProperties` 除去、名前順で固定）。
+`persona.provider.reasoning` は `off`（既定）/`on`/`auto`（修正・確認指示のあるターンだけ思考）。`persona.provider.extra_body` は provider 固有の要求フィールド（`messages`/`tools`/`model` 等は上書き不可）。プロンプトは静的部分（system, tool 定義, seed, 自己状態, 記憶）→ 動的部分（観測, TURN_CONTEXT, 入力）の順で並び、llama.cpp の prompt cache が効く。
 
 ```bash
 # 導入（各ノード）
@@ -163,6 +245,7 @@ cd /srv/kamimusuhi/mcp && npm install --prefix . @modelcontextprotocol/server-fi
   @upstash/context7-mcp@4.1.1 @bitbonsai/mcpvault@0.16.0 [@playwright/mcp@0.0.82]
 ./node_modules/.bin/playwright-mcp install-browser chrome-for-testing   # llm_master のみ
 sudo deploy/resident/install-netdata.sh                                 # Netdata + NETDATA_MCP_KEY
+deploy/resident/install-computer-mcp.sh                                 # computer use (Linux: Xvfb :99 + xdotool/scrot)
 ```
 
 GitHub MCP のバイナリは公式 release を checksums.txt で検証して `/srv/kamimusuhi/mcp/github/` に置く。token は `GITHUB_TOKEN_FILE=<file> deploy/resident/push-secrets.sh <host>` で配布（fine-grained・read-only・期限付きを推奨）。
@@ -193,14 +276,42 @@ resident（Pi）は並列に進む作業をタスクとして記録する（`cur
 | 承認待ち（`approval`, 状態=あなたの判断待ち） | 要求した tool 呼び出し |
 | 承認後の反映 commit/push（`commit`） | 承認 |
 | 定期ジョブ（`job`, ジョブごとに 1 枚を更新） | — |
+| 外部エージェントへの委譲（`delegated`, Task Plane） | 委譲した対話ターン |
 
 - 操作者: `GET /v1/tasks`, `POST /v1/tasks {"action":"create"|"update",...}`（GUI のタスク画面）。
 - 澪（個体）: tool `task_list` / `task_create` / `task_update` で自分の計画を載せる。自動記録タスクは澪からは変更不可。
 - 再起動時に進行中だった自動記録タスクは「失敗（中断）」になる。完了は 3 日表示、400 件を保持。
 
+## Task Plane（外部エージェント）
+
+llm_master は Devin / OpenCode / Command Code などの agent harness に作業を委譲できる（`task_plane`）。澪は `task_delegate` で task id を受け取ってすぐ会話に戻り、結果は `task_status` で Evidence として読む。
+harness は `task_plane.executors_file`（例: `agent-executors.example.json`）で増減でき、ファイル変更は再起動なしで反映される。詳細は [docs/implementation/task-plane.md](../../docs/implementation/task-plane.md)。
+
+### Mac ノード（Task Plane 用）
+
+開発 Mac にも cognition ノード `mac` を LaunchAgent で常駐させられる（Devin / OpenCode / Command Code がそこに入っているため）。個体の正本は持たず、NAS も使わない（spool はローカルに残る）。
+
+```bash
+deploy/resident/install-mac.sh             # release build → ~/Library/Application Support/Kamimusuhi/node に配置、LaunchAgent 起動（再実行で更新）
+deploy/resident/install-mac.sh --uninstall # LaunchAgent を外す（データは残す）
+```
+
+- 構成は `deploy/resident/local/mac.resident.json`（git 管理外、実際のホスト/IP）があればそれを、なければ `mac.resident.example.json` から初回だけ生成（`config/resident.json`、以後は保持）。`0.0.0.0:7860` で待ち受け、`/health` 以外は node token 必須。token は起動時に `~/.config/kamimusuhi/node_token` から読む。
+- workspace `kamimusuhi` は `~/dev/sandbox/kamimusuhi`（`allow_write: true`）。書き込みタスクは `node/worktrees/` の worktree とブランチで行い、本体へは `kamimusuhi agents apply` でだけ入る。
+- peer は `alt_urls` で複数の到達先（LAN と tailnet など）を持てる。health probe は前回応答した先から順に試し、転送・library・tool 呼び出しは最後に応答した先を使う。Mac ノードは Pi を LAN と tailnet の両方で持つ（`mac.resident.example.json` の `PI_HOST` / `PI_TAILNET_HOST`）。
+- Pi から澪の task tool をこのノードへ転送するには、この版の resident を Pi に入れたうえで、Pi の `resident.json` の `peers` に次を足して再起動する（転送先は Task Plane を持つ最初の peer）。launchd 配下の resident は macOS の「ローカルネットワーク」許可がないと LAN 宛てに出られないため、tailnet を `alt_urls` に入れておく。
+
+  ```json
+  {"id": "mac", "role": "cognition", "url": "http://MAC_LAN_HOST:7860", "alt_urls": ["http://MAC_TAILNET_HOST:7860"]}
+  ```
+
 ## アバター名
 
 個体の `runtime.json` の `avatar_name`（例 `"澪"`）が、Persona が名乗る名前になる（未設定は「かみむすび」）。表示上の名前で、個体の identity は変わらない。
+
+`avatar_aliases`（例 `["Mio", "みお"]`）と `avatar_self_description`（操作者が書く「何者か」の説明）を設定すると、
+毎ターンの冒頭で「これらの名前は第三者ではなくあなた自身」と伝える。別名が既存の名前（例: 実験系の MIO/MIOBA）と
+紛らわしい場合は、説明文でその区別も書く。runtime の再起動は不要（ターンごとに読み込む）。
 
 ## 状態確認
 
@@ -208,12 +319,44 @@ resident（Pi）は並列に進む作業をタスクとして記録する（`cur
 kamimusuhi status            # ノード上。0=正常 1=劣化 2=resident不達
 kamimusuhi status --json
 KAMIMUSUHI_NODE_TOKEN=$(cat ~/.config/kamimusuhi/node_token) \
-  kamimusuhi status --url http://100.111.150.4:7860     # Mac など別ホストから
+  kamimusuhi status --url http://PI_HOST:7860     # Mac など別ホストから
 kamimusuhi ask "テスト"      # 実際にルーティングして応答と経路を表示
 journalctl -u kamimusuhi-resident -f
 ```
 
 `status` は Pi / llm_master（peer の /health とGPU）/ routing tier / NAS（書込probe・spool backlog・最終同期）/ HAI（API疎通・残高）/ K-CORE / snapshot を表示する。
+
+## Node Task（Light/Heavy 委譲プロトコル）
+
+Pi (light) ↔ llm_master (heavy) 間の typed task 委譲。詳細は
+`docs/light-heavy-node-architecture.md`。
+
+- `POST /task` — `{task_id?, type, requires[], payload, timeout_ms?, target_node?, wait_ms?}`
+  を受理。`task_id` は冪等キー（再送は既存レコードを返す）。認証は node token。
+- `GET /task/<id>` — タスクの現状態・結果を取得。
+- `GET /capabilities` — `{"node_id","role","mode","capabilities":[...]}`（無認証、
+  `/health` にも同じ capabilities が載るので既存 probe が discovery を兼ねる）。
+- `GET /v1/delegations` / `POST /v1/delegations` — 一覧 / show / retry / cancel。
+- `kamimusuhi node` — spec形状の node_state。`kamimusuhi task …` — submit/status/list/retry/cancel。
+
+分類は LOCAL / DELEGATE / QUEUE / REJECT の rule-based（`delegation::decide`）。
+`node.*`/`state.*` は常に local。`requires` と各ノードの advertised capability で
+宛先を決めるので、将来の GPU/V100/cloud API ノードも同一プロトコルに載る。
+light node は healthy な capable peer を優先し、heavy node は local を優先する。
+
+queue は `current_state/delegations.sqlite` (WAL)。再起動で in-flight は
+`retry_pending` に倒れて再送される。payload/result は node-local のみ —
+NAS journal/board に載るのは id/type/state/latency だけ。
+
+```jsonc
+// pi.resident.json 追加例
+"peers": [{"id": "llm_master", "url": "http://…:7860",
+           "capabilities": ["llm.generate"], "priority": 100}],
+"delegation": {"enabled": true, "workers": 2, "max_attempts": 6,
+               "retry_secs": 30, "poll_ms": 1500,
+               "default_timeout_ms": 120000, "max_timeout_ms": 900000,
+               "max_queue": 128}
+```
 
 ## 障害時の挙動
 
@@ -224,3 +367,33 @@ journalctl -u kamimusuhi-resident -f
 | llm_master 再起動 | resident・llama-master とも自動起動 | 自動 |
 | NAS 断 / ハング | spool に蓄積、probe は別スレッドで timeout | マーカー確認後に自動配送 |
 | HAI 断 | 他tierのみ。全滅なら 503 | probe 成功で自動 |
+| heavy node 停止中の委譲 | task は `retry_pending` で待機（Pi側 event loop は止まらない） | peer 復帰で冪等再送、attempts 上限超過で `failed` |
+
+## ローカル配置の例（Obsidian + 開発ディレクトリ）
+
+このマシン（Mac）では情報置き場が `~/Desktop/Obsidian`、開発ディレクトリが `~/dev`。
+resident.json では次のように接続する（`local/` 配下は git 管理外のサイト固有設定）:
+
+```jsonc
+// ~/Desktop/Obsidian を library として読み取り専用公開（/v1/library, library_* tools）
+"libraries": [
+  { "name": "obsidian", "path": "~/Desktop/Obsidian",
+    "description": "情報置き場の Obsidian vault（読み取り専用）" }
+],
+// mcpvault 経由なら検索・読み・承認制の書き込みも可（deploy/resident の MCP 節を参照）
+// ~/dev を Task Plane の workspace として委譲先に使う
+"task_plane": {
+  "workspaces": [
+    { "name": "dev", "path": "~/dev",
+      "description": "開発ディレクトリ（読み取り・explore 委譲）",
+      "allow_write": false },
+    { "name": "kamimusuhi", "path": "~/dev/sandbox/kamimusuhi",
+      "description": "Kamimusuhi リポジトリ（書き込みは worktree+apply のみ）",
+      "allow_write": true }
+  ]
+}
+```
+
+library は読み取り専用（`.git` と外のパスは返さない）。Obsidian vault の変更を
+個体に即反映させたい場合は、`mcp__obsidian__search_notes` 等の MCP tool 経路の方が向く
+（書き込み系は Pi のみ承認制）。

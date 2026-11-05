@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
-from ..identity.diff import ADDED, MODIFIED, REMOVED, Change
+from ..identity.diff import ADDED, REMOVED, Change
 from ..identity.manifest import COMPONENT_SCHEMA
 from ..identity.canonical import flatten_components
 

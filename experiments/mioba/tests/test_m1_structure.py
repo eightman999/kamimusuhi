@@ -11,7 +11,6 @@ from __future__ import annotations
 import random
 from collections import Counter
 
-import pytest
 
 from experiments.mioba.development.phenotype import develop
 from experiments.mioba.genome import mutation as mut

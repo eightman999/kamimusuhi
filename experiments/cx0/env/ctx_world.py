@@ -27,7 +27,7 @@ Actions: 0 NOOP, 1 FWD, 2 BACK, 3 INTERACT, 4 REST, 5 STORE, 6 RECALL,
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 

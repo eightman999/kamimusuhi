@@ -15,11 +15,11 @@ after building every condition.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence
+from typing import List, Optional, Sequence
 
 from ..index.inverted import InvertedIndex
-from ..retrieval.retriever import BM25Retriever, ScoredSpan
-from ..store.events import Event, Provenance, Span
+from ..retrieval.retriever import BM25Retriever
+from ..store.events import Provenance, Span
 from ..store.immutable_store import ImmutableEventStore
 from ..summarization.base import Summarizer
 from ..summarization.cascade import run_cascade

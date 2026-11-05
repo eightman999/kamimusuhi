@@ -6,17 +6,21 @@
 //! path; derived-lane drafts become pending proposals that a deterministic
 //! replay gate decides on.
 
+use std::collections::BTreeSet;
+
 use kamimusuhi_core::c0::{
     self, AllowedEvidence, ImprovementProposal, ProposalStatus, ReflectionEpisode, ReflectionInput,
-    ReflectionMemoryRecord, ReflectionOutput, TurnMetrics, validate_improvement_draft,
+    ReflectionMemoryRecord, ReflectionOutput, Reflector, TurnMetrics, validate_improvement_draft,
 };
 use kamimusuhi_core::continuity::WriterIdentity;
 use kamimusuhi_core::evidence::{
     EvidenceKind, EvidenceLookup, EvidenceRelation, EvidenceStore, NewEvidenceLink,
 };
-use kamimusuhi_core::ids::{C0ProposalId, EvidenceId, SessionId, TurnId};
-use kamimusuhi_core::memory::{MemoryQuery, MemoryRepository};
+use kamimusuhi_core::ids::{C0ProposalId, EvidenceId, MemoryId, SessionId, TurnId};
+use kamimusuhi_core::memory::{MemoryLink, MemoryQuery, MemoryRepository};
 use kamimusuhi_core::mutation::{MutationDomain, OriginClass};
+use kamimusuhi_core::persona::ProposalDraft;
+use kamimusuhi_core::time::UtcTimestamp;
 use serde::Serialize;
 
 use crate::c0::{self as lane, replay};
@@ -58,6 +62,28 @@ pub fn run(
     session_id: Option<SessionId>,
     turn_id: Option<TurnId>,
     writer_cache: &mut Option<WriterIdentity>,
+) -> Result<ReflectionReport, RuntimeError> {
+    let reflector = runtime.config().build_reflector()?;
+    run_with_reflector(
+        runtime,
+        subject,
+        session_id,
+        turn_id,
+        writer_cache,
+        reflector.as_ref(),
+    )
+}
+
+/// [`run`] with an explicit reflector. Everything past backend construction
+/// is identical — the seam exists so tests can drive the cycle with a
+/// fixture carrying declared metadata.
+pub fn run_with_reflector(
+    runtime: &mut Runtime,
+    subject: &str,
+    session_id: Option<SessionId>,
+    turn_id: Option<TurnId>,
+    writer_cache: &mut Option<WriterIdentity>,
+    reflector: &dyn Reflector,
 ) -> Result<ReflectionReport, RuntimeError> {
     let individual = runtime.individual_id();
 
@@ -160,14 +186,20 @@ pub fn run(
     };
 
     // --- reflect ------------------------------------------------------------
-    let reflector = runtime.config().build_reflector()?;
     let descriptor = reflector.descriptor();
-    let output: ReflectionOutput = reflector.reflect(&input)?;
+    let mut output: ReflectionOutput = reflector.reflect(&input)?;
     let actor_kind = runtime.config().persona.backend.as_str();
     let evaluator_distinct = descriptor.kind != actor_kind;
 
     // The manifest: which ids the output was allowed to cite, by kind.
     let allowed: AllowedEvidence = presented.iter().map(|e| (e.evidence_id, e.kind)).collect();
+    // Declared recall metadata is model output riding inside `candidate`:
+    // normalize it against the manifest before it becomes payload.
+    sanitize_declared_metadata(
+        &mut output.canonical_drafts,
+        &allowed,
+        &input.memory_records,
+    );
 
     // --- correction links ----------------------------------------------------
     let mut corrections_linked = 0usize;
@@ -360,4 +392,197 @@ pub fn run(
         gate_results,
         activations,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Declared recall metadata (producer side of recall v0)
+// ---------------------------------------------------------------------------
+
+/// The most tags a draft may declare — the cap the prompt states. Extras
+/// are dropped, not the draft.
+const MAX_DECLARED_TAGS: usize = 8;
+
+/// Fail-soft cleanup of producer-declared recall metadata on canonical
+/// drafts.
+///
+/// A draft may carry `tags`/`links`/`valid_from`/`valid_to` inside
+/// `candidate`; they land verbatim in the state record's payload where
+/// `StateRecord::{tags,links,valid_from,valid_to}` read them. Everything
+/// here is model output, so intake normalizes it the same way the rest of
+/// the reflector contract does: entries are kept only when they are
+/// well-formed *and* `evidence:`/`state:` links name ids the reflector was
+/// actually shown. A malformed field is dropped — never the draft.
+fn sanitize_declared_metadata(
+    drafts: &mut [ProposalDraft],
+    allowed: &AllowedEvidence,
+    presented_records: &[ReflectionMemoryRecord],
+) {
+    let presented_states: BTreeSet<MemoryId> = presented_records
+        .iter()
+        .map(|record| record.state_record_id)
+        .collect();
+    for draft in drafts {
+        let Some(candidate) = draft.candidate.as_object_mut() else {
+            continue;
+        };
+        // tags: a deduplicated string list, capped at MAX_DECLARED_TAGS.
+        let tags = candidate.get("tags").and_then(|value| {
+            let tags: Vec<serde_json::Value> = value
+                .as_array()?
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .take(MAX_DECLARED_TAGS)
+                .map(serde_json::Value::String)
+                .collect();
+            (!tags.is_empty()).then_some(serde_json::Value::Array(tags))
+        });
+        if let Some(tags) = tags {
+            candidate.insert("tags".to_owned(), tags);
+        } else {
+            candidate.remove("tags");
+        }
+        // links: typed refs to exactly the ids the input presented —
+        // evidence ids from the episode list, state ids from the memory
+        // records. Anything else is a dead end dropped at the boundary.
+        let links = candidate.get("links").and_then(|value| {
+            let links: Vec<serde_json::Value> = value
+                .as_array()?
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .filter_map(MemoryLink::parse)
+                .filter(|link| match link {
+                    MemoryLink::Evidence(id) => allowed.contains_key(id),
+                    MemoryLink::State(id) => presented_states.contains(id),
+                })
+                .map(|link| link.as_str())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .map(serde_json::Value::String)
+                .collect();
+            (!links.is_empty()).then_some(serde_json::Value::Array(links))
+        });
+        if let Some(links) = links {
+            candidate.insert("links".to_owned(), links);
+        } else {
+            candidate.remove("links");
+        }
+        // valid_from/valid_to: keep only the shapes the StateRecord readers
+        // accept — unix seconds (integer) or RFC 3339 text.
+        for key in ["valid_from", "valid_to"] {
+            let usable = candidate.get(key).is_some_and(|value| {
+                value.as_i64().is_some()
+                    || value
+                        .as_str()
+                        .is_some_and(|text| UtcTimestamp::from_rfc3339(text).is_some())
+            });
+            if !usable {
+                candidate.remove(key);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use kamimusuhi_core::mutation::MutationOperation;
+    use serde_json::json;
+
+    use super::*;
+
+    fn draft(candidate: serde_json::Value) -> ProposalDraft {
+        ProposalDraft {
+            domain: MutationDomain::Episodic,
+            operation: MutationOperation::Capture,
+            subject_key: Some("alice".to_owned()),
+            candidate,
+            evidence_refs: vec![],
+            supersedes: None,
+            origin_class: OriginClass::Reported,
+        }
+    }
+
+    fn presented(
+        evidence: &[EvidenceId],
+        states: &[MemoryId],
+    ) -> (AllowedEvidence, Vec<ReflectionMemoryRecord>) {
+        (
+            evidence
+                .iter()
+                .map(|id| (*id, EvidenceKind::UserUtterance))
+                .collect(),
+            states
+                .iter()
+                .map(|id| ReflectionMemoryRecord {
+                    state_record_id: *id,
+                    domain: MutationDomain::Episodic,
+                    subject_key: Some("alice".to_owned()),
+                    kind: "episode".to_owned(),
+                    payload: serde_json::json!({}),
+                    evidence_refs: vec![],
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn declared_metadata_is_normalized_against_what_was_presented() {
+        let evidence = EvidenceId::from_u128(0xE1);
+        let state = MemoryId::from_u128(0x51);
+        let (allowed, records) = presented(&[evidence], &[state]);
+        let mut drafts = vec![draft(json!({
+            "summary": "two utterances",
+            "tags": ["tea", 42, "preference", "tea"],
+            "links": [
+                format!("evidence:{evidence}"),
+                format!("state:{state}"),
+                "nonsense",
+                // Well-formed but never presented: dropped at intake.
+                format!("state:{}", MemoryId::from_u128(0xFF)),
+            ],
+            "valid_from": 1_700_000_000,
+            "valid_to": "2027-01-01T00:00:00Z",
+        }))];
+        sanitize_declared_metadata(&mut drafts, &allowed, &records);
+        let candidate = &drafts[0].candidate;
+        assert_eq!(candidate["tags"], json!(["preference", "tea"]));
+        assert_eq!(
+            candidate["links"],
+            json!([format!("evidence:{evidence}"), format!("state:{state}")])
+        );
+        assert_eq!(candidate["valid_from"], json!(1_700_000_000));
+        assert_eq!(candidate["valid_to"], json!("2027-01-01T00:00:00Z"));
+        assert_eq!(candidate["summary"], json!("two utterances"));
+    }
+
+    #[test]
+    fn malformed_declared_fields_are_dropped_not_the_draft() {
+        let (allowed, records) = presented(&[], &[]);
+        let mut drafts = vec![draft(json!({
+            "summary": "two utterances",
+            "tags": "not-an-array",
+            "links": [42, "state:zz"],
+            "valid_from": "not-a-date",
+            "valid_to": 1.5,
+        }))];
+        sanitize_declared_metadata(&mut drafts, &allowed, &records);
+        let candidate = &drafts[0].candidate;
+        for key in ["tags", "links", "valid_from", "valid_to"] {
+            assert!(candidate.get(key).is_none(), "{key} must be dropped");
+        }
+        assert_eq!(candidate["summary"], json!("two utterances"));
+    }
+
+    #[test]
+    fn declared_tags_are_deduplicated_and_capped() {
+        let (allowed, records) = presented(&[], &[]);
+        let mut drafts = vec![draft(json!({
+            "tags": ["t9", "t8", "t7", "t6", "t5", "t4", "t3", "t2", "t1", "t0"],
+        }))];
+        sanitize_declared_metadata(&mut drafts, &allowed, &records);
+        let tags = drafts[0].candidate["tags"].as_array().unwrap();
+        assert_eq!(tags.len(), MAX_DECLARED_TAGS);
+    }
 }

@@ -1,12 +1,10 @@
-import base64
 import json
 
 import numpy as np
 import pytest
 
 from ..env.c0_env import C0Config
-from ..persistence.artifact import (ARTIFACT_KEYS, ITEM_KEYS, read_artifact,
-                                    write_artifact)
+from ..persistence.artifact import ARTIFACT_KEYS, ITEM_KEYS, write_artifact
 from ..persistence.codec import (apply_condition, compress, decode_lossless,
                                  decode_payload, decompress,
                                  encode_lossless, flatten, mask_state,

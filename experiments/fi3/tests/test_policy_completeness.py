@@ -9,7 +9,6 @@ import pytest
 
 from experiments.fi3.identity.canonical import flatten_components
 from experiments.fi3.identity.diff import diff_manifests
-from experiments.fi3.identity.manifest import COMPONENT_SCHEMA
 from experiments.fi3.policies.compatibility import (
     BREAKING,
     CLASSIFICATIONS,

@@ -6,10 +6,8 @@ run. Raises BackendUnavailable when pygenn is not installed.
 """
 from __future__ import annotations
 
-import time
 
 from .backend import BackendUnavailable, FbaBackend
-from .torch_backend import PARAMS, _load_connectome
 
 try:
     import pygenn  # noqa: F401

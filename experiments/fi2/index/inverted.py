@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List
 
 from ..store.events import Event
 

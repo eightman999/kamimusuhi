@@ -1,5 +1,4 @@
 """Synthetic live protocol boundaries; these do not execute hardware jobs."""
-import copy
 import json
 import tempfile
 import unittest

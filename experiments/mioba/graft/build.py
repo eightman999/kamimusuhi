@@ -14,7 +14,7 @@ from pathlib import Path
 import pandas as pd
 
 from ..anatomy import schema as A
-from ..graft.namespaces import host_id, parse_host_id
+from ..graft.namespaces import parse_host_id
 from ..graft.schema import GraftSpec, HostSelector
 
 

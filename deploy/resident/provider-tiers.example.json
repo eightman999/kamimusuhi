@@ -1,0 +1,107 @@
+{
+  "_comment": "Extra routing tiers for the Pi resident (append to resident.json \"tiers\"). Only add a tier after its key is in secrets.env (KEY_FILES=... deploy/resident/push-secrets.sh). privacy_ok_for_private_memory is true only where the provider's own terms say API inputs are not used for training (checked 2026-09-24): Groq services agreement (free tier included), Cerebras terms of service, OpenAI API data docs. Gemini API free tier, OpenRouter :free models and OrcaRouter (data terms not confirmed) may train, so they only serve requests marked non-private. Everyday chat (FAST_CHAT) prefers llm_master (Gemma 4, keeps the persona's voice) via its prefer_lanes; these clouds are the fallback when it is asleep or slow (gpt-oss answers in polite keigo, off-persona). Prices from provider_bench (USD per 1M tokens).",
+  "tiers": [
+    {
+      "name": "groq",
+      "billing": "free_tier",
+      "base_url": "https://api.groq.com/openai/v1",
+      "model": "openai/gpt-oss-120b",
+      "auth_env": "GROQ_API_KEY",
+      "timeout_secs": 30,
+      "probe_interval_secs": 120,
+      "privacy_ok_for_private_memory": true,
+      "reasoning_suppression": true,
+      "context_limit_tokens": 131072,
+      "approx_tpm_limit": 15000,
+      "extra_body": {
+        "reasoning_effort": "low"
+      },
+      "strip_fields": [
+        "chat_template_kwargs"
+      ]
+    },
+    {
+      "name": "cerebras",
+      "billing": "metered",
+      "base_url": "https://api.cerebras.ai/v1",
+      "model": "gpt-oss-120b",
+      "auth_env": "CEREBRAS_API_KEY",
+      "timeout_secs": 30,
+      "probe_interval_secs": 120,
+      "input_usd_per_mtok": 0.25,
+      "output_usd_per_mtok": 0.69,
+      "privacy_ok_for_private_memory": true,
+      "reasoning_suppression": true,
+      "context_limit_tokens": 131072,
+      "extra_body": {
+        "reasoning_effort": "low"
+      },
+      "strip_fields": [
+        "chat_template_kwargs"
+      ]
+    },
+    {
+      "name": "openai",
+      "billing": "metered",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "auth_env": "OPENAI_API_KEY",
+      "timeout_secs": 60,
+      "probe_interval_secs": 300,
+      "input_usd_per_mtok": 0.25,
+      "output_usd_per_mtok": 2.0,
+      "privacy_ok_for_private_memory": true,
+      "reasoning_suppression": true,
+      "context_limit_tokens": 400000,
+      "extra_body": {
+        "reasoning_effort": "minimal"
+      },
+      "strip_fields": [
+        "chat_template_kwargs"
+      ]
+    },
+    {
+      "name": "gemini",
+      "billing": "free_tier",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "model": "gemini-3.1-flash-lite",
+      "auth_env": "GEMINI_API_KEY",
+      "timeout_secs": 30,
+      "probe_interval_secs": 300,
+      "privacy_ok_for_private_memory": false,
+      "reasoning_suppression": true,
+      "context_limit_tokens": 1048576,
+      "extra_body": {
+        "reasoning_effort": "low"
+      },
+      "strip_fields": [
+        "chat_template_kwargs"
+      ]
+    },
+    {
+      "name": "openrouter",
+      "billing": "free_tier",
+      "base_url": "https://openrouter.ai/api/v1",
+      "model": "google/gemma-4-31b-it:free",
+      "auth_env": "OPENROUTER_API_KEY",
+      "timeout_secs": 60,
+      "probe_interval_secs": 300,
+      "privacy_ok_for_private_memory": false,
+      "reasoning_suppression": false,
+      "strip_fields": [
+        "chat_template_kwargs"
+      ]
+    },
+    {
+      "name": "orcarouter",
+      "billing": "free_tier",
+      "base_url": "https://api.orcarouter.ai/v1",
+      "model": "deepseek/deepseek-v4-flash-free",
+      "auth_env": "ORCAROUTER_API_KEY",
+      "timeout_secs": 60,
+      "probe_interval_secs": 300,
+      "privacy_ok_for_private_memory": false,
+      "reasoning_suppression": false
+    }
+  ]
+}

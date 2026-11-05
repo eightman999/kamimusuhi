@@ -12,13 +12,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from experiments.mioba.body.body0 import (Environment, BodyState,
-                                          bearing, decode_motor,
-                                          encode_sensory,
-                                          pick_sensorimotor_circuit,
-                                          run_episode, run_oracle,
-                                          select_ports, step_body,
-                                          wrap_pi)
+from experiments.mioba.body.body0 import Environment, BodyState, bearing, decode_motor, encode_sensory, pick_sensorimotor_circuit, run_oracle, select_ports, step_body, wrap_pi
 from experiments.mioba.fba.torch_backend import TorchBackend
 from experiments.mioba.physio.channels import build_channel
 from experiments.mioba.physio.fly_channels import (FLY_CHANNELS,

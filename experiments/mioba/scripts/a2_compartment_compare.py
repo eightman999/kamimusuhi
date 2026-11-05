@@ -21,7 +21,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 from ..anatomy import schema as A
 from ..anatomy import compartments as C

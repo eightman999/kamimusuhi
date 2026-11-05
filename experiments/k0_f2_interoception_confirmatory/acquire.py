@@ -1,7 +1,7 @@
 """Real telemetry alignment and bounded, block-separated hardware job measurement."""
-import argparse,bisect,copy,hashlib,json,os,random,signal,subprocess,sys,threading,time
+import argparse, bisect, copy, json, os, random, signal, subprocess, sys, threading, time
 from pathlib import Path
-from .workloads import JobPool,devices,gpu_temperatures
+from .workloads import JobPool, devices
 from .normalize import align_records,DEFAULT_CONFIG
 
 from .protocol import TASKS,LABELS,SESSIONS,task_features,load_lock,lock_sha256,lock_receipt

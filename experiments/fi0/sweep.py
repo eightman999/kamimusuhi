@@ -24,7 +24,7 @@ import dataclasses
 import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence
+from typing import Any, Dict, Iterator, List, Sequence
 
 import yaml
 

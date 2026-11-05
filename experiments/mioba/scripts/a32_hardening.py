@@ -21,8 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from ..anatomy import compartments as C
-from ..physio.calibrate import (BOUNDS, TARGETS, calibrate_profile,
-                                single_node_phys)
+from ..physio.calibrate import TARGETS, calibrate_profile, single_node_phys
 from ..physio.benchmark import eval_profile
 from ..physio.fly_compiler import AIS, compile_reduced_graph_v4
 from ..physio.fly_overlay import (build_fly_overlay, load_fly_overlay,

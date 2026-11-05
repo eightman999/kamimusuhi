@@ -227,6 +227,35 @@ pub struct PersonaProviderConfig {
     /// the individual's own and which are borrowed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<String>,
+    /// Whether the model thinks before answering. Off by default: ordinary
+    /// dialogue and tool calls do not need reasoning tokens.
+    #[serde(default)]
+    pub reasoning: ReasoningSetting,
+    /// Provider-specific fields merged into every chat request (for example
+    /// sampling parameters). The turn's own keys cannot be replaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_body: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// See [`kamimusuhi_persona_http::ReasoningMode`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningSetting {
+    #[default]
+    Off,
+    On,
+    /// Off, except for host-requested repair or clarification turns.
+    Auto,
+}
+
+impl ReasoningSetting {
+    pub const fn to_backend(self) -> kamimusuhi_persona_http::ReasoningMode {
+        match self {
+            Self::Off => kamimusuhi_persona_http::ReasoningMode::Off,
+            Self::On => kamimusuhi_persona_http::ReasoningMode::On,
+            Self::Auto => kamimusuhi_persona_http::ReasoningMode::Auto,
+        }
+    }
 }
 
 fn default_persona_locality() -> LocalityClass {
@@ -247,15 +276,15 @@ impl PersonaProviderConfig {
         &self,
         tools: Option<&ToolServerSetting>,
     ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
-        self.build_persona_with(tools, None)
+        self.build_persona_with(tools, &AvatarIdentity::default())
     }
 
     /// As [`Self::build_persona_with_tools`], also naming the individual's
-    /// avatar in dialogue.
+    /// avatar (and what else refers to it) in dialogue.
     pub fn build_persona_with(
         &self,
         tools: Option<&ToolServerSetting>,
-        avatar_name: Option<&str>,
+        identity: &AvatarIdentity<'_>,
     ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
         if self.locality == LocalityClass::InProcess {
             return Err(RuntimeError::PersonaConfig {
@@ -275,7 +304,10 @@ impl PersonaProviderConfig {
         }
         config = config
             .with_tools(tools.map(ToolServerSetting::to_backend))
-            .with_display_name(avatar_name);
+            .with_display_name(identity.name)
+            .with_identity(identity.aliases, identity.self_description)
+            .with_reasoning(self.reasoning.to_backend())
+            .with_extra_body(self.extra_body.clone());
         config
             .validate()
             .map_err(|message| RuntimeError::PersonaConfig { message })?;
@@ -405,13 +437,13 @@ impl PersonaSetting {
         &self,
         tools: Option<&ToolServerSetting>,
     ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
-        self.build_with(tools, None)
+        self.build_with(tools, &AvatarIdentity::default())
     }
 
     pub fn build_with(
         &self,
         tools: Option<&ToolServerSetting>,
-        avatar_name: Option<&str>,
+        identity: &AvatarIdentity<'_>,
     ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
         self.check_privacy(PrivacyConstraint::Unconstrained)?;
         match self.backend {
@@ -423,7 +455,7 @@ impl PersonaSetting {
                         .ok_or_else(|| RuntimeError::PersonaConfig {
                             message: "openai-compatible needs a persona provider entry".to_owned(),
                         })?;
-                provider.build_persona_with(tools, avatar_name)
+                provider.build_persona_with(tools, identity)
             }
         }
     }
@@ -559,6 +591,14 @@ pub struct RuntimeConfig {
     /// presentation setting: it does not change the individual's identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_name: Option<String>,
+    /// Other names for the same individual (e.g. `Mio`, `みお`). Presentation
+    /// only, like `avatar_name`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub avatar_aliases: Vec<String>,
+    /// Operator-authored description of what the individual is and runs on,
+    /// given to the model so it answers questions about itself as itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_self_description: Option<String>,
     /// Whether the genome's `exploration_probability` may admit uncertain,
     /// non-baseline recall candidates into the workspace. Off by default:
     /// the legacy behaviour (uncertain candidates are dropped) is unchanged
@@ -567,6 +607,14 @@ pub struct RuntimeConfig {
     /// before it is enabled.
     #[serde(default)]
     pub genome_exploration: bool,
+}
+
+/// Who the Persona speaks as: display name, aliases and self description.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AvatarIdentity<'a> {
+    pub name: Option<&'a str>,
+    pub aliases: &'a [String],
+    pub self_description: Option<&'a str>,
 }
 
 /// An MCP-like tool server (the resident's `/v1/tools`). Every tool it
@@ -585,6 +633,11 @@ pub struct ToolServerSetting {
     /// Tool names offered. Empty offers every tool the server lists.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed: Vec<String>,
+    /// Tools offered from the first round; the other allowed tools are
+    /// discoverable via `tool_catalog` / `tool_enable`. Absent: built-in
+    /// tools upfront, MCP tools (`mcp__*`) discoverable. `["*"]` offers all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core: Option<Vec<String>>,
 }
 
 const fn default_tool_rounds() -> u32 {
@@ -602,6 +655,7 @@ impl ToolServerSetting {
         config.max_rounds = self.max_rounds;
         config.timeout_ms = self.timeout_ms;
         config.allowed = self.allowed.clone();
+        config.core = self.core.clone();
         config
     }
 }
@@ -625,6 +679,8 @@ impl RuntimeConfig {
             tools: None,
             reference: None,
             avatar_name: None,
+            avatar_aliases: Vec::new(),
+            avatar_self_description: None,
             genome_exploration: false,
         }
     }
@@ -633,7 +689,7 @@ impl RuntimeConfig {
     /// [`Self::build_registry`]: the two namespaces never mix.
     pub fn build_persona(&self) -> Result<Box<dyn PersonaCore>, RuntimeError> {
         self.persona
-            .build_with(self.tools.as_ref(), self.avatar_name.as_deref())
+            .build_with(self.tools.as_ref(), &self.avatar_identity())
     }
 
     /// Build an additional language organ with the same tool access as the
@@ -642,16 +698,26 @@ impl RuntimeConfig {
         &self,
         provider: &PersonaProviderConfig,
     ) -> Result<Box<dyn PersonaCore>, RuntimeError> {
-        provider.build_persona_with(self.tools.as_ref(), self.avatar_name.as_deref())
+        provider.build_persona_with(self.tools.as_ref(), &self.avatar_identity())
+    }
+
+    fn avatar_identity(&self) -> AvatarIdentity<'_> {
+        AvatarIdentity {
+            name: self.avatar_name.as_deref(),
+            aliases: &self.avatar_aliases,
+            self_description: self.avatar_self_description.as_deref(),
+        }
     }
 
     /// Build the reflector this config selects. `Mirror` resolves against the
     /// persona setting, so the default needs no extra configuration.
     pub fn build_reflector(&self) -> Result<Box<dyn kamimusuhi_core::c0::Reflector>, RuntimeError> {
         match self.c0.reflector.backend {
-            ReflectorBackend::Fake => Ok(Box::new(kamimusuhi_testkit::FakeReflector)),
+            ReflectorBackend::Fake => Ok(Box::new(kamimusuhi_testkit::FakeReflector::default())),
             ReflectorBackend::Mirror => match self.persona.backend {
-                PersonaBackendKind::Fake => Ok(Box::new(kamimusuhi_testkit::FakeReflector)),
+                PersonaBackendKind::Fake => {
+                    Ok(Box::new(kamimusuhi_testkit::FakeReflector::default()))
+                }
                 PersonaBackendKind::OpenaiCompatible => {
                     let provider = self.persona.provider.as_ref().ok_or_else(|| {
                         RuntimeError::PersonaConfig {
@@ -937,5 +1003,50 @@ mod tests {
         assert!("gpt-4".parse::<ResourceImplementation>().is_err());
         assert!(ResourceImplementation::OpenaiCompatible.is_networked());
         assert!(!ResourceImplementation::FakeA.is_networked());
+    }
+
+    #[test]
+    fn persona_provider_reasoning_defaults_off_and_round_trips() {
+        let provider: PersonaProviderConfig = serde_json::from_value(serde_json::json!({
+            "backend_id": "7230930b8007a073bc04b25b8f2016d5",
+            "base_url": "http://127.0.0.1:7860/v1", "model": "kamimusuhi", "timeout_ms": 1000
+        }))
+        .unwrap();
+        assert_eq!(provider.reasoning, ReasoningSetting::Off);
+        assert!(provider.extra_body.is_none());
+        let serialized = serde_json::to_value(&provider).unwrap();
+        assert_eq!(serialized["reasoning"], "off");
+        assert!(serialized.get("extra_body").is_none());
+
+        let provider: PersonaProviderConfig = serde_json::from_value(serde_json::json!({
+            "backend_id": "7230930b8007a073bc04b25b8f2016d5",
+            "base_url": "http://127.0.0.1:7860/v1", "model": "kamimusuhi", "timeout_ms": 1000,
+            "reasoning": "auto", "extra_body": {"temperature": 0.2}
+        }))
+        .unwrap();
+        assert_eq!(
+            provider.reasoning.to_backend(),
+            kamimusuhi_persona_http::ReasoningMode::Auto
+        );
+        assert_eq!(provider.extra_body.unwrap()["temperature"], 0.2);
+    }
+
+    #[test]
+    fn tool_server_core_reaches_the_backend() {
+        let setting: ToolServerSetting = serde_json::from_value(serde_json::json!({
+            "base_url": "http://127.0.0.1:7860", "allowed": ["json_get", "mcp__context7__*"],
+            "core": ["json_*"]
+        }))
+        .unwrap();
+        let backend = setting.to_backend();
+        assert_eq!(backend.core.as_deref(), Some(&["json_*".to_owned()][..]));
+        assert!(backend.is_core("json_get"));
+        assert!(!backend.is_core("mcp__context7__query"));
+        let default: ToolServerSetting =
+            serde_json::from_value(serde_json::json!({"base_url": "http://127.0.0.1:7860"}))
+                .unwrap();
+        assert!(default.core.is_none());
+        assert!(default.to_backend().is_core("task_list"));
+        assert!(!default.to_backend().is_core("mcp__nas__read_text_file"));
     }
 }

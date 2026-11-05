@@ -2,7 +2,7 @@
 
 **日本語（本ページ）** | [English](./README.en.md)
 
-**かみむすび（Kamimusuhi）**は、ひとつのモデルや一台のコンピュータに閉じない、**永続・分散・発達する人工認知個体 / 情報空間上の人工生命体**を作るための実験的アーキテクチャです。
+**かみむすび（Kamimusuhi）**は、ひとつのモデルに閉じず、必要な感覚器・認知器官・計算資源を複数の計算機へ配置できる、**永続・発達する人工認知個体 / 情報空間上の人工生命体**を作るための実験的アーキテクチャです。
 
 目標は「長い system prompt を持つチャットボット」ではありません。セッション、モデル、端末、推論基盤が変わっても、**同じ個体としての自己・履歴・関係・権限系譜を継続できるシステム**を作ります。
 
@@ -22,7 +22,7 @@
 - 睡眠・再生・統合・忘却・夢に相当するオフライン処理
 - 視覚・聴覚・触覚・環境・機械テレメトリを束ねる人工感覚系
 - 発話、割り込み、相槌、韻律を含む音声運動系
-- 複数端末・複数計算機にまたがる分散身体
+- 複数端末・複数計算機へ配置できる感覚器・認知器官・計算資源
 - 自分が現在どの計算資源上で動いているかを把握する computational embodiment
 - モデルやハードウェアが交換されても追跡可能な一つの continuity lineage
 
@@ -291,23 +291,28 @@ memory / VRAM / thermal pressure
 
 「Python を C に書き換えれば速い」ではなく、**hot path と model-bound path を分けて測定する**のが原則です。
 
-## 分散しても一人であるために
+## 分散構成と個体境界
 
-複数端末が同時に感覚・推論・cache・proposal を持つことは許します。
+Kamimusuhi では、**器官や計算資源の分散**と、**個体そのものの複製**を分けます。
 
-しかし canonical self-state は、古い状態から勝手に二つの正統後継を作れません。
+カメラ、センサー、検索、GPU、LLM、worker などを複数端末へ配置しても、それらが bounded な organ / resource として一つの個体へ結果を返す限り、それは個体の複製ではありません。
+
+一方、canonical self-state を読み書きし、自律的に判断・発話・commit できる完全な runtime を複数ノードへコピーして同時に活動させる場合、それらを「分散した同じ一人」とは扱いません。**独立して活動可能になった時点で、別 `individual_id` / continuity root を持つ個体、または明示的な fork として扱います。**
+
+同一個体として許すのは、旧 runtime を停止・fence したうえで新 runtime へ authority を移す **migration / handoff** と、まだ発話・commit 権限を持たない inert な standby です。
 
 Continuity Kernel は少なくとも次を担います。
 
-- canonical head / lineage
+- individual ごとの canonical head / lineage
 - expected predecessor の検証
 - stale writer の拒否
 - atomic activation
-- split-brain detection
+- active writer / migration boundary の検証
+- accidental split-brain の検出と拒否
 - migration checkpoint
 - audit / recovery metadata
 
-ネットワーク分断で競合 branch が生じた場合は、明示的な reconciliation / quarantine / fork 指定が必要です。
+ネットワーク分断などで独立した branch が活動を始めた場合、後から履歴を混ぜて「実はずっと一人だった」ことにはしません。quarantine して、どの lineage を継続するかを明示するか、別個体として fork します。
 
 ## 実行・副作用も状態機械として扱う
 
@@ -376,7 +381,7 @@ v0.1 の狙いは **continuity slice** です。
 ./scripts/demo-v0.1.sh
 ```
 
-これは **別プロセス2つ** を1つの runtime directory に対して走らせます。process B に渡すのはディレクトリのパスだけで、会話ログも prompt buffer も共有メモリも渡しません。それでも同じ individual を canonical state から復元し、認知資源を差し替えたうえで応答します。
+これは **別プロセス2つを順番に** 1つの runtime directory に対して走らせる、再開 / handoff のデモです。process B に渡すのはディレクトリのパスだけで、会話ログも prompt buffer も共有メモリも渡しません。process A と B を独立個体として同時稼働させるものではなく、B が canonical state から同じ lineage を再開し、認知資源を差し替えたうえで応答します。
 
 個別に実行する場合:
 
@@ -412,9 +417,15 @@ MIO coordinatorのURL・実験ID・genome IDを後から設定すると、その
     ./scripts/run-desktop.sh
 
     # Jev -> 全対象器官のrace開始 -> 匿名候補の品質判定（外部送信を明示）
-    /Users/eightman/dev/sandbox/kamimusuhi/scripts/run-desktop.sh \
+    ./scripts/run-desktop.sh \
       --privacy unconstrained \
-      --dir /Users/eightman/dev/sandbox/kamimusuhi/.local/desktop
+      --dir .local/desktop
+
+常駐個体（Pi）と話す既定モードは、macOSアプリとしても起動できます。
+`~/.config/kamimusuhi/nodes` と `node_token` を読むので、Finderから起動しても同じ接続先を使います。
+
+    # target/macos/Kamimusuhi.app を作り、~/Applications へ配置
+    ./scripts/build-macos-app.sh --install
 
 画面にはチャット、会話用K-CORE state、追加LLM API登録、観測済み生成候補、Jevの根拠・帰属・依頼適合性評価と各遅延を表示します。`HAI_API_KEY` とJev設定をexportして起動すると、HAIの `qwen3.8-27b-uncensored` と `llm-jp-4-vl-9b` を自動登録します。追加APIはOpenAI-compatible `/chat/completions` として登録します。発話前のJev batchで発話可否・記憶の関連性・不足情報を判定した後、primaryを含む有効・privacy許可・必要な認証設定済みの全器官をrace開始します。最初の有効完了と10ms以内の同着1件までを匿名候補として品質判定し、ACCEPTなら遅い器官を待たずに返します。
 
@@ -487,7 +498,31 @@ cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase res
 
 ## 現在の状態
 
-**Alpha / v0.1 continuity slice 実装済み。** 上記 10 項目の continuity slice は Rust + SQLite で実装され、テストで検証されています。実装範囲は W0–W7:
+**Alpha / v0.1 continuity slice 実装済み + 常設ノード構成（resident）が稼働中。**
+現在の実装は二層です。`crates/` の個体 runtime が continuity・証拠・記憶を正本 SQLite で担保し、
+その上で `kamimusuhi-resident`（バイナリ名 `kamimusuhi`）が tailnet 内の各マシンに常駐して
+**OpenAI 互換の HTTP API**・個体対話・ノード間委譲・tool/MCP・承認フローを提供します。
+
+- **常設構成**: `continuity` ノード（個体の正本・scheduler・K-CORE 監督）と `cognition` ノード
+  （local LLM・GPU・Task Plane）を HTTP+bearer token で接続。LAN と tailnet の複数アドレスを
+  `alt_urls` で自動切替し、外部サービス依存なしに tailnet で完結できます。
+- **API**: `/v1/chat/completions`（privacy/cost guard 付き自動ルーティング）・
+  `/v1/kamimusuhi/talk`（個体と話す）・`/v1/tasks` `/v1/agents` `/v1/commitments`
+  `/v1/intercom` `/v1/tools` `/v1/library` `/task` ほか。詳細は
+  [`deploy/resident/README.md`](./deploy/resident/README.md) と
+  [`deepwiki/03-api-reference.md`](./deepwiki/03-api-reference.md)。
+- **接続面**: `kamimusuhi chat`（CLI）、`kami`（TUI）、`kamimusuhi-desktop`（ネイティブ GUI /
+  macOS アプリ）、Discord bot。どの面も同じ個体・同じ subject で会話を共有します。
+- **姉妹個体**: `dialogue` を持つノード同士は別個体（intercom の envelope で会話。
+  直接配送 + Cloudflare relay の任意 fallback）。
+- **持続する目標**: Commitment Engine が checkpoint・再計画ラダー L0–L6・予算で
+  再起動・失敗を跨いだ耐久目標を追跡します（`docs/implementation/commitment-engine.md`）。
+
+**ドキュメント**: コードから逆引きした現状地図は [`deepwiki/`](./deepwiki/README.md)、
+導入の最短ルートは [`deepwiki/02-quickstart.md`](./deepwiki/02-quickstart.md)
+（tailnet 内の1台に resident を立てて API で使う手順）を参照してください。
+
+上記 10 項目の continuity slice は Rust + SQLite で実装され、テストで検証されています。実装範囲は W0–W7:
 
 - W0–W1: Cargo workspace、canonical continuity（single-writer、atomic activation、writer fencing、restart 復元、failpoint 検証）
 - W2: canonical evidence と durable episodic/relationship memory、correction/supersession、domain separation

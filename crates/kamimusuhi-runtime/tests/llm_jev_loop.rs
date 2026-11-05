@@ -226,6 +226,8 @@ fn prepared(server: &FixtureServer) -> (tempfile::TempDir, Runtime) {
             timeout_ms: 2_000,
             tls_root_ca_path: None,
             system_instruction: None,
+            reasoning: Default::default(),
+            extra_body: None,
         }),
         seed: config.persona.seed.clone(),
     };
@@ -269,6 +271,8 @@ fn fanout_session(
                 timeout_ms: 2_000,
                 tls_root_ca_path: None,
                 system_instruction: None,
+                reasoning: Default::default(),
+                extra_body: None,
             },
         )
         .unwrap();
@@ -1245,6 +1249,8 @@ fn jev_selects_anonymous_generated_response_from_ready_race_batch() {
                 timeout_ms: 2_000,
                 tls_root_ca_path: None,
                 system_instruction: None,
+                reasoning: Default::default(),
+                extra_body: None,
             },
         )
         .unwrap();

@@ -20,7 +20,7 @@ import numpy as np
 from .config_util import build_runner, git_commit, load_env_cfg
 from .env.c0_env import C0Env
 from .persistence.artifact import read_artifact, write_artifact
-from .persistence.codec import state_spec_from, decode_payload
+from .persistence.codec import decode_payload
 from .persistence.interrupt import run_leg, capture_payloads
 from .run_phase_a import runner_spec
 

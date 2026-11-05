@@ -13,12 +13,10 @@ labels (2/3/4/7) — ingestion records whichever the file has.
 """
 from __future__ import annotations
 
-import math
 import numpy as np
 import pandas as pd
 from pathlib import Path
 
-from .provenance import Provenance
 
 #: SWC type code → canonical compartment (§14)
 SWC_TYPE_TO_COMPARTMENT = {

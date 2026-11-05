@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..env.c0_env import IGNORE, STORE, ANSWER, ITEM, QUERY
+from ..env.c0_env import IGNORE, STORE, ANSWER, ITEM
 from .slot_memory import SlotMemory
 
 

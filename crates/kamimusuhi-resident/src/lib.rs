@@ -9,19 +9,30 @@
 //! It never initializes an individual and never writes canonical state.
 
 pub mod approvals;
+pub mod capabilities;
 pub mod client;
+pub mod commitments;
 pub mod config;
+pub mod delegation;
 pub mod dialogue;
+pub mod intercom;
 pub mod jobs;
+pub mod judge;
 pub mod kcore;
 pub mod library;
 pub mod mcp;
 pub mod probes;
+pub mod remote;
 pub mod router;
+pub mod selfmon;
 pub mod server;
 pub mod spool;
 pub mod state;
 pub mod status;
+pub mod task_ledger;
+pub mod task_orchestrator;
+pub mod task_worktree;
 pub mod tasks;
 pub mod tools;
+pub mod usage;
 pub mod util;

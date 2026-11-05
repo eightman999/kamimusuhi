@@ -9,9 +9,10 @@
 use std::time::{Duration, Instant};
 
 use kamimusuhi_resource_http::{Endpoint, Header, TrustAnchors, http};
+use kamimusuhi_runtime::route_gate::{BillingClass, RouteGate, RouteLane, RouteProvider};
 use serde_json::{Map, Value, json};
 
-use crate::config::{TierCondition, TierConfig};
+use crate::config::{TierBilling, TierCondition, TierConfig};
 use crate::probes::{ROUTE_HEADER, bearer, describe};
 use crate::state::{RouteEvent, Shared};
 use crate::util::unix_now;
@@ -32,6 +33,144 @@ pub struct Routed {
     pub body: Value,
     pub tier: Option<String>,
     pub attempts: Vec<String>,
+    /// The routing event recorded for this request.
+    pub event: Option<RouteEvent>,
+}
+
+impl RouteProvider for TierConfig {
+    fn route_id(&self) -> &str {
+        &self.name
+    }
+
+    fn billing(&self) -> BillingClass {
+        match self.billing.unwrap_or(TierBilling::Metered) {
+            TierBilling::Local => BillingClass::Local,
+            TierBilling::Subscription => BillingClass::Subscription,
+            TierBilling::FreeTier => BillingClass::FreeTier,
+            TierBilling::Metered => BillingClass::Metered,
+        }
+    }
+
+    fn privacy_ok_for_private_memory(&self) -> bool {
+        self.privacy_ok_for_private_memory.unwrap_or(matches!(
+            self.billing,
+            Some(TierBilling::Local) | Some(TierBilling::Subscription)
+        ))
+    }
+
+    fn context_limit_tokens(&self) -> Option<u64> {
+        self.context_limit_tokens
+    }
+
+    fn approx_tpm_limit(&self) -> Option<u64> {
+        self.approx_tpm_limit
+    }
+
+    fn reasoning_suppression(&self) -> bool {
+        self.reasoning_suppression.unwrap_or(false)
+    }
+
+    fn route_available(&self) -> bool {
+        self.billing.is_some() && !self.base_url.is_empty()
+    }
+
+    fn preferred_for(&self, lane: RouteLane) -> bool {
+        self.prefer_lanes.contains(&lane)
+    }
+}
+
+fn request_private(shared: &Shared, request: &RouteRequest) -> bool {
+    request
+        .body
+        .get("kamimusuhi_private")
+        .and_then(Value::as_bool)
+        .unwrap_or(shared.config.routing.private_by_default)
+}
+
+/// The lane an auto-routed request belongs to. An explicit
+/// `kamimusuhi_route_lane` hint wins; otherwise the request's shape decides,
+/// so callers that send plain OpenAI bodies (the Persona Core does) are not
+/// all treated as fast chat.
+fn route_lane(shared: &Shared, request: &RouteRequest) -> RouteLane {
+    if request.local_only || request.body.get("model").and_then(Value::as_str) == Some("k0") {
+        return RouteLane::LocalChat;
+    }
+    match request
+        .body
+        .get("kamimusuhi_route_lane")
+        .and_then(Value::as_str)
+    {
+        Some("LOCAL_CHAT") => return RouteLane::LocalChat,
+        Some("FAST_CHAT") => return RouteLane::FastChat,
+        Some("DEEP_REASONING") => return RouteLane::DeepReasoning,
+        Some("TOOL_TASK") => return RouteLane::ToolTask,
+        Some("MEMORY_HEAVY") => return RouteLane::MemoryHeavy,
+        _ => {}
+    }
+    let last = request
+        .body
+        .get("messages")
+        .and_then(Value::as_array)
+        .and_then(|messages| messages.last());
+    let last_role = last
+        .and_then(|message| message.get("role"))
+        .and_then(Value::as_str);
+    // A follow-up round of a tool loop: the person is already waiting on the
+    // tools, so a first-token latency ceiling must not bench its provider.
+    if last_role == Some("tool") {
+        return RouteLane::ToolTask;
+    }
+    if prompt_tokens_est(&request.body) >= shared.config.routing.memory_heavy_prompt_tokens {
+        return RouteLane::MemoryHeavy;
+    }
+    // Quick everyday exchanges are short; a long request is substantive work
+    // that should go to the stronger conversational tiers first.
+    let input_chars = last
+        .filter(|_| last_role == Some("user"))
+        .and_then(|message| message.get("content"))
+        .map_or(0, |content| match content {
+            Value::String(text) => text.chars().count(),
+            other => other.to_string().chars().count(),
+        });
+    if input_chars > shared.config.routing.fast_chat_max_input_chars {
+        return RouteLane::DeepReasoning;
+    }
+    RouteLane::FastChat
+}
+
+fn lane_name(lane: RouteLane) -> String {
+    serde_json::to_value(lane)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+
+fn prompt_tokens_est(body: &Value) -> u64 {
+    // Same conservative approximation used by provider-bench.  The resident
+    // sees the fully assembled OpenAI-compatible body, so this includes the
+    // persona prefix/history rather than only the latest user message.
+    let bytes = u64::try_from(body.to_string().len()).unwrap_or(u64::MAX);
+    bytes.saturating_add(2) / 3
+}
+
+fn completion_tokens_for_cost(shared: &Shared, body: &Value) -> Result<u32, String> {
+    // Providers honor either spelling and both may be present after
+    // extra_body merging; the priced worst case is the largest output cap
+    // the sent body actually allows. Reject invalid/oversized values:
+    // pricing a smaller default while forwarding null or a huge cap
+    // would not bound what the provider can bill.
+    let mut maximum = None;
+    for key in ["max_completion_tokens", "max_tokens"] {
+        if let Some(value) = body.get(key) {
+            let limit = value
+                .as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| *n > 0)
+                .ok_or_else(|| format!("cost guard: invalid {key}"))?;
+            maximum = Some(maximum.map_or(limit, |previous: u32| previous.max(limit)));
+        }
+    }
+    Ok(maximum.unwrap_or(shared.config.routing.max_completion_tokens_for_cost))
 }
 
 fn prompt_chars(body: &Value) -> usize {
@@ -61,8 +200,11 @@ pub fn plan<'a>(
         .get("model")
         .and_then(Value::as_str)
         .unwrap_or("kamimusuhi");
+    let private = request_private(shared, request);
 
-    // Forced tier: `hai` or `hai/glm-5.3`.
+    // Forced tier: `hai` or `hai/glm-5.3`. Explicit routing still obeys
+    // the privacy wall and local-only boundary; cost limits are enforced at
+    // call time below.
     if !AUTO_MODELS.contains(&requested) {
         let (name, model) = requested.split_once('/').unwrap_or((requested, ""));
         let tier = tiers
@@ -71,6 +213,12 @@ pub fn plan<'a>(
             .ok_or_else(|| format!("unknown model or tier {requested:?}"))?;
         if request.local_only && !tier.node_local {
             return Err(format!("tier {name} is not local to this node"));
+        }
+        if tier.billing.is_none() {
+            return Err(format!("tier {name} has no declared billing class"));
+        }
+        if private && !tier.privacy_ok_for_private_memory() {
+            return Err(format!("tier {name} is not eligible for private memory"));
         }
         let model = if model.is_empty() {
             tier.model.clone()
@@ -82,8 +230,28 @@ pub fn plan<'a>(
 
     let small = requested == "k0"
         || prompt_chars(&request.body) <= shared.config.routing.small_request_chars;
-    let eligible: Vec<&TierConfig> = tiers
-        .iter()
+    let lane = route_lane(shared, request);
+    let gate = RouteGate {
+        fast_chat_ttft_ceiling_ms: Some(shared.config.routing.fast_chat_latency_ceiling_ms),
+        ..Default::default()
+    };
+    let health = shared
+        .route_health
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let candidates = gate.select(
+        lane,
+        tiers,
+        prompt_tokens_est(&request.body),
+        private,
+        &health,
+        Instant::now(),
+    );
+    drop(health);
+
+    let eligible: Vec<&TierConfig> = candidates
+        .into_iter()
+        .map(|candidate| candidate.spec)
         .filter(|t| !request.local_only || t.node_local)
         .filter(|t| t.condition == TierCondition::Always || small)
         .collect();
@@ -102,15 +270,52 @@ pub fn plan<'a>(
     }
     Ok(chosen.into_iter().map(|t| (t, t.model.clone())).collect())
 }
-
-fn call_tier(tier: &TierConfig, model: &str, body: &Value) -> Result<Value, String> {
+/// The body actually sent to `tier`: routing-owned fields set, host-only
+/// hints removed, and the tier's own field adjustments applied.
+fn upstream_body(
+    tier: &TierConfig,
+    model: &str,
+    body: &Value,
+    default_max_tokens: Option<u32>,
+) -> Value {
     let mut upstream = body.clone();
     if let Value::Object(map) = &mut upstream {
         map.insert("model".into(), Value::String(model.to_owned()));
         // Streaming is re-synthesized by the server from the full reply.
         map.insert("stream".into(), Value::Bool(false));
         map.remove("stream_options");
+        // Host-only policy hints must never be forwarded to providers.
+        map.remove("kamimusuhi_private");
+        map.remove("kamimusuhi_route_lane");
+        for field in &tier.strip_fields {
+            if !matches!(field.as_str(), "model" | "stream" | "messages") {
+                map.remove(field);
+            }
+        }
+        if let Some(extra) = &tier.extra_body {
+            for (key, value) in extra {
+                if !matches!(key.as_str(), "model" | "stream" | "messages") {
+                    map.entry(key.clone()).or_insert_with(|| value.clone());
+                }
+            }
+        }
+        if let Some(max_tokens) = default_max_tokens
+            && !map.contains_key("max_tokens")
+            && !map.contains_key("max_completion_tokens")
+        {
+            // OpenAI-compatible providers universally used by this router
+            // accept max_tokens; bounding output makes the cost pre-flight
+            // estimate an enforceable upper bound for metered fallbacks.
+            map.insert("max_tokens".into(), Value::from(max_tokens));
+        }
     }
+    upstream
+}
+
+/// Send an already-shaped upstream body to `tier` and validate the reply.
+/// Callers build the body once with [`upstream_body`] so the same JSON
+/// that a guard priced is the JSON on the wire.
+fn call_tier(tier: &TierConfig, upstream: &Value) -> Result<Value, String> {
     let mut headers: Vec<Header> = bearer(tier.auth_env.as_deref())?;
     if tier.peer_local_only {
         headers.push(Header {
@@ -139,19 +344,170 @@ fn call_tier(tier: &TierConfig, model: &str, body: &Value) -> Result<Value, Stri
     if !has_choice {
         return Err("reply has no choices".to_owned());
     }
+    if response_kind(&value).is_none() {
+        // Reasoning is not a final expression or an executable tool call.
+        // Do not accept a reasoning-only 200 and prevent a usable fallback.
+        // Only a closed metadata vocabulary can enter diagnostic records.
+        return Err(format!(
+            "reply has no usable content, tool calls or refusal (finish_reason={})",
+            completion_finish_reason(&value)
+        ));
+    }
     Ok(value)
+}
+
+fn nonblank_string(value: &Value) -> bool {
+    value.as_str().is_some_and(|text| !text.trim().is_empty())
+}
+
+/// The first choice is the one consumed by Persona and the SSE adapter.
+/// Preserve refusals and standard function calls without promoting reasoning.
+fn response_kind(value: &Value) -> Option<&'static str> {
+    let message = value.pointer("/choices/0/message")?;
+    if nonblank_string(&message["refusal"]) {
+        return Some("refusal");
+    }
+    if nonblank_string(&message["content"]) {
+        return Some("content");
+    }
+    let calls = message["tool_calls"].as_array()?;
+    (!calls.is_empty()
+        && calls.iter().all(|call| {
+            call["type"] == "function"
+                && nonblank_string(&call["id"])
+                && nonblank_string(&call["function"]["name"])
+                && call["function"]["arguments"].is_string()
+        }))
+    .then_some("tool_calls")
+}
+
+/// Upstream metadata is untrusted too; never copy arbitrary provider text
+/// into failure diagnostics or the metadata-only completion fields.
+fn completion_finish_reason(value: &Value) -> &'static str {
+    match value
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+    {
+        Some("stop") => "stop",
+        Some("length") => "length",
+        Some("tool_calls") => "tool_calls",
+        Some("function_call") => "function_call",
+        Some("content_filter") => "content_filter",
+        Some(_) => "unknown",
+        None => "missing",
+    }
+}
+
+pub(crate) struct GuardedReply {
+    pub body: Value,
+    cost_usd: Option<f64>,
+    cost_kind: Option<&'static str>,
+}
+
+pub(crate) fn call_tier_guarded(
+    shared: &Shared,
+    tier: &TierConfig,
+    model: &str,
+    body: &Value,
+) -> Result<GuardedReply, String> {
+    if tier.billing != Some(TierBilling::Metered) {
+        let reply = call_tier(tier, &upstream_body(tier, model, body, None))?;
+        let usage = usage_of(&reply);
+        let (cost_usd, cost_kind) = cost_of(tier, &usage);
+        return Ok(GuardedReply {
+            body: reply,
+            cost_usd,
+            cost_kind,
+        });
+    }
+    let price = tier
+        .input_usd_per_mtok
+        .zip(tier.output_usd_per_mtok)
+        .ok_or_else(|| "cost guard: metered tier has no declared price".to_owned())?;
+    // The guard prices the exact body the provider will receive:
+    // strip_fields / extra_body can remove, keep or raise the output cap
+    // the client sent — or add one it did not — so the estimate and the
+    // permit decision are computed from the shaped body, and that same
+    // body is what goes on the wire.
+    let upstream = upstream_body(
+        tier,
+        model,
+        body,
+        Some(shared.config.routing.max_completion_tokens_for_cost),
+    );
+    let prompt_tokens = prompt_tokens_est(&upstream);
+    let max_completion_tokens = completion_tokens_for_cost(shared, &upstream)?;
+    // Keep the guard locked through the paid call. Metered fallbacks are
+    // rare, and serializing only those calls prevents concurrent requests
+    // from both reserving the same remaining daily/monthly budget.
+    let mut guard = shared.cost_guard.lock().unwrap_or_else(|p| p.into_inner());
+    let estimate = guard.estimate(Some(price), prompt_tokens, max_completion_tokens);
+    guard
+        .permit(estimate)
+        .map_err(|error| format!("cost guard: {error}"))?;
+    match call_tier(tier, &upstream) {
+        Ok(reply) => {
+            let usage = usage_of(&reply);
+            let (reported_cost, reported_kind) = cost_of(tier, &usage);
+            let cost_usd = reported_cost.or(estimate);
+            let cost_kind = reported_kind.or_else(|| estimate.map(|_| "estimate"));
+            if let Some(cost) = cost_usd {
+                guard.record_cost(cost);
+            } else {
+                guard.record_unpriced();
+            }
+            Ok(GuardedReply {
+                body: reply,
+                cost_usd,
+                cost_kind,
+            })
+        }
+        Err(error) => {
+            // A provider may bill work even when the reply times out, is
+            // malformed, or is rejected by our final-response checks. Charge
+            // the pre-flight upper-bound estimate to the local budget rather
+            // than assuming a failed request was free.
+            if let Some(estimate) = estimate {
+                guard.record_cost(estimate);
+            } else {
+                guard.record_unpriced();
+            }
+            Err(error)
+        }
+    }
 }
 
 pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
     let started = Instant::now();
+    let requested = request
+        .body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("kamimusuhi");
+    let lane = AUTO_MODELS
+        .contains(&requested)
+        .then(|| lane_name(route_lane(shared, request)));
     let plan = match plan(shared, request) {
         Ok(plan) => plan,
         Err(e) => {
+            let event = RouteEvent {
+                at: unix_now(),
+                lane: lane.clone(),
+                latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                ..RouteEvent::default()
+            };
+            shared.usage.record_request(&event, true);
+            let _ = shared.spool.append(
+                "logs/routing",
+                serde_json::to_value(&event).unwrap_or(Value::Null),
+            );
+            *shared.last_route.write().unwrap_or_else(|p| p.into_inner()) = Some(event.clone());
             return Routed {
                 status: 400,
                 body: error_body(&e, "invalid_request_error"),
                 tier: None,
                 attempts: Vec::new(),
+                event: Some(event),
             };
         }
     };
@@ -159,21 +515,96 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
     let mut result = None;
     for (tier, model) in plan {
         let tier_started = Instant::now();
-        match call_tier(tier, &model, &request.body) {
-            Ok(mut body) => {
+        match call_tier_guarded(shared, tier, &model, &request.body) {
+            Ok(GuardedReply {
+                mut body,
+                cost_usd,
+                cost_kind,
+            }) => {
+                let ms = u64::try_from(tier_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                let usage = usage_of(&body);
+                let actual_model = body
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .filter(|model| !model.trim().is_empty())
+                    .unwrap_or(&model)
+                    .to_owned();
+                shared.usage.record_attempt(&RouteEvent {
+                    at: unix_now(),
+                    tier: Some(tier.name.clone()),
+                    model: Some(actual_model.clone()),
+                    billing: tier.billing.map(|b| b.as_str().to_owned()),
+                    latency_ms: ms,
+                    ok: true,
+                    prompt_tokens: usage.prompt_tokens,
+                    completion_tokens: usage.completion_tokens,
+                    cached_tokens: usage.cached_tokens,
+                    cache_write_tokens: usage.cache_write_tokens,
+                    cost_usd,
+                    cost_kind: cost_kind.map(str::to_owned),
+                    ..RouteEvent::default()
+                });
+                shared.set_tier(&tier.name, Ok(Value::Null), ms);
+                shared
+                    .route_health
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get_mut(&tier.name)
+                    .observe(
+                        true,
+                        Some(ms),
+                        false,
+                        usage.cached_tokens,
+                        Duration::from_secs(60),
+                        Instant::now(),
+                    );
                 if let Value::Object(map) = &mut body {
                     map.insert(
                         "kamimusuhi_route".into(),
-                        json!({"tier": tier.name, "model": model, "attempts": attempts.clone()}),
+                        json!({
+                            "tier": tier.name,
+                            "model": actual_model,
+                            "billing": tier.billing.map(|b| b.as_str()),
+                            "cost_usd": cost_usd,
+                            "cost_kind": cost_kind,
+                            "prompt_tokens": usage.prompt_tokens,
+                            "completion_tokens": usage.completion_tokens,
+                            "cached_tokens": usage.cached_tokens,
+                            "cache_write_tokens": usage.cache_write_tokens,
+                            "attempts": attempts.clone(),
+                        }),
                     );
                 }
                 attempts.push(format!("{}:ok", tier.name));
-                result = Some((tier.name.clone(), body));
+                result = Some((tier, body, actual_model, usage, cost_usd, cost_kind));
                 break;
             }
             Err(e) => {
                 let ms = u64::try_from(tier_started.elapsed().as_millis()).unwrap_or(u64::MAX);
-                shared.set_tier(&tier.name, Err(format!("request failed: {e}")), ms);
+                if !e.starts_with("cost guard:") {
+                    shared.usage.record_attempt(&RouteEvent {
+                        at: unix_now(),
+                        tier: Some(tier.name.clone()),
+                        model: Some(model.clone()),
+                        billing: tier.billing.map(|b| b.as_str().to_owned()),
+                        latency_ms: ms,
+                        ..RouteEvent::default()
+                    });
+                    shared.set_tier(&tier.name, Err(format!("request failed: {e}")), ms);
+                    shared
+                        .route_health
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .get_mut(&tier.name)
+                        .observe(
+                            false,
+                            None,
+                            e == "HTTP 429",
+                            None,
+                            Duration::from_secs(60),
+                            Instant::now(),
+                        );
+                }
                 attempts.push(format!("{}:{e}", tier.name));
             }
         }
@@ -181,27 +612,45 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let event = RouteEvent {
         at: unix_now(),
-        tier: result.as_ref().map(|(t, _)| t.clone()),
+        lane,
+        tier: result.as_ref().map(|(t, ..)| t.name.clone()),
+        model: result.as_ref().map(|(_, _, m, ..)| m.clone()),
+        billing: result
+            .as_ref()
+            .and_then(|(t, ..)| t.billing.map(|b| b.as_str().to_owned())),
         attempts: attempts.clone(),
         latency_ms,
         ok: result.is_some(),
+        prompt_tokens: result.as_ref().and_then(|(.., u, _, _)| u.prompt_tokens),
+        completion_tokens: result
+            .as_ref()
+            .and_then(|(.., u, _, _)| u.completion_tokens),
+        cached_tokens: result.as_ref().and_then(|(.., u, _, _)| u.cached_tokens),
+        cache_write_tokens: result
+            .as_ref()
+            .and_then(|(.., u, _, _)| u.cache_write_tokens),
+        cost_usd: result.as_ref().and_then(|(.., c, _)| *c),
+        cost_kind: result.as_ref().and_then(|(.., k)| k.map(str::to_owned)),
     };
     let _ = shared.spool.append(
         "logs/routing",
         serde_json::to_value(&event).unwrap_or(Value::Null),
     );
-    *shared.last_route.write().unwrap_or_else(|p| p.into_inner()) = Some(event);
+    shared.usage.record_request(&event, false);
+    *shared.last_route.write().unwrap_or_else(|p| p.into_inner()) = Some(event.clone());
 
     match result {
-        Some((tier, body)) => {
+        Some((tier, body, _model, ..)) => {
             if shared.config.routing.log_conversations && !request.local_only {
-                let _ = shared.spool.append(
+                let _ = shared.spool.append_sync(
                     "conversations",
                     json!({
-                        "tier": tier,
+                        "tier": tier.name,
                         "latency_ms": latency_ms,
                         "request": {"model": request.body.get("model"), "messages": request.body.get("messages")},
                         "response": body.pointer("/choices/0/message"),
+                        "response_kind": response_kind(&body),
+                        "finish_reason": completion_finish_reason(&body),
                         "usage": body.get("usage"),
                     }),
                 );
@@ -209,8 +658,9 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
             Routed {
                 status: 200,
                 body,
-                tier: Some(tier),
+                tier: Some(tier.name.clone()),
                 attempts,
+                event: Some(event),
             }
         }
         None => Routed {
@@ -221,8 +671,83 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
             ),
             tier: None,
             attempts,
+            event: Some(event),
         },
     }
+}
+
+/// Token accounting from a completion's `usage` block — the same shapes
+/// the provider bench records, plus upstream-reported billed cost
+/// (`usage.cost_usd`, OrcaRouter's `X-OrcaRouter-Include-Cost` field, or
+/// OpenRouter's `usage.cost`).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TurnUsage {
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+    /// Prompt tokens served from the provider's prefix cache (a cache
+    /// *read* hit — never a cache write).
+    pub cached_tokens: Option<u64>,
+    /// Prompt tokens the provider wrote into its prefix cache on this
+    /// call (Anthropic `cache_creation_input_tokens`), when reported.
+    pub cache_write_tokens: Option<u64>,
+    /// Billed cost the upstream reported on the response, when present.
+    pub actual_cost_usd: Option<f64>,
+}
+
+fn usage_of(body: &Value) -> TurnUsage {
+    let usage = &body["usage"];
+    let num = |key: &str| usage.get(key).and_then(Value::as_u64);
+    let cost = usage
+        .get("cost_usd")
+        .or_else(|| usage.get("cost"))
+        .and_then(Value::as_f64);
+    // Cache-read hits, first non-null wins, most specific shape first:
+    //   1. OpenAI/Groq `prompt_tokens_details.cached_tokens`
+    //   2. Anthropic-compat `cache_read_input_tokens`
+    //   3. DeepSeek `prompt_cache_hit_tokens` and the `input_cache_hit`
+    //      spelling some compat shims use
+    //   4. A bare `usage.cached_tokens` for providers that flatten the
+    //      detail object onto the usage record
+    // Miss counters (`prompt_cache_miss_tokens`, `input_cache_miss`) are
+    // deliberately ignored: they are ordinary prompt tokens, already
+    // counted by `prompt_tokens` — `cached_tokens` means *served from
+    // cache*, matching `cacheReadTokens` in the RDSH harness.
+    let cached_tokens = usage
+        .pointer("/prompt_tokens_details/cached_tokens")
+        .and_then(Value::as_u64)
+        .or_else(|| num("cache_read_input_tokens"))
+        .or_else(|| num("prompt_cache_hit_tokens"))
+        .or_else(|| num("input_cache_hit"))
+        .or_else(|| num("cached_tokens"));
+    TurnUsage {
+        prompt_tokens: num("prompt_tokens"),
+        completion_tokens: num("completion_tokens"),
+        cached_tokens,
+        cache_write_tokens: num("cache_creation_input_tokens"),
+        actual_cost_usd: cost,
+    }
+}
+
+/// Cost basis for one served request. Actual billed cost wins; a tier with
+/// configured prices yields an estimate; otherwise `None` — an undeclared
+/// plan's cost is unknown, not free.
+fn cost_of(tier: &TierConfig, usage: &TurnUsage) -> (Option<f64>, Option<&'static str>) {
+    if let Some(cost) = usage.actual_cost_usd {
+        return (Some(cost), Some("actual"));
+    }
+    if let (Some(input), Some(output), Some(prompt_tokens), Some(completion_tokens)) = (
+        tier.input_usd_per_mtok,
+        tier.output_usd_per_mtok,
+        usage.prompt_tokens,
+        usage.completion_tokens,
+    ) {
+        let tokens = prompt_tokens as f64 * input + completion_tokens as f64 * output;
+        return (Some(tokens / 1e6), Some("estimate"));
+    }
+    // Missing usage cannot safely be interpreted as zero tokens. The
+    // production CostGuard still books its pre-flight upper-bound estimate,
+    // while the UI reports the amount as unknown rather than "$0.0000".
+    (None, None)
 }
 
 fn error_body(message: &str, kind: &str) -> Value {
@@ -250,7 +775,7 @@ pub fn to_sse(body: &Value) -> String {
         .unwrap_or_else(|| json!("stop"));
     let mut delta = Map::new();
     delta.insert("role".into(), json!("assistant"));
-    for key in ["content", "reasoning_content", "tool_calls"] {
+    for key in ["content", "refusal", "reasoning_content", "tool_calls"] {
         if let Some(v) = message.get(key).filter(|v| !v.is_null()) {
             delta.insert(key.into(), v.clone());
         }
@@ -284,10 +809,13 @@ mod tests {
             "node": {"id": "pi", "role": "continuity", "listen": "127.0.0.1:0"},
             "paths": {"root": dir.path()},
             "tiers": [
-                {"name": "local", "base_url": "http://127.0.0.1:9/v1", "model": "tiny",
-                 "condition": "small_request", "node_local": true},
-                {"name": "llm_master", "base_url": "http://127.0.0.1:9/v1", "model": "big"},
-                {"name": "hai", "base_url": "https://example.invalid/v1", "model": "q"}
+                {"name": "local", "billing": "local", "base_url": "http://127.0.0.1:9/v1", "model": "tiny",
+                 "condition": "small_request", "node_local": true,
+                 "privacy_ok_for_private_memory": true, "reasoning_suppression": true},
+                {"name": "llm_master", "billing": "local", "base_url": "http://127.0.0.1:9/v1", "model": "big",
+                 "privacy_ok_for_private_memory": true, "reasoning_suppression": true},
+                {"name": "hai", "billing": "subscription", "base_url": "https://example.invalid/v1", "model": "q",
+                 "privacy_ok_for_private_memory": true, "reasoning_suppression": true}
             ]
         }))
         .expect("config");
@@ -297,6 +825,457 @@ mod tests {
 
     fn names(plan: &[(&TierConfig, String)]) -> Vec<String> {
         plan.iter().map(|(t, _)| t.name.clone()).collect()
+    }
+
+    fn completion_server(reply: Value) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture");
+        let url = format!("http://{}/v1", listener.local_addr().expect("address"));
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept fixture");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("timeout");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                assert!(reader.read_line(&mut line).expect("request header") > 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    length = value.trim().parse::<usize>().expect("length");
+                }
+            }
+            reader
+                .read_exact(&mut vec![0; length])
+                .expect("request body");
+            let body = reply.to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(), body
+            )
+            .expect("reply");
+        });
+        (url, handle)
+    }
+
+    /// Like `completion_server`, but the handle yields the request JSON
+    /// the upstream actually received.
+    fn capturing_completion_server(reply: Value) -> (String, std::thread::JoinHandle<Value>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture");
+        let url = format!("http://{}/v1", listener.local_addr().expect("address"));
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept fixture");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("timeout");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                assert!(reader.read_line(&mut line).expect("request header") > 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    length = value.trim().parse::<usize>().expect("length");
+                }
+            }
+            let mut request = vec![0; length];
+            reader.read_exact(&mut request).expect("request body");
+            let body = reply.to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(), body
+            )
+            .expect("reply");
+            serde_json::from_slice(&request).expect("request JSON")
+        });
+        (url, handle)
+    }
+
+    #[test]
+    fn usage_and_cost_are_extracted_for_the_route_event() {
+        let body = json!({
+            "usage": {
+                "prompt_tokens": 1200,
+                "completion_tokens": 40,
+                "prompt_tokens_details": {"cached_tokens": 512}
+            }
+        });
+        let usage = usage_of(&body);
+        assert_eq!(usage.prompt_tokens, Some(1200));
+        assert_eq!(usage.completion_tokens, Some(40));
+        assert_eq!(usage.cached_tokens, Some(512));
+        assert_eq!(usage.actual_cost_usd, None);
+
+        // Upstream-reported billed cost wins over the configured estimate.
+        let billed = json!({"usage": {"prompt_tokens": 1, "cost_usd": 0.007}});
+        let usage = usage_of(&billed);
+        let mut tier = TierConfig {
+            name: "t".into(),
+            base_url: "http://x/v1".into(),
+            model: "m".into(),
+            auth_env: None,
+            timeout_secs: 1,
+            condition: TierCondition::Always,
+            node_local: false,
+            peer_local_only: false,
+            probe_interval_secs: 1,
+            billing: Some(crate::config::TierBilling::Metered),
+            input_usd_per_mtok: Some(1.0),
+            output_usd_per_mtok: Some(2.0),
+            privacy_ok_for_private_memory: Some(true),
+            context_limit_tokens: None,
+            approx_tpm_limit: None,
+            reasoning_suppression: Some(true),
+            extra_body: None,
+            strip_fields: Vec::new(),
+            prefer_lanes: Vec::new(),
+        };
+        let (cost, kind) = cost_of(&tier, &usage);
+        assert_eq!(cost, Some(0.007));
+        assert_eq!(kind, Some("actual"));
+
+        // No actual cost → estimate from configured prices.
+        let usage = usage_of(&json!({"usage": {"prompt_tokens": 1_000_000,
+                                              "completion_tokens": 500_000}}));
+        let (cost, kind) = cost_of(&tier, &usage);
+        assert_eq!(cost, Some(2.0));
+        assert_eq!(kind, Some("estimate"));
+
+        // Missing usage is unknown, never a fabricated zero-dollar turn.
+        let missing = usage_of(&json!({"choices": []}));
+        let (cost, kind) = cost_of(&tier, &missing);
+        assert_eq!(cost, None);
+        assert_eq!(kind, None);
+
+        // An undeclared plan reports no cost — never zero.
+        tier.input_usd_per_mtok = None;
+        let (cost, kind) = cost_of(&tier, &usage);
+        assert_eq!(cost, None);
+        assert_eq!(kind, None);
+    }
+
+    #[test]
+    fn usage_of_reads_each_provider_cache_field_shape() {
+        // OpenAI/Groq: nested prompt_tokens_details.
+        let u = usage_of(&json!({"usage": {"prompt_tokens": 100,
+            "prompt_tokens_details": {"cached_tokens": 64}}}));
+        assert_eq!(u.cached_tokens, Some(64));
+
+        // Anthropic-style compat names: reads are cache hits, creations
+        // are writes — never merged into each other.
+        let u = usage_of(&json!({"usage": {"prompt_tokens": 100,
+            "cache_read_input_tokens": 80,
+            "cache_creation_input_tokens": 20}}));
+        assert_eq!(u.cached_tokens, Some(80));
+        assert_eq!(u.cache_write_tokens, Some(20));
+
+        // DeepSeek counters, both spellings; the miss counter is input,
+        // not a hit, and must not inflate cached_tokens.
+        let u = usage_of(&json!({"usage": {"prompt_tokens": 100,
+            "prompt_cache_hit_tokens": 40,
+            "prompt_cache_miss_tokens": 60}}));
+        assert_eq!(u.cached_tokens, Some(40));
+        let u = usage_of(&json!({"usage": {"prompt_tokens": 100,
+            "input_cache_hit": 30, "input_cache_miss": 70}}));
+        assert_eq!(u.cached_tokens, Some(30));
+
+        // A flat usage.cached_tokens is the last-resort shape.
+        let u = usage_of(&json!({"usage": {"prompt_tokens": 100,
+            "cached_tokens": 12}}));
+        assert_eq!(u.cached_tokens, Some(12));
+
+        // The nested details object wins when several shapes coexist.
+        let u = usage_of(&json!({"usage": {"prompt_tokens": 100,
+            "prompt_tokens_details": {"cached_tokens": 5},
+            "cache_read_input_tokens": 9}}));
+        assert_eq!(u.cached_tokens, Some(5));
+
+        // Nothing reported → None, never a fabricated zero.
+        let u = usage_of(&json!({"usage": {"prompt_tokens": 3}}));
+        assert_eq!(u.cached_tokens, None);
+        assert_eq!(u.cache_write_tokens, None);
+    }
+
+    #[test]
+    fn usage_records_invalid_routes_without_upstream_attempts_or_request_body() {
+        let (s, _dir) = shared();
+        let routed = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "nonexistent", "messages": [{"role": "user", "content": "private content"}]}),
+                local_only: false,
+            },
+        );
+        assert_eq!(routed.status, 400);
+        let history = s.usage.history(10, None);
+        let records = history["records"].as_array().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["kind"], "request");
+        assert_eq!(records[0]["outcome"], "invalid");
+        assert!(!history.to_string().contains("private content"));
+    }
+
+    #[test]
+    fn usage_records_failed_tier_attempt_and_failed_request_separately() {
+        let (s, _dir) = shared();
+        let routed = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "local", "messages": [{"role": "user", "content": "hi"}]}),
+                local_only: true,
+            },
+        );
+        assert_eq!(routed.status, 503);
+        let history = s.usage.history(10, None);
+        let records = history["records"].as_array().unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["kind"], "request");
+        assert_eq!(records[0]["outcome"], "error");
+        assert_eq!(records[1]["kind"], "attempt");
+        assert_eq!(records[1]["model"], "tiny");
+        assert_eq!(records[1]["outcome"], "error");
+        assert!(records[1]["cost_usd"].is_null());
+        assert!(!history.to_string().contains("127.0.0.1"));
+    }
+
+    #[test]
+    fn usage_records_reported_model_and_excludes_cost_guard_rejections_from_attempts() {
+        let (url, server) = completion_server(json!({
+            "model": "tiny-version-2026",
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]
+        }));
+        let (mut s, _dir) = shared();
+        s.config.tiers[0].base_url = url;
+        let routed = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "local"}),
+                local_only: true,
+            },
+        );
+        assert_eq!(routed.status, 200);
+        assert_eq!(
+            routed.body["kamimusuhi_route"]["model"],
+            "tiny-version-2026"
+        );
+        assert_eq!(
+            s.usage.history(10, None)["records"][0]["model"],
+            "tiny-version-2026"
+        );
+        server.join().expect("fixture finished");
+
+        let (mut s, _dir) = shared();
+        s.config.tiers[0].billing = Some(TierBilling::Metered);
+        let routed = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "local"}),
+                local_only: true,
+            },
+        );
+        assert_eq!(routed.status, 503);
+        let history = s.usage.history(10, None);
+        let records = history["records"].as_array().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["kind"], "request");
+    }
+
+    #[test]
+    fn route_metadata_reaches_the_response_body() {
+        let (url, server) = completion_server(json!({
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 5, "cost_usd": 0.001}
+        }));
+        let (mut s, _dir) = shared();
+        let mut tier = s.config.tiers[2].clone();
+        tier.base_url = url;
+        tier.billing = Some(crate::config::TierBilling::Metered);
+        tier.input_usd_per_mtok = Some(1.0);
+        tier.output_usd_per_mtok = Some(1.0);
+        tier.privacy_ok_for_private_memory = Some(true);
+        s.config.tiers = vec![tier];
+        let req = RouteRequest {
+            body: json!({"model": "kamimusuhi",
+                         "messages": [{"role": "user", "content": "hi"}]}),
+            local_only: false,
+        };
+        let routed = route(&s, &req);
+        assert_eq!(routed.status, 200);
+        let meta = &routed.body["kamimusuhi_route"];
+        assert_eq!(meta["tier"], "hai");
+        assert_eq!(meta["billing"], "metered");
+        assert_eq!(meta["cost_usd"], 0.001);
+        assert_eq!(meta["cost_kind"], "actual");
+        assert_eq!(meta["prompt_tokens"], 100);
+        let event = s
+            .last_route
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+            .expect("route event");
+        assert_eq!(event.model.as_deref(), Some("q"));
+        assert_eq!(event.billing.as_deref(), Some("metered"));
+        assert_eq!(event.cost_usd, Some(0.001));
+        let history = s.usage.history(10, None);
+        let records = history["records"].as_array().unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["kind"], "request");
+        assert_eq!(records[1]["kind"], "attempt");
+        assert_eq!(records[1]["cost_kind"], "actual");
+        server.join().expect("fixture finished");
+    }
+
+    #[test]
+    fn metered_missing_usage_reports_the_preflight_estimate() {
+        let (url, server) = completion_server(json!({
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]
+        }));
+        let (mut s, _dir) = shared();
+        let mut tier = s.config.tiers[2].clone();
+        tier.base_url = url;
+        tier.auth_env = None;
+        tier.billing = Some(crate::config::TierBilling::Metered);
+        tier.input_usd_per_mtok = Some(1.0);
+        tier.output_usd_per_mtok = Some(1.0);
+        tier.privacy_ok_for_private_memory = Some(true);
+        s.config.tiers = vec![tier];
+        let req = RouteRequest {
+            body: json!({"model": "kamimusuhi",
+                         "messages": [{"role": "user", "content": "hi"}]}),
+            local_only: false,
+        };
+        let routed = route(&s, &req);
+        assert_eq!(routed.status, 200);
+        let meta = &routed.body["kamimusuhi_route"];
+        assert_eq!(meta["cost_kind"], "estimate");
+        assert!(meta["cost_usd"].as_f64().is_some_and(|cost| cost > 0.0));
+        assert!(
+            s.cost_guard
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .spent_usd()
+                > 0.0
+        );
+        server.join().expect("fixture finished");
+    }
+
+    #[test]
+    fn response_shapes_keep_content_refusals_and_standard_tool_calls() {
+        let completion = |message| json!({"choices": [{"message": message}]});
+        assert_eq!(
+            response_kind(&completion(json!({"content": "こんにちは"}))),
+            Some("content")
+        );
+        assert_eq!(
+            response_kind(&completion(
+                json!({"content": null, "refusal": "対応できません"})
+            )),
+            Some("refusal")
+        );
+        assert_eq!(
+            response_kind(&completion(json!({"content": null, "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {
+                    "name": "library_search", "arguments": "{\"query\":\"Rust\"}"
+                }}
+            ]}))),
+            Some("tool_calls")
+        );
+        for message in [
+            json!({"content": "", "reasoning_content": "internal reasoning"}),
+            json!({"content": " \n\t", "refusal": " ", "tool_calls": []}),
+            json!({"content": null, "tool_calls": [{}]}),
+            json!({"tool_calls": [{"id": "c", "type": "function", "function": {
+                "name": " ", "arguments": "{}"
+            }}]}),
+        ] {
+            assert_eq!(response_kind(&completion(message)), None);
+        }
+    }
+
+    #[test]
+    fn reasoning_only_http_200_falls_back_without_leaking_provider_text() {
+        let (bad_url, bad_server) = completion_server(json!({"choices": [{
+            "message": {"role": "assistant", "content": " \n",
+                        "reasoning_content": "PRIVATE_REASONING"},
+            "finish_reason": "PRIVATE_PROVIDER_METADATA"
+        }]}));
+        let (good_url, good_server) = completion_server(json!({"choices": [{
+            "message": {"role": "assistant", "content": "確認できました"},
+            "finish_reason": "stop"
+        }]}));
+        let (mut s, _dir) = shared();
+        let mut bad = s.config.tiers[2].clone();
+        bad.base_url = bad_url;
+        let mut good = s.config.tiers[1].clone();
+        good.base_url = good_url;
+        s.config.tiers = vec![bad, good];
+        let req = RouteRequest {
+            body: json!({"model": "kamimusuhi", "messages": [{"role": "user", "content": "hi"}]}),
+            local_only: false,
+        };
+        let routed = route(&s, &req);
+        assert_eq!(routed.status, 200);
+        assert_eq!(routed.tier.as_deref(), Some("llm_master"));
+        assert_eq!(
+            routed.body["choices"][0]["message"]["content"],
+            "確認できました"
+        );
+        assert_eq!(routed.attempts.len(), 2);
+        assert!(routed.attempts[0].contains("finish_reason=unknown"));
+        assert!(!routed.attempts.join(" ").contains("PRIVATE_"));
+        assert!(!s.tier_healthy("hai"));
+        bad_server.join().expect("bad fixture finished");
+        good_server.join().expect("good fixture finished");
+
+        let directory = s.spool.root().join("conversations/pi");
+        let log = std::fs::read_dir(directory)
+            .expect("conversation log directory")
+            .next()
+            .expect("conversation log")
+            .expect("entry")
+            .path();
+        let record: Value =
+            serde_json::from_str(std::fs::read_to_string(log).expect("read log").trim())
+                .expect("record");
+        assert_eq!(record["finish_reason"], "stop");
+        assert_eq!(record["response_kind"], "content");
+    }
+
+    #[test]
+    fn finish_reason_metadata_uses_only_known_values() {
+        for reason in [
+            "stop",
+            "length",
+            "tool_calls",
+            "function_call",
+            "content_filter",
+        ] {
+            assert_eq!(
+                completion_finish_reason(&json!({"choices": [{"finish_reason": reason}]})),
+                reason
+            );
+        }
+        assert_eq!(completion_finish_reason(&json!({})), "missing");
+        assert_eq!(
+            completion_finish_reason(&json!({"choices": [{"finish_reason": "private text"}]})),
+            "unknown"
+        );
     }
 
     #[test]
@@ -322,6 +1301,166 @@ mod tests {
             names(&plan(&s, &req).expect("plan")),
             ["llm_master", "hai"],
             "recovered primary is preferred again"
+        );
+    }
+
+    #[test]
+    fn a_measured_tier_does_not_starve_its_unmeasured_sibling() {
+        let (s, _dir) = shared();
+        for t in ["llm_master", "hai"] {
+            s.set_tier(t, Ok(Value::Null), 1);
+        }
+        let req = RouteRequest {
+            body: json!({"model": "kamimusuhi", "messages": [{"role": "user", "content": "x".repeat(5000)}]}),
+            local_only: false,
+        };
+        // HAI answered first and got a latency sample; llm_master never
+        // has. It must still be tried, or it can never earn a sample.
+        s.route_health.lock().unwrap().get_mut("hai").observe(
+            true,
+            Some(1_500),
+            false,
+            None,
+            Duration::from_secs(60),
+            Instant::now(),
+        );
+        assert_eq!(names(&plan(&s, &req).expect("plan")), ["llm_master", "hai"]);
+        // Measured slower, it yields to the faster tier of the same band.
+        s.route_health
+            .lock()
+            .unwrap()
+            .get_mut("llm_master")
+            .observe(
+                true,
+                Some(3_000),
+                false,
+                None,
+                Duration::from_secs(60),
+                Instant::now(),
+            );
+        assert_eq!(names(&plan(&s, &req).expect("plan")), ["hai", "llm_master"]);
+    }
+
+    #[test]
+    fn tier_field_adjustments_shape_the_upstream_body() {
+        let (s, _dir) = shared();
+        let mut tier = s.config.tiers[2].clone();
+        tier.strip_fields = vec!["chat_template_kwargs".into(), "model".into()];
+        tier.extra_body = serde_json::from_value(json!({
+            "reasoning_effort": "low", "temperature": 0.1, "stream": true
+        }))
+        .unwrap();
+        let body = json!({"model": "kamimusuhi", "kamimusuhi_private": true,
+                          "chat_template_kwargs": {"enable_thinking": false},
+                          "temperature": 0.7, "messages": []});
+        let sent = upstream_body(&tier, "gpt-oss-120b", &body, Some(64));
+        assert!(sent.get("chat_template_kwargs").is_none());
+        assert!(sent.get("kamimusuhi_private").is_none());
+        assert_eq!(sent["reasoning_effort"], "low");
+        // The client's own value wins; routing-owned fields cannot be
+        // stripped or overridden by tier config.
+        assert_eq!(sent["temperature"], 0.7);
+        assert_eq!(sent["model"], "gpt-oss-120b");
+        assert_eq!(sent["stream"], false);
+        assert_eq!(sent["max_tokens"], 64);
+    }
+
+    #[test]
+    fn a_fast_tier_leads_quick_chat_but_not_long_requests() {
+        let (mut s, _dir) = shared();
+        let mut fast = s.config.tiers[2].clone();
+        fast.name = "cerebras".into();
+        fast.billing = Some(crate::config::TierBilling::Metered);
+        fast.input_usd_per_mtok = Some(0.25);
+        fast.output_usd_per_mtok = Some(0.69);
+        fast.privacy_ok_for_private_memory = Some(true);
+        fast.prefer_lanes = vec![RouteLane::FastChat];
+        s.config.tiers.push(fast);
+        for t in ["llm_master", "hai", "cerebras"] {
+            s.set_tier(t, Ok(Value::Null), 1);
+        }
+        let ask = |text: String| RouteRequest {
+            body: json!({"model": "kamimusuhi", "messages": [
+                {"role": "system", "content": "x".repeat(2_000)},
+                {"role": "user", "content": text}]}),
+            local_only: false,
+        };
+        assert_eq!(
+            names(&plan(&s, &ask("おはよう".into())).expect("plan"))[0],
+            "cerebras"
+        );
+        let long = plan(&s, &ask("調べて".repeat(100))).expect("plan");
+        assert_eq!(names(&long).last().map(String::as_str), Some("cerebras"));
+    }
+
+    #[test]
+    fn unhinted_requests_are_classified_into_lanes() {
+        let (s, _dir) = shared();
+        let lane = |body: Value| {
+            route_lane(
+                &s,
+                &RouteRequest {
+                    body,
+                    local_only: false,
+                },
+            )
+        };
+        let user = json!({"role": "user", "content": "hi"});
+        assert_eq!(lane(json!({"messages": [user]})), RouteLane::FastChat);
+        assert_eq!(
+            lane(
+                json!({"messages": [user, {"role": "assistant", "tool_calls": []},
+                                     {"role": "tool", "content": "{}"}]})
+            ),
+            RouteLane::ToolTask
+        );
+        assert_eq!(
+            lane(json!({"messages": [{"role": "user", "content": "x".repeat(600)}]})),
+            RouteLane::DeepReasoning,
+            "a long request is substantive work, not quick chat"
+        );
+        let big = "x".repeat(60_000);
+        assert_eq!(
+            lane(json!({"messages": [{"role": "user", "content": big}]})),
+            RouteLane::MemoryHeavy
+        );
+        // An explicit hint always wins over the request's shape.
+        assert_eq!(
+            lane(json!({"kamimusuhi_route_lane": "FAST_CHAT",
+                        "messages": [{"role": "tool", "content": "{}"}]})),
+            RouteLane::FastChat
+        );
+        assert_eq!(lane_name(RouteLane::ToolTask), "TOOL_TASK");
+    }
+
+    #[test]
+    fn route_events_record_the_lane() {
+        let (s, _dir) = shared();
+        let _ = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "no-such-tier", "messages": []}),
+                local_only: false,
+            },
+        );
+        assert_eq!(s.last_route.read().unwrap().as_ref().unwrap().lane, None);
+        let _ = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "kamimusuhi", "kamimusuhi_private": true,
+                             "messages": [{"role": "tool", "content": "{}"}]}),
+                local_only: true,
+            },
+        );
+        assert_eq!(
+            s.last_route
+                .read()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .lane
+                .as_deref(),
+            Some("LOCAL_CHAT")
         );
     }
 
@@ -365,6 +1504,237 @@ mod tests {
     }
 
     #[test]
+    fn production_plan_keeps_private_turns_off_untrusted_free_tiers() {
+        let (mut s, _dir) = shared();
+        let mut free = s.config.tiers[2].clone();
+        free.name = "free".to_owned();
+        free.billing = Some(crate::config::TierBilling::FreeTier);
+        free.privacy_ok_for_private_memory = Some(false);
+        free.auth_env = None;
+        s.config.tiers.insert(0, free);
+
+        // Long enough to rule out the small-request tier, but a short user
+        // message so the turn stays on the FAST_CHAT lane.
+        let long = "x".repeat(5_000);
+        let private = RouteRequest {
+            body: json!({"model": "kamimusuhi",
+                         "messages": [{"role": "system", "content": long.clone()},
+                                      {"role": "user", "content": "hi"}]}),
+            local_only: false,
+        };
+        let private_names = names(&plan(&s, &private).expect("private plan"));
+        assert!(!private_names.iter().any(|name| name == "free"));
+
+        let public = RouteRequest {
+            body: json!({"model": "kamimusuhi", "kamimusuhi_private": false,
+                         "messages": [{"role": "system", "content": long},
+                                      {"role": "user", "content": "hi"}]}),
+            local_only: false,
+        };
+        let public_names = names(&plan(&s, &public).expect("public plan"));
+        assert_eq!(public_names.first().map(String::as_str), Some("free"));
+    }
+
+    #[test]
+    fn production_cost_guard_blocks_expensive_metered_call_before_network() {
+        let (mut s, _dir) = shared();
+        let mut paid = s.config.tiers[2].clone();
+        paid.name = "paid".to_owned();
+        paid.base_url = "http://127.0.0.1:9/v1".to_owned();
+        paid.auth_env = None;
+        paid.billing = Some(crate::config::TierBilling::Metered);
+        paid.input_usd_per_mtok = Some(1_000.0);
+        paid.output_usd_per_mtok = Some(1_000.0);
+        paid.privacy_ok_for_private_memory = Some(true);
+        s.config.tiers = vec![paid];
+        s.set_tier("paid", Ok(Value::Null), 1);
+
+        let req = RouteRequest {
+            body: json!({"model": "kamimusuhi",
+                         "messages": [{"role": "user", "content": "hi"}]}),
+            local_only: false,
+        };
+        let routed = route(&s, &req);
+        assert_eq!(routed.status, 503);
+        assert!(
+            routed
+                .attempts
+                .iter()
+                .any(|attempt| attempt.contains("cost guard:"))
+        );
+        assert!(
+            s.tier_healthy("paid"),
+            "budget rejection is policy, not provider health failure"
+        );
+        assert_eq!(
+            s.cost_guard
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .spent_usd(),
+            0.0,
+            "blocked call never reaches the network and spends nothing"
+        );
+    }
+
+    /// The guard must price the body the provider receives. An
+    /// `extra_body` output cap larger than the estimate priced would
+    /// otherwise be sent under the cheaper estimate.
+    #[test]
+    fn metered_extra_body_output_cap_is_priced_and_refused_before_sending() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind fixture");
+        let url = format!("http://{}/v1", listener.local_addr().expect("address"));
+        let (mut s, _dir) = shared();
+        let mut paid = s.config.tiers[2].clone();
+        paid.name = "paid".to_owned();
+        paid.base_url = url;
+        paid.billing = Some(TierBilling::Metered);
+        paid.input_usd_per_mtok = Some(0.0);
+        paid.output_usd_per_mtok = Some(2.0);
+        paid.privacy_ok_for_private_memory = Some(true);
+        paid.extra_body = serde_json::from_value(json!({"max_completion_tokens": 100_000}))
+            .expect("extra_body map");
+        s.config.tiers = vec![paid];
+        s.set_tier("paid", Ok(Value::Null), 1);
+
+        let routed = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "kamimusuhi",
+                             "messages": [{"role": "user", "content": "hi"}]}),
+                local_only: false,
+            },
+        );
+        // 100k output tokens at $2/M is a $0.20 worst case — over the
+        // $0.02 request cap even though the client sent no limit at all.
+        assert_eq!(routed.status, 503);
+        assert!(
+            routed
+                .attempts
+                .iter()
+                .any(|attempt| attempt.contains("cost guard:"))
+        );
+        assert!(
+            s.tier_healthy("paid"),
+            "budget rejection is policy, not provider health failure"
+        );
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        assert!(
+            listener.accept().is_err(),
+            "a refused call must never reach the provider"
+        );
+        assert_eq!(
+            s.cost_guard
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .spent_usd(),
+            0.0
+        );
+    }
+
+    #[test]
+    fn invalid_metered_output_caps_never_reach_the_provider() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let (s, _dir) = shared();
+        let mut paid = s.config.tiers[2].clone();
+        paid.base_url = format!("http://{}/v1", listener.local_addr().unwrap());
+        paid.timeout_secs = 1;
+        paid.billing = Some(TierBilling::Metered);
+        paid.input_usd_per_mtok = Some(0.0);
+        paid.output_usd_per_mtok = Some(2.0);
+        for key in ["max_tokens", "max_completion_tokens"] {
+            for invalid in [
+                json!(null),
+                json!(0),
+                json!(-1),
+                json!("256"),
+                json!(1.5),
+                json!(u64::MAX),
+            ] {
+                paid.extra_body = Some(Map::from_iter([(key.to_owned(), invalid)]));
+                let body = json!({"messages": [{"role": "user", "content": "hi"}]});
+                assert!(matches!(call_tier_guarded(&s, &paid, "q", &body),
+                    Err(error) if error.starts_with("cost guard: invalid ")));
+            }
+        }
+        assert!(matches!(listener.accept(), Err(error)
+            if error.kind() == std::io::ErrorKind::WouldBlock));
+        assert_eq!(s.cost_guard.lock().unwrap().spent_usd(), 0.0);
+    }
+
+    #[test]
+    fn stripped_metered_output_cap_is_replaced_before_pricing() {
+        let (url, server) = capturing_completion_server(json!({
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]
+        }));
+        let (s, _dir) = shared();
+        let mut paid = s.config.tiers[2].clone();
+        paid.base_url = url;
+        paid.billing = Some(TierBilling::Metered);
+        paid.input_usd_per_mtok = Some(0.0);
+        paid.output_usd_per_mtok = Some(2.0);
+        paid.strip_fields = vec!["max_tokens".to_owned()];
+        paid.extra_body = serde_json::from_value(json!({"max_completion_tokens": 256})).unwrap();
+        let result = call_tier_guarded(
+            &s,
+            &paid,
+            "q",
+            &json!({
+                "max_tokens": 100_000,
+                "messages": [{"role": "user", "content": "hi"}]
+            }),
+        )
+        .unwrap();
+        let sent = server.join().unwrap();
+        assert!(sent.get("max_tokens").is_none());
+        assert_eq!(sent["max_completion_tokens"], 256);
+        assert_eq!(result.cost_usd, Some(256.0 * 2.0 / 1e6));
+    }
+
+    /// A permitted `extra_body` cap is sent as configured, and the cost
+    /// recorded is the estimate for that exact sent body.
+    #[test]
+    fn metered_extra_body_cap_within_budget_is_sent_and_charged_as_priced() {
+        let (url, server) = capturing_completion_server(json!({
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]
+        }));
+        let (mut s, _dir) = shared();
+        let mut paid = s.config.tiers[2].clone();
+        paid.name = "paid".to_owned();
+        paid.base_url = url;
+        paid.billing = Some(TierBilling::Metered);
+        paid.input_usd_per_mtok = Some(0.0);
+        paid.output_usd_per_mtok = Some(2.0);
+        paid.privacy_ok_for_private_memory = Some(true);
+        paid.extra_body =
+            serde_json::from_value(json!({"max_completion_tokens": 256})).expect("extra_body map");
+        s.config.tiers = vec![paid];
+        s.set_tier("paid", Ok(Value::Null), 1);
+
+        let routed = route(
+            &s,
+            &RouteRequest {
+                body: json!({"model": "kamimusuhi",
+                             "messages": [{"role": "user", "content": "hi"}]}),
+                local_only: false,
+            },
+        );
+        assert_eq!(routed.status, 200);
+        let sent = server.join().expect("fixture finished");
+        assert_eq!(sent["max_completion_tokens"], 256);
+        assert_eq!(sent["model"], "q");
+        let event = routed.event.expect("route event");
+        assert_eq!(event.cost_kind.as_deref(), Some("estimate"));
+        let priced = 256.0 * 2.0 / 1e6;
+        assert!(
+            (event.cost_usd.expect("cost") - priced).abs() < 1e-9,
+            "recorded cost must price the sent 256-token cap, not the client body"
+        );
+    }
+
+    #[test]
     fn failing_tiers_fall_through_to_503() {
         let (s, _dir) = shared();
         let req = RouteRequest {
@@ -383,5 +1753,23 @@ mod tests {
         );
         assert!(sse.contains("やあ"));
         assert!(sse.ends_with("data: [DONE]\n\n"));
+    }
+
+    #[test]
+    fn sse_preserves_refusal_without_promoting_reasoning() {
+        let sse = to_sse(&json!({"choices": [{"message": {
+            "role": "assistant", "content": null, "refusal": "対応できません",
+            "reasoning_content": "internal reasoning"
+        }, "finish_reason": "stop"}]}));
+        let chunk: Value = serde_json::from_str(
+            sse.lines()
+                .next()
+                .expect("chunk")
+                .strip_prefix("data: ")
+                .expect("SSE data"),
+        )
+        .expect("JSON chunk");
+        assert_eq!(chunk["choices"][0]["delta"]["refusal"], "対応できません");
+        assert!(chunk["choices"][0]["delta"].get("content").is_none());
     }
 }

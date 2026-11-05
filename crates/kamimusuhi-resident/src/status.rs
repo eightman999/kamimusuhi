@@ -31,6 +31,61 @@ fn s(v: Option<&Value>) -> String {
     }
 }
 
+/// `via tier/model` label for a route record (`kamimusuhi_route`, a talk
+/// reply's `route` object, or `routing.last_route`). `None` when no route
+/// was recorded.
+pub fn route_target_label(route: &Value) -> Option<String> {
+    let tier = route.get("tier").and_then(Value::as_str)?;
+    let model = route.get("model").and_then(Value::as_str);
+    Some(match model {
+        Some(model) => format!("via {tier}/{model}"),
+        None => format!("via {tier}"),
+    })
+}
+
+/// Cost label for a route record: the dollar amount for metered turns, or
+/// the plan kind for unmetered ones. `None` when the plan is undeclared —
+/// an unknown cost basis is never shown as free.
+pub fn route_cost_label(route: &Value) -> Option<String> {
+    let billing = route.get("billing").and_then(Value::as_str);
+    let cost = route.get("cost_usd").and_then(Value::as_f64);
+    let estimated = route.get("cost_kind").and_then(Value::as_str) == Some("estimate");
+    let amount = |c: f64| {
+        if estimated {
+            format!("~${c:.4}")
+        } else {
+            format!("${c:.4}")
+        }
+    };
+    match billing {
+        Some("metered") => Some(cost.map(amount).unwrap_or_else(|| "従量".to_owned())),
+        Some("subscription") => Some("サブスク".to_owned()),
+        Some("free_tier") => Some("無料枠".to_owned()),
+        Some("local") => Some("local".to_owned()),
+        _ => cost.map(amount),
+    }
+}
+
+/// Prefix-cache label for a route record: `cached=N hit=M%` where the hit
+/// rate is cached/(prompt+cached) — the same accounting as the usage
+/// rollup. `None` when the provider reported no cache reads.
+pub fn route_cache_label(route: &Value) -> Option<String> {
+    let cached = route.get("cached_tokens").and_then(Value::as_u64)?;
+    let prompt = route
+        .get("prompt_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let total = prompt.saturating_add(cached);
+    Some(if total > 0 {
+        format!(
+            "cached={cached} hit={:.0}%",
+            100.0 * cached as f64 / total as f64
+        )
+    } else {
+        format!("cached={cached}")
+    })
+}
+
 /// Render the status document. Returns the text and whether everything
 /// required for normal operation is healthy.
 pub fn render(status: &Value) -> (String, bool) {
@@ -139,12 +194,24 @@ pub fn render(status: &Value) -> (String, bool) {
         all_ok = false;
     }
     if let Some(last) = routing.get("last_route").filter(|v| !v.is_null()) {
+        let cost = last
+            .get("cost_usd")
+            .and_then(Value::as_f64)
+            .map(|c| format!(" cost=${c:.4}"))
+            .unwrap_or_default();
+        let cache = route_cache_label(last)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default();
         let _ = writeln!(
             out,
-            "  last request: tier={} ok={} {}ms attempts={}",
+            "  last request: tier={} model={} billing={} ok={} {}ms{}{} attempts={}",
             s(last.get("tier")),
+            s(last.get("model")),
+            s(last.get("billing")),
             s(last.get("ok")),
             s(last.get("latency_ms")),
+            cost,
+            cache,
             s(last.get("attempts"))
         );
     }
@@ -261,6 +328,45 @@ pub fn render(status: &Value) -> (String, bool) {
             );
         }
     }
+    // Node-task delegation (light/heavy split): queue depth, outcomes and
+    // the few most recent records — ids and states only, never payloads.
+    let delegations = &status["delegations"];
+    let pending = delegations["pending"].as_u64().unwrap_or(0);
+    let recent = delegations["recent"].as_array();
+    if delegations["enabled"].as_bool().unwrap_or(false)
+        && (pending > 0 || recent.is_some_and(|r| !r.is_empty()))
+    {
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "DELEGATIONS  pending={} completed={} failed={} timeouts={} retries={} last={}ms",
+            pending,
+            s(delegations.get("completed")),
+            s(delegations.get("failed")),
+            s(delegations.get("timeouts")),
+            s(delegations.get("retries")),
+            s(delegations.get("last_latency_ms")),
+        );
+        for t in recent.into_iter().flatten().take(5) {
+            let terminal = ["completed", "failed", "timeout", "cancelled"]
+                .contains(&t["state"].as_str().unwrap_or(""));
+            let _ = writeln!(
+                out,
+                "  [{}] {:<14} {:<20} {} {}",
+                mark(!terminal || t["state"] == "completed"),
+                s(t.get("state")),
+                s(t.get("task_id")),
+                s(t.get("type")),
+                t.get("node")
+                    .map(|n| format!("→ {}", s(Some(n))))
+                    .unwrap_or_default(),
+            );
+        }
+        if let Some(e) = delegations.get("last_error").filter(|v| !v.is_null()) {
+            let _ = writeln!(out, "  last_error: {}", s(Some(e)));
+        }
+    }
+
     if let Some(pending) = status["approvals_pending"]
         .as_array()
         .filter(|p| !p.is_empty())
@@ -311,4 +417,71 @@ pub fn describe_approval(a: &Value) -> String {
             format!("{preview} »")
         }
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn route_labels_cover_target_and_cost_basis() {
+        let route = json!({"tier": "cerebras", "model": "gpt-oss-120b",
+                           "billing": "metered", "cost_usd": 0.0042,
+                           "cost_kind": "actual"});
+        assert_eq!(
+            route_target_label(&route).as_deref(),
+            Some("via cerebras/gpt-oss-120b")
+        );
+        assert_eq!(route_cost_label(&route).as_deref(), Some("$0.0042"));
+
+        let estimated = json!({"tier": "cerebras", "billing": "metered",
+                              "cost_usd": 0.001, "cost_kind": "estimate"});
+        assert_eq!(route_cost_label(&estimated).as_deref(), Some("~$0.0010"));
+
+        // Metered with no reported figure is honest, not zero.
+        let unknown = json!({"tier": "cerebras", "billing": "metered"});
+        assert_eq!(route_cost_label(&unknown).as_deref(), Some("従量"));
+
+        for (billing, label) in [
+            ("subscription", "サブスク"),
+            ("free_tier", "無料枠"),
+            ("local", "local"),
+        ] {
+            let route = json!({"tier": "x", "billing": billing});
+            assert_eq!(route_cost_label(&route).as_deref(), Some(label));
+        }
+
+        // Undeclared plan: unknown, never rendered as free.
+        assert_eq!(route_cost_label(&json!({"tier": "x"})), None);
+        // But an actual billed amount still shows even without a class.
+        let billed = json!({"tier": "x", "cost_usd": 0.002});
+        assert_eq!(route_cost_label(&billed).as_deref(), Some("$0.0020"));
+
+        assert_eq!(route_target_label(&json!({})), None);
+        assert_eq!(
+            route_target_label(&json!({"tier": "hai"})).as_deref(),
+            Some("via hai")
+        );
+    }
+
+    #[test]
+    fn route_cache_label_reports_hits_only_when_reported() {
+        assert_eq!(
+            route_cache_label(&json!({"prompt_tokens": 60, "cached_tokens": 40})).as_deref(),
+            Some("cached=40 hit=40%")
+        );
+        // A reported zero hit is still information, not silence.
+        assert_eq!(
+            route_cache_label(&json!({"prompt_tokens": 100, "cached_tokens": 0})).as_deref(),
+            Some("cached=0 hit=0%")
+        );
+        // Without prompt tokens the count alone still shows.
+        assert_eq!(
+            route_cache_label(&json!({"cached_tokens": 7})).as_deref(),
+            Some("cached=7 hit=100%")
+        );
+        // Unreported → no label at all.
+        assert_eq!(route_cache_label(&json!({"prompt_tokens": 100})), None);
+    }
 }

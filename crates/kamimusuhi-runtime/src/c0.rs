@@ -118,25 +118,36 @@ pub fn retrieve_memories(
             .about(subject)
             .limited(64),
     )?;
+    memories.extend(
+        rank_episodic(pool, query_text, params.retrieval.min_score)
+            .into_iter()
+            .take(params.retrieval.episodic_top_k)
+            .map(|(_, m)| m),
+    );
+    Ok(memories)
+}
+
+/// Score an episodic pool against the query and rank it best-first. Highest
+/// score first; ties break on creation time, then record id, for
+/// determinism. Shared by [`retrieve_memories`] and the declared-path seed
+/// selection, which must seed from the same records the lexical path picks.
+pub fn rank_episodic(
+    pool: Vec<AttributedMemory>,
+    query_text: &str,
+    min_score: f64,
+) -> Vec<(f64, AttributedMemory)> {
     let mut scored: Vec<(f64, AttributedMemory)> = pool
         .into_iter()
         .map(|m| (lexical_score(query_text, &m.record.payload.to_string()), m))
-        .filter(|(score, _)| *score >= params.retrieval.min_score)
+        .filter(|(score, _)| *score >= min_score)
         .collect();
-    // Highest score first; ties break on creation time for determinism.
     scored.sort_by(|a, b| {
         b.0.partial_cmp(&a.0)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(b.1.record.created_at.cmp(&a.1.record.created_at))
             .then(b.1.record.state_record_id.cmp(&a.1.record.state_record_id))
     });
-    memories.extend(
-        scored
-            .into_iter()
-            .take(params.retrieval.episodic_top_k)
-            .map(|(_, m)| m),
-    );
-    Ok(memories)
+    scored
 }
 
 /// Raw canonical utterances recalled by lexical match — older or outside the
@@ -195,12 +206,17 @@ pub struct DraftOutcome {
 }
 
 /// Lazily claim writer authority — only when a draft actually exists, so a
-/// read-only conversation never takes the epoch.
+/// read-only conversation never takes the epoch. A cached identity is reused
+/// only while it is still the current epoch: another process (a concurrent
+/// turn, a reflection job) may have claimed since, and submitting under the
+/// fenced epoch would reject the draft. Call with the writer lock held.
 pub fn ensure_writer(
     runtime: &Runtime,
     cached: &mut Option<WriterIdentity>,
 ) -> Result<WriterIdentity, RuntimeError> {
-    if let Some(writer) = cached {
+    if let Some(writer) = cached
+        && writer.writer_epoch == runtime.head()?.writer_epoch
+    {
         return Ok(*writer);
     }
     let writer = runtime.claim_writer()?;
@@ -220,6 +236,11 @@ pub fn submit_drafts(
     drafts: Vec<ProposalDraft>,
 ) -> Result<Vec<DraftOutcome>, RuntimeError> {
     let mut outcomes = Vec::new();
+    if drafts.is_empty() {
+        return Ok(outcomes);
+    }
+    // Claim and submit as one step with respect to other processes.
+    let _lock = runtime.lock_writer()?;
     for (index, draft) in drafts.into_iter().enumerate() {
         let writer = ensure_writer(runtime, cached_writer)?;
         let head = runtime.head()?;

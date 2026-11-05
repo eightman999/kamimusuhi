@@ -11,7 +11,7 @@ from experiments.t0.evaluate import (freeze_dynamics, hidden_noise,
                                      eval_delay, eval_with_intervention,
                                      consolidate)
 from experiments.t0.models import make_model
-from experiments.t0.train import (advantages, collect, episode_metrics, train)
+from experiments.t0.train import advantages, collect, train
 
 
 class TestCollect(unittest.TestCase):

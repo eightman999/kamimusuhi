@@ -2,28 +2,36 @@
 # Install/upgrade the resident on this node as the service user (no sudo).
 # Run from a source checkout after install-root.sh has been run once:
 #
-#   deploy/resident/install-node.sh <pi|llm_master>
+#   deploy/resident/install-node.sh <node>   # pi, llm_master, 6f, tb250, ...
 #
 # Builds release binaries, installs them under /srv/kamimusuhi/runtime/bin,
 # installs the node config (keeping an existing one unless --force-config),
-# and on the Pi initializes the individual ONLY if no canonical store exists.
+# and initializes the individual (canonical on pi, sister on llm_master)
+# ONLY when the config enables dialogue and no store exists yet.
 set -euo pipefail
 
-NODE="${1:?usage: $0 <pi|llm_master> [--force-config]}"
+NODE="${1:?usage: $0 <node> [--force-config]}"
 FORCE_CONFIG="${2:-}"
 ROOT=/srv/kamimusuhi
 SRC="$(cd "$(dirname "$0")/../.." && pwd)"
-case "$NODE" in pi|llm_master) ;; *) echo "node must be pi or llm_master" >&2; exit 64;; esac
+[[ "$NODE" =~ ^[a-z0-9_]+$ ]] || { echo "node id must match [a-z0-9_]+ (pi, llm_master, 6f, tb250, ...)" >&2; exit 64; }
 [[ -w "$ROOT/runtime/bin" ]] || { echo "$ROOT not prepared; run install-root.sh first" >&2; exit 1; }
 
 # shellcheck disable=SC1091
 [[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
 cd "$SRC"
 echo "==> build (release)"
-bins=(--bin kamimusuhi)
-[[ "$NODE" == pi ]] && bins+=(--bin k-core --bin kamimusuhi-runtime)
-pkgs=(-p kamimusuhi-resident)
-[[ "$NODE" == pi ]] && pkgs+=(-p kamimusuhi-runtime)
+bins=(--bin kamimusuhi --bin kamimusuhi-runtime)
+# k-core supervises the canonical individual, so only continuity nodes need it.
+ROLE_CONFIG="$ROOT/config/resident.json"
+if [[ ! -f "$ROLE_CONFIG" || "$FORCE_CONFIG" == --force-config ]]; then
+  ROLE_CONFIG="deploy/resident/local/$NODE.resident.json"
+fi
+NODE_ROLE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["node"].get("role",""))' "$ROLE_CONFIG" 2>/dev/null || true)"
+if [[ "$NODE" == pi || "$NODE_ROLE" == continuity ]]; then
+  bins+=(--bin k-core)
+fi
+pkgs=(-p kamimusuhi-resident -p kamimusuhi-runtime)
 cargo build --release "${pkgs[@]}" "${bins[@]}"
 
 echo "==> binaries"
@@ -39,15 +47,17 @@ install -d "$ROOT/runtime/deploy"
 cp -f deploy/resident/README.md "$ROOT/runtime/deploy/README.md" 2>/dev/null || true
 
 echo "==> config"
+SITE_CONFIG="deploy/resident/local/$NODE.resident.json"
 if [[ ! -f "$ROOT/config/resident.json" || "$FORCE_CONFIG" == --force-config ]]; then
-  install -m 644 "deploy/resident/$NODE.resident.json" "$ROOT/config/resident.json"
+  [[ -f "$SITE_CONFIG" ]] || { echo "missing $SITE_CONFIG (copy deploy/resident/$NODE.resident.example.json and fill in hosts)" >&2; exit 1; }
+  install -m 644 "$SITE_CONFIG" "$ROOT/config/resident.json"
 fi
 "$ROOT/runtime/bin/kamimusuhi" check-config --config "$ROOT/config/resident.json"
 if [[ ! -f "$ROOT/config/secrets.env" ]]; then
   echo "    WARNING: $ROOT/config/secrets.env missing (push it with push-secrets.sh)"
 fi
 
-if [[ "$NODE" == pi ]]; then
+if grep -q '"dialogue"[[:space:]]*:' "$ROOT/config/resident.json"; then
   IND="$ROOT/runtime/individual"
   if [[ -e "$IND/kamimusuhi.sqlite" || -e "$IND/runtime.json" ]]; then
     echo "==> individual exists at $IND (never reinitialized)"

@@ -1,5 +1,4 @@
 """Missing-data, artifact-schema and read-only GUI regressions."""
-import json
 import os
 from pathlib import Path
 import tempfile

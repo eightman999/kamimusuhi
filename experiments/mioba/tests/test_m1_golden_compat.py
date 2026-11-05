@@ -27,7 +27,6 @@ number. Nothing here depends on internals that the refactor may move.
 """
 from __future__ import annotations
 
-import json
 import random
 
 import pytest

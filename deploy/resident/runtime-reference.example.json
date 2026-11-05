@@ -1,10 +1,28 @@
 {
-  "_comment": "Merge into <individual>/runtime.json (top level). tools: model-initiated read-only tool calls. reference: host-run per-turn consultation.",
+  "_comment": "Merge into <individual>/runtime.json (top level). tools: model-initiated read-only tool calls (core = offered every turn; the rest of allowed is discoverable via tool_catalog/tool_enable). reference: host-run per-turn consultation. persona.provider.reasoning: off|on|auto (default off), persona.provider.extra_body: provider-specific request fields.",
   "tools": {
     "base_url": "http://127.0.0.1:7860",
     "max_rounds": 8,
     "timeout_ms": 30000,
+    "core": [
+      "task_delegate",
+      "task_status",
+      "task_update",
+      "task_create",
+      "task_list",
+      "library_list",
+      "library_search",
+      "library_read",
+      "json_get",
+      "json_find"
+    ],
     "allowed": [
+      "task_delegate",
+      "task_status",
+      "task_cancel",
+      "task_continue",
+      "agent_models",
+      "agent_health",
       "task_update",
       "task_create",
       "task_list",
@@ -14,6 +32,9 @@
       "json_get",
       "json_find",
       "mcp__context7__*",
+      "mcp__chrome_web__google_search",
+      "mcp__chrome_web__fetch_url",
+      "mcp__chrome_web__health_check",
       "mcp__obsidian__search_notes",
       "mcp__obsidian__read_note",
       "mcp__obsidian__read_note_lines",
@@ -42,7 +63,20 @@
       "mcp__github__*",
       "mcp__obsidian__write_note",
       "mcp__obsidian__patch_note",
-      "mcp__obsidian__update_frontmatter"
+      "mcp__obsidian__update_frontmatter",
+      "commit_create",
+      "commit_list",
+      "commit_show",
+      "commit_update",
+      "commit_resume",
+      "commit_close",
+      "commit_abandon",
+      "peer_say",
+      "peer_list",
+      "mcp__computer_mac__*",
+      "mcp__computer_llm__*",
+      "mcp__computer_pi__*",
+      "mcp__colab__*"
     ]
   },
   "reference": {

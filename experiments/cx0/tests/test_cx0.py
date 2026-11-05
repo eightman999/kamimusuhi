@@ -8,8 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from experiments.cx0.env.ctx_world import (EP_LEN, INTERACT, N_ETYPES, N_LOCS,
-                                           RESP0, CtxWorld, Oracle, TASKS)
+from experiments.cx0.env.ctx_world import EP_LEN, INTERACT, N_ETYPES, RESP0, CtxWorld, Oracle, TASKS
 from experiments.cx0.memory.slot_memory import SlotMemory
 from experiments.cx0.organs.base import BUNDLE_DIM, DIMS, OrganSignals
 

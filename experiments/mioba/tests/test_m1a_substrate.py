@@ -16,9 +16,7 @@ from experiments.mioba.development.phenotype import develop  # noqa: E402
 from experiments.mioba.fba.torch_backend import TorchBackend  # noqa: E402
 from experiments.mioba.genome.schema import (  # noqa: E402
     ParameterMutation, fba0_genome)
-from experiments.mioba.m1a.diagnostics import (  # noqa: E402
-    ablate_recurrent, env_drive, fixed_net, first_spike, make_backend,
-    run_traced, wipe_neural_state)
+from experiments.mioba.m1a.diagnostics import ablate_recurrent, env_drive, fixed_net, make_backend, run_traced
 
 
 def _spike_series(b, steps, **kw):

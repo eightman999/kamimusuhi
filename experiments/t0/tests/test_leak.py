@@ -12,7 +12,7 @@ import unittest
 
 import torch
 
-from experiments.t0.env.interval_env import OBS_DIM, IntervalEnv
+from experiments.t0.env.interval_env import IntervalEnv
 
 
 def delay_period_obs(seed, n=64, delays=(32,), steps=24, **config):

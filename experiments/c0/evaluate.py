@@ -23,25 +23,21 @@ from __future__ import annotations
 import argparse
 import concurrent.futures as cf
 import json
-import os
 import subprocess
 import sys
 import time
-from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 import torch
 import yaml
 
-from .agents.policies import MODEL_SPECS, build_policy
+from .agents.policies import MODEL_SPECS
 from .agents.runner import Runner
 from .config_util import git_commit, load_env_cfg, load_policy
 from .env.c0_env import C0Env, C0Config
 from .persistence.artifact import read_artifact, write_artifact
-from .persistence.codec import (apply_condition, decode_payload,
-                                encode_lossless, mask_state, shuffle_state,
-                                state_spec_from)
+from .persistence.codec import decode_payload, encode_lossless, mask_state, shuffle_state, state_spec_from
 from .persistence.interrupt import run_interrupted
 
 ROOT = Path(__file__).resolve().parents[2]

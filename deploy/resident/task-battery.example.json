@@ -1,0 +1,96 @@
+{
+  "name": "kamimusuhi-q1-q7",
+  "description": "Kamimusuhi リポジトリ（workspace: kamimusuhi）で model × harness を比べる共通タスク。判定は回答文への決定的な文字列チェック。requires_write のケースは workspace が allow_write のときだけ専用 worktree で実行し（採点後に破棄）、変更ファイルがあることも合格条件にする。",
+  "cases": [
+    {
+      "id": "Q1",
+      "kind": "research",
+      "objective": "このリポジトリの crates/ 配下にある各 crate の役割を、crate 名ごとに1行で要約してください。",
+      "success_criteria": [
+        "crate 名を正確に挙げる",
+        "役割はコードに基づく"
+      ],
+      "must_contain_all": [
+        "kamimusuhi-core",
+        "kamimusuhi-runtime",
+        "kamimusuhi-resident"
+      ],
+      "min_chars": 200
+    },
+    {
+      "id": "Q2",
+      "kind": "debug",
+      "objective": "resident の FastChat の応答レイテンシ上限（fast_chat_latency_ceiling_ms）の既定値がどのファイルで定義され、何ミリ秒かを特定してください。",
+      "success_criteria": [
+        "ファイルパスと値を示す"
+      ],
+      "must_contain_all": [
+        "config.rs"
+      ],
+      "must_contain_any": [
+        "4_000",
+        "4000",
+        "4 秒",
+        "4秒"
+      ]
+    },
+    {
+      "id": "Q3",
+      "kind": "review",
+      "objective": "crates/kamimusuhi-resident/src/util.rs の run_with_timeout を読み取り専用でレビューし、潜在的な問題点を重要度順に挙げてください。",
+      "success_criteria": [
+        "具体的な行・挙動に基づく指摘"
+      ],
+      "must_contain_any": [
+        "timeout",
+        "kill",
+        "pipe",
+        "stdout",
+        "stderr"
+      ],
+      "min_chars": 200
+    },
+    {
+      "id": "Q4",
+      "kind": "coding",
+      "objective": "crates/kamimusuhi-resident/src/tasks.rs の title_limit にある 80 文字の上限を名前付き定数にする1ファイルの修正を行い、cargo test -p kamimusuhi-resident tasks が通ることを確認してください。",
+      "must_contain_any": [
+        "test",
+        "テスト"
+      ],
+      "requires_write": true
+    },
+    {
+      "id": "Q5",
+      "kind": "coding",
+      "objective": "crates/kamimusuhi-resident/src/tasks.rs と tools.rs にまたがる task_create の入力（title・depends_on）の検証を1か所に共通化する複数ファイルの修正を行い、cargo test -p kamimusuhi-resident が通ることを確認してください。",
+      "must_contain_any": [
+        "test",
+        "テスト"
+      ],
+      "requires_write": true
+    },
+    {
+      "id": "Q6",
+      "kind": "debug",
+      "objective": "crates/kamimusuhi-resident/src/tasks.rs のテスト create_update_and_restart_interrupts_running_system_tasks が守っている不変条件を説明し、このテストを失敗させる変更の例を2つ挙げてください（実行・変更はしない）。",
+      "must_contain_any": [
+        "再起動",
+        "restart",
+        "in_progress",
+        "InProgress"
+      ],
+      "min_chars": 150
+    },
+    {
+      "id": "Q7",
+      "kind": "planning",
+      "objective": "resident の spool から NAS への配送が長時間止まった場合に起きることと、その対策を設計として提案してください（コード変更はしない）。",
+      "must_contain_all": [
+        "spool",
+        "NAS"
+      ],
+      "min_chars": 300
+    }
+  ]
+}

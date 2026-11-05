@@ -20,8 +20,7 @@ sit at every step boundary — see fault.injector.P.
 from __future__ import annotations
 
 import json
-import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from ..fault.injector import P
 from ..persistence.store import Store

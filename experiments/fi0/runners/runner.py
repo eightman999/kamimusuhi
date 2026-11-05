@@ -20,7 +20,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, List, Optional
 
 from experiments.fi0.analysis import agreement, cache, drift
 from experiments.fi0.sweep import SweepConfig

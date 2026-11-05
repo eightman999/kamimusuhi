@@ -3,6 +3,8 @@
 //! Endpoints:
 //! * `GET /health` — unauthenticated summary for peers and monitors.
 //! * `GET /status` — full status (token unless loopback).
+//! * `GET /metrics`, `GET /v1/usage`, `GET /v1/usage/history` — model usage
+//!   without conversation bodies (same authentication as status).
 //! * `GET /v1/models`, `POST /v1/chat/completions` — routing proxy
 //!   (token unless loopback). `X-Kamimusuhi-Route: local` restricts routing
 //!   to node-local tiers so the calling peer keeps its own fallback.
@@ -15,6 +17,8 @@ use std::thread;
 use std::time::Duration;
 
 use serde_json::{Value, json};
+
+use kamimusuhi_resource_http::http::TURN_HEADER;
 
 use crate::probes::ROUTE_HEADER;
 use crate::router::{self, AUTO_MODELS, RouteRequest};
@@ -43,6 +47,12 @@ impl Request {
 
 pub fn serve(shared: &Arc<Shared>) -> std::io::Result<()> {
     let listener = TcpListener::bind(&shared.config.node.listen)?;
+    serve_listener(shared, listener)
+}
+
+/// Accept loop on an already-bound listener. Tests bind an ephemeral
+/// port (`127.0.0.1:0`) and still get the real request path.
+pub fn serve_listener(shared: &Arc<Shared>, listener: TcpListener) -> std::io::Result<()> {
     let active = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
@@ -182,6 +192,12 @@ fn handle(shared: &Shared, stream: TcpStream) {
     let path = request.path.split('?').next().unwrap_or_default();
     match (request.method.as_str(), path) {
         ("GET", "/health") => json_response(stream, 200, &shared.health(), &[]),
+        ("GET", "/capabilities") => json_response(
+            stream,
+            200,
+            &serde_json::to_value(crate::capabilities::doc(shared)).unwrap_or_default(),
+            &[],
+        ),
         _ if !authorized(shared, &stream, &request) => json_response(
             stream,
             401,
@@ -189,6 +205,31 @@ fn handle(shared: &Shared, stream: TcpStream) {
             &[],
         ),
         ("GET", "/status") => json_response(stream, 200, &shared.status(), &[]),
+        ("GET", "/metrics") => {
+            let body = shared.usage.prometheus();
+            let _ = respond(
+                stream,
+                200,
+                "text/plain; version=0.0.4; charset=utf-8",
+                body.as_bytes(),
+                &[("Cache-Control", "no-store".into())],
+            );
+        }
+        ("GET", "/v1/usage") => json_response(
+            stream,
+            200,
+            &shared.usage.snapshot(),
+            &[("Cache-Control", "no-store".into())],
+        ),
+        ("GET", "/v1/usage/history") => match usage_query(&request.path) {
+            Ok((limit, since)) => json_response(
+                stream,
+                200,
+                &shared.usage.history(limit, Some(since)),
+                &[("Cache-Control", "no-store".into())],
+            ),
+            Err(message) => json_response(stream, 400, &json!({"error": message}), &[]),
+        },
         ("GET", "/v1/tasks") => {
             let (status, reply) =
                 crate::tasks::handle(shared, &json!({"action": "list"}), "operator");
@@ -247,12 +288,70 @@ fn handle(shared: &Shared, stream: TcpStream) {
         }
         ("POST", "/v1/tools/call") => {
             let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
-            let (status, reply) = crate::tools::call(shared, &body);
+            let turn = shared.turn_for(request.header(TURN_HEADER));
+            let (status, reply) = crate::tools::call(shared, &body, turn.as_deref());
+            json_response(stream, status, &reply, &[]);
+        }
+        ("GET", "/v1/commitments") => {
+            let (status, reply) =
+                crate::commitments::handle(shared, &json!({"action": "list"}), "operator");
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/commitments") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            let (status, reply) = crate::commitments::handle(shared, &body, "operator");
+            json_response(stream, status, &reply, &[]);
+        }
+        ("GET", "/v1/agents") => {
+            let (status, reply) =
+                crate::task_orchestrator::handle(shared, &json!({"action": "health"}), "operator");
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/agents") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            let (status, reply) = crate::task_orchestrator::handle(shared, &body, "operator");
+            json_response(stream, status, &reply, &[]);
+        }
+        ("GET", "/v1/intercom") => {
+            let (status, reply) =
+                crate::intercom::handle(shared, &json!({"action": "status"}), "operator");
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/intercom") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            // A body carrying `from`/`to` is a peer envelope; anything else
+            // is an operator action (see intercom::handle).
+            let (status, reply) = crate::intercom::handle(shared, &body, "operator");
             json_response(stream, status, &reply, &[]);
         }
         ("POST", "/v1/library") => {
             let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
             let (status, reply) = crate::library::handle(shared, &body);
+            json_response(stream, status, &reply, &[]);
+        }
+        // Typed node tasks: the light/heavy delegation protocol. See
+        // delegation.rs and docs/light-heavy-node-architecture.md.
+        ("POST", "/task") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            let (status, reply) = crate::delegation::submit(shared, &body);
+            json_response(stream, status, &reply, &[]);
+        }
+        ("GET", p) if p.starts_with("/task/") => {
+            let task_id = &p["/task/".len()..];
+            if !kamimusuhi_node::valid_id(task_id) {
+                json_response(stream, 400, &json!({"error": "invalid_task_id"}), &[]);
+                return;
+            }
+            let (status, reply) = crate::delegation::show(shared, task_id);
+            json_response(stream, status, &reply, &[]);
+        }
+        ("GET", "/v1/delegations") => {
+            let (status, reply) = crate::delegation::handle(shared, &json!({"action": "list"}));
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/delegations") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            let (status, reply) = crate::delegation::handle(shared, &body);
             json_response(stream, status, &reply, &[]);
         }
         _ => json_response(stream, 404, &json!({"error": "not found"}), &[]),
@@ -263,6 +362,29 @@ fn local_only(request: &Request) -> bool {
     request
         .header(ROUTE_HEADER)
         .is_some_and(|v| v.eq_ignore_ascii_case("local"))
+}
+
+fn usage_query(path: &str) -> Result<(usize, u64), &'static str> {
+    let mut limit = 100;
+    let mut since = 0;
+    if let Some((_, query)) = path.split_once('?') {
+        for pair in query.split('&').filter(|s| !s.is_empty()) {
+            let (key, value) = pair.split_once('=').ok_or("expected key=value")?;
+            match key {
+                "limit" => {
+                    limit = value
+                        .parse()
+                        .map_err(|_| "limit must be an integer from 1 to 1000")?;
+                    if !(1..=1000).contains(&limit) {
+                        return Err("limit must be an integer from 1 to 1000");
+                    }
+                }
+                "since" => since = value.parse().map_err(|_| "since must be Unix seconds")?,
+                _ => return Err("unknown usage query parameter"),
+            }
+        }
+    }
+    Ok((limit, since))
 }
 
 fn models(shared: &Shared, stream: TcpStream, request: &Request) {
@@ -322,6 +444,7 @@ fn chat(shared: &Shared, stream: TcpStream, request: &Request) {
     }
     let wants_stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let _ = stream.set_write_timeout(Some(Duration::from_secs(60)));
+    let turn = shared.turn_for(request.header(TURN_HEADER));
     let routed = router::route(
         shared,
         &RouteRequest {
@@ -329,6 +452,9 @@ fn chat(shared: &Shared, stream: TcpStream, request: &Request) {
             local_only: local_only(request),
         },
     );
+    if let (Some(turn), Some(event)) = (turn, routed.event.clone()) {
+        shared.record_turn_route(&turn, event);
+    }
     let extra = vec![(
         "X-Kamimusuhi-Tier",
         routed.tier.clone().unwrap_or_else(|| "none".to_owned()),
@@ -358,4 +484,132 @@ fn talk(shared: &Shared, stream: TcpStream, request: &Request) {
     let _ = stream.set_write_timeout(Some(Duration::from_secs(60)));
     let (status, reply) = crate::dialogue::talk(shared, config, &body);
     json_response(stream, status, &reply, &[]);
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+
+    #[test]
+    fn history_query_is_bounded_and_rejects_invalid_filters() {
+        assert_eq!(usage_query("/v1/usage/history"), Ok((100, 0)));
+        assert_eq!(
+            usage_query("/v1/usage/history?limit=5&since=123"),
+            Ok((5, 123))
+        );
+        for query in [
+            "limit=0",
+            "limit=1001",
+            "limit=-1",
+            "since=no",
+            "since=-1",
+            "model=x",
+            "limit",
+        ] {
+            assert!(usage_query(&format!("/v1/usage/history?{query}")).is_err());
+        }
+    }
+
+    #[test]
+    fn model_calls_are_attributed_to_the_turn_that_made_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = serde_json::from_value(json!({
+            "node": {"id": "test", "role": "cognition", "listen": "127.0.0.1:0"},
+            "paths": {"root": dir.path()},
+        }))
+        .unwrap();
+        let spool = crate::spool::Spool::new(dir.path().join("spool"), "test").unwrap();
+        let shared = Arc::new(Shared::new(config, spool, 1, None));
+        shared.begin_turn("t-a");
+        shared.begin_turn("t-b");
+        // Concurrent turns: an unlabelled call is not guessed.
+        assert_eq!(shared.turn_for(None), None);
+        assert_eq!(shared.turn_for(Some("t-z")), None);
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let s = Arc::clone(&shared);
+        let worker = thread::spawn(move || handle(&s, listener.accept().unwrap().0));
+        let mut client = TcpStream::connect(addr).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let body = r#"{"model":"kamimusuhi","messages":[{"role":"user","content":"hi"}]}"#;
+        write!(
+            client,
+            "POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\n{TURN_HEADER}: t-b\r\n\
+             Content-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        worker.join().unwrap();
+
+        assert!(shared.end_turn("t-b").is_some(), "{response}");
+        assert!(shared.end_turn("t-a").is_none());
+        // With a single turn left running, an unlabelled call belongs to it.
+        shared.begin_turn("t-c");
+        assert_eq!(shared.turn_for(None).as_deref(), Some("t-c"));
+    }
+
+    #[test]
+    fn usage_endpoints_serve_real_http_without_upstream_calls() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = serde_json::from_value(json!({
+            "node": {"id": "test", "role": "cognition", "listen": "127.0.0.1:0"},
+            "paths": {"root": dir.path()},
+        }))
+        .unwrap();
+        let spool = crate::spool::Spool::new(dir.path().join("spool"), "test").unwrap();
+        let shared = Arc::new(Shared::new(config, spool, 1, None));
+        for (path, status, content_type, needle) in [
+            (
+                "/metrics",
+                "200 OK",
+                "text/plain",
+                "kamimusuhi_usage_persistence_healthy",
+            ),
+            (
+                "/v1/usage",
+                "200 OK",
+                "application/json",
+                "persistence_healthy",
+            ),
+            (
+                "/v1/usage/history?limit=5&since=0",
+                "200 OK",
+                "application/json",
+                "records",
+            ),
+            (
+                "/v1/usage/history?limit=1001",
+                "400 Bad Request",
+                "application/json",
+                "limit must",
+            ),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let s = Arc::clone(&shared);
+            let worker = thread::spawn(move || handle(&s, listener.accept().unwrap().0));
+            let mut client = TcpStream::connect(addr).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            write!(client, "GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            worker.join().unwrap();
+            assert!(
+                response.starts_with(&format!("HTTP/1.1 {status}")),
+                "{response}"
+            );
+            assert!(response.contains(content_type));
+            assert!(response.contains(needle));
+            if status == "200 OK" {
+                assert!(response.contains("Cache-Control: no-store"));
+            }
+        }
+    }
 }

@@ -24,10 +24,8 @@ host port identity = CURATED_ANNOTATION (dataset `super_class`,
 """
 from __future__ import annotations
 
-import json
 import math
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 
 import numpy as np
 

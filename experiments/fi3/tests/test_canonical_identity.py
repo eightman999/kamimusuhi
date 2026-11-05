@@ -9,10 +9,7 @@ from experiments.fi3.identity.canonical import (
     canonical_hash,
     canonicalize_text,
 )
-from experiments.fi3.identity.manifest import (
-    collect_manifest,
-    runtime_identity_hash,
-)
+from experiments.fi3.identity.manifest import runtime_identity_hash
 
 
 def test_canonical_bytes_order_independent():

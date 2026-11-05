@@ -20,7 +20,7 @@ Research notes may contain competing hypotheses. The default normative order is 
 
 ## 1. System definition
 
-Kamimusuhi is a **persistent, distributed artificial cognitive individual** whose continuity does not depend on one model context, process, machine, or interface.
+Kamimusuhi is a **persistent, developing artificial cognitive individual** whose continuity does not depend on one model context, process, machine, or interface. It may use sensory organs, cognitive organs, and compute resources placed across machines, but it does not treat multiple complete active runtimes as one individual.
 
 The system is intended, over time, to support the following:
 
@@ -29,7 +29,7 @@ The system is intended, over time, to support the following:
 - record, reinterpret, consolidate, and forget experience;
 - vary reasoning depth and computational expenditure according to need;
 - delegate reasoning, retrieval, calculation, code execution, perception, and specialist tasks to external resources;
-- inhabit multiple authenticated devices and surfaces while preserving one authoritative identity lineage;
+- use bounded organs/resources on multiple authenticated devices and surfaces; moving the complete runtime is migration/handoff, while concurrently autonomous complete runtimes are separate individuals/forks;
 - perform background cognition, default cognition, and offline consolidation outside request/response interaction;
 - treat vision, hearing, touch, environment, and machine telemetry as parts of an artificial sensory system;
 - treat speech as a time-bearing motor/social action rather than only text-to-speech rendering;
@@ -88,11 +88,13 @@ Model output, dream output, background cognition, tool output, or retrieved text
 
 Durable changes SHALL pass through an explicit **proposal → validation/policy → activation** boundary and preserve provenance, predecessor state, and disposition.
 
-### INV-006 — Distributed execution must not imply accidental duplication
+### INV-006 — Distributed resources and individual replication are distinct
 
-Multiple devices or processes MAY perceive, reason, cache, and propose changes concurrently.
+Multiple devices or processes MAY perceive, reason, cache, and propose changes concurrently when they act as bounded organs/resources.
 
-There SHALL nevertheless be a continuity mechanism that prevents multiple descendants of a stale predecessor from silently presenting themselves as the same authoritative individual.
+However, multiple complete runtimes with canonical self-state read/write access and independent speaking, decision, or commit authority MUST NOT be active as one individual. If multiple runtimes become independently active from the same state, they SHALL be treated as separate forks with distinct `individual_id` / continuity roots.
+
+Moving the same individual between hosts SHALL use migration/handoff semantics: the old active writer MUST be stopped or fenced before the new runtime is activated.
 
 ### INV-007 — External intelligence remains distinguishable from self
 
@@ -702,11 +704,11 @@ Full-duplex interaction is a long-term target. The system SHOULD at least be abl
 
 ---
 
-## 10. Distributed embodiment and continuity
+## 10. Distributed organs, migration, and continuity
 
 ### FR-018 — Execution surfaces
 
-Kamimusuhi MAY run across multiple surfaces such as phones, laptops, home servers, robots, and cloud nodes.
+Kamimusuhi MAY place bounded organs/resources on multiple surfaces such as phones, laptops, home servers, robots, and cloud nodes. Authority for the complete active runtime belongs to only one host at a time.
 
 Each surface SHALL have a stable authenticated identity and declared capabilities.
 
@@ -738,11 +740,11 @@ Changing a model, host, or interaction surface SHOULD be representable as migrat
 
 Migration does not guarantee behavioral invariance; material cognitive changes SHOULD be evaluated separately.
 
-### FR-022 — Split-brain handling
+### FR-022 — Split-brain / fork handling
 
-Network partitions or concurrent writers MUST NOT silently create multiple authoritative descendants from one canonical predecessor.
+Network partitions or concurrent writers MUST NOT allow multiple independently acting runtimes descended from one canonical predecessor to continue silently as the same individual.
 
-Conflicting branches SHALL require explicit reconciliation, quarantine, or designation as a fork/new individual.
+Conflicting branches SHALL be quarantined. One branch MAY be selected as the continuation of the prior lineage, but histories produced while both branches acted independently MUST NOT later be merged and represented as one autobiographical continuity. Any other surviving branch SHALL become a fork/new individual with a distinct `individual_id` / continuity root.
 
 ---
 
@@ -985,14 +987,14 @@ See the [implementation audit](./docs/implementation/2026-09-10-spec-implementat
 - background freshness policy;
 - bounded default cognition.
 
-### v0.5 — distributed body
+### v0.5 — distributed organs / migration
 
-- K-Edge + K-Core deployment;
+- K-Edge + K-Core organ/resource deployment;
 - authenticated surfaces;
 - Embodiment State;
-- canonical activation across nodes;
-- migration;
-- network-partition / split-brain / recovery tests.
+- single-active-runtime authority;
+- migration / handoff;
+- network-partition / accidental-split-brain / fork tests.
 
 ### v1.x — artificial cognitive life research
 
@@ -1016,7 +1018,7 @@ See the [implementation audit](./docs/implementation/2026-09-10-spec-implementat
 - Under what conditions can background cognition remain useful without becoming uncontrolled self-reinforcement?
 - How should digital interoceptive variables be calibrated or learned?
 - How much canonical evidence should remain lossless, and how should that trade off against privacy and storage cost?
-- When does a distributed branch become a fork/new individual rather than a continuation?
+- How should the single-active-runtime boundary for migration/handoff be enforced mechanically under failures?
 - How should personality drift after model migration be measured?
 - How can long-lived relationship competence be measured independently of short benchmark tasks?
 - How much do speech timing, backchannels, and sensory embodiment contribute to identity and relationship formation?

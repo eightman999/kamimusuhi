@@ -23,8 +23,7 @@ from contextlib import contextmanager
 from typing import Callable
 
 from . import fitness as F
-from ..genome.mutation import (OUTCOME_APPLIED, merged_config,
-                               mutate, structural_summary)
+from ..genome.mutation import OUTCOME_APPLIED, mutate, structural_summary
 from ..genome.schema import Genome, fba0_genome
 from ..storage import models as M
 

@@ -40,11 +40,9 @@ from .analysis.metrics import (cause_centroids, dropout_dims,
 from .config import Config, load_config
 from .data import EVAL_SEED_OFFSET, collect_dataset
 from .env import LatentCauseEnv, N_CAUSES
-from .env.dynamics import NEUTRAL
-from .models import build_model
 from .probes import (FEAT_NAMES, best_match_acc, centroid_margin,
                      dynseg_dataset, fewshot_probe, kmeans,
-                     logistic_probe, mutual_info, nmi, purity,
+                     logistic_probe, mutual_info, purity,
                      ridge_probe)
 from .representations import (KMeansRep, TorchRep, build_analytic_rep,
                               build_kmeans_rep)

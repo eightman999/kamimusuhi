@@ -1,8 +1,6 @@
 import numpy as np
-import pytest
 
-from ..env.c0_env import (C0Config, C0Env, IGNORE, STORE, ANSWER,
-                          ITEM, QUERY, NOISE)
+from ..env.c0_env import C0Config, C0Env, IGNORE, ANSWER, ITEM, QUERY
 
 
 def cfg(**kw):

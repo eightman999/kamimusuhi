@@ -32,7 +32,7 @@ import torch
 from experiments.g0.data import train_val_datasets
 from experiments.g0.evaluate import _eval_datasets, eval_dynfeat
 from experiments.g0.representations import build_analytic_rep
-from experiments.g0.sweep import METRIC_PATHS, _get, mean_std, summarize
+from experiments.g0.sweep import METRIC_PATHS, _get, summarize
 
 from .config import apply_overrides, load_config
 from .evaluate import eval_model

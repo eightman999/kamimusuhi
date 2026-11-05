@@ -1,7 +1,9 @@
-//! Resident mode worker: talks to the always-on Kamimusuhi individual on the
-//! Pi through its resident HTTP API. The UI thread never blocks on the
-//! network: a turn runs on one thread, decisions on short-lived threads and
+//! Resident-mode client worker: talks to the always-on Kamimusuhi individual
+//! through its resident HTTP API. The UI thread never blocks on the network:
+//! a turn runs on one thread, decisions on short-lived threads and
 //! status/approval polling on a background refresher.
+//!
+//! Shared by the desktop (egui) and terminal (ratatui) frontends.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,12 +11,14 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
-use kamimusuhi_resident::client;
 use serde_json::Value;
+
+use crate::client;
 
 #[derive(Debug, Clone)]
 pub struct RemoteConfig {
-    /// Explicit resident URL; `None` discovers (LAN, then Tailscale).
+    /// Explicit resident URL; `None` uses `$KAMIMUSUHI_URL` or
+    /// `~/.config/kamimusuhi/nodes`.
     pub url: Option<String>,
     pub subject: String,
 }
@@ -29,19 +33,33 @@ pub enum RemoteCommand {
     },
     /// `POST /v1/tasks` body (create / update).
     Task(Value),
+    /// `POST /v1/agents` body (task plane: cancel / feedback / continue /
+    /// refresh). The reply arrives as [`RemoteEvent::AgentsReply`].
+    Agents(Value),
     Refresh,
     Shutdown,
 }
 
 #[derive(Debug)]
 pub enum RemoteEvent {
-    Connected { url: String, history: Vec<Value> },
+    Connected {
+        url: String,
+        history: Vec<Value>,
+    },
     Reply(Value),
     Status(Value),
     Approvals(Vec<Value>),
     Tools(Value),
     Tasks(Vec<Value>),
-    Decision { id: String, reply: Value },
+    /// Task-plane panel document (`{"action":"panel"}`); `Value::Null` when
+    /// the node has no task plane (the endpoint answered 404).
+    Agents(Value),
+    /// Reply to a [`RemoteCommand::Agents`] action.
+    AgentsReply(Value),
+    Decision {
+        id: String,
+        reply: Value,
+    },
     Error(String),
 }
 
@@ -56,7 +74,7 @@ pub fn spawn(config: RemoteConfig) -> (Sender<RemoteCommand>, Receiver<RemoteEve
 }
 
 fn refresh(url: &str, token: Option<&str>, events: &Sender<RemoteEvent>) -> bool {
-    match kamimusuhi_resident::status::fetch(url, token) {
+    match crate::status::fetch(url, token) {
         Ok(status) => {
             if events.send(RemoteEvent::Status(status)).is_err() {
                 return false;
@@ -68,6 +86,18 @@ fn refresh(url: &str, token: Option<&str>, events: &Sender<RemoteEvent>) -> bool
     }
     if let Ok(tasks) = client::tasks(url, token)
         && events.send(RemoteEvent::Tasks(tasks)).is_err()
+    {
+        return false;
+    }
+    // Task plane: a 404 means this node has none; other failures are
+    // transient and keep the last panel (status errors already surface).
+    let panel = match client::agents(url, token, &serde_json::json!({"action": "panel"})) {
+        Ok(panel) => Some(panel),
+        Err(e) if e.starts_with("HTTP 404") => Some(Value::Null),
+        Err(_) => None,
+    };
+    if let Some(panel) = panel
+        && events.send(RemoteEvent::Agents(panel)).is_err()
     {
         return false;
     }
@@ -179,6 +209,19 @@ fn run(config: RemoteConfig, commands: Receiver<RemoteCommand>, events: Sender<R
                         let _ = events
                             .send(RemoteEvent::Error(format!("タスク操作に失敗しました: {e}")));
                     }
+                    refresh(&url, token.as_deref(), &events);
+                });
+            }
+            RemoteCommand::Agents(body) => {
+                let (url, token, events) = (url.clone(), token.clone(), events.clone());
+                thread::spawn(move || {
+                    let event = match client::agents(&url, token.as_deref(), &body) {
+                        Ok(reply) => RemoteEvent::AgentsReply(reply),
+                        Err(e) => {
+                            RemoteEvent::Error(format!("外部エージェント操作に失敗しました: {e}"))
+                        }
+                    };
+                    let _ = events.send(event);
                     refresh(&url, token.as_deref(), &events);
                 });
             }

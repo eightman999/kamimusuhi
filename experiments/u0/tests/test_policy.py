@@ -113,7 +113,7 @@ def test_oracle_separates_from_no_memory():
 
 def test_targeted_erase_removes_relevant_memory():
     """targeted_erase at onset removes only the need-serving items."""
-    from experiments.u0.env.u0_env import CLS_FUNCTIONAL, U0Env
+    from experiments.u0.env.u0_env import U0Env
     from experiments.u0.evaluate import _apply_causal
     env = U0Env(U0Config(seed=0, needs_per_episode=1,
                          delay_min=4, delay_max=4))

@@ -1,7 +1,6 @@
 """Publication-style E2 plots from saved seed-level metrics; never recompute models."""
 import argparse
 import json
-import re
 from pathlib import Path
 
 import numpy as np

@@ -1,0 +1,33 @@
+name: Discord Bot
+
+on:
+  push:
+    paths:
+      - 'deploy/resident/discord*'
+      - 'deploy/resident/test_discord_bot.py'
+      - 'crates/kamimusuhi-discord/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/discord-bot-ci.yml'
+  pull_request:
+    paths:
+      - 'deploy/resident/discord*'
+      - 'deploy/resident/test_discord_bot.py'
+      - 'crates/kamimusuhi-discord/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/discord-bot-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: cargo test --locked -p kamimusuhi-discord
+      - run: cargo clippy --locked -p kamimusuhi-discord --all-targets -- -D warnings

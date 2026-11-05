@@ -72,7 +72,7 @@ def test_ancestry_fraction_synthetic(client, service):
     """Organ genome under synthetic mode must get fraction in (0,1)."""
     import random
     from experiments.mioba.genome.mutation import mutate_child as mutate
-    from experiments.mioba.genome.schema import Genome, fba0_genome
+    from experiments.mioba.genome.schema import fba0_genome
     from experiments.mioba.development.phenotype import develop
 
     base = fba0_genome()

@@ -15,8 +15,7 @@ import pytest
 
 from experiments.mioba.evolution import fitness as F
 from experiments.mioba.fba.seeds import disturbance_seed
-from experiments.mioba.mie.disturbance import (KINDS, merged_config,
-                                               sample_schedule)
+from experiments.mioba.mie.disturbance import KINDS, sample_schedule
 from experiments.mioba.mie.episode import analyse_trace, run_episode
 from experiments.mioba.mie.virtual_env import (CHANNELS, NOMINAL,
                                                PhysicalSensorsNotTraced,

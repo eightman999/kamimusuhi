@@ -2,7 +2,10 @@
   "node": {
     "id": "llm_master",
     "role": "cognition",
-    "listen": "0.0.0.0:7860"
+    "listen": "0.0.0.0:7860",
+    "capabilities": [
+      "llm.generate"
+    ]
   },
   "paths": {
     "root": "/srv/kamimusuhi",
@@ -16,30 +19,54 @@
     {
       "id": "pi",
       "role": "continuity",
-      "url": "http://100.111.150.4:7860"
+      "url": "http://PI_HOST:7860",
+      "priority": 100
+    },
+    {
+      "id": "mac",
+      "role": "cognition",
+      "url": "http://MAC_HOST:7860",
+      "alt_urls": [
+        "http://MAC_TAILNET_HOST:7860"
+      ],
+      "priority": 50
     }
   ],
   "tiers": [
     {
       "name": "local",
-      "base_url": "http://100.74.160.53:8080/v1",
-      "model": "qwen3.8-27b-q4_K_M",
+      "billing": "local",
+      "base_url": "http://LLM_MASTER_HOST:8080/v1",
+      "model": "huihui-gemma-4-26b-a4b-abliterated",
       "node_local": true,
-      "timeout_secs": 300,
-      "probe_interval_secs": 15
+      "timeout_secs": 120,
+      "probe_interval_secs": 15,
+      "privacy_ok_for_private_memory": true,
+      "reasoning_suppression": true,
+      "context_limit_tokens": 65536
     },
     {
       "name": "hai",
+      "billing": "subscription",
       "base_url": "https://hai-api.hcloud.ltd/v1",
       "model": "qwen3.8-27b-uncensored",
       "auth_env": "HAI_API_KEY",
       "timeout_secs": 300,
-      "probe_interval_secs": 60
+      "probe_interval_secs": 60,
+      "privacy_ok_for_private_memory": true,
+      "reasoning_suppression": true
     }
   ],
   "routing": {
     "small_request_chars": 1200,
-    "log_conversations": true
+    "log_conversations": true,
+    "fast_chat_latency_ceiling_ms": 4000,
+    "private_by_default": true,
+    "max_completion_tokens_for_cost": 768,
+    "max_request_cost_usd": 0.02,
+    "max_session_cost_usd": 0.5,
+    "max_daily_cost_usd": 0.1,
+    "max_monthly_cost_usd": 2
   },
   "hai_account": {
     "base_url": "https://hai-api.hcloud.ltd/api",
@@ -47,10 +74,31 @@
     "interval_secs": 900,
     "low_balance_jpy": 0
   },
+  "task_plane": {
+    "executors_file": "/srv/kamimusuhi/config/agent-executors.json",
+    "workspaces": [
+      {
+        "name": "kamimusuhi",
+        "path": "/srv/work/kamimusuhi",
+        "description": "Kamimusuhi リポジトリの作業用 clone（外部エージェントは読み取り専用で使う）"
+      },
+      {
+        "name": "jp_market_vis",
+        "path": "/srv/library/JP_Market_Vis",
+        "description": "JP_Market_Vis（読み取り専用）"
+      }
+    ],
+    "max_concurrent": 2,
+    "routing_mode": "shadow",
+    "quota": {
+      "max_tasks_per_day": 60,
+      "max_usd_per_day": 1.0
+    }
+  },
   "libraries": [
     {
       "name": "jp_market_vis",
-      "path": "/mnt/sda1/kamimusuhi/library/JP_Market_Vis",
+      "path": "/srv/library/JP_Market_Vis",
       "description": "日本の上場企業間の資本・取引・提携・役員兼任・グループ関係（EDINET等由来、3,812社・約9万関係、2026-09時点。現在の株主構成を保証しない）。使い方: 企業は json_get path=public/M4_companies.json pointer=/companies/<証券コード>（名前から探すなら json_find pointer=/companies match=[{field:/name,op:contains,value:社名}]）。関係は json_find path=public/M5_company_relations.json pointer=/relations match=[{field:/source/key,value:<コード>},{field:/target/key,value:<コード>}]（source→target, relation_type, attributes.ownership_ratio）。key が ENT で始まるものは非上場主体で json_get path=public/M5_company_relations.json pointer=/entities/<ENT…> で名前を引く（M4 ではない）。関係タイプの説明は pointer=/relation_types。",
       "source": "https://github.com/mattyamonaca/JP_Market_Vis"
     }
@@ -125,7 +173,7 @@
         "GITHUB_PERSONAL_ACCESS_TOKEN": "$GITHUB_PERSONAL_ACCESS_TOKEN"
       },
       "read_only": true,
-      "description": "GitHub（eightman999 のリポジトリ等）の読み取り専用参照。書き込み系 tool は出さない"
+      "description": "GitHubの読み取り専用参照。書き込み系 tool は出さない"
     },
     {
       "name": "playwright",
@@ -145,6 +193,54 @@
       ],
       "call_timeout_secs": 180,
       "description": "ヘッドレス Chromium による Web 閲覧（llm_master のみ, 隔離プロファイル）"
+    },
+    {
+      "name": "computer_llm",
+      "command": "/srv/kamimusuhi/mcp/computer/bin/computer-mcp",
+      "call_timeout_secs": 30,
+      "description": "llm_master上のXvfb仮想デスクトップ(:99)へのGUI操作。観測系は直接、操作系はtool_judgeモデル審査。install-computer-mcp.shで配置。",
+      "judge_required": [
+        "mouse_move",
+        "click",
+        "key_press",
+        "type_text",
+        "scroll",
+        "activate",
+        "open_application"
+      ]
     }
-  ]
+  ],
+  "dialogue": {
+    "runtime_binary": "/srv/kamimusuhi/runtime/bin/kamimusuhi-runtime",
+    "dir": "/srv/kamimusuhi/runtime/individual-llm",
+    "privacy": "unconstrained",
+    "timeout_secs": 600
+  },
+  "intercom": {
+    "enabled": true,
+    "sisters": {
+      "pi": {
+        "label": "次女",
+        "note": "Pi上の姉妹（continuity ノードの個体）"
+      },
+      "mac": {
+        "label": "長女",
+        "note": "Mac上の姉（cognition ノードの個体）"
+      }
+    }
+  },
+  "tool_judge": {
+    "model": "local",
+    "on_unavailable": "approval"
+  },
+  "delegation": {
+    "enabled": true,
+    "workers": 4,
+    "max_attempts": 6,
+    "retry_secs": 15,
+    "poll_ms": 1500,
+    "default_timeout_ms": 120000,
+    "max_timeout_ms": 900000,
+    "max_queue": 256
+  }
 }

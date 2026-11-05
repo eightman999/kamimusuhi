@@ -4,6 +4,7 @@
 //! it: every secret is referenced by the *name* of an environment variable,
 //! which systemd loads from a mode-600 file outside the repository.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -59,6 +60,442 @@ pub struct Config {
     pub jobs: Vec<crate::jobs::JobConfig>,
     #[serde(default)]
     pub intervals: Intervals,
+    /// External agent harnesses this node runs tasks on (task plane).
+    #[serde(default)]
+    pub task_plane: Option<TaskPlaneConfig>,
+    /// The commitment engine: durable goals pursued across turns and
+    /// restarts (see commitments.rs).
+    #[serde(default)]
+    pub commitments: CommitmentsConfig,
+    /// Sister-to-sister messaging: envelopes between the individuals on
+    /// different nodes, delivered as dialogue turns (see intercom.rs).
+    #[serde(default)]
+    pub intercom: IntercomConfig,
+    /// Model adjudication for tools listed in an MCP server's
+    /// `judge_required` (see judge.rs).
+    #[serde(default)]
+    pub tool_judge: ToolJudgeConfig,
+    /// Typed node-task delegation (`POST /task`): queueing, retries and
+    /// deadlines for work this node hands to a peer — and for work peers
+    /// hand to this node (see delegation.rs).
+    #[serde(default)]
+    pub delegation: DelegationConfig,
+}
+
+/// Delegation lifecycle bounds. Defaults are sized for a light node on a
+/// Raspberry Pi: a couple of workers, generous retries, tight queue caps.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DelegationConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Worker threads running tasks (inbound and outbound share the pool).
+    /// Local LLM calls block the worker for the call's duration; keep this
+    /// small on the Pi so delegated work never saturates the CPU.
+    #[serde(default = "default_delegation_workers")]
+    pub workers: usize,
+    /// Submit attempts before a delegation fails permanently.
+    #[serde(default = "default_delegation_attempts")]
+    pub max_attempts: u32,
+    /// Backoff between submit attempts, seconds.
+    #[serde(default = "default_delegation_retry_secs")]
+    pub retry_secs: u64,
+    /// Poll interval while a task runs remotely, milliseconds.
+    #[serde(default = "default_delegation_poll_ms")]
+    pub poll_ms: u64,
+    /// Consecutive poll transport failures before the task goes back to
+    /// `retry_pending` (the peer may have restarted and still hold the
+    /// record — the idempotent re-submit reconciles).
+    #[serde(default = "default_poll_error_limit")]
+    pub poll_error_limit: u32,
+    /// Deadline applied when a submission sets none, milliseconds.
+    #[serde(default = "default_task_timeout_ms")]
+    pub default_timeout_ms: u64,
+    /// Cap on a submission's `timeout_ms`.
+    #[serde(default = "default_task_max_timeout_ms")]
+    pub max_timeout_ms: u64,
+    /// Open outbound delegations allowed before new submissions are
+    /// refused with `queue_full`.
+    #[serde(default = "default_delegation_queue")]
+    pub max_queue: usize,
+    /// Connect+read bound for submit/poll calls to peers, seconds.
+    #[serde(default = "default_delegation_http_timeout")]
+    pub http_timeout_secs: u64,
+}
+
+const fn default_delegation_workers() -> usize {
+    2
+}
+
+const fn default_delegation_attempts() -> u32 {
+    6
+}
+
+const fn default_delegation_retry_secs() -> u64 {
+    15
+}
+
+const fn default_delegation_poll_ms() -> u64 {
+    1500
+}
+
+const fn default_poll_error_limit() -> u32 {
+    3
+}
+
+const fn default_task_timeout_ms() -> u64 {
+    120_000
+}
+
+const fn default_task_max_timeout_ms() -> u64 {
+    900_000
+}
+
+const fn default_delegation_queue() -> usize {
+    256
+}
+
+const fn default_delegation_http_timeout() -> u64 {
+    10
+}
+
+impl Default for DelegationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            workers: default_delegation_workers(),
+            max_attempts: default_delegation_attempts(),
+            retry_secs: default_delegation_retry_secs(),
+            poll_ms: default_delegation_poll_ms(),
+            poll_error_limit: default_poll_error_limit(),
+            default_timeout_ms: default_task_timeout_ms(),
+            max_timeout_ms: default_task_max_timeout_ms(),
+            max_queue: default_delegation_queue(),
+            http_timeout_secs: default_delegation_http_timeout(),
+        }
+    }
+}
+
+/// Which model screens `judge_required` tool calls before they run, and
+/// what happens when it cannot answer. The default asks the `hai` tier
+/// and queues the call for the operator when no verdict comes back, so an
+/// absent judge is a human question, never a silent yes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolJudgeConfig {
+    /// Judge in router model syntax: a tier name (`hai`), `tier/model`,
+    /// or `kamimusuhi` to let the router pick.
+    #[serde(default = "default_judge_model")]
+    pub model: String,
+    /// Fallback when the judge is unreachable or answers unusably.
+    #[serde(default)]
+    pub on_unavailable: JudgeUnavailable,
+    /// Extra operator policy appended to the judge's instructions.
+    #[serde(default)]
+    pub policy: Option<String>,
+}
+
+fn default_judge_model() -> String {
+    "hai".to_owned()
+}
+
+impl Default for ToolJudgeConfig {
+    fn default() -> Self {
+        Self {
+            model: default_judge_model(),
+            on_unavailable: JudgeUnavailable::default(),
+            policy: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JudgeUnavailable {
+    /// Queue the call for the human operator (the `approval_required` path).
+    #[default]
+    Approval,
+    /// Refuse the call outright.
+    Deny,
+}
+
+/// Commitment engine policy. The engine needs a task plane to act; with
+/// none configured, commitments still persist but no attempt dispatches.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommitmentsConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Seconds between engine passes over the commitment list.
+    #[serde(default = "default_tick_secs")]
+    pub tick_secs: u64,
+    /// Commitment attempts in flight at once, over all commitments.
+    #[serde(default = "default_max_active")]
+    pub max_active: usize,
+    /// Identical failure signatures tolerated before climbing the replan
+    /// ladder (L0→L1→…).
+    #[serde(default = "default_same_failure_limit")]
+    pub same_failure_limit: u64,
+    /// A running attempt silent this long gets a stall note.
+    #[serde(default = "default_stall_note_secs")]
+    pub stall_note_secs: u64,
+    /// How long an externally-blocked commitment sleeps before retrying.
+    #[serde(default = "default_blocked_sleep_secs")]
+    pub blocked_sleep_secs: u64,
+    /// Per-commitment default attempt budget (unset budgets inherit this).
+    #[serde(default = "default_attempt_budget")]
+    pub default_attempts: u64,
+    /// Per-commitment default wall-clock budget; `null` = no time limit.
+    #[serde(default = "default_time_budget")]
+    pub default_time_secs: Option<u64>,
+    /// Per-commitment default cost budget; `null` = no cost limit.
+    #[serde(default)]
+    pub default_usd: Option<f64>,
+    /// When set (and `dialogue` is configured), commitment outcomes are
+    /// delivered to the individual as dialogue turns on this subject:
+    /// done, abandoned and each entry into `escalated` become turns she
+    /// can remember — the engine's results reach her memory through the
+    /// normal intake, not around it. Unset = no delivery.
+    #[serde(default)]
+    pub notify_subject: Option<String>,
+}
+
+const fn default_tick_secs() -> u64 {
+    30
+}
+const fn default_max_active() -> usize {
+    2
+}
+const fn default_same_failure_limit() -> u64 {
+    2
+}
+const fn default_stall_note_secs() -> u64 {
+    600
+}
+const fn default_blocked_sleep_secs() -> u64 {
+    900
+}
+const fn default_attempt_budget() -> u64 {
+    30
+}
+const fn default_time_budget() -> Option<u64> {
+    Some(6 * 3600)
+}
+
+impl Default for CommitmentsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            tick_secs: default_tick_secs(),
+            max_active: default_max_active(),
+            same_failure_limit: default_same_failure_limit(),
+            stall_note_secs: default_stall_note_secs(),
+            blocked_sleep_secs: default_blocked_sleep_secs(),
+            default_attempts: default_attempt_budget(),
+            default_time_secs: default_time_budget(),
+            default_usd: None,
+            notify_subject: None,
+        }
+    }
+}
+
+/// Sister-to-sister messaging between the individuals hosted on peer
+/// nodes. Each node that hosts an individual (`dialogue` configured)
+/// accepts envelopes over `POST /v1/intercom` and turns them into dialogue
+/// turns under the subject `sister-<from>`. Replies are active — the
+/// individual calls `peer_say` — except in conversations the operator
+/// opened with an auto-reply budget, where each turn's response is
+/// forwarded until the budget or the hop limit runs out.
+///
+/// Delivery is direct HTTP first; when the peer is unreachable and a
+/// `relay` is configured, the envelope goes through the relay's per-node
+/// mailbox and the receiver's poller picks it up. Both paths converge on
+/// the same deduplicated accept path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IntercomConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Total forwards a conversation tolerates before envelopes drop —
+    /// the hard ceiling on unattended back-and-forth.
+    #[serde(default = "default_max_hops")]
+    pub max_hops: u64,
+    /// Per-attempt delivery timeout.
+    #[serde(default = "default_intercom_timeout")]
+    pub send_timeout_secs: u64,
+    /// Base backoff between delivery attempts (doubles to a 1h cap).
+    #[serde(default = "default_intercom_retry")]
+    pub retry_secs: u64,
+    /// Delivery attempts before a message is dead-lettered.
+    #[serde(default = "default_intercom_attempts")]
+    pub max_attempts: u32,
+    /// Outbound messages accepted per peer per UTC day.
+    #[serde(default = "default_daily_limit")]
+    pub per_peer_daily_limit: u64,
+    /// Auto-reply turns granted when the operator opens a conversation —
+    /// and the ceiling on budgets arriving inside inbound envelopes.
+    #[serde(default = "default_auto_turns")]
+    pub auto_reply_turns: u64,
+    /// Relay mailbox for peers unreachable directly, and this node's own
+    /// inbound path when it cannot be reached (see deploy/relay).
+    #[serde(default)]
+    pub relay: Option<RelayConfig>,
+    /// Display metadata for the sister individuals, keyed by peer id —
+    /// the name the individual sees in incoming messages.
+    #[serde(default)]
+    pub sisters: BTreeMap<String, SisterConfig>,
+}
+
+/// A mailbox relay, e.g. the Cloudflare Worker in `deploy/relay`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelayConfig {
+    /// Base URL, e.g. `https://kamimusuhi-relay.<account>.workers.dev`.
+    pub url: String,
+    /// Environment variable holding the relay bearer token.
+    #[serde(default = "default_relay_token_env")]
+    pub token_env: String,
+    /// Seconds between inbox polls.
+    #[serde(default = "default_relay_poll")]
+    pub poll_secs: u64,
+}
+
+/// How a sister individual is presented in message framing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SisterConfig {
+    /// e.g. `長女` — shown to the receiving individual.
+    pub label: String,
+    /// Optional context line (who she is, what her node does).
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+const fn default_max_hops() -> u64 {
+    12
+}
+const fn default_intercom_timeout() -> u64 {
+    30
+}
+const fn default_intercom_retry() -> u64 {
+    60
+}
+const fn default_intercom_attempts() -> u32 {
+    72
+}
+const fn default_daily_limit() -> u64 {
+    200
+}
+const fn default_auto_turns() -> u64 {
+    6
+}
+fn default_relay_token_env() -> String {
+    "KAMIMUSUHI_RELAY_TOKEN".to_owned()
+}
+const fn default_relay_poll() -> u64 {
+    15
+}
+
+impl Default for IntercomConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_hops: default_max_hops(),
+            send_timeout_secs: default_intercom_timeout(),
+            retry_secs: default_intercom_retry(),
+            max_attempts: default_intercom_attempts(),
+            per_peer_daily_limit: default_daily_limit(),
+            auto_reply_turns: default_auto_turns(),
+            relay: None,
+            sisters: BTreeMap::new(),
+        }
+    }
+}
+
+/// Task plane: agent harnesses (Devin, OpenCode, Command Code, …) the
+/// individual can delegate work to. Harnesses are listed in `executors`
+/// and/or in `executors_file`; the file is re-read whenever it changes, so
+/// a harness can be added or removed without restarting the resident
+/// (which would interrupt running tasks).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskPlaneConfig {
+    #[serde(default)]
+    pub executors: Vec<kamimusuhi_runtime::agent_exec::ExecutorConfig>,
+    /// `{"executors": [...]}`, merged after `executors` (same names are an
+    /// error).
+    #[serde(default)]
+    pub executors_file: Option<PathBuf>,
+    /// Directories tasks may run in. Delegation names one of these; no
+    /// other path is ever handed to a harness.
+    pub workspaces: Vec<WorkspaceConfig>,
+    /// Tasks running at once on this node, over all executors.
+    #[serde(default = "default_task_concurrency")]
+    pub max_concurrent: usize,
+    /// How often catalog freshness, `executors_file` and helper servers
+    /// are checked.
+    #[serde(default = "default_catalog_check")]
+    pub check_interval_secs: u64,
+    /// Limits over every executor together (each executor may also set
+    /// its own `quota`).
+    #[serde(default)]
+    pub quota: Option<kamimusuhi_runtime::agent_exec::Quota>,
+    /// How `executor: auto` chooses: `static` rules, `shadow` (static,
+    /// with the history-based choice recorded for comparison) or `history`
+    /// (measured outcomes once `history_min_samples` exist).
+    #[serde(default)]
+    pub routing_mode: RoutingMode,
+    #[serde(default = "default_min_samples")]
+    pub history_min_samples: usize,
+    /// Evaluation battery (`task-battery.example.json` format); the
+    /// built-in Q1–Q7 battery otherwise.
+    #[serde(default)]
+    pub battery_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingMode {
+    Static,
+    #[default]
+    Shadow,
+    History,
+}
+
+impl RoutingMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Static => "static",
+            Self::Shadow => "shadow",
+            Self::History => "history",
+        }
+    }
+}
+
+const fn default_min_samples() -> usize {
+    3
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceConfig {
+    pub name: String,
+    pub path: PathBuf,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Permit write tasks. They still never touch this directory: each
+    /// runs in its own git worktree and branch, merged only by an
+    /// explicit operator `apply`.
+    #[serde(default)]
+    pub allow_write: bool,
+}
+
+const fn default_task_concurrency() -> usize {
+    2
+}
+
+const fn default_catalog_check() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +510,12 @@ pub struct NodeConfig {
     /// for every non-loopback request except `/health`.
     #[serde(default = "default_token_env")]
     pub token_env: String,
+    /// Extra capability ids this node advertises on `/capabilities` and in
+    /// `/health` (e.g. `"vision"`, `"embedding"` once an adapter exists).
+    /// Capabilities derived from the config merge with these — see
+    /// capabilities.rs.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 fn default_token_env() -> String {
@@ -134,8 +577,34 @@ const fn default_nas_timeout() -> u64 {
 pub struct PeerConfig {
     pub id: String,
     pub role: NodeRole,
-    /// Base URL of the peer resident, e.g. `http://100.74.160.53:7860`.
+    /// Base URL of the peer resident, e.g. `http://llm-master.example:7860`.
     pub url: String,
+    /// Other addresses of the same peer (e.g. LAN and tailnet). The health
+    /// probe tries them in order and requests go to whichever answered.
+    #[serde(default)]
+    pub alt_urls: Vec<String>,
+    /// Static capability declaration for delegation routing. The live
+    /// `/health` probe carries the peer's advertised capabilities and
+    /// overrides this list once a probe has succeeded; the static list is
+    /// the fallback for peers that have never been reached (needed so a
+    /// task can queue for a peer that is down rather than be rejected).
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    /// Delegation preference among capable peers; higher wins, ties keep
+    /// config order.
+    #[serde(default = "default_peer_priority")]
+    pub priority: u32,
+}
+
+const fn default_peer_priority() -> u32 {
+    50
+}
+
+impl PeerConfig {
+    /// `url` first, then `alt_urls`.
+    pub fn urls(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.url.as_str()).chain(self.alt_urls.iter().map(String::as_str))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -146,6 +615,33 @@ pub enum TierCondition {
     Always,
     /// Only for short requests (K0 / local-class work) or when asked for.
     SmallRequest,
+}
+
+/// How a tier is paid for — display and policy metadata, mirroring
+/// `BillingClass` in the runtime's route gate. `None` means the plan is
+/// undeclared; an undeclared tier's cost is shown as unknown, never as free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TierBilling {
+    /// Self-hosted or peer node; marginal cost is zero.
+    Local,
+    /// Flat subscription already paid for (e.g. HAI).
+    Subscription,
+    /// Provider free tier.
+    FreeTier,
+    /// Per-token billing.
+    Metered,
+}
+
+impl TierBilling {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Subscription => "subscription",
+            Self::FreeTier => "free_tier",
+            Self::Metered => "metered",
+        }
+    }
 }
 
 /// One OpenAI-compatible backend in the routing order.
@@ -177,6 +673,43 @@ pub struct TierConfig {
     /// Seconds between health probes for this tier.
     #[serde(default = "default_probe_interval")]
     pub probe_interval_secs: u64,
+    /// How this tier is billed. Drives the per-turn cost display; when the
+    /// prices below are set, metered turns also get an estimate.
+    #[serde(default)]
+    pub billing: Option<TierBilling>,
+    /// USD per million prompt tokens, for metered tiers.
+    #[serde(default)]
+    pub input_usd_per_mtok: Option<f64>,
+    /// USD per million completion tokens, for metered tiers.
+    #[serde(default)]
+    pub output_usd_per_mtok: Option<f64>,
+    /// Explicit privacy declaration. When omitted, only local/subscription
+    /// tiers are trusted with persona memory; free/metered tiers fail closed.
+    #[serde(default)]
+    pub privacy_ok_for_private_memory: Option<bool>,
+    /// Maximum prompt tokens accepted by this tier, when known.
+    #[serde(default)]
+    pub context_limit_tokens: Option<u64>,
+    /// Approximate per-minute token budget used to avoid predictable 429s.
+    #[serde(default)]
+    pub approx_tpm_limit: Option<u64>,
+    /// Whether the tier can suppress reasoning for latency-sensitive chat.
+    #[serde(default)]
+    pub reasoning_suppression: Option<bool>,
+    /// Provider-specific request fields added to every upstream call (e.g.
+    /// `{"reasoning_effort": "low"}` for gpt-oss). Fields the client already
+    /// set, and the routing-owned `model`/`stream`/`messages`, win.
+    #[serde(default)]
+    pub extra_body: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Request fields removed before calling this tier, for providers that
+    /// reject fields they do not know (e.g. `chat_template_kwargs`, which
+    /// llama.cpp and HAI accept but strict OpenAI-compatible APIs refuse).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub strip_fields: Vec<String>,
+    /// Lanes this tier leads ahead of the billing order (e.g. a fast cloud
+    /// for `FAST_CHAT`). Privacy, health and spend limits still apply.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prefer_lanes: Vec<kamimusuhi_runtime::route_gate::RouteLane>,
 }
 
 const fn default_tier_timeout() -> u64 {
@@ -197,6 +730,34 @@ pub struct RoutingConfig {
     /// Record request/response pairs under `conversations/`.
     #[serde(default = "default_true")]
     pub log_conversations: bool,
+    /// User-facing latency ceiling for FAST_CHAT. The production resident
+    /// uses this as the RouteGate health cutoff; default is the 4s SLA.
+    #[serde(default = "default_fast_chat_latency_ceiling_ms")]
+    pub fast_chat_latency_ceiling_ms: u64,
+    /// Estimated prompt tokens from which an unhinted request is routed on
+    /// the MEMORY_HEAVY lane (context-limit aware, no fast-chat ceiling).
+    #[serde(default = "default_memory_heavy_prompt_tokens")]
+    pub memory_heavy_prompt_tokens: u64,
+    /// The last user message counts as everyday quick chat (`FAST_CHAT`)
+    /// up to this many characters; longer requests go to `DEEP_REASONING`.
+    #[serde(default = "default_fast_chat_max_input_chars")]
+    pub fast_chat_max_input_chars: usize,
+    /// Persona requests are private unless an internal caller explicitly
+    /// marks a request public.
+    #[serde(default = "default_true")]
+    pub private_by_default: bool,
+    /// Completion-token assumption used for metered pre-flight estimates
+    /// when the request does not carry an explicit limit.
+    #[serde(default = "default_max_completion_tokens_for_cost")]
+    pub max_completion_tokens_for_cost: u32,
+    #[serde(default = "default_max_request_cost_usd")]
+    pub max_request_cost_usd: f64,
+    #[serde(default = "default_max_session_cost_usd")]
+    pub max_session_cost_usd: f64,
+    #[serde(default = "default_max_daily_cost_usd")]
+    pub max_daily_cost_usd: Option<f64>,
+    #[serde(default = "default_max_monthly_cost_usd")]
+    pub max_monthly_cost_usd: Option<f64>,
 }
 
 impl Default for RoutingConfig {
@@ -204,12 +765,53 @@ impl Default for RoutingConfig {
         Self {
             small_request_chars: default_small_chars(),
             log_conversations: true,
+            fast_chat_latency_ceiling_ms: default_fast_chat_latency_ceiling_ms(),
+            memory_heavy_prompt_tokens: default_memory_heavy_prompt_tokens(),
+            fast_chat_max_input_chars: default_fast_chat_max_input_chars(),
+            private_by_default: true,
+            max_completion_tokens_for_cost: default_max_completion_tokens_for_cost(),
+            max_request_cost_usd: default_max_request_cost_usd(),
+            max_session_cost_usd: default_max_session_cost_usd(),
+            max_daily_cost_usd: default_max_daily_cost_usd(),
+            max_monthly_cost_usd: default_max_monthly_cost_usd(),
         }
     }
 }
 
 const fn default_small_chars() -> usize {
     1200
+}
+
+const fn default_fast_chat_latency_ceiling_ms() -> u64 {
+    4_000
+}
+
+const fn default_fast_chat_max_input_chars() -> usize {
+    200
+}
+
+const fn default_memory_heavy_prompt_tokens() -> u64 {
+    16_000
+}
+
+const fn default_max_completion_tokens_for_cost() -> u32 {
+    768
+}
+
+const fn default_max_request_cost_usd() -> f64 {
+    0.02
+}
+
+const fn default_max_session_cost_usd() -> f64 {
+    0.50
+}
+
+fn default_max_daily_cost_usd() -> Option<f64> {
+    Some(0.10)
+}
+
+fn default_max_monthly_cost_usd() -> Option<f64> {
+    Some(2.00)
 }
 
 const fn default_true() -> bool {
@@ -278,6 +880,14 @@ pub struct DialogueConfig {
     pub privacy: String,
     #[serde(default = "default_dialogue_timeout")]
     pub timeout_secs: u64,
+    /// Turns that may run at once across all clients. Turns for the same
+    /// subject still run one at a time, in arrival order.
+    #[serde(default = "default_dialogue_concurrency")]
+    pub max_concurrent: usize,
+}
+
+const fn default_dialogue_concurrency() -> usize {
+    2
 }
 
 fn default_privacy() -> String {
@@ -388,13 +998,82 @@ impl Config {
             if tier.timeout_secs == 0 || tier.probe_interval_secs == 0 {
                 return Err(format!("tier {}: intervals must be positive", tier.name));
             }
+            let billing = tier
+                .billing
+                .ok_or_else(|| format!("tier {}: billing must be declared", tier.name))?;
+            let valid_price = |value: Option<f64>| value.is_none_or(|v| v.is_finite() && v >= 0.0);
+            if !valid_price(tier.input_usd_per_mtok) || !valid_price(tier.output_usd_per_mtok) {
+                return Err(format!(
+                    "tier {}: prices must be finite and non-negative",
+                    tier.name
+                ));
+            }
+            if billing == TierBilling::Metered
+                && (tier.input_usd_per_mtok.is_none() || tier.output_usd_per_mtok.is_none())
+            {
+                return Err(format!(
+                    "tier {}: metered tiers require input/output prices for pre-flight cost control",
+                    tier.name
+                ));
+            }
+            if billing == TierBilling::FreeTier
+                && (tier.input_usd_per_mtok.unwrap_or(0.0) > 0.0
+                    || tier.output_usd_per_mtok.unwrap_or(0.0) > 0.0)
+            {
+                return Err(format!(
+                    "tier {}: free_tier must not declare non-zero token prices",
+                    tier.name
+                ));
+            }
+        }
+        let finite_non_negative = |v: f64| v.is_finite() && v >= 0.0;
+        if self.routing.fast_chat_latency_ceiling_ms == 0
+            || self.routing.max_completion_tokens_for_cost == 0
+            || !finite_non_negative(self.routing.max_request_cost_usd)
+            || !finite_non_negative(self.routing.max_session_cost_usd)
+            || self.routing.max_request_cost_usd > self.routing.max_session_cost_usd
+            || self
+                .routing
+                .max_daily_cost_usd
+                .is_some_and(|v| !finite_non_negative(v))
+            || self
+                .routing
+                .max_monthly_cost_usd
+                .is_some_and(|v| !finite_non_negative(v))
+        {
+            return Err("routing latency/cost limits are invalid".to_owned());
         }
         for peer in &self.peers {
             if !id_ok(&peer.id) {
                 return Err(format!("peer id {:?} is invalid", peer.id));
             }
-            kamimusuhi_resource_http::Endpoint::parse(&peer.url, "/health")
-                .map_err(|e| format!("peer {}: {e}", peer.id))?;
+            for url in peer.urls() {
+                kamimusuhi_resource_http::Endpoint::parse(url, "/health")
+                    .map_err(|e| format!("peer {}: {e}", peer.id))?;
+            }
+            for cap in &peer.capabilities {
+                if !kamimusuhi_node::valid_id(cap) {
+                    return Err(format!("peer {}: capability {cap:?} is invalid", peer.id));
+                }
+            }
+        }
+        for cap in &self.node.capabilities {
+            if !kamimusuhi_node::valid_id(cap) {
+                return Err(format!("node.capabilities {cap:?} is invalid"));
+            }
+        }
+        let d = &self.delegation;
+        if d.workers == 0
+            || d.workers > 8
+            || d.max_attempts == 0
+            || d.poll_ms < 50
+            || d.poll_error_limit == 0
+            || d.default_timeout_ms > d.max_timeout_ms
+            || d.max_timeout_ms > kamimusuhi_node::MAX_TIMEOUT_MS
+            || d.max_queue == 0
+            || d.http_timeout_secs == 0
+        {
+            return Err("delegation limits are invalid".to_owned());
         }
         let mut mcp_names = std::collections::HashSet::new();
         for server in &self.mcp_servers {
@@ -408,6 +1087,86 @@ impl Config {
         for lib in &self.libraries {
             if !id_ok(&lib.name) || !lib.path.is_absolute() {
                 return Err(format!("library {:?}: name or path invalid", lib.name));
+            }
+        }
+        if let Some(plane) = &self.task_plane {
+            kamimusuhi_runtime::agent_exec::resolve_all(&plane.executors)
+                .map_err(|e| format!("task_plane: {e}"))?;
+            if plane
+                .executors_file
+                .iter()
+                .chain(&plane.battery_file)
+                .any(|p| !p.is_absolute())
+            {
+                return Err("task_plane.executors_file/battery_file must be absolute".to_owned());
+            }
+            if let Some(q) = &plane.quota {
+                q.validate().map_err(|e| format!("task_plane.quota: {e}"))?;
+            }
+            if plane.workspaces.is_empty()
+                || plane.max_concurrent == 0
+                || plane.check_interval_secs == 0
+            {
+                return Err(
+                    "task_plane needs workspaces and positive max_concurrent/check_interval_secs"
+                        .to_owned(),
+                );
+            }
+            let mut names = std::collections::HashSet::new();
+            for ws in &plane.workspaces {
+                if !id_ok(&ws.name) || !names.insert(ws.name.as_str()) || !ws.path.is_absolute() {
+                    return Err(format!(
+                        "task_plane workspace {:?}: name invalid/duplicated or path not absolute",
+                        ws.name
+                    ));
+                }
+            }
+        }
+        if self
+            .dialogue
+            .as_ref()
+            .is_some_and(|d| d.max_concurrent == 0)
+        {
+            return Err("dialogue.max_concurrent must be positive".to_owned());
+        }
+        let cm = &self.commitments;
+        if cm.enabled
+            && (cm.tick_secs == 0
+                || cm.max_active == 0
+                || cm.same_failure_limit == 0
+                || cm.stall_note_secs == 0
+                || cm.blocked_sleep_secs == 0
+                || cm.default_attempts == 0
+                || cm.default_time_secs.is_some_and(|t| t == 0)
+                || cm.default_usd.is_some_and(|u| !u.is_finite() || u < 0.0))
+        {
+            return Err("commitments intervals/limits must be positive".to_owned());
+        }
+        if let Some(subject) = &cm.notify_subject
+            && !crate::dialogue::valid_subject(subject)
+        {
+            return Err("commitments.notify_subject is not a valid dialogue subject".to_owned());
+        }
+        let ic = &self.intercom;
+        if ic.enabled
+            && (ic.max_hops == 0
+                || ic.send_timeout_secs == 0
+                || ic.retry_secs == 0
+                || ic.max_attempts == 0
+                || ic.per_peer_daily_limit == 0)
+        {
+            return Err("intercom intervals/limits must be positive".to_owned());
+        }
+        for id in ic.sisters.keys() {
+            if !self.peers.iter().any(|p| &p.id == id) {
+                return Err(format!("intercom sister {id:?} is not a configured peer"));
+            }
+        }
+        if let Some(relay) = &ic.relay {
+            kamimusuhi_resource_http::Endpoint::parse(&relay.url, "/health")
+                .map_err(|e| format!("intercom.relay: {e}"))?;
+            if relay.poll_secs == 0 {
+                return Err("intercom.relay.poll_secs must be positive".to_owned());
             }
         }
         if let Some(nas) = &self.nas
@@ -426,10 +1185,61 @@ mod tests {
     #[test]
     fn deploy_examples_parse() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/resident");
-        for name in ["pi.resident.json", "llm_master.resident.json"] {
+        for name in [
+            "pi.resident.example.json",
+            "llm_master.resident.example.json",
+        ] {
             let config = Config::load(&root.join(name)).expect(name);
             assert!(!config.tiers.is_empty(), "{name} has tiers");
         }
+    }
+
+    #[test]
+    fn mac_example_parses_after_substitution() {
+        let text = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../deploy/resident/mac.resident.example.json"),
+        )
+        .expect("read")
+        .replace("@ROOT@", "/tmp/kamimusuhi-node")
+        .replace("@HOME@", "/Users/example");
+        let config: Config = serde_json::from_str(&text).expect("parses");
+        config.validate().expect("valid");
+        let plane = config.task_plane.expect("task plane");
+        assert!(plane.workspaces[0].allow_write);
+    }
+
+    #[test]
+    fn agent_executors_example_resolves() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../deploy/resident/agent-executors.example.json");
+        let executors =
+            crate::task_orchestrator::parse_executors_file(&std::fs::read(&path).expect("read"))
+                .expect("executors");
+        let specs = kamimusuhi_runtime::agent_exec::resolve_all(&executors).expect("resolves");
+        assert_eq!(specs.len(), 4);
+    }
+
+    #[test]
+    fn provider_tiers_example_parses_and_keeps_training_tiers_off_private_memory() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../deploy/resident/provider-tiers.example.json");
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("json");
+        let tiers: Vec<TierConfig> = serde_json::from_value(value["tiers"].clone()).expect("tiers");
+        for tier in &tiers {
+            assert!(tier.billing.is_some(), "{} declares billing", tier.name);
+            assert!(tier.auth_env.is_some(), "{} names its key", tier.name);
+        }
+        let private_ok = |name: &str| {
+            tiers
+                .iter()
+                .find(|t| t.name == name)
+                .and_then(|t| t.privacy_ok_for_private_memory)
+        };
+        assert_eq!(private_ok("gemini"), Some(false));
+        assert_eq!(private_ok("openrouter"), Some(false));
+        assert_eq!(private_ok("groq"), Some(true));
     }
 
     #[test]

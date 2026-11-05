@@ -37,7 +37,6 @@ from ..development.phenotype import develop
 from ..fba.registry import get_backend
 from ..fba.replicates import replicate_seeds
 from ..fba.semantics import check_replayable
-from ..fba.semantics import semantics as current_semantics
 from ..genome.hashing import scientific_config_hash
 from ..genome.schema import Genome
 from ..storage.db import Database

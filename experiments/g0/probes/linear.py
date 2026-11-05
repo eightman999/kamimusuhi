@@ -6,7 +6,7 @@ env ground truth used at EVALUATION time only.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import torch

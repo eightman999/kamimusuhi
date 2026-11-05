@@ -22,6 +22,10 @@ name = "k-core"
 path = "src/bin/k-core.rs"
 
 [[bin]]
+name = "provider-bench"
+path = "src/bin/provider-bench.rs"
+
+[[bin]]
 name = "kamimusuhi-genome"
 path = "src/bin/kamimusuhi-genome.rs"
 

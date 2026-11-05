@@ -4,8 +4,11 @@
 //! in this module performs I/O.
 
 use std::collections::BTreeMap;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, RwLock};
+
+use kamimusuhi_runtime::provider_bench::{CostCaps, CostGuard};
+use kamimusuhi_runtime::route_gate::ProviderStateBook;
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -74,23 +77,49 @@ pub struct SyncState {
     pub total_delivered_files: u64,
 }
 
+/// What one routed request did: which tier answered, at what cost basis.
+/// Token/cost fields are `None` when the upstream did not report them —
+/// an unknown cost is never rendered as zero.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct RouteEvent {
     pub at: u64,
+    /// Route-gate lane of an auto-routed request (`FAST_CHAT`, `TOOL_TASK`,
+    /// ...); `None` for an explicitly forced tier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lane: Option<String>,
     pub tier: Option<String>,
+    /// Upstream model that served the request.
+    pub model: Option<String>,
+    /// The tier's declared billing class (`local`/`subscription`/
+    /// `free_tier`/`metered`); `None` = undeclared.
+    pub billing: Option<String>,
     pub attempts: Vec<String>,
     pub latency_ms: u64,
     pub ok: bool,
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+    /// Prompt tokens served from an upstream prefix cache, when reported.
+    pub cached_tokens: Option<u64>,
+    /// Prompt tokens the upstream wrote into its prefix cache on this
+    /// request, when reported.
+    pub cache_write_tokens: Option<u64>,
+    /// USD this request cost — actual when the provider billed and said
+    /// so, estimate when computed from configured prices.
+    pub cost_usd: Option<f64>,
+    /// `actual` | `estimate`; absent when `cost_usd` is.
+    pub cost_kind: Option<String>,
 }
 
 pub struct Shared {
     pub config: Config,
     pub started: u64,
     pub boot_epoch: u64,
-    pub spool: Spool,
+    pub spool: std::sync::Arc<Spool>,
     pub token: Option<String>,
     pub tiers: RwLock<BTreeMap<String, ProbeResult>>,
     pub peers: RwLock<BTreeMap<String, ProbeResult>>,
+    /// Address each peer last answered on (see `PeerConfig::alt_urls`).
+    pub peer_urls: RwLock<BTreeMap<String, String>>,
     pub nas: RwLock<ProbeResult>,
     pub sync: RwLock<SyncState>,
     pub account: RwLock<Option<ProbeResult>>,
@@ -98,14 +127,32 @@ pub struct Shared {
     pub kcore: RwLock<Value>,
     pub snapshot: RwLock<Value>,
     pub last_route: RwLock<Option<RouteEvent>>,
+    /// Bounded local usage history, independent of the NAS delivery spool.
+    pub usage: crate::usage::UsageStore,
+    /// Live request observations consumed by the shared RouteGate.
+    pub route_health: Mutex<ProviderStateBook>,
+    /// Persistent production spend guard. Metered calls hold this lock for
+    /// the duration of the call so concurrent fallbacks cannot overbook a cap.
+    pub cost_guard: Mutex<CostGuard>,
     pub requests: AtomicU64,
     pub mcp: Vec<std::sync::Arc<crate::mcp::McpServer>>,
     pub approvals: crate::approvals::ApprovalQueue,
-    pub tasks: crate::tasks::TaskBoard,
-    /// Task id of the dialogue turn in progress, so tool calls made during
-    /// it are recorded as its successors.
-    pub current_turn: std::sync::Mutex<Option<String>>,
+    pub tasks: std::sync::Arc<crate::tasks::TaskBoard>,
+    /// Durable node-task queue (`current_state/delegations.sqlite`):
+    /// outbound delegations and inbound peer tasks (see delegation.rs).
+    pub delegations: crate::delegation::DelegationStore,
+    /// Dialogue turns in progress (task id → the last route served for
+    /// it), so tool calls and model calls made during a turn are attributed
+    /// to that turn even while several run at once.
+    pub turns: std::sync::Mutex<BTreeMap<String, Option<RouteEvent>>>,
     pub jobs: crate::jobs::JobStatus,
+    /// External agent harnesses (`None` when this node has none).
+    pub task_plane: Option<std::sync::Arc<crate::task_orchestrator::TaskPlane>>,
+    /// The commitment engine: durable goals pursued across restarts.
+    pub commitments: crate::commitments::Commitments,
+    /// Sister-to-sister messaging between this node's individual and the
+    /// individuals hosted on peer nodes.
+    pub intercom: crate::intercom::Intercom,
 }
 
 fn read<T: Clone>(lock: &RwLock<T>) -> T {
@@ -114,6 +161,20 @@ fn read<T: Clone>(lock: &RwLock<T>) -> T {
 
 impl Shared {
     pub fn new(config: Config, spool: Spool, boot_epoch: u64, token: Option<String>) -> Self {
+        let cost_guard = CostGuard::new(
+            CostCaps {
+                request_usd: config.routing.max_request_cost_usd,
+                session_usd: config.routing.max_session_cost_usd,
+                daily_usd: config.routing.max_daily_cost_usd,
+                monthly_usd: config.routing.max_monthly_cost_usd,
+            },
+            Some(
+                config
+                    .paths
+                    .current_state()
+                    .join("routing-cost-ledger.json"),
+            ),
+        );
         let tiers = config
             .tiers
             .iter()
@@ -138,18 +199,42 @@ impl Shared {
             config.paths.current_state().join("approvals.json"),
         );
         Self {
+            usage: crate::usage::UsageStore::open(
+                config.paths.current_state().join("usage.sqlite"),
+            ),
             mcp,
             approvals,
-            tasks: crate::tasks::TaskBoard::load(config.paths.current_state().join("tasks.json")),
-            current_turn: std::sync::Mutex::new(None),
+            tasks: std::sync::Arc::new(crate::tasks::TaskBoard::load(
+                config.paths.current_state().join("tasks.json"),
+            )),
+            delegations: crate::delegation::DelegationStore::open(
+                &config.paths.current_state().join("delegations.sqlite"),
+            ),
+            task_plane: config.task_plane.as_ref().map(|plane| {
+                std::sync::Arc::new(crate::task_orchestrator::TaskPlane::new(
+                    plane.clone(),
+                    &config.paths,
+                ))
+            }),
+            commitments: crate::commitments::Commitments::load(
+                config.paths.current_state().join("commitments.json"),
+                config.commitments.clone(),
+            ),
+            intercom: crate::intercom::Intercom::load(
+                config.paths.current_state().join("intercom.json"),
+                config.intercom.clone(),
+                config.node.id.clone(),
+            ),
+            turns: std::sync::Mutex::new(BTreeMap::new()),
             jobs: crate::jobs::JobStatus::default(),
             config,
             started: unix_now(),
             boot_epoch,
-            spool,
+            spool: std::sync::Arc::new(spool),
             token,
             tiers: RwLock::new(tiers),
             peers: RwLock::new(peers),
+            peer_urls: RwLock::new(BTreeMap::new()),
             nas: RwLock::new(ProbeResult::default()),
             sync: RwLock::new(SyncState::default()),
             account: RwLock::new(None),
@@ -157,8 +242,62 @@ impl Shared {
             kcore: RwLock::new(json!({"state": "disabled"})),
             snapshot: RwLock::new(Value::Null),
             last_route: RwLock::new(None),
+            route_health: Mutex::new(ProviderStateBook::default()),
+            cost_guard: Mutex::new(cost_guard),
             requests: AtomicU64::new(0),
         }
+    }
+
+    pub fn begin_turn(&self, turn: &str) {
+        self.turns
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(turn.to_owned(), None);
+    }
+
+    /// Close a turn and return the last route served for it.
+    pub fn end_turn(&self, turn: &str) -> Option<RouteEvent> {
+        self.turns
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(turn)
+            .flatten()
+    }
+
+    /// The turn a request belongs to: the one its `X-Kamimusuhi-Turn`
+    /// header names when that turn is in progress. Without the header
+    /// (an older runtime binary, a non-loopback persona URL) the request is
+    /// attributed only when exactly one turn is running — never guessed
+    /// between concurrent ones.
+    pub fn turn_for(&self, header: Option<&str>) -> Option<String> {
+        let turns = self.turns.lock().unwrap_or_else(|p| p.into_inner());
+        match header {
+            Some(turn) => turns.contains_key(turn).then(|| turn.to_owned()),
+            None if turns.len() == 1 => turns.keys().next().cloned(),
+            None => None,
+        }
+    }
+
+    pub fn record_turn_route(&self, turn: &str, event: RouteEvent) {
+        if let Some(slot) = self
+            .turns
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get_mut(turn)
+        {
+            *slot = Some(event);
+        }
+    }
+
+    /// The address to use for `peer`: the one that last answered its
+    /// health probe, else its primary `url`.
+    pub fn peer_url(&self, peer: &crate::config::PeerConfig) -> String {
+        self.peer_urls
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&peer.id)
+            .cloned()
+            .unwrap_or_else(|| peer.url.clone())
     }
 
     pub fn tier_healthy(&self, name: &str) -> bool {
@@ -166,6 +305,17 @@ impl Shared {
             .read()
             .unwrap_or_else(|p| p.into_inner())
             .get(name)
+            .is_some_and(|r| r.healthy)
+    }
+
+    /// Whether the peer's last health probe succeeded. A peer that fails
+    /// probes is not contacted for listings or forwarded calls: its socket
+    /// may accept a connection and still never answer.
+    pub fn peer_healthy(&self, id: &str) -> bool {
+        self.peers
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(id)
             .is_some_and(|r| r.healthy)
     }
 
@@ -198,7 +348,10 @@ impl Shared {
             "version": env!("CARGO_PKG_VERSION"),
             "node": self.config.node.id,
             "role": self.config.node.role.as_str(),
+            "mode": crate::capabilities::mode(&self.config).as_str(),
             "authoritative_state": self.config.node.role == crate::config::NodeRole::Continuity,
+            "capabilities": crate::capabilities::local(&self.config)
+                .into_iter().collect::<Vec<_>>(),
             "started_at": iso8601(self.started),
             "uptime_secs": unix_now().saturating_sub(self.started),
             "boot_epoch": self.boot_epoch,
@@ -207,6 +360,56 @@ impl Shared {
             "nas": self.nas_healthy(),
             "kcore": read(&self.kcore).get("state").cloned().unwrap_or(Value::Null),
             "gpu": read(&self.gpu).map(|g| g.detail),
+            "pending_tasks": self.delegations.pending_count(),
+        })
+    }
+
+    /// Spec-shaped light/heavy node state: the minimum the continuity node
+    /// must hold to remain *the* runtime while heavy nodes come and go.
+    /// `active_goal` and `active_session` are references (ids/titles), not
+    /// bodies — memory stays in the canonical store this node guards.
+    pub fn node_state(&self) -> Value {
+        let mode = crate::capabilities::mode(&self.config);
+        let peers: BTreeMap<String, ProbeResult> = read(&self.peers);
+        let heavy_available = match mode {
+            kamimusuhi_node::NodeMode::Light => peers.values().any(|p| p.healthy),
+            kamimusuhi_node::NodeMode::Heavy => true,
+        };
+        let last_probe = read(&self.tiers)
+            .values()
+            .chain(peers.values())
+            .map(|p| p.checked_at)
+            .chain(std::iter::once(read(&self.nas).checked_at))
+            .max()
+            .unwrap_or(0);
+        let last_error = read(&self.tiers)
+            .values()
+            .chain(peers.values())
+            .chain(std::iter::once(&read(&self.nas)))
+            .filter_map(|p| p.error.clone().map(|e| (p.checked_at, e)))
+            .max_by_key(|(at, _)| *at)
+            .map(|(_, e)| e);
+        let active_goal = self
+            .commitments
+            .list(false)
+            .first()
+            .map(|c| json!({"id": c.id, "goal": c.goal}));
+        let sessions: Vec<String> = {
+            let turns = self.turns.lock().unwrap_or_else(|p| p.into_inner());
+            turns.keys().cloned().collect()
+        };
+        let pending = self.delegations.pending_count();
+        let running = self.delegations.in_flight_count();
+        json!({
+            "node_id": self.config.node.id,
+            "mode": mode.as_str(),
+            "status": if running > 0 || !sessions.is_empty() { "busy" } else { "idle" },
+            "active_sessions": sessions,
+            "active_goal": active_goal,
+            "heavy_node_available": heavy_available,
+            "pending_tasks": pending,
+            "last_heartbeat": (last_probe > 0).then(|| iso8601(last_probe)),
+            "last_error": last_error,
         })
     }
 
@@ -232,14 +435,28 @@ impl Shared {
                 t.condition == crate::config::TierCondition::Always && self.tier_healthy(&t.name)
             })
             .map(|t| t.name.clone());
+        let cost_guard = self.cost_guard.lock().unwrap_or_else(|p| p.into_inner());
+        let cost_status = json!({
+            "session_usd": cost_guard.spent_usd(),
+            "daily_usd": cost_guard.day_spent_usd(),
+            "monthly_usd": cost_guard.month_spent_usd(),
+            "session_remaining_usd": cost_guard.remaining_usd(),
+            "unpriced_requests": cost_guard.unpriced_requests(),
+        });
+        drop(cost_guard);
         json!({
             "node": self.health(),
+            "node_state": self.node_state(),
+            "delegations": self.delegations.status(),
+            "process": crate::selfmon::read(),
             "peers": peers,
             "routing": {
                 "order": order,
                 "active_primary": active,
                 "tiers": tiers,
                 "last_route": read(&self.last_route),
+                "usage": self.usage.snapshot(),
+                "cost_guard": cost_status,
                 "requests": self.requests.load(Ordering::Relaxed),
             },
             "nas": {
@@ -262,6 +479,9 @@ impl Shared {
             "snapshot": read(&self.snapshot),
             "mcp": self.mcp.iter().map(|m| m.status()).collect::<Vec<_>>(),
             "jobs": read(&*self.jobs),
+            "task_plane": self.task_plane.as_ref().map(|p| p.status()),
+            "commitments": self.commitments.summary(),
+            "intercom": self.intercom.summary(),
             "approvals_pending": self.approvals.list(true).iter().map(|a| a.view()).collect::<Vec<_>>(),
             "generated_at": iso8601(unix_now()),
         })
