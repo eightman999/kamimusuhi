@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the computer-use MCP (computer-mcp.py + a private Xvfb display and
+# Install the computer-use MCP (Rust binary + a private Xvfb display and
 # xdotool/scrot backend) as the non-root resident service user on Linux.
 #
 #   deploy/resident/install-computer-mcp.sh [--check] [--prefix DIRECTORY] [--refresh]
@@ -36,7 +36,16 @@ done
 [[ "$PREFIX" == /* && "$PREFIX" != / ]] || { echo 'prefix must be an absolute directory other than /' >&2; exit 64; }
 [[ "$(uname -s)" == Linux ]] || { echo 'install-computer-mcp.sh is for Linux nodes (macOS uses install-mac.sh).' >&2; exit 1; }
 [[ "$(id -u)" != 0 ]] || { echo 'Run as the non-root resident service user.' >&2; exit 1; }
-[[ -f "$SRC/deploy/resident/computer-mcp.py" ]] || { echo "missing $SRC/deploy/resident/computer-mcp.py" >&2; exit 1; }
+# A matching prebuilt binary avoids requiring a Rust toolchain on small nodes.
+if [[ -n "${COMPUTER_MCP_BINARY:-}" && ! -x "$COMPUTER_MCP_BINARY" ]]; then
+  echo 'COMPUTER_MCP_BINARY must point to an executable for this CPU/OS.' >&2
+  exit 1
+fi
+COMPUTER_MCP_BINARY="${COMPUTER_MCP_BINARY:-$SRC/target/release/kamimusuhi-computer-mcp}"
+if [[ ! -x "$COMPUTER_MCP_BINARY" ]] && ! command -v cargo >/dev/null; then
+  echo 'Build kamimusuhi-computer-mcp first or set COMPUTER_MCP_BINARY to a matching native binary.' >&2
+  exit 1
+fi
 
 # pick_package: print the first name that has an apt candidate.
 pick_package() {
@@ -52,15 +61,12 @@ pick_package() {
 }
 
 missing=0
-for dependency in python3 apt-get apt-cache dpkg-deb ldd sha256sum; do
+for dependency in apt-get apt-cache dpkg-deb ldd sha256sum; do
   if ! command -v "$dependency" >/dev/null; then
     echo "Missing prerequisite: $dependency" >&2
     missing=1
   fi
 done
-if command -v python3 >/dev/null; then
-  python3 -c 'import sys; assert sys.version_info >= (3, 9), "Python 3.9+ required"' || missing=1
-fi
 (( missing == 0 )) || exit 1
 
 SPECS=()
@@ -81,15 +87,13 @@ for alternatives in 'x11-xkb-utils' 'x11-utils' 'xdotool' 'libxdo3 libxdo3t64' '
     exit 1
   fi
 done
-# xdpyinfo links libXxf86dga even on headless hosts; extract it locally when
-# the system does not provide it (same handling as install-chrome-web-mcp.sh).
-if ! python3 -c 'import ctypes; ctypes.CDLL("libXxf86dga.so.1")' >/dev/null 2>&1; then
-  if spec=$(pick_package libxxf86dga1 libxxf86dga1t64); then
-    SPECS+=("$spec")
-  else
-    echo 'No apt candidate: libxxf86dga1 (needed by xdpyinfo)' >&2
-    exit 1
-  fi
+# xdpyinfo links libXxf86dga even on headless hosts; include the local
+# package so setup needs no Python ctypes probe.
+if spec=$(pick_package libxxf86dga1 libxxf86dga1t64); then
+  SPECS+=("$spec")
+else
+  echo 'No apt candidate: libxxf86dga1 (needed by xdpyinfo)' >&2
+  exit 1
 fi
 printf 'Prerequisites PASS. Packages: %s\n' "${SPECS[*]}"
 $CHECK_ONLY && exit 0
@@ -113,9 +117,8 @@ if $REFRESH || [[ ! -x "$DEPS/usr/bin/Xvfb" ]] || [[ ! -f "$marker" ]] \
   printf '%s\n' "$wanted" > "$marker"
 fi
 
-multiarch=$(python3 -c 'import sysconfig; print(sysconfig.get_config_var("MULTIARCH") or "")')
 libdirs=()
-for d in "$DEPS/usr/lib/$multiarch" "$DEPS/lib/$multiarch" "$DEPS/usr/lib" "$DEPS/lib"; do
+for d in "$DEPS"/usr/lib/*-linux-gnu* "$DEPS"/lib/*-linux-gnu* "$DEPS/usr/lib" "$DEPS/lib"; do
   [[ -d "$d" ]] && libdirs+=("$d")
 done
 ld_path=$(IFS=:; printf '%s' "${libdirs[*]}")
@@ -134,7 +137,11 @@ for exe in Xvfb xdotool scrot wmctrl xdpyinfo xkbcomp; do
 done
 [[ "$unresolved" == 0 ]] || { echo 'Local X binaries have missing libraries; no system change was made.' >&2; exit 1; }
 
-install -m 644 "$SRC/deploy/resident/computer-mcp.py" "$PREFIX/computer-mcp.py"
+if [[ ! -x "$COMPUTER_MCP_BINARY" ]]; then
+  cargo build --release --manifest-path "$SRC/Cargo.toml" -p kamimusuhi-computer-mcp
+fi
+install -m 755 "$COMPUTER_MCP_BINARY" "$PREFIX/kamimusuhi-computer-mcp.new"
+mv -f "$PREFIX/kamimusuhi-computer-mcp.new" "$PREFIX/kamimusuhi-computer-mcp"
 
 # Launcher: dependencies on PATH, local libs for ldd resolution, a dedicated
 # state dir, and the managed display default. Exclusive-create a temp file
@@ -150,7 +157,7 @@ export IMLIB2_LOADER_PATH="$imlib_loaders"
 export COMPUTER_XVFB="$DEPS/usr/bin/Xvfb"
 export COMPUTER_DIR="$PREFIX/state"
 export COMPUTER_DISPLAY="\${COMPUTER_DISPLAY:-:99}"
-exec python3 "$PREFIX/computer-mcp.py" "\$@"
+exec "$PREFIX/kamimusuhi-computer-mcp" "\$@"
 EOF
 )
 if [[ -f "$launcher" && "$(cat "$launcher")" != "$text" ]]; then
@@ -168,7 +175,7 @@ mv -f "$tmp" "$launcher"
 if ! printf '%s\n' \
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
     '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"health_check","arguments":{}}}' \
-    | "$launcher" | grep -q '"platform": "linux"'; then
+    | "$launcher" | grep -Eq '"platform"[[:space:]]*:[[:space:]]*"linux"'; then
   echo 'computer-mcp smoke test failed (health_check did not report linux).' >&2
   exit 1
 fi

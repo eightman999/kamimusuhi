@@ -1,0 +1,273 @@
+[
+  {
+    "name": "health_check",
+    "description": "このノードの computer-use 基盤の状態（プラットフォーム、ディスプレイ、必要ツールの有無、macOS のアクセシビリティ許可）。副作用なし。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "list_windows",
+    "description": "画面上のウィンドウ・アプリ一覧（macOS: AX 経由のプロセスとウィンドウ名、Linux: 管理ディスプレイ上の X ウィンドウ）。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "ui_tree",
+    "description": "macOS 専用: 指定アプリのウィンドウ内 UI 要素ツリー（role/name/value/位置）。深さ depth（既定3）・要素数 limit（既定250）まで。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "description": "アプリ/プロセス名"
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 1000
+        }
+      },
+      "required": [
+        "app"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "screenshot",
+    "description": "画面を PNG として保存し、パスを返す。画像自体はモデルには届かない（記録・操作者確認用）。region に 'x,y,w,h' で範囲指定可。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "region": {
+          "type": "string",
+          "description": "x,y,w,h"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "wait",
+    "description": "ms ミリ秒待つ（最大10秒）。画面反映待ちに使う。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      },
+      "required": [
+        "ms"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "mouse_move",
+    "description": "マウスカーソルを座標へ移動する（クリックはしない）。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "click",
+    "description": "座標 (x,y) をクリック。button: left|middle|right、clicks: 1-3（2でダブルクリック）。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "button": {
+          "type": "string",
+          "enum": [
+            "left",
+            "middle",
+            "right",
+            "wheel_up",
+            "wheel_down"
+          ]
+        },
+        "clicks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "key_press",
+    "description": "キーまたはショートカットを送る。'return','tab','escape','space','delete',矢印,'f1'-'f12', 修飾子は 'cmd+space' 'ctrl+l' のように + 連結。macOS は key code 数値も可。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "type_text",
+    "description": "文字列をそのまま入力する（英数字は直接キー入力、日本語等はクリップボード貼り付け経由）。フォーカス中の入力欄に入る。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 8000
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "scroll",
+    "description": "スクロール。dy: 負=上/正=下（行数）、dx: 水平。x,y を指定するとその位置でスクロール。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "dx": {
+          "type": "integer"
+        },
+        "dy": {
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "activate",
+    "description": "アプリまたはウィンドウを前面に出す。app（プロセス名）または window（タイトル部分一致）。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string"
+        },
+        "window": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "open_application",
+    "description": "アプリを開く。macOS: アプリ名または /path/App.app。Linux: 管理ディスプレイ上でコマンド名（+args 配列）として起動。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  }
+]

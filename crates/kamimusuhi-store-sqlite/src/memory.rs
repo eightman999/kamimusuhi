@@ -11,8 +11,8 @@ use kamimusuhi_core::continuity::ContinuityError;
 use kamimusuhi_core::evidence::{EvidenceError, EvidenceSnapshot, resolve_roots};
 use kamimusuhi_core::ids::{CommitId, EvidenceId, IndividualId, MemoryId};
 use kamimusuhi_core::memory::{
-    AttributedMemory, LifecycleState, MemoryError, MemoryQuery, MemoryRepository, StateLookup,
-    StateRecord, StateRecordFacts,
+    AttributedMemory, LifecycleState, MemoryError, MemoryQuery, MemoryRepository, MemoryUsage,
+    RecordUsage, StateLookup, StateRecord, StateRecordFacts,
 };
 use kamimusuhi_core::mutation::{MutationDomain, MutationOperation};
 use kamimusuhi_core::time::UtcTimestamp;
@@ -270,6 +270,143 @@ impl MemoryRepository for SqliteStore {
             message: e.to_string(),
         })?;
         get_state_in(&conn, state_record_id)
+    }
+
+    /// One `IN (...)` query instead of the trait default's per-id loop.
+    /// Results follow the requested id order; absent ids are skipped.
+    fn get_state_records(&self, ids: &[MemoryId]) -> Vec<StateRecord> {
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        let Ok(conn) = self.conn() else {
+            return Vec::new();
+        };
+        let Ok(mut stmt) = conn.prepare(&format!(
+            "SELECT {STATE_COLUMNS} FROM state_records WHERE state_record_id IN ({})",
+            placeholders(ids.len())
+        )) else {
+            return Vec::new();
+        };
+        let id_args: Vec<String> = ids.iter().map(ToString::to_string).collect();
+        let params: Vec<&dyn rusqlite::ToSql> =
+            id_args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
+        let Ok(rows) = stmt.query_map(params.as_slice(), read_state_row) else {
+            return Vec::new();
+        };
+        let mut found = std::collections::HashMap::new();
+        for row in rows.flatten() {
+            if let Ok(record) = build_state(&conn, row) {
+                found.insert(record.state_record_id, record);
+            }
+        }
+        ids.iter().filter_map(|id| found.get(id).cloned()).collect()
+    }
+}
+
+fn placeholders(count: usize) -> String {
+    (1..=count)
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Usage bookkeeping lives in `state_record_usage`, a side table — never on
+/// the canonical `state_records` row (`kamimusuhi_core::memory::MemoryUsage`).
+/// These operations are deliberately infallible at the signature level:
+/// recall must fail soft, so a store error reads as "no usage recorded".
+impl MemoryUsage for SqliteStore {
+    /// One statement: every listed id gets `use_count + 1`,
+    /// `last_used_at = now`, whether the row exists yet or not.
+    fn mark_used(&self, ids: &[MemoryId], now: UtcTimestamp) {
+        if ids.is_empty() {
+            return;
+        }
+        let Ok(conn) = self.conn() else {
+            return;
+        };
+        let now_index = ids.len() + 1;
+        let mut sql = String::from(
+            "INSERT INTO state_record_usage(state_record_id, last_used_at, use_count) VALUES ",
+        );
+        for i in 1..=ids.len() {
+            if i > 1 {
+                sql.push(',');
+            }
+            sql.push_str(&format!("(?{i}, ?{now_index}, 1)"));
+        }
+        sql.push_str(
+            " ON CONFLICT(state_record_id) DO UPDATE SET
+             use_count = use_count + 1, last_used_at = excluded.last_used_at",
+        );
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = ids
+            .iter()
+            .map(|id| Box::new(id.to_string()) as Box<dyn rusqlite::ToSql>)
+            .collect();
+        args.push(Box::new(now.unix_millis()));
+        let params: Vec<&dyn rusqlite::ToSql> = args.iter().map(AsRef::as_ref).collect();
+        let _ = conn.execute(&sql, params.as_slice());
+    }
+
+    fn usage(&self, id: &MemoryId) -> Option<RecordUsage> {
+        let conn = self.conn().ok()?;
+        conn.query_row(
+            "SELECT last_used_at, use_count FROM state_record_usage
+             WHERE state_record_id = ?1",
+            params![id.to_string()],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .map(|(last_used_at, use_count)| RecordUsage {
+            last_used_at: UtcTimestamp::from_unix_millis(last_used_at),
+            use_count: u32::try_from(use_count).unwrap_or(u32::MAX),
+        })
+    }
+
+    fn usages(&self, ids: &[MemoryId]) -> Vec<(MemoryId, RecordUsage)> {
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        let Ok(conn) = self.conn() else {
+            return Vec::new();
+        };
+        let Ok(mut stmt) = conn.prepare(&format!(
+            "SELECT state_record_id, last_used_at, use_count FROM state_record_usage
+             WHERE state_record_id IN ({})",
+            placeholders(ids.len())
+        )) else {
+            return Vec::new();
+        };
+        let id_args: Vec<String> = ids.iter().map(ToString::to_string).collect();
+        let params: Vec<&dyn rusqlite::ToSql> =
+            id_args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
+        let Ok(rows) = stmt.query_map(params.as_slice(), |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        }) else {
+            return Vec::new();
+        };
+        let mut found = std::collections::HashMap::new();
+        for (raw_id, last_used_at, use_count) in rows.flatten() {
+            let Ok(id) = raw_id.parse::<MemoryId>() else {
+                continue;
+            };
+            found.insert(
+                id,
+                RecordUsage {
+                    last_used_at: UtcTimestamp::from_unix_millis(last_used_at),
+                    use_count: u32::try_from(use_count).unwrap_or(u32::MAX),
+                },
+            );
+        }
+        // Same ordering rule as `get_state_records`: follow the request.
+        ids.iter()
+            .filter_map(|id| found.get(id).map(|usage| (*id, usage.clone())))
+            .collect()
     }
 }
 

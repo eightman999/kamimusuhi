@@ -17,7 +17,9 @@ use kamimusuhi_core::persona::{PersonaBackendDescriptor, PersonaError, ProposalD
 ///   active relationship record exists for the subject — a
 ///   `relationship.correction` draft superseding it;
 /// * **episodic capture**: uncaptured recent user utterances yield one
-///   `episodic.capture` draft citing them;
+///   `episodic.capture` draft citing them — plus whatever declared recall
+///   metadata [`with_episodic_declared`](Self::with_episodic_declared)
+///   attached;
 /// * **retrieval update**: a measured `retrieval_missed` yields a
 ///   `retrieval.evidence_top_k` raise;
 /// * **policy update**: mean response length over the configured bound (or
@@ -29,8 +31,25 @@ use kamimusuhi_core::persona::{PersonaBackendDescriptor, PersonaError, ProposalD
 ///
 /// Every rule fires only on what was presented, so two identical reflections
 /// produce identical output.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct FakeReflector;
+#[derive(Debug, Default, Clone)]
+pub struct FakeReflector {
+    /// Declared recall metadata merged verbatim into each `episodic.capture`
+    /// candidate. `None` keeps the fixture's original behaviour.
+    episodic_declared: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl FakeReflector {
+    /// Attach declared recall metadata (`tags`/`links`/`valid_from`/
+    /// `valid_to`) to the episodic capture drafts this fixture emits — the
+    /// producer-side half of recall v0 that tests exercise. Entries are
+    /// merged unchecked so tests can also cover the intake-side fail-soft
+    /// rules; a non-object value is ignored.
+    #[must_use]
+    pub fn with_episodic_declared(mut self, declared: serde_json::Value) -> Self {
+        self.episodic_declared = declared.as_object().cloned();
+        self
+    }
+}
 
 /// The fixture's backend identity. Distinct from the fake persona's.
 pub const FIXTURE_REFLECTOR_BACKEND_ID: PersonaBackendId = PersonaBackendId::from_u128(0x0FE5);
@@ -116,14 +135,22 @@ impl Reflector for FakeReflector {
             .filter(|e| !cited.contains(&e.evidence_id))
             .collect();
         if uncaptured.len() >= 2 {
+            let mut candidate = serde_json::json!({
+                "summary": format!("{} utterances from this subject", uncaptured.len()),
+                "turns": uncaptured.len(),
+            });
+            if let (Some(declared), Some(map)) =
+                (&self.episodic_declared, candidate.as_object_mut())
+            {
+                for (key, value) in declared {
+                    map.insert(key.clone(), value.clone());
+                }
+            }
             output.canonical_drafts.push(ProposalDraft {
                 domain: MutationDomain::Episodic,
                 operation: MutationOperation::Capture,
                 subject_key: input.subject_key.clone(),
-                candidate: serde_json::json!({
-                    "summary": format!("{} utterances from this subject", uncaptured.len()),
-                    "turns": uncaptured.len(),
-                }),
+                candidate,
                 evidence_refs: uncaptured.iter().map(|e| e.evidence_id).collect(),
                 supersedes: None,
                 origin_class: OriginClass::Reported,

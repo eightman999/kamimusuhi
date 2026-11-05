@@ -2,7 +2,17 @@
 
 澪が各ノードのデスクトップ画面を観測し、GUI を操作するための MCP サーバー。
 標準入出力の改行区切り JSON-RPC 2.0（protocolVersion `2025-06-18`）。
-実装は `deploy/resident/computer-mcp.py` 単一ファイル、Python 標準ライブラリのみ。
+実装は `crates/kamimusuhi-computer-mcp` のRustネイティブバイナリ。
+Pythonランタイムは不要。旧 `deploy/resident/computer-mcp.py` は移植時の互換性確認用に保持している。
+
+```sh
+cargo build --release -p kamimusuhi-computer-mcp
+cargo test -p kamimusuhi-computer-mcp # 互換性テストのみ比較対象のPython 3が必要
+```
+
+Linux installerは既存の `target/release/kamimusuhi-computer-mcp` を優先し、無ければCargoでbuildする。
+別ホストでbuildした場合は `COMPUTER_MCP_BINARY=/path/to/binary` で指定する（配置先CPU/OSに対応したbinaryが必要）。
+Mac installerはresidentと同時にbuildする。MCP名・ツール定義・環境変数・JSON-RPC形式は維持する。
 
 ## ノード別の提供形態
 
@@ -31,7 +41,7 @@
 
 - `mouse_move` / `click`（button: left|middle|right, clicks≤3）/ `scroll`
 - `key_press` — `return` `tab` `escape` `f1`..`f12` `cmd+space` `ctrl+l` 形式
-- `type_text` — 最大 8000 文字。非 ASCII はクリップボード経由（旧内容を復元）
+- `type_text` — 最大 8000 文字。macOSはIMEによる変換を避けるためASCIIもクリップボード経由（旧プレーンテキスト内容を復元）
 - `activate` — アプリ/ウィンドウを前面へ
 - `open_application` — macOS は `open -a`、Linux は管理ディスプレイ上で起動
 
@@ -64,7 +74,7 @@ llm_master は `local` tier（自前の llama.cpp）。`hai` のような推論�
   `CGEventPost`）、`screencapture`、`pbcopy/pbpaste`、`open`。外部依存なし。
 - **前提**: アクセシビリティ（System Settings > Privacy & Security >
   Accessibility）と画面収録の許可を、責任プロセス（resident から起動した
-  `python3`）に操作者が付与する。未許可でも `CGEventPost` 系は動くことが
+  `kamimusuhi-computer-mcp`）に操作者が付与する。未許可でも `CGEventPost` 系は動くことが
   あるが、System Events 経由の呼び出しはタイムアウトまでハングするため、
   本サーバーは AX 依存操作の前に `AXIsProcessTrusted` を確認し即時失敗する。
 - `health_check` の `accessibility_trusted` で許可状態を確認できる。

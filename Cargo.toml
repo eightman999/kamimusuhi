@@ -9,7 +9,11 @@ members = [
     "crates/kamimusuhi-runtime",
     "crates/kamimusuhi-desktop",
     "crates/kamimusuhi-resident",
+    "crates/kamimusuhi-node",
     "crates/kamimusuhi-tui",
+    "crates/kamimusuhi-computer-mcp",
+    "crates/kamimusuhi-discord",
+    "crates/kamimusuhi-monitoring",
 ]
 
 [workspace.package]
@@ -26,6 +30,7 @@ kamimusuhi-store-sqlite = { path = "crates/kamimusuhi-store-sqlite" }
 kamimusuhi-persona-http = { path = "crates/kamimusuhi-persona-http" }
 kamimusuhi-resource-http = { path = "crates/kamimusuhi-resource-http" }
 kamimusuhi-testkit = { path = "crates/kamimusuhi-testkit" }
+kamimusuhi-node = { path = "crates/kamimusuhi-node" }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

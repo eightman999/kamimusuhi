@@ -3,6 +3,13 @@
 Raspberry Pi と llm_master の両方で `kamimusuhi-resident`（バイナリ名 `kamimusuhi`）を systemd 常駐させる。
 自己改善・自動実験はこの構成が安定してから追加する。
 
+運用補助も Rust workspace に含める。Computer MCP は `kamimusuhi-computer-mcp`、
+Discord 連携は `kamimusuhi-discord`、Grafana JSON 生成は `kamimusuhi-monitoring`。
+起動・導入方法はそれぞれ [computer-mcp.md](computer-mcp.md)、[discord.md](discord.md)、
+[monitoring/README.md](monitoring/README.md) を参照。
+旧 Python 実装は移植照合用に保持する。研究・学習コード、外部 MCP の依存、
+インストール補助スクリプトは別途扱い、Cloudflare Relay は TypeScript を維持する。
+
 ```text
              NAS (NFS export → /mnt/kamimusuhi, 共有全体は /mnt/nas-share)
           ↗       ↖
@@ -319,6 +326,38 @@ journalctl -u kamimusuhi-resident -f
 
 `status` は Pi / llm_master（peer の /health とGPU）/ routing tier / NAS（書込probe・spool backlog・最終同期）/ HAI（API疎通・残高）/ K-CORE / snapshot を表示する。
 
+## Node Task（Light/Heavy 委譲プロトコル）
+
+Pi (light) ↔ llm_master (heavy) 間の typed task 委譲。詳細は
+`docs/light-heavy-node-architecture.md`。
+
+- `POST /task` — `{task_id?, type, requires[], payload, timeout_ms?, target_node?, wait_ms?}`
+  を受理。`task_id` は冪等キー（再送は既存レコードを返す）。認証は node token。
+- `GET /task/<id>` — タスクの現状態・結果を取得。
+- `GET /capabilities` — `{"node_id","role","mode","capabilities":[...]}`（無認証、
+  `/health` にも同じ capabilities が載るので既存 probe が discovery を兼ねる）。
+- `GET /v1/delegations` / `POST /v1/delegations` — 一覧 / show / retry / cancel。
+- `kamimusuhi node` — spec形状の node_state。`kamimusuhi task …` — submit/status/list/retry/cancel。
+
+分類は LOCAL / DELEGATE / QUEUE / REJECT の rule-based（`delegation::decide`）。
+`node.*`/`state.*` は常に local。`requires` と各ノードの advertised capability で
+宛先を決めるので、将来の GPU/V100/cloud API ノードも同一プロトコルに載る。
+light node は healthy な capable peer を優先し、heavy node は local を優先する。
+
+queue は `current_state/delegations.sqlite` (WAL)。再起動で in-flight は
+`retry_pending` に倒れて再送される。payload/result は node-local のみ —
+NAS journal/board に載るのは id/type/state/latency だけ。
+
+```jsonc
+// pi.resident.json 追加例
+"peers": [{"id": "llm_master", "url": "http://…:7860",
+           "capabilities": ["llm.generate"], "priority": 100}],
+"delegation": {"enabled": true, "workers": 2, "max_attempts": 6,
+               "retry_secs": 30, "poll_ms": 1500,
+               "default_timeout_ms": 120000, "max_timeout_ms": 900000,
+               "max_queue": 128}
+```
+
 ## 障害時の挙動
 
 | 事象 | 挙動 | 復帰 |
@@ -328,3 +367,33 @@ journalctl -u kamimusuhi-resident -f
 | llm_master 再起動 | resident・llama-master とも自動起動 | 自動 |
 | NAS 断 / ハング | spool に蓄積、probe は別スレッドで timeout | マーカー確認後に自動配送 |
 | HAI 断 | 他tierのみ。全滅なら 503 | probe 成功で自動 |
+| heavy node 停止中の委譲 | task は `retry_pending` で待機（Pi側 event loop は止まらない） | peer 復帰で冪等再送、attempts 上限超過で `failed` |
+
+## ローカル配置の例（Obsidian + 開発ディレクトリ）
+
+このマシン（Mac）では情報置き場が `~/Desktop/Obsidian`、開発ディレクトリが `~/dev`。
+resident.json では次のように接続する（`local/` 配下は git 管理外のサイト固有設定）:
+
+```jsonc
+// ~/Desktop/Obsidian を library として読み取り専用公開（/v1/library, library_* tools）
+"libraries": [
+  { "name": "obsidian", "path": "~/Desktop/Obsidian",
+    "description": "情報置き場の Obsidian vault（読み取り専用）" }
+],
+// mcpvault 経由なら検索・読み・承認制の書き込みも可（deploy/resident の MCP 節を参照）
+// ~/dev を Task Plane の workspace として委譲先に使う
+"task_plane": {
+  "workspaces": [
+    { "name": "dev", "path": "~/dev",
+      "description": "開発ディレクトリ（読み取り・explore 委譲）",
+      "allow_write": false },
+    { "name": "kamimusuhi", "path": "~/dev/sandbox/kamimusuhi",
+      "description": "Kamimusuhi リポジトリ（書き込みは worktree+apply のみ）",
+      "allow_write": true }
+  ]
+}
+```
+
+library は読み取り専用（`.git` と外のパスは返さない）。Obsidian vault の変更を
+個体に即反映させたい場合は、`mcp__obsidian__search_notes` 等の MCP tool 経路の方が向く
+（書き込み系は Pi のみ承認制）。

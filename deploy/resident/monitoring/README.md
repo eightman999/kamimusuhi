@@ -1,7 +1,8 @@
 # モデル利用監視
 
 Grafanaの `Kamimusuhi · モデル利用監視` はPrometheusからresidentのモデル利用を表示する。
-`generate_dashboard.py` で `kamimusuhi-model-usage.json` を再生成できる。
+Rust製の `kamimusuhi-monitoring` で `kamimusuhi-model-usage.json` を再生成できる。
+リポジトリルートから実行する。引数に出力JSONのパスを指定でき、Pythonは不要。
 既定データソースは現在のPiの `prometheus`。他環境では画面上部のデータソースを変更する。
 
 ## 収集対象
@@ -41,7 +42,10 @@ Grafanaの `Kamimusuhi · モデル利用監視` はPrometheusからresidentの�
 ```sh
 cargo test -p kamimusuhi-resident
 cargo clippy -p kamimusuhi-resident --all-targets -- -D warnings
-python3 deploy/resident/monitoring/generate_dashboard.py
+cargo test -p kamimusuhi-monitoring
+cargo run -p kamimusuhi-monitoring -- /tmp/kamimusuhi-model-usage.json
+# 配布JSONを更新する場合（リポジトリルートから）:
+# cargo run -p kamimusuhi-monitoring
 ```
 
 PromQLはGrafana変数を実値（例: `$__range`→`3h`, `$__rate_interval`→`1m`）に置換して

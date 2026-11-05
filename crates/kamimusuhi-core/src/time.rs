@@ -30,6 +30,84 @@ impl UtcTimestamp {
         self.unix_millis
     }
 
+    /// Parse RFC 3339 / ISO 8601 text back into a timestamp.
+    ///
+    /// Accepts the form [`to_rfc3339`](Self::to_rfc3339) emits, the same form
+    /// without a fractional part, and `+HH:MM`/`-HH:MM` (or `+HHMM`, `+HH`)
+    /// offsets. Anything else returns `None`: the input is producer-supplied
+    /// candidate data, so parsing fails soft rather than guessing.
+    pub fn from_rfc3339(text: &str) -> Option<Self> {
+        fn field(text: &str, from: usize, len: usize) -> Option<i64> {
+            let slice = text.get(from..from + len)?;
+            if !slice.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            slice.parse().ok()
+        }
+
+        let b = text.as_bytes();
+        if b.len() < 19
+            || b[4] != b'-'
+            || b[7] != b'-'
+            || !matches!(b[10], b'T' | b't' | b' ')
+            || b[13] != b':'
+            || b[16] != b':'
+        {
+            return None;
+        }
+        let year = field(text, 0, 4)?;
+        let month = field(text, 5, 2)?;
+        let day = field(text, 8, 2)?;
+        let hour = field(text, 11, 2)?;
+        let minute = field(text, 14, 2)?;
+        let second = field(text, 17, 2)?;
+        if !(1..=12).contains(&month)
+            || !(1..=31).contains(&day)
+            || hour > 23
+            || minute > 59
+            || second > 60
+        {
+            return None;
+        }
+
+        let mut rest = &text[19..];
+        let mut millis = 0i64;
+        if let Some(fraction) = rest.strip_prefix('.') {
+            let digits = fraction.bytes().take_while(|b| b.is_ascii_digit()).count();
+            if digits == 0 {
+                return None;
+            }
+            let taken = digits.min(3);
+            millis = fraction[..taken].parse::<i64>().ok()? * 10i64.pow((3 - taken) as u32);
+            rest = &fraction[digits..];
+        }
+
+        let offset_secs = match rest.as_bytes().first() {
+            None | Some(b'Z') | Some(b'z') if rest.len() <= 1 => 0,
+            Some(b'+') | Some(b'-') => {
+                let sign = if rest.as_bytes()[0] == b'-' { -1 } else { 1 };
+                let hm = &rest[1..];
+                let (h, m) = match hm.len() {
+                    5 if hm.as_bytes()[2] == b':' => (field(hm, 0, 2)?, field(hm, 3, 2)?),
+                    4 => (field(hm, 0, 2)?, field(hm, 2, 2)?),
+                    2 => (field(hm, 0, 2)?, 0),
+                    _ => return None,
+                };
+                if h > 23 || m > 59 {
+                    return None;
+                }
+                sign * (h * 3600 + m * 60)
+            }
+            _ => return None,
+        };
+
+        let days = days_from_civil(year, month, day);
+        let secs = days * 86_400 + hour * 3600 + minute * 60 + second - offset_secs;
+        Some(Self::from_unix_millis(
+            secs.saturating_mul(1_000).saturating_add(millis),
+        ))
+    }
+
     /// RFC 3339 / ISO 8601 text, e.g. `2026-09-08T00:00:00.000Z`.
     pub fn to_rfc3339(self) -> String {
         let millis = self.unix_millis.rem_euclid(1000);
@@ -65,6 +143,19 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// Proleptic Gregorian (year, month, day) to days since 1970-01-01.
+/// Howard Hinnant's `days_from_civil` algorithm, the inverse of
+/// [`civil_from_days`].
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9).rem_euclid(12);
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 /// Source of UTC wall time for durable records.
@@ -221,6 +312,33 @@ mod tests {
             UtcTimestamp::from_unix_millis(-1).to_rfc3339(),
             "1969-12-31T23:59:59.999Z"
         );
+    }
+
+    #[test]
+    fn rfc3339_parsing_round_trips_and_accepts_offsets() {
+        for millis in [0, 1_788_825_600_000, 1_709_210_096_789, -1] {
+            let timestamp = UtcTimestamp::from_unix_millis(millis);
+            assert_eq!(
+                UtcTimestamp::from_rfc3339(&timestamp.to_rfc3339()),
+                Some(timestamp)
+            );
+        }
+        // 1_730_000_000 s = 2024-10-27T03:33:20Z; offsets name the same instant.
+        let expected = Some(UtcTimestamp::from_unix_millis(1_730_000_000_000));
+        assert_eq!(UtcTimestamp::from_rfc3339("2024-10-27T03:33:20Z"), expected);
+        assert_eq!(
+            UtcTimestamp::from_rfc3339("2024-10-27T04:33:20+01:00"),
+            expected
+        );
+        assert_eq!(
+            UtcTimestamp::from_rfc3339("2024-10-27T12:33:20+0900"),
+            expected
+        );
+        // A missing offset is read as UTC; malformed or out-of-range input
+        // fails soft.
+        assert_eq!(UtcTimestamp::from_rfc3339("2024-10-27T03:33:20"), expected);
+        assert_eq!(UtcTimestamp::from_rfc3339("not a date"), None);
+        assert_eq!(UtcTimestamp::from_rfc3339("2024-13-01T00:00:00Z"), None);
     }
 
     #[test]
