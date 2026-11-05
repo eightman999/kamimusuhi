@@ -30,6 +30,9 @@ pub mod openai;
 pub mod openai_response;
 pub mod tls;
 
-pub use http::{Endpoint, Header, HttpError, HttpResponse, StreamedResponse, post_json_stream};
+pub use http::{
+    Endpoint, Header, HttpError, HttpResponse, HttpResponseWithHeaders, StreamedResponse,
+    post_json_stream, request,
+};
 pub use openai::{OpenAiCompatibleConfig, OpenAiCompatibleResource};
 pub use tls::{TlsFailureKind, TrustAnchors};

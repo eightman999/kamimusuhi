@@ -245,5 +245,17 @@
     "default_timeout_ms": 120000,
     "max_timeout_ms": 900000,
     "max_queue": 128
+  },
+  "tools": {
+    "http_allow_hosts": [
+      "api.github.com",
+      "api.mistral.ai",
+      "127.0.0.1",
+      "localhost"
+    ],
+    "http_allow_methods": [
+      "GET",
+      "POST"
+    ]
   }
 }

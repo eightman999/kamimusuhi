@@ -259,6 +259,41 @@ pub fn get_json(
     request_json("GET", endpoint, "", headers, timeout, anchors)
 }
 
+/// One HTTP response with its headers kept. [`HttpResponse`] drops them
+/// because most callers only classify status; a caller that surfaces the
+/// reply to another principal (a tool result) needs the headers too.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpResponseWithHeaders {
+    pub status: u16,
+    /// Response headers in wire order, names and values as sent. Framing
+    /// fields the parser consumed (`content-length`, `transfer-encoding`)
+    /// are omitted — the body is already de-framed.
+    pub headers: Vec<(String, String)>,
+    pub body: String,
+}
+
+/// Send an arbitrary HTTP `method` (GET, POST, PUT, PATCH, DELETE, …) with
+/// the same TLS, header, deadline and wire-limit rules as [`post_json`].
+/// The method must be an HTTP token; the body, when any, is still declared
+/// `application/json`, and the reserved request headers stay reserved.
+pub fn request(
+    method: &str,
+    endpoint: &Endpoint,
+    body: &str,
+    headers: &[Header],
+    timeout: Duration,
+    anchors: &TrustAnchors,
+) -> Result<HttpResponseWithHeaders, HttpError> {
+    if !token_name(method) {
+        return Err(HttpError::InvalidRequest(
+            "invalid or unsafe HTTP method".to_owned(),
+        ));
+    }
+    let (mut stream, started) = open_request(method, endpoint, body, headers, timeout, anchors)?;
+    let raw = read_to_close(&mut stream, started, timeout)?;
+    parse_response_full(&raw)
+}
+
 /// A streaming POST response: the decoded body arrives in `on_chunk` pieces
 /// while it is being read, and the assembled body is still returned.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -312,12 +347,22 @@ fn request_json(
     anchors: &TrustAnchors,
 ) -> Result<HttpResponse, HttpError> {
     let (mut stream, started) = open_request(method, endpoint, body, headers, timeout, anchors)?;
+    let raw = read_to_close(&mut stream, started, timeout)?;
+    parse_response(&raw)
+}
 
+/// Read the whole response until EOF (the request asked for
+/// `Connection: close`), bounded by the shared deadline and the wire byte
+/// limit. EOF ends transport reading, but only framing validation in
+/// [`parse_response`] can establish that the message is complete.
+fn read_to_close(
+    stream: &mut Transport,
+    started: Instant,
+    timeout: Duration,
+) -> Result<Vec<u8>, HttpError> {
     let remaining = |phase: &'static str| -> Result<Duration, HttpError> {
         remaining_time(started, timeout, phase)
     };
-    // Connection: close is requested. EOF ends transport reading, but only
-    // framing validation below can establish that the message is complete.
     let mut raw = Vec::new();
     let mut chunk = [0_u8; 4096];
     let mut headers_complete = false;
@@ -351,8 +396,7 @@ fn request_json(
             Err(source) => return Err(classify_io(&source, started, "read")),
         }
     }
-
-    parse_response(&raw)
+    Ok(raw)
 }
 
 fn remaining_time(
@@ -520,6 +564,9 @@ enum BodyFraming {
 struct ResponseHead {
     status: u16,
     framing: BodyFraming,
+    /// Non-framing headers, in wire order. Only the buffered path keeps
+    /// them; the streaming reader parses the same head and discards them.
+    headers: Vec<(String, String)>,
 }
 
 /// Parse the status line and the framing headers of a complete response head
@@ -552,6 +599,7 @@ fn parse_head(head_bytes: &[u8]) -> Result<ResponseHead, HttpError> {
     }
     let mut length = None;
     let mut chunked = false;
+    let mut headers = Vec::new();
     for line in lines {
         let (name, value) = response_header(line)?;
         if name.eq_ignore_ascii_case("content-length") {
@@ -568,6 +616,8 @@ fn parse_head(head_bytes: &[u8]) -> Result<ResponseHead, HttpError> {
                 return Err(malformed("unsupported or duplicate transfer encoding"));
             }
             chunked = true;
+        } else {
+            headers.push((name.to_owned(), value.to_owned()));
         }
     }
     let framing = match (length, chunked) {
@@ -580,7 +630,11 @@ fn parse_head(head_bytes: &[u8]) -> Result<ResponseHead, HttpError> {
             ));
         }
     };
-    Ok(ResponseHead { status, framing })
+    Ok(ResponseHead {
+        status,
+        framing,
+        headers,
+    })
 }
 
 /// What the chunked decoder is waiting for at the wire cursor.
@@ -835,7 +889,7 @@ fn malformed(detail: &str) -> HttpError {
     HttpError::Malformed(detail.to_owned())
 }
 
-fn parse_response(raw: &[u8]) -> Result<HttpResponse, HttpError> {
+fn parse_response_parts(raw: &[u8]) -> Result<(ResponseHead, String), HttpError> {
     if raw.len() > MAX_RESPONSE_BYTES {
         return Err(malformed("response exceeds wire byte limit"));
     }
@@ -858,8 +912,22 @@ fn parse_response(raw: &[u8]) -> Result<HttpResponse, HttpError> {
         }
         BodyFraming::Chunked => decode_chunked(body_bytes)?,
     };
+    Ok((head, body))
+}
+
+fn parse_response(raw: &[u8]) -> Result<HttpResponse, HttpError> {
+    let (head, body) = parse_response_parts(raw)?;
     Ok(HttpResponse {
         status: head.status,
+        body,
+    })
+}
+
+fn parse_response_full(raw: &[u8]) -> Result<HttpResponseWithHeaders, HttpError> {
+    let (head, body) = parse_response_parts(raw)?;
+    Ok(HttpResponseWithHeaders {
+        status: head.status,
+        headers: head.headers,
         body,
     })
 }
@@ -1363,6 +1431,59 @@ mod tests {
             );
             server.join().expect("fixture finished");
         }
+    }
+
+    #[test]
+    fn request_keeps_response_headers_and_checks_the_method() {
+        let raw = "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\n\
+                   X-RateLimit-Remaining: 59\r\nContent-Length: 7\r\n\r\n{\"a\":1}";
+        let server = kamimusuhi_testkit::FixtureServer::always(
+            kamimusuhi_testkit::FixtureResponse::RawHttp {
+                response: raw.to_owned(),
+            },
+        )
+        .expect("fixture");
+        let endpoint = Endpoint::parse(&format!("http://127.0.0.1:{}", server.port()), "/x")
+            .expect("endpoint");
+        let response = request(
+            "PUT",
+            &endpoint,
+            "{}",
+            &[],
+            Duration::from_secs(5),
+            &TrustAnchors::default(),
+        )
+        .expect("request");
+        assert_eq!(response.status, 201);
+        assert_eq!(response.body, "{\"a\":1}");
+        assert!(
+            response
+                .headers
+                .iter()
+                .any(|(n, v)| n == "X-RateLimit-Remaining" && v == "59")
+        );
+        // Framing fields were consumed by the parser, not surfaced.
+        assert!(
+            !response
+                .headers
+                .iter()
+                .any(|(n, _)| n.eq_ignore_ascii_case("content-length"))
+        );
+
+        // A method is part of the request line: anything but a token is
+        // refused before a socket is opened.
+        assert!(matches!(
+            request(
+                "PUT /admin",
+                &endpoint,
+                "{}",
+                &[],
+                Duration::from_secs(1),
+                &TrustAnchors::default(),
+            ),
+            Err(HttpError::InvalidRequest(_))
+        ));
+        assert_eq!(server.request_count(), 1);
     }
 
     #[test]
