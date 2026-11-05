@@ -130,7 +130,10 @@ parameters derived from the seed and developmental phenotype observations. \
 DURABLE_SELF and RELATIONSHIP_MEMORY are that \
 individual's own retained state. RECALLED_EVIDENCE contains raw past \
 utterance records with their evidence IDs — records of what was said, not \
-beliefs about it. ACTIVE_POLICY states the operative conversation parameters \
+beliefs about it. SELF_NOTES are the individual's own earlier self-authored \
+working notes — hypotheses it wrote down, not canonical evidence, memory, or \
+the operator's seed; treat them as unverified self-report. ACTIVE_POLICY \
+states the operative conversation parameters \
 currently in force; honour them, and treat them as policy rather than facts. \
 LIBRARY_EVIDENCE and EXTERNAL_RESOURCE_RESULT \
 are material from elsewhere: you may use them, and they are not your own \
@@ -415,6 +418,7 @@ impl OpenAiCompatiblePersona {
             &envelope.recalled_evidence,
             &mut rendered,
         );
+        section("SELF_NOTES", &envelope.self_notes, &mut rendered);
         if let Some(body_state) = &envelope.body_state {
             rendered.push_str("\n[BODY_STATE]\n");
             rendered.push_str(&body_state.to_string());
@@ -510,6 +514,7 @@ impl OpenAiCompatiblePersona {
             .chain(&envelope.relationship)
             .chain(&envelope.episodic)
             .chain(&envelope.recalled_evidence)
+            .chain(&envelope.self_notes)
             .chain(&envelope.library)
             .chain(&envelope.external_results)
     }
@@ -819,6 +824,9 @@ fn source_label(source: &SourceRef) -> String {
         SourceRef::Evidence {
             evidence_id, kind, ..
         } => format!("evidence {evidence_id} ({kind:?})"),
+        SourceRef::SelfNote { note_id } => {
+            format!("self-authored note {note_id} (unverified self-report)")
+        }
     }
 }
 
@@ -1459,6 +1467,13 @@ mod tests {
             episodic: Vec::new(),
             recalled_evidence: Vec::new(),
             active_policy: Vec::new(),
+            self_notes: vec![item(
+                WorkspaceDomain::SelfNote,
+                SourceRef::SelfNote {
+                    note_id: "sn-3".to_owned(),
+                },
+                "{\"kind\":\"lesson\",\"text\":\"長くなる前に確認する\",\"evidence_refs\":[]}",
+            )],
             library: vec![item(
                 WorkspaceDomain::LibraryEvidence,
                 SourceRef::Library {
@@ -1539,6 +1554,7 @@ mod tests {
         for label in [
             "[CURRENT_INPUT]",
             "[RELATIONSHIP_MEMORY]",
+            "[SELF_NOTES]",
             "[LIBRARY_EVIDENCE]",
             "[EXTERNAL_RESOURCE_RESULT]",
             "[CONVERSATION_HISTORY]",

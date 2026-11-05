@@ -103,6 +103,12 @@
   <section id="sec-commit"><h2>Commitments</h2><div id="commitments"></div><div class="err" id="commitmentsErr"></div></section>
   <section id="sec-agents"><h2>Agents / Delegations / Intercom</h2><div id="agents"></div><div class="err" id="agentsErr"></div></section>
   <section id="sec-memory"><h2>Memory</h2><div id="memory"></div><div class="err" id="memoryErr"></div></section>
+  <section id="sec-self"><h2>Self-improvement</h2>
+    <div class="small muted">self notes <span class="muted">(self-authored, unverified)</span></div>
+    <div id="selfnotes"></div>
+    <div class="small muted" style="margin-top:8px">pending improvement proposals</div>
+    <div id="proposals"></div>
+    <div class="err" id="selfErr"></div></section>
   <section id="sec-thoughts" class="wide"><h2>Thoughts — recent turns</h2><div id="thoughts"></div><div class="err" id="thoughtsErr"></div></section>
   <section id="sec-tasks" class="wide"><h2>Task board</h2><div class="kanban" id="tasks"></div><div class="err" id="tasksErr"></div></section>
 </main>
@@ -313,14 +319,35 @@ async function loadMemory() {
           ${r.tags&&r.tags.length?`<div class="m">${r.tags.map(t=>pill(t)).join("")}</div>`:""}</div>`;
       }).join("") || '<div class="muted small">—</div>') + `</details>`;
     $("memory").innerHTML = html;
+    // The same report feeds the self-improvement card's proposal list —
+    // a second spawn of the runtime report would buy nothing.
+    const pending = d.pending_proposals || [];
+    $("proposals").innerHTML = pending.length ? pending.map(p =>
+      `<div class="card"><div class="t">${esc(p.target)} → ${esc(JSON.stringify(p.proposed_value))}</div>
+        <div class="m">${pill(p.kind,"warn")} ${pill(p.status)} ${esc(p.proposal_id||"")}
+        ${p.target_key ? " · key " + esc(p.target_key) : ""}</div></div>`
+    ).join("") : '<span class="muted">none pending</span>';
     setErr("memoryErr");
   } catch (e) { setErr("memoryErr", e); }
+}
+
+async function loadSelfNotes() {
+  try {
+    const d = await post("/v1/kamimusuhi/self_notes", {limit: 8});
+    const notes = (d.self_notes || []).slice().reverse();
+    $("selfnotes").innerHTML = notes.length ? notes.map(n =>
+      `<div class="card"><div class="t">${esc(String(n.text||"").slice(0,240))}</div>
+        <div class="m">${pill(n.kind,"accent")} ${esc(n.note_id || "sn-"+n.seq)} · ${esc(ago(n.created_at))}
+        ${(n.evidence_refs||[]).length ? " · refs " + esc(n.evidence_refs.join(",").slice(0,60)) : ""}</div></div>`
+    ).join("") : '<span class="muted">no self notes yet</span>';
+    setErr("selfErr");
+  } catch (e) { setErr("selfErr", e); }
 }
 
 async function refresh() {
   const t0 = Date.now();
   $("conn").className = "dot";
-  await Promise.allSettled([loadNode(), loadTasks(), loadCommitments(), loadThoughts(), loadMemory()]);
+  await Promise.allSettled([loadNode(), loadTasks(), loadCommitments(), loadThoughts(), loadMemory(), loadSelfNotes()]);
   const ok = !$("nodeErr").textContent;
   $("conn").className = "dot " + (ok ? "ok" : "bad");
   $("connText").textContent = ok ? "connected" : "error";

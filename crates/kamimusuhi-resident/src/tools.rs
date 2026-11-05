@@ -151,6 +151,26 @@ pub fn definitions() -> Vec<Value> {
                 "body": {"type": "string"}},
                 "required": ["method", "url"]}),
         ),
+        function(
+            "self_note",
+            "Write down a self-authored working note about yourself (at most a few per turn). kind is what the note claims; text is the note itself (≤1KiB); evidence_refs optionally names the ids it draws on. Notes are scratch state: they come back marked SELF_NOTES — self-authored and unverified — never canonical memory or evidence.",
+            json!({"type": "object", "properties": {
+                "kind": {"type": "string",
+                         "enum": ["tendency", "lesson", "preference", "observation"]},
+                "text": {"type": "string", "maxLength": 1024},
+                "evidence_refs": {"type": "array", "maxItems": 8,
+                                  "items": {"type": "string", "maxLength": 64}}},
+                "required": ["kind", "text"]}),
+        ),
+        function(
+            "improve",
+            "Propose an operative-parameter change for operator review — this call never applies anything. param is a closed-vocabulary key (retrieval.<name>, conversation.max_response_chars, reflection.interval_turns; dialogue.<name> is accepted as an alias of conversation.<name>); value is the proposed numeric value; reason says why the change should help. The proposal lands pending on the derived lane and the operator's gate decides it.",
+            json!({"type": "object", "properties": {
+                "param": {"type": "string"},
+                "value": {"type": "number"},
+                "reason": {"type": "string", "maxLength": 600}},
+                "required": ["param", "value"]}),
+        ),
     ]
 }
 
@@ -424,7 +444,7 @@ pub fn call(shared: &Shared, request: &Value, turn: Option<&str>) -> (u16, Value
         return task_tool(shared, name, request, turn);
     }
     if request["local_only"].as_bool().unwrap_or(false) {
-        return call_inner(shared, request);
+        return call_inner(shared, request, turn);
     }
     let turn = turn.map(str::to_owned);
     let node = executing_node(shared, name, &request["arguments"]);
@@ -436,12 +456,12 @@ pub fn call(shared: &Shared, request: &Value, turn: Option<&str>) -> (u16, Value
             node: &node,
             owner: "mio",
             status: crate::tasks::TaskStatus::InProgress,
-            depends_on: turn.into_iter().collect(),
+            depends_on: turn.clone().into_iter().collect(),
             detail: json!({"tool": name}),
         },
     );
     let started = std::time::Instant::now();
-    let (status, reply) = call_inner(shared, request);
+    let (status, reply) = call_inner(shared, request, turn.as_deref());
     let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     if reply["pending_approval"].as_bool().unwrap_or(false) {
         shared.tasks.update(
@@ -494,7 +514,7 @@ pub fn call(shared: &Shared, request: &Value, turn: Option<&str>) -> (u16, Value
     (status, reply)
 }
 
-fn call_inner(shared: &Shared, request: &Value) -> (u16, Value) {
+fn call_inner(shared: &Shared, request: &Value, turn: Option<&str>) -> (u16, Value) {
     let name = request["name"].as_str().unwrap_or("");
     if name.starts_with("mcp__") {
         return call_mcp(shared, name, request);
@@ -506,6 +526,18 @@ fn call_inner(shared: &Shared, request: &Value) -> (u16, Value) {
             other => other.clone(),
         };
         return http_request_tool(shared, &arguments, HTTP_REQUEST_TIMEOUT);
+    }
+    if name == "self_note" || name == "improve" {
+        // OpenAI tool calls carry arguments as a JSON string; accept both.
+        let arguments = match &request["arguments"] {
+            Value::String(text) => serde_json::from_str(text).unwrap_or_else(|_| json!({})),
+            other => other.clone(),
+        };
+        return if name == "self_note" {
+            self_note_tool(shared, &arguments, turn)
+        } else {
+            improve_tool(shared, &arguments, turn)
+        };
     }
     let Some(action) = action_for(name) else {
         return (
@@ -796,6 +828,198 @@ fn http_request_tool(
     }
 }
 
+/// Self-improvement budget: how many `self_note`/`improve` calls one
+/// dialogue turn may make, counted on the task board (the journal of what
+/// the turn already did). Calls unattributed to a turn — a direct
+/// `POST /v1/tools/call` — are uncapped, like every other tool.
+const SELF_TOOL_MAX_PER_TURN: usize = 4;
+
+/// `improve` spawns `kamimusuhi-runtime propose` to queue the proposal; a
+/// wedged store open must not pin the call.
+const IMPROVE_SPAWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// `self_note`: append one bounded, self-authored note to
+/// `<dialogue.dir>/self_notes.jsonl`. The file is scratch state the resident
+/// owns — never canonical memory — and the workspace marks it as such.
+fn self_note_tool(shared: &Shared, arguments: &Value, turn: Option<&str>) -> (u16, Value) {
+    let fail = |detail: String| (200, json!({"ok": false, "error": detail}));
+    let Some(config) = &shared.config.dialogue else {
+        return fail("self_note is only served on the node hosting the individual".to_owned());
+    };
+    if !config.dir.join("kamimusuhi.sqlite").is_file() {
+        return fail("individual is not initialized on this node".to_owned());
+    }
+    // The current call's board entry is already counted; > MAX means the
+    // earlier calls exhausted the turn's budget.
+    let used = turn.map_or(0, |t| shared.tasks.tool_calls_in(t, "self_note"));
+    if used > SELF_TOOL_MAX_PER_TURN {
+        return fail(format!(
+            "self_note is limited to {SELF_TOOL_MAX_PER_TURN} calls per turn"
+        ));
+    }
+    let Some(raw_kind) = arguments.get("kind").and_then(Value::as_str) else {
+        return fail("kind is required (tendency|lesson|preference|observation)".to_owned());
+    };
+    let kind = match raw_kind.parse::<kamimusuhi_core::self_note::SelfNoteKind>() {
+        Ok(kind) => kind,
+        Err(error) => return fail(error.to_string()),
+    };
+    let text = arguments
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let evidence_refs: Vec<String> = match arguments.get("evidence_refs") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(refs)) => {
+            if let Some(bad) = refs.iter().position(|r| !r.is_string()) {
+                return fail(format!("evidence_refs[{bad}] must be a string"));
+            }
+            refs.iter()
+                .filter_map(|r| r.as_str().map(str::to_owned))
+                .collect()
+        }
+        Some(_) => return fail("evidence_refs must be an array of strings".to_owned()),
+    };
+    let at = kamimusuhi_core::time::UtcTimestamp::from_unix_millis(
+        i64::try_from(crate::util::unix_now_ms()).unwrap_or(i64::MAX),
+    );
+    match kamimusuhi_runtime::self_notes::append(&config.dir, kind, &text, evidence_refs, at) {
+        Ok(note) => {
+            let _ = shared.spool.append(
+                "logs/self_note",
+                json!({
+                    "note_id": note.note_id(),
+                    "kind": note.kind,
+                    "text": note.text,
+                    "evidence_refs": note.evidence_refs,
+                }),
+            );
+            let kept = kamimusuhi_runtime::self_notes::load(&config.dir)
+                .map(|notes| notes.len())
+                .unwrap_or(0);
+            (
+                200,
+                json!({"ok": true, "result": {
+                    "note_id": note.note_id(),
+                    "seq": note.seq,
+                    "kind": note.kind,
+                    "kept": kept,
+                }}),
+            )
+        }
+        Err(error) => fail(error.to_string()),
+    }
+}
+
+/// `improve`: validate an operative-param change against the closed
+/// vocabulary *before* proposing it — a bad target gets the bound error
+/// back, not a stored rejection — then queue the proposal on the C0 lane
+/// through `kamimusuhi-runtime propose`. The operator's gate applies it.
+fn improve_tool(shared: &Shared, arguments: &Value, turn: Option<&str>) -> (u16, Value) {
+    let fail = |detail: Value| (200, json!({"ok": false, "error": detail}));
+    let Some(config) = &shared.config.dialogue else {
+        return fail(json!(
+            "improve is only served on the node hosting the individual"
+        ));
+    };
+    if !config.dir.join("kamimusuhi.sqlite").is_file() {
+        return fail(json!("individual is not initialized on this node"));
+    }
+    let used = turn.map_or(0, |t| shared.tasks.tool_calls_in(t, "improve"));
+    if used > SELF_TOOL_MAX_PER_TURN {
+        return fail(json!(format!(
+            "improve is limited to {SELF_TOOL_MAX_PER_TURN} calls per turn"
+        )));
+    }
+    let Some(raw_param) = arguments.get("param").and_then(Value::as_str) else {
+        return fail(json!(
+            "param is required — a closed-vocabulary operative key"
+        ));
+    };
+    // `dialogue.*` is the model-facing alias of the `conversation.*`
+    // namespace; the stored target is always the canonical key.
+    let param = raw_param.strip_prefix("dialogue.").map_or_else(
+        || raw_param.to_owned(),
+        |rest| format!("conversation.{rest}"),
+    );
+    let value = arguments.get("value").cloned().unwrap_or(Value::Null);
+    if let Err(error) = kamimusuhi_core::c0::OperativeParams::check(&param, &value) {
+        return fail(json!({
+            "kind": "closed_vocabulary",
+            "detail": error.to_string(),
+            "param": param,
+            "known_params": kamimusuhi_core::c0::param_keys().collect::<Vec<_>>(),
+        }));
+    }
+    let reason: String = arguments
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .chars()
+        .take(600)
+        .collect();
+    let dir = config.dir.to_string_lossy().into_owned();
+    let binary = config.runtime_binary.to_string_lossy().into_owned();
+    let value_text = value.to_string();
+    let args = vec![
+        "propose",
+        "--dir",
+        dir.as_str(),
+        "--param",
+        param.as_str(),
+        "--value",
+        value_text.as_str(),
+        "--reason",
+        reason.as_str(),
+    ];
+    let Some(output) =
+        crate::util::run_with_timeout_env(&binary, &args, &[], IMPROVE_SPAWN_TIMEOUT)
+    else {
+        return fail(json!("propose timed out or could not start"));
+    };
+    // `propose` prints the queued proposal as JSON; take the last JSON line
+    // in case anything else ever prints first (the memory report does the
+    // same for spawned output).
+    let parsed = serde_json::from_str::<Value>(&output.stdout)
+        .ok()
+        .or_else(|| {
+            output
+                .stdout
+                .lines()
+                .rev()
+                .find_map(|line| serde_json::from_str::<Value>(line).ok())
+        });
+    let _ = shared.spool.append(
+        "logs/improve",
+        json!({
+            "param": param,
+            "value": value,
+            "reason": reason,
+            "ok": output.success,
+            "proposal": parsed.clone(),
+        }),
+    );
+    match parsed {
+        Some(report) if output.success => (
+            200,
+            json!({"ok": true, "result": {
+                "proposal": report,
+                "status": "pending",
+                "message": "queued for operator review; nothing was applied",
+            }}),
+        ),
+        _ => {
+            let tail: Vec<&str> = output.stderr.lines().rev().take(3).collect();
+            let tail: Vec<&str> = tail.into_iter().rev().collect();
+            fail(json!({
+                "kind": "propose_failed",
+                "detail": tail.join("\n"),
+            }))
+        }
+    }
+}
+
 /// Queue a gated call for the operator instead of running it now —
 /// `approval_required` calls always, `judge_required` calls when the judge
 /// model escalates or cannot answer (per `tool_judge.on_unavailable`).
@@ -935,7 +1159,9 @@ mod tests {
         for def in definitions() {
             let name = def["function"]["name"].as_str().expect("name");
             assert!(
-                name.starts_with("task_") || name == "http_request" || action_for(name).is_some(),
+                name.starts_with("task_")
+                    || matches!(name, "http_request" | "self_note" | "improve")
+                    || action_for(name).is_some(),
                 "{name}"
             );
         }
@@ -979,6 +1205,7 @@ mod tests {
                 let (status, reply) = call_inner(
                     &shared,
                     &json!({"name": "library_search", "arguments": args}),
+                    None,
                 );
                 assert_eq!(status, 200);
                 assert_eq!(reply["ok"], true);
@@ -1024,6 +1251,7 @@ mod tests {
         call_inner(
             shared,
             &json!({"name": "http_request", "arguments": arguments}),
+            None,
         )
     }
 
@@ -1380,5 +1608,242 @@ mod tests {
         assert_eq!(requests.len(), 3);
         assert_eq!(requests[2].path, "/v1/tools/call");
         assert!(requests[2].body.contains("\"local_only\":true"));
+    }
+
+    // ------------------------------------------------------------------
+    // self_note / improve
+    // ------------------------------------------------------------------
+
+    /// A node hosting an individual: `dir` is the runtime directory with a
+    /// marker `kamimusuhi.sqlite`, `binary` a script pretending to be the
+    /// runtime CLI.
+    fn self_improve_fixture(script_body: &str) -> (Shared, tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let rt = dir.path().join("rt");
+        std::fs::create_dir_all(&rt).expect("rt dir");
+        std::fs::write(rt.join("kamimusuhi.sqlite"), b"").expect("sqlite marker");
+        let bin = dir.path().join("fake-runtime");
+        std::fs::write(&bin, format!("#!/bin/sh\n{script_body}\n")).expect("fake runtime");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+        let config = serde_json::from_value(json!({
+            "node": {"id": "test", "role": "continuity", "listen": "127.0.0.1:0"},
+            "paths": {"root": dir.path()},
+            "dialogue": {"runtime_binary": bin, "dir": rt, "timeout_secs": 5},
+        }))
+        .expect("config");
+        let spool = crate::spool::Spool::new(dir.path().join("spool"), "test").expect("spool");
+        (Shared::new(config, spool, 1, None), dir, rt)
+    }
+
+    fn self_note_call(shared: &Shared, args: Value, turn: Option<&str>) -> (u16, Value) {
+        call(
+            shared,
+            &json!({"name": "self_note", "arguments": args}),
+            turn,
+        )
+    }
+
+    #[test]
+    fn self_note_appends_whitelisted_bounded_notes() {
+        let (shared, _dir, rt) = self_improve_fixture("exit 0");
+        let file = kamimusuhi_runtime::self_notes::path(&rt);
+
+        let (status, reply) = self_note_call(
+            &shared,
+            json!({"kind": "lesson", "text": "長くなる前に確認する",
+                   "evidence_refs": ["ev-1", "rec-2"]}),
+            Some("t-turn-1"),
+        );
+        assert_eq!(status, 200);
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(reply["result"]["note_id"], "sn-1");
+
+        // The note file carries the lane's own shape — and the call is
+        // journaled like every other tool.
+        let notes = kamimusuhi_runtime::self_notes::load(&rt).expect("load");
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].kind.as_str(), "lesson");
+        assert_eq!(notes[0].text, "長くなる前に確認する");
+        assert_eq!(notes[0].evidence_refs, vec!["ev-1", "rec-2"]);
+        let journal_dir = shared.spool.root().join("logs/self_note/test");
+        let journal = std::fs::read_to_string(
+            std::fs::read_dir(&journal_dir)
+                .expect("journal dir")
+                .next()
+                .expect("one journal file")
+                .expect("entry")
+                .path(),
+        )
+        .expect("journal");
+        assert!(journal.contains("sn-1"), "{journal}");
+
+        // Unknown kind: refused before anything is written.
+        let (_, reply) = self_note_call(
+            &shared,
+            json!({"kind": "fact", "text": "x"}),
+            Some("t-turn-2"),
+        );
+        assert_eq!(reply["ok"], false);
+        assert!(reply["error"].as_str().unwrap().contains("tendency"));
+        assert_eq!(kamimusuhi_runtime::self_notes::load(&rt).unwrap().len(), 1);
+        drop(file);
+    }
+
+    #[test]
+    fn self_note_bounds_and_the_per_turn_cap_hold() {
+        let (shared, _dir, rt) = self_improve_fixture("exit 0");
+        // Text over 1KiB is refused, not clipped.
+        let (_, reply) = self_note_call(
+            &shared,
+            json!({"kind": "observation", "text": "x".repeat(1025)}),
+            None,
+        );
+        assert_eq!(reply["ok"], false);
+        // Too many refs is refused too.
+        let (_, reply) = self_note_call(
+            &shared,
+            json!({"kind": "observation", "text": "t",
+                   "evidence_refs": (0..9).map(|i| i.to_string()).collect::<Vec<_>>()}),
+            None,
+        );
+        assert_eq!(reply["ok"], false);
+        assert!(
+            kamimusuhi_runtime::self_notes::load(&rt)
+                .unwrap()
+                .is_empty()
+        );
+
+        // The turn's budget is 4; the fifth call in one turn is refused
+        // while calls in other turns still pass.
+        let turn = "t-turn-cap";
+        for i in 0..4 {
+            let (_, reply) = self_note_call(
+                &shared,
+                json!({"kind": "tendency", "text": format!("n{i}")}),
+                Some(turn),
+            );
+            assert_eq!(reply["ok"], true, "call {i}: {reply}");
+        }
+        let (_, reply) = self_note_call(
+            &shared,
+            json!({"kind": "tendency", "text": "over"}),
+            Some(turn),
+        );
+        assert_eq!(reply["ok"], false);
+        assert!(reply["error"].as_str().unwrap().contains("per turn"));
+        let (_, reply) = self_note_call(
+            &shared,
+            json!({"kind": "tendency", "text": "other turn"}),
+            Some("t-other"),
+        );
+        assert_eq!(reply["ok"], true);
+        assert_eq!(kamimusuhi_runtime::self_notes::load(&rt).unwrap().len(), 5);
+    }
+
+    #[test]
+    fn improve_validates_before_proposing_and_queues_pending() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let rt = dir.path().join("rt");
+        std::fs::create_dir_all(&rt).expect("rt dir");
+        std::fs::write(rt.join("kamimusuhi.sqlite"), b"").expect("sqlite marker");
+        let marker = dir.path().join("invoked.txt");
+        let bin = dir.path().join("fake-runtime");
+        std::fs::write(
+            &bin,
+            format!(
+                "#!/bin/sh\necho \"$@\" >> {}\necho '{{\"proposal_id\":\"p1\",\"kind\":\"retrieval_update\",\"target\":\"{}\",\"proposed_value\":6,\"status\":\"pending\"}}'\n",
+                marker.display(),
+                "retrieval.self_notes_max"
+            ),
+        )
+        .expect("fake runtime");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+        let config = serde_json::from_value(json!({
+            "node": {"id": "test", "role": "continuity", "listen": "127.0.0.1:0"},
+            "paths": {"root": dir.path()},
+            "dialogue": {"runtime_binary": bin, "dir": rt, "timeout_secs": 5},
+        }))
+        .expect("config");
+        let spool = crate::spool::Spool::new(dir.path().join("spool"), "test").expect("spool");
+        let shared = Shared::new(config, spool, 1, None);
+
+        // A param outside the closed vocabulary never reaches the runtime:
+        // the bound error comes back first and the binary is not invoked.
+        let (_, reply) = call(
+            &shared,
+            &json!({"name": "improve", "arguments": {
+                "param": "retrieval.made_up_knob", "value": 4, "reason": "why"}}),
+            None,
+        );
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert_eq!(reply["error"]["kind"], "closed_vocabulary");
+        assert!(
+            reply["error"]["detail"]
+                .as_str()
+                .unwrap()
+                .contains("unknown param target")
+        );
+        assert!(!marker.exists(), "invalid param spawned the runtime");
+
+        // Out-of-bounds and fractional values for integer params are refused
+        // the same way.
+        for bad in [json!(10_000), json!(1.5), json!("6")] {
+            let (_, reply) = call(
+                &shared,
+                &json!({"name": "improve", "arguments": {
+                    "param": "retrieval.self_notes_max", "value": bad}}),
+                None,
+            );
+            assert_eq!(reply["ok"], false, "{reply}");
+        }
+        assert!(!marker.exists());
+
+        // A valid proposal goes through the proposal machinery and comes
+        // back pending — never applied by the tool itself.
+        let (_, reply) = call(
+            &shared,
+            &json!({"name": "improve", "arguments": {
+                "param": "dialogue.max_response_chars", "value": 2000,
+                "reason": "shorter replies work better"}}),
+            None,
+        );
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(reply["result"]["status"], "pending");
+        assert_eq!(reply["result"]["proposal"]["proposal_id"], "p1");
+        // `dialogue.*` was normalized to the canonical conversation.* key
+        // before validation — and before the spawn.
+        let invoked = std::fs::read_to_string(&marker).expect("marker");
+        assert!(
+            invoked.contains("--param conversation.max_response_chars"),
+            "{invoked}"
+        );
+    }
+
+    #[test]
+    fn the_self_notes_endpoint_reads_the_tail() {
+        let (shared, _dir, rt) = self_improve_fixture("exit 0");
+        for i in 0..12 {
+            kamimusuhi_runtime::self_notes::append(
+                &rt,
+                kamimusuhi_core::self_note::SelfNoteKind::Observation,
+                &format!("n{i}"),
+                vec![],
+                kamimusuhi_core::time::UtcTimestamp::from_unix_millis(i),
+            )
+            .expect("append");
+        }
+        let (status, reply) = crate::self_notes::self_notes(&shared, &json!({"limit": 5}));
+        assert_eq!(status, 200);
+        let notes = reply["self_notes"].as_array().expect("notes");
+        assert_eq!(notes.len(), 5);
+        assert_eq!(notes[0]["text"], "n7");
+        assert_eq!(notes[4]["text"], "n11");
+        assert_eq!(reply["file_present"], true);
     }
 }

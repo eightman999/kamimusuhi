@@ -31,6 +31,7 @@ pub mod persona;
 pub mod persona_seed;
 pub mod resources;
 pub mod routing;
+pub mod self_note;
 pub mod time;
 pub mod trace;
 pub mod workspace;

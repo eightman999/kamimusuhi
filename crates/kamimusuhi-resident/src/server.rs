@@ -12,6 +12,8 @@
 //!   HTML, unauthenticated; API calls from it still need the token).
 //! * `GET|POST /v1/kamimusuhi/memory` — read-only memory report from the
 //!   individual's store, for the dashboard (token unless loopback).
+//! * `GET|POST /v1/kamimusuhi/self_notes` — the newest self-authored notes
+//!   from the individual's note file, for the dashboard.
 //!
 //! All responses carry `Access-Control-Allow-Origin: *` and OPTIONS
 //! preflights are answered before authentication, so the dashboard works
@@ -329,6 +331,15 @@ fn handle(shared: &Shared, stream: TcpStream) {
         ("POST", "/v1/kamimusuhi/memory") => {
             let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
             let (status, reply) = crate::memory::memory(shared, &body);
+            json_response(stream, status, &reply, &[]);
+        }
+        ("GET", "/v1/kamimusuhi/self_notes") => {
+            let (status, reply) = crate::self_notes::self_notes(shared, &json!({}));
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/kamimusuhi/self_notes") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            let (status, reply) = crate::self_notes::self_notes(shared, &body);
             json_response(stream, status, &reply, &[]);
         }
         ("GET", "/v1/tools") => json_response(stream, 200, &crate::tools::list(shared), &[]),

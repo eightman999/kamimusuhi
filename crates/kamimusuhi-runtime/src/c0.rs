@@ -14,7 +14,8 @@ pub mod replay;
 use std::collections::BTreeSet;
 
 use kamimusuhi_core::c0::{
-    Activation, ImprovementKind, ImprovementProposal, OperativeView, ProposalStatus,
+    Activation, ImprovementKind, ImprovementProposal, OperativeParams, OperativeView,
+    ProposalStatus,
 };
 use kamimusuhi_core::continuity::WriterIdentity;
 use kamimusuhi_core::evidence::{
@@ -363,6 +364,72 @@ pub fn narrate(
 // ---------------------------------------------------------------------------
 // Proposal lifecycle in the derived lane
 // ---------------------------------------------------------------------------
+
+/// Intake for model-initiated parameter proposals — the resident `improve`
+/// tool reaches this through `kamimusuhi-runtime propose`.
+///
+/// The closed vocabulary is checked *before* a row exists: an unknown key or
+/// out-of-bounds value is refused to the caller with the same error intake
+/// validation produces, so a model sees the bound rather than a stored
+/// rejection. What passes is queued `pending` — the operator's gate
+/// (`activate`) applies it; this path never applies anything itself.
+pub fn propose_param(
+    runtime: &Runtime,
+    target: &str,
+    proposed_value: serde_json::Value,
+    expected_effect: Option<String>,
+) -> Result<ImprovementProposal, RuntimeError> {
+    OperativeParams::check(target, &proposed_value)?;
+    let view = runtime.store().c0_view(runtime.individual_id())?;
+    let kind = if target.starts_with("retrieval.") {
+        ImprovementKind::RetrievalUpdate
+    } else {
+        ImprovementKind::PolicyUpdate
+    };
+    let proposal = ImprovementProposal {
+        proposal_id: C0ProposalId::generate(runtime.ids().as_ref()),
+        individual_id: runtime.individual_id(),
+        kind,
+        target: target.to_owned(),
+        target_key: None,
+        old_value: view.params.get(target),
+        proposed_value,
+        evidence_refs: Vec::new(),
+        expected_effect,
+        risk: None,
+        confidence: None,
+        status: ProposalStatus::Pending,
+        rejection_reason: None,
+        reflection_id: None,
+        created_at: runtime.now(),
+        decided_at: None,
+        activation_seq: None,
+    };
+    if !runtime.store().c0_insert_proposal(&proposal)? {
+        return Err(RuntimeError::Usage(format!(
+            "proposal {} was already recorded",
+            proposal.proposal_id
+        )));
+    }
+    narrate(
+        runtime,
+        None,
+        None,
+        EvidenceKind::SystemEvent,
+        OriginClass::Inferred,
+        serde_json::json!({
+            "event": "improvement_proposal",
+            "proposal_id": proposal.proposal_id,
+            "kind": proposal.kind,
+            "target": proposal.target,
+            "proposed_value": proposal.proposed_value,
+            "via": "self-improve-tool",
+        }),
+        "self-improve-tool",
+        &[],
+    )?;
+    Ok(proposal)
+}
 
 /// Serializable proposal view for command output.
 #[derive(Debug, Clone, Serialize)]

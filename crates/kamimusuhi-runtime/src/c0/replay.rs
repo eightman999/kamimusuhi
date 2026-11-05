@@ -140,6 +140,10 @@ fn assemble_replay(
         &exclude,
     )?;
     let head = runtime.head()?;
+    // Self notes ride the same lane the live path reads — a replay that
+    // skipped them would measure a workspace the model never sees.
+    let self_notes =
+        crate::self_notes::latest(&runtime.paths().dir, params.retrieval.self_notes_max);
     let workspace = WorkspaceBuilder::new(runtime.individual_id(), runtime.now())
         .with_continuity(&head)
         .with_current_input(&CurrentInput {
@@ -150,6 +154,7 @@ fn assemble_replay(
         .with_self_state(&view.self_model)
         .with_active_policy(params, activation_seq)
         .with_recalled_evidence(&recalled)
+        .with_self_notes(&self_notes)
         .build();
     Ok((workspace, history))
 }

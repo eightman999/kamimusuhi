@@ -57,6 +57,10 @@ commands:
   reflect           run one reflection cycle now; JSON report on stdout
   rollback          move the derived lane back one activation; JSON on stdout
   activate          gate + apply a pending C0 proposal (--proposal-id <hex>)
+  propose           queue a pending C0 param proposal for operator review
+                    (--param <key> --value <json> [--reason <text>]); the
+                    closed vocabulary is checked before anything is stored
+                    and nothing is applied by this command
   research-check    verify bundled research source files; no runtime writes
   recall-eval       read-only declared-link recall evaluation over the store
 
@@ -95,6 +99,10 @@ options:
                     (stderr in chat; a `debug_context` field in talk's JSON)
   --debug           talk/chat: emit secret-free K-CORE, Jev and LLM trace
   --proposal-id <hex>  activate only: the pending C0 proposal to gate+apply
+  --param <key>     propose only: operative param (retrieval.*, conversation.*,
+                    reflection.* — the closed vocabulary)
+  --value <json>    propose only: the proposed value, as JSON
+  --reason <text>   propose only: why the change is expected to help
   --limit <n>       recall-eval: evaluate at most the newest N link-declaring
                     episodic records; memory: newest N records per domain
   --json            recall-eval/memory: JSON report on stdout (the default)
@@ -136,6 +144,13 @@ fn run() -> Result<String, RuntimeError> {
     {
         return Err(RuntimeError::Usage(
             "--limit and --json are only supported by recall-eval and memory".to_owned(),
+        ));
+    }
+    if (options.param.is_some() || options.value.is_some() || options.reason.is_some())
+        && command != "propose"
+    {
+        return Err(RuntimeError::Usage(
+            "--param, --value and --reason are only supported by propose".to_owned(),
         ));
     }
     if !matches!(
@@ -226,7 +241,7 @@ fn run() -> Result<String, RuntimeError> {
             encode(&report)
         }
         "talk" | "chat" => run_dialogue(&command, &options),
-        "reflect" | "rollback" | "activate" => run_c0_command(&command, &options),
+        "reflect" | "rollback" | "activate" | "propose" => run_c0_command(&command, &options),
         "--help" | "-h" | "help" => Ok(USAGE.to_owned()),
         other => Err(RuntimeError::Usage(format!(
             "unknown command {other:?}\n\n{USAGE}"
@@ -359,6 +374,28 @@ fn run_c0_command(command: &str, options: &Options) -> Result<String, RuntimeErr
             runtime.stopping();
             encode(&report)
         }
+        "propose" => {
+            let target = options
+                .param
+                .as_deref()
+                .ok_or_else(|| RuntimeError::Usage("propose requires --param <key>".to_owned()))?;
+            let raw = options
+                .value
+                .as_deref()
+                .ok_or_else(|| RuntimeError::Usage("propose requires --value <json>".to_owned()))?;
+            // Bare text is still a JSON value; the closed vocabulary decides
+            // whether it is an acceptable one (params are numeric today).
+            let value: serde_json::Value = serde_json::from_str(raw)
+                .unwrap_or_else(|_| serde_json::Value::String(raw.to_owned()));
+            let proposal = kamimusuhi_runtime::c0::propose_param(
+                &runtime,
+                target,
+                value,
+                options.reason.clone(),
+            )?;
+            runtime.stopping();
+            encode(&kamimusuhi_runtime::c0::ProposalReport::from(&proposal))
+        }
         "rollback" => {
             let outcome = kamimusuhi_runtime::c0::rollback(&runtime, None, None)?;
             runtime.stopping();
@@ -443,6 +480,9 @@ struct Options {
     debug_context: bool,
     debug: bool,
     proposal_id: Option<String>,
+    param: Option<String>,
+    value: Option<String>,
+    reason: Option<String>,
     limit: Option<usize>,
     json: bool,
 }
@@ -530,6 +570,9 @@ impl Options {
                 "--debug-context" => options.debug_context = true,
                 "--debug" => options.debug = true,
                 "--proposal-id" => options.proposal_id = Some(value()?),
+                "--param" => options.param = Some(value()?),
+                "--value" => options.value = Some(value()?),
+                "--reason" => options.reason = Some(value()?),
                 "--limit" => {
                     let raw = value()?;
                     options.limit = Some(raw.parse().map_err(|_| {
