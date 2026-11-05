@@ -1122,16 +1122,20 @@ mod tests {
     use super::*;
 
     fn tiny(environment: Environment) -> EvolutionConfig {
+        // Smallest panel that still exercises selection, validation and
+        // final-test wiring: every scenario run boots a real runtime, so
+        // panel size is what CI pays for. The replicated batch lives in the
+        // `kamimusuhi-evolution` binary, not in this test.
         EvolutionConfig {
             seed: 21,
             population_size: 4,
             generations: 3,
-            repeats: 2,
+            repeats: 1,
             mutation_rate: 0.5,
             validation_seed: 900_000,
-            validation_panel: 2,
+            validation_panel: 1,
             final_test_seed: 950_000,
-            final_test_panel: 2,
+            final_test_panel: 1,
             environment,
         }
     }
@@ -1273,8 +1277,8 @@ mod tests {
         assert_eq!(a.adaptation.len(), 3);
         assert_eq!(a.lineage.len(), 12);
         for e in &a.lineage {
-            assert_eq!(e.selection.runs, 2);
-            assert_eq!(e.validation.runs, 2);
+            assert_eq!(e.selection.runs, 1);
+            assert_eq!(e.validation.runs, 1);
             assert_eq!(e.validation.seed, 900_000);
             assert_eq!(e.selection.seed, selection_seed(&config, e.generation));
             assert_ne!(e.selection.seed, e.validation.seed);
@@ -1308,7 +1312,7 @@ mod tests {
         assert_eq!(a.final_test.last_generation, 2);
         assert_eq!(a.final_test.seed, 950_000);
         assert_eq!(a.final_test.first_individuals.len(), 4);
-        assert!(a.final_test.first_individuals.iter().all(|r| r.runs == 2));
+        assert!(a.final_test.first_individuals.iter().all(|r| r.runs == 1));
         let table = report_markdown(&a);
         assert!(table.contains("### final-test panel"));
         assert!(table.contains("### selection panel"));

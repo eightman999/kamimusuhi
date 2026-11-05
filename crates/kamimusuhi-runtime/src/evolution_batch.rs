@@ -752,17 +752,21 @@ mod tests {
     use super::*;
 
     fn tiny() -> BatchConfig {
+        // Smallest batch that still covers replicate pairing, all five
+        // environments, both panels and thread-independence: each scenario
+        // run boots a real runtime, so panel size is what CI pays for. The
+        // replicated study lives in the `kamimusuhi-evolution` binary.
         BatchConfig {
             seed_base: 300,
             replicates: 2,
-            population_size: 4,
+            population_size: 3,
             generations: 2,
-            repeats: 2,
+            repeats: 1,
             mutation_rate: 0.5,
             validation_seed: 900_000,
-            validation_panel: 2,
+            validation_panel: 1,
             final_test_seed: 950_000,
-            final_test_panel: 2,
+            final_test_panel: 1,
             threads: 2,
             bootstrap_resamples: 200,
             bootstrap_seed: 7,
@@ -820,7 +824,7 @@ mod tests {
         assert_eq!(a.replicates.len(), 2);
         for r in &a.replicates {
             assert_eq!(r.environments.len(), ENVIRONMENTS.len());
-            assert_eq!(r.founder_hashes.len(), 4);
+            assert_eq!(r.founder_hashes.len(), 3);
             assert_eq!(r.seed, 300 + u64::from(r.replicate));
             assert!(r.paired_validation.contains_key("exploration-favoured"));
             assert!(r.paired_validation.contains_key("exploration-wm-fixed"));
