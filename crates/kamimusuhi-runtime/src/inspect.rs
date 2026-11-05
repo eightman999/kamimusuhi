@@ -250,8 +250,7 @@ pub fn memory_report(
     };
     let mut domains = serde_json::Map::new();
     for domain in [MutationDomain::Relationship, MutationDomain::Episodic] {
-        let active =
-            MemoryRepository::retrieve(store, &query(domain))?.len();
+        let active = MemoryRepository::retrieve(store, &query(domain))?.len();
         let total = MemoryRepository::retrieve(store, &query(domain).including_history())?.len();
         let memories = MemoryRepository::retrieve(store, &query(domain).limited(limit))?;
         let ids: Vec<MemoryId> = memories.iter().map(|m| m.record.state_record_id).collect();
