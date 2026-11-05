@@ -25,6 +25,18 @@ path = "src/bin/k-core.rs"
 name = "provider-bench"
 path = "src/bin/provider-bench.rs"
 
+[[bin]]
+name = "kamimusuhi-genome"
+path = "src/bin/kamimusuhi-genome.rs"
+
+[[bin]]
+name = "kamimusuhi-selection"
+path = "src/bin/kamimusuhi-selection.rs"
+
+[[bin]]
+name = "kamimusuhi-evolution"
+path = "src/bin/kamimusuhi-evolution.rs"
+
 [dependencies]
 kamimusuhi-core = { workspace = true }
 kamimusuhi-persona-http = { workspace = true }

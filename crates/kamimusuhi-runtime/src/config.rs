@@ -599,6 +599,14 @@ pub struct RuntimeConfig {
     /// given to the model so it answers questions about itself as itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_self_description: Option<String>,
+    /// Whether the genome's `exploration_probability` may admit uncertain,
+    /// non-baseline recall candidates into the workspace. Off by default:
+    /// the legacy behaviour (uncertain candidates are dropped) is unchanged
+    /// unless an operator or a harness turns this on. Opportunities and
+    /// draws are still recorded while off, so the branch is observable
+    /// before it is enabled.
+    #[serde(default)]
+    pub genome_exploration: bool,
 }
 
 /// Who the Persona speaks as: display name, aliases and self description.
@@ -673,6 +681,7 @@ impl RuntimeConfig {
             avatar_name: None,
             avatar_aliases: Vec::new(),
             avatar_self_description: None,
+            genome_exploration: false,
         }
     }
 

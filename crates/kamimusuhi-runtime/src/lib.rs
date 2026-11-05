@@ -27,6 +27,8 @@ pub mod dialogue_recall;
 pub(crate) mod dialogue_recall_links;
 pub mod dialogue_setup;
 pub mod error;
+pub mod evolution;
+pub mod evolution_batch;
 pub mod inspect;
 pub mod kcore;
 pub mod llm_jev;
@@ -39,6 +41,7 @@ pub mod research;
 pub mod route_gate;
 pub mod runtime;
 pub mod scenario;
+pub mod selection;
 pub mod trace;
 
 pub use config::{
