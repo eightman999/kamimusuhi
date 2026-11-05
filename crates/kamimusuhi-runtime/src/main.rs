@@ -47,6 +47,9 @@ commands:
                     when the canonical database holds none
   inspect           read-only report of identity, lineage, memory, Library
                     and resource calls
+  memory            read-only JSON memory report: per-domain counts, newest
+                    records, self model and pending proposals
+                    (--subject <id> scopes records, --limit <n> per domain)
   demo-continuity   run one phase of the deterministic restart scenario
   talk              answer --message once; JSON on stdout
   chat              interactive text conversation; /quit or EOF to stop,
@@ -92,9 +95,9 @@ options:
                     (stderr in chat; a `debug_context` field in talk's JSON)
   --debug           talk/chat: emit secret-free K-CORE, Jev and LLM trace
   --proposal-id <hex>  activate only: the pending C0 proposal to gate+apply
-  --limit <n>       recall-eval only: evaluate at most the newest N
-                    link-declaring episodic records
-  --json            recall-eval only: JSON report on stdout (the default)
+  --limit <n>       recall-eval: evaluate at most the newest N link-declaring
+                    episodic records; memory: newest N records per domain
+  --json            recall-eval/memory: JSON report on stdout (the default)
 ";
 
 fn main() -> ExitCode {
@@ -128,13 +131,17 @@ fn run() -> Result<String, RuntimeError> {
             "--source-root is only supported by research-check".to_owned(),
         ));
     }
-    if (options.limit.is_some() || options.json) && command != "recall-eval" {
+    if (options.limit.is_some() || options.json)
+        && !matches!(command.as_str(), "recall-eval" | "memory")
+    {
         return Err(RuntimeError::Usage(
-            "--limit and --json are only supported by recall-eval".to_owned(),
+            "--limit and --json are only supported by recall-eval and memory".to_owned(),
         ));
     }
-    if !matches!(command.as_str(), "talk" | "chat" | "reflect" | "activate")
-        && (options.message.is_some() || options.subject.is_some() || options.mio_options_present())
+    if !matches!(
+        command.as_str(),
+        "talk" | "chat" | "reflect" | "activate" | "memory"
+    ) && (options.message.is_some() || options.subject.is_some() || options.mio_options_present())
     {
         return Err(RuntimeError::Usage(
             "--message, --subject and MIO flags are dialogue options".to_owned(),
@@ -170,6 +177,17 @@ fn run() -> Result<String, RuntimeError> {
             // Same read-only open as inspect: no writer epoch, only SELECTs.
             let runtime = Runtime::open(options.dir()?, options.runtime_options())?;
             let report = kamimusuhi_runtime::recall_eval::evaluate(&runtime, options.limit)?;
+            runtime.stopping();
+            encode(&report)
+        }
+        "memory" => {
+            // Read-only like inspect. `--limit` caps records per domain.
+            let runtime = Runtime::open(options.dir()?, options.runtime_options())?;
+            let report = inspect::memory_report(
+                &runtime,
+                options.subject.as_deref(),
+                options.limit.unwrap_or(24),
+            )?;
             runtime.stopping();
             encode(&report)
         }

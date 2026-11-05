@@ -6,10 +6,11 @@
 //! is a line in the operational trace — which is not canonical state, and is
 //! deliberately the only record that inspection happened.
 
+use kamimusuhi_core::c0::ProposalStatus;
 use kamimusuhi_core::continuity::ContinuityStore;
-use kamimusuhi_core::ids::IndividualId;
+use kamimusuhi_core::ids::{IndividualId, MemoryId};
 use kamimusuhi_core::library::LibraryRepository;
-use kamimusuhi_core::memory::{MemoryQuery, MemoryRepository};
+use kamimusuhi_core::memory::{MemoryQuery, MemoryRepository, MemoryUsage, RecordUsage};
 use kamimusuhi_core::mutation::MutationDomain;
 use kamimusuhi_core::resources::{ResourceCallLog, ResourceOutcome};
 use kamimusuhi_core::trace::{TraceCorrelation, TraceEventKind};
@@ -222,4 +223,86 @@ pub fn inspect(runtime: &Runtime) -> Result<InspectReport, RuntimeError> {
         }),
     );
     Ok(report)
+}
+
+/// Read-only memory report: per-domain counts plus the newest current
+/// records, the derived self model, operative params and pending C0
+/// proposals. `subject` scopes records to one interlocutor key (as dialogue
+/// does); `None` reports across subjects. All SELECTs — the same guarantee
+/// as [`inspect`]. Served to the operator dashboard by the resident's
+/// `/v1/kamimusuhi/memory` endpoint.
+pub fn memory_report(
+    runtime: &Runtime,
+    subject: Option<&str>,
+    limit: usize,
+) -> Result<serde_json::Value, RuntimeError> {
+    let individual = runtime.individual_id();
+    let store = runtime.store();
+    let limit = limit.clamp(1, 200);
+    let operative = crate::c0::operative(runtime).unwrap_or_default();
+
+    let query = |domain: MutationDomain| {
+        let q = MemoryQuery::current(individual).in_domain(domain);
+        match subject {
+            Some(subject) => q.about(subject),
+            None => q,
+        }
+    };
+    let mut domains = serde_json::Map::new();
+    for domain in [MutationDomain::Relationship, MutationDomain::Episodic] {
+        let active =
+            MemoryRepository::retrieve(store, &query(domain))?.len();
+        let total = MemoryRepository::retrieve(store, &query(domain).including_history())?.len();
+        let memories = MemoryRepository::retrieve(store, &query(domain).limited(limit))?;
+        let ids: Vec<MemoryId> = memories.iter().map(|m| m.record.state_record_id).collect();
+        let usages: std::collections::BTreeMap<MemoryId, RecordUsage> =
+            store.usages(&ids).into_iter().collect();
+        let records: Vec<serde_json::Value> = memories
+            .iter()
+            .map(|m| {
+                let mut row = serde_json::json!({
+                    "state_record_id": m.record.state_record_id,
+                    "subject_key": m.record.subject_key,
+                    "payload": m.record.payload,
+                    "evidence_refs": m.record.evidence_refs,
+                    "independent_evidence_count": m.independent_evidence_count,
+                    "created_at": m.record.created_at.to_rfc3339(),
+                });
+                let tags = m.record.tags();
+                if !tags.is_empty() {
+                    row["tags"] = serde_json::json!(tags);
+                }
+                let links = m.record.links();
+                if !links.is_empty() {
+                    row["links"] = serde_json::json!(links);
+                }
+                if let Some(usage) = usages.get(&m.record.state_record_id) {
+                    row["use_count"] = serde_json::json!(usage.use_count);
+                }
+                if let Some(valid_to) = m.record.valid_to() {
+                    row["valid_to"] = serde_json::json!(valid_to.to_rfc3339());
+                }
+                row
+            })
+            .collect();
+        domains.insert(
+            domain.as_str().to_owned(),
+            serde_json::json!({"active": active, "total": total, "records": records}),
+        );
+    }
+
+    let pending = store.c0_proposals(individual, Some(ProposalStatus::Pending))?;
+    Ok(serde_json::json!({
+        "individual_id": individual,
+        "subject": subject,
+        "generated_at": runtime.now().to_rfc3339(),
+        "activation_seq": operative.activation_seq,
+        "self_model": operative.view.self_model,
+        "operative_params": operative.view.params,
+        "pending_proposals": pending
+            .iter()
+            .map(crate::c0::ProposalReport::from)
+            .collect::<Vec<_>>(),
+        "domains": domains,
+    }))
 }

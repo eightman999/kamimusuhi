@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>かみむすび dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --border: #2d333f;
+    --fg: #e6edf3; --dim: #8b949e; --accent: #7aa2f7; --ok: #3fb950;
+    --warn: #d29922; --bad: #f85149; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.5 -apple-system, "Hiragino Sans", "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline;
+           padding: 12px 16px; border-bottom: 1px solid var(--border);
+           position: sticky; top: 0; background: var(--bg); z-index: 5; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  header .who { color: var(--dim); font-size: 12px; }
+  header .spacer { flex: 1; }
+  header select, header input, header button {
+    background: var(--panel); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+  header button { cursor: pointer; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+         background: var(--dim); margin-right: 5px; }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+  #stamp { color: var(--dim); font-size: 11px; }
+  main { padding: 14px; display: grid; gap: 14px;
+         grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+  section { background: var(--panel); border: 1px solid var(--border);
+            border-radius: 10px; padding: 12px 14px; min-width: 0; }
+  section.wide { grid-column: 1 / -1; }
+  h2 { margin: 0 0 8px; font-size: 13px; color: var(--accent);
+       text-transform: uppercase; letter-spacing: .06em; }
+  .err { color: var(--bad); font-size: 12px; white-space: pre-wrap; }
+  .muted { color: var(--dim); }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { text-align: left; padding: 3px 8px 3px 0; vertical-align: top;
+           border-bottom: 1px solid var(--border); }
+  th { color: var(--dim); font-weight: 500; font-size: 11px; }
+  tr:last-child td { border-bottom: none; }
+  .pill { display: inline-block; padding: 0 7px; border-radius: 9px;
+          font-size: 10.5px; border: 1px solid var(--border); color: var(--dim);
+          margin-right: 4px; white-space: nowrap; }
+  .pill.ok { color: var(--ok); border-color: var(--ok); }
+  .pill.bad { color: var(--bad); border-color: var(--bad); }
+  .pill.warn { color: var(--warn); border-color: var(--warn); }
+  .pill.accent { color: var(--accent); border-color: var(--accent); }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 12.5px; }
+  .kv dt { color: var(--dim); } .kv dd { margin: 0; font-family: var(--mono); font-size: 12px; }
+  .kanban { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+  .col { flex: 1 0 220px; min-width: 200px; background: var(--panel2);
+         border-radius: 8px; padding: 8px; }
+  .col h3 { margin: 0 0 6px; font-size: 11.5px; color: var(--dim);
+            text-transform: uppercase; letter-spacing: .05em; }
+  .card { background: var(--panel); border: 1px solid var(--border);
+          border-radius: 7px; padding: 7px 9px; margin-bottom: 7px; font-size: 12.5px; }
+  .card .t { font-weight: 600; margin-bottom: 2px; word-break: break-word; }
+  .card .m { color: var(--dim); font-size: 11px; }
+  .turn { border-bottom: 1px solid var(--border); padding: 8px 0; }
+  .turn:last-child { border-bottom: none; }
+  .turn .msg { color: var(--fg); }
+  .turn .resp { color: #b8c4d4; margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
+  .turn .meta { color: var(--dim); font-size: 11px; margin-top: 3px; font-family: var(--mono); }
+  details summary { cursor: pointer; color: var(--dim); font-size: 11.5px; }
+  details[open] summary { margin-bottom: 4px; }
+  pre { background: var(--panel2); border-radius: 6px; padding: 8px;
+        overflow-x: auto; font-size: 11px; font-family: var(--mono); }
+  #setup { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 10;
+           display: none; align-items: center; justify-content: center; padding: 16px; }
+  #setup .box { background: var(--panel); border: 1px solid var(--border);
+                border-radius: 10px; padding: 20px; width: 100%; max-width: 440px; }
+  #setup label { display: block; margin: 10px 0 3px; font-size: 12px; color: var(--dim); }
+  #setup input { width: 100%; padding: 7px 9px; background: var(--panel2); color: var(--fg);
+                 border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+  #setup button { margin-top: 14px; width: 100%; padding: 9px; background: var(--accent);
+                  color: #0d1117; border: none; border-radius: 6px; font-weight: 600;
+                  cursor: pointer; }
+  .clip { max-height: 4.4em; overflow: hidden; }
+  .small { font-size: 11.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>かみむすび <span class="who" id="who">dashboard</span></h1>
+  <span><span class="dot" id="conn"></span><span id="connText" class="small muted">connecting…</span></span>
+  <span class="spacer"></span>
+  <label class="small muted">subject <input id="subject" style="width:110px" placeholder="local-user"></label>
+  <label class="small muted">poll <select id="pollSel">
+    <option value="10000">10s</option><option value="15000" selected>15s</option>
+    <option value="30000">30s</option><option value="60000">60s</option>
+  </select></label>
+  <button id="refresh">refresh</button>
+  <button id="reconfig">config</button>
+  <span id="stamp"></span>
+</header>
+<main>
+  <section id="sec-node"><h2>Node</h2><div class="kv" id="node"></div><div class="err" id="nodeErr"></div></section>
+  <section id="sec-tiers"><h2>Tiers</h2><div id="tiers"></div><div class="err" id="tiersErr"></div></section>
+  <section id="sec-peers"><h2>Peers &amp; Cost</h2><div id="peers"></div><div class="err" id="peersErr"></div></section>
+  <section id="sec-commit"><h2>Commitments</h2><div id="commitments"></div><div class="err" id="commitmentsErr"></div></section>
+  <section id="sec-agents"><h2>Agents / Delegations / Intercom</h2><div id="agents"></div><div class="err" id="agentsErr"></div></section>
+  <section id="sec-memory"><h2>Memory</h2><div id="memory"></div><div class="err" id="memoryErr"></div></section>
+  <section id="sec-thoughts" class="wide"><h2>Thoughts — recent turns</h2><div id="thoughts"></div><div class="err" id="thoughtsErr"></div></section>
+  <section id="sec-tasks" class="wide"><h2>Task board</h2><div class="kanban" id="tasks"></div><div class="err" id="tasksErr"></div></section>
+</main>
+<div id="setup"><div class="box">
+  <h2 style="text-transform:none;letter-spacing:0">接続設定</h2>
+  <div class="small muted">トークンは localStorage にのみ保存。このページ自体を resident (<code>http://&lt;pi&gt;:7860/</code>) から開くと API base は同一オリジンでそのまま動く。</div>
+  <label>API base URL</label>
+  <input id="cfgBase" placeholder="http://100.111.150.4:7860">
+  <label>Node token (KAMIMUSUHI_NODE_TOKEN)</label>
+  <input id="cfgToken" type="password" placeholder="Bearer token">
+  <button id="cfgSave">Save &amp; connect</button>
+</div></div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+const cfg = {
+  get base() { return localStorage.getItem("km.base") || location.origin; },
+  get token() { return localStorage.getItem("km.token") || ""; },
+  get subject() { return localStorage.getItem("km.subject") || "local-user"; },
+};
+$("subject").value = cfg.subject === "local-user" ? "" : cfg.subject;
+$("subject").placeholder = cfg.subject;
+
+function showSetup() {
+  $("cfgBase").value = cfg.base;
+  $("setup").style.display = "flex";
+}
+$("reconfig").onclick = showSetup;
+$("cfgSave").onclick = () => {
+  localStorage.setItem("km.base", $("cfgBase").value.trim().replace(/\/+$/,""));
+  localStorage.setItem("km.token", $("cfgToken").value.trim());
+  $("setup").style.display = "none";
+  refresh();
+};
+$("subject").onchange = e =>
+  localStorage.setItem("km.subject", e.target.value.trim() || "local-user");
+$("refresh").onclick = refresh;
+
+async function api(path, opts) {
+  const headers = {"Accept": "application/json"};
+  if (cfg.token) headers["Authorization"] = "Bearer " + cfg.token;
+  if (opts && opts.body) headers["Content-Type"] = "application/json";
+  const r = await fetch(cfg.base + path, {method: (opts && opts.method) || "GET",
+                                          headers, body: opts && opts.body});
+  const text = await r.text();
+  let data; try { data = JSON.parse(text); } catch { data = {raw: text}; }
+  if (!r.ok) {
+    const msg = (data && (data.error && (data.error.message || data.error))) || r.status;
+    const e = new Error("HTTP " + r.status + " " + (typeof msg === "string" ? msg : JSON.stringify(msg)));
+    e.status = r.status; throw e;
+  }
+  return data;
+}
+const post = (p, body) => api(p, {method: "POST", body: JSON.stringify(body || {})});
+
+function setErr(id, e) {
+  $(id).textContent = e ? (e.status === 401 ? "401 unauthorized — token を確認" : String(e.message||e)) : "";
+}
+const fmtT = s => { if (!s) return "—"; const d = new Date(s); return isNaN(d) ? s : d.toLocaleString(); };
+const ago = s => { const d = new Date(s); if (isNaN(d)) return "—";
+  const sec = Math.max(0,(Date.now()-d)/1e3)|0;
+  if (sec<60) return sec+"s"; if (sec<3600) return (sec/60|0)+"m";
+  if (sec<86400) return (sec/3600|0)+"h"; return (sec/86400|0)+"d"; };
+const bool = v => v ? '<span class="pill ok">ok</span>' : '<span class="pill bad">down</span>';
+const pill = (t,c) => `<span class="pill ${c||""}">${esc(t)}</span>`;
+
+function rowKV(id, rows) {
+  $(id).innerHTML = rows.filter(r => r[1] !== undefined)
+    .map(r => `<dt>${esc(r[0])}</dt><dd>${r[1]}</dd>`).join("");
+}
+
+async function loadNode() {
+  try {
+    const [h, s] = await Promise.all([api("/health"), api("/status")]);
+    $("who").textContent = `${h.node || "?"} · ${h.role || "?"}`;
+    const ns = (s && s.node_state) || {};
+    const cg = s && s.routing && s.routing.cost_guard || {};
+    rowKV("node", [
+      ["state", pill(ns.status || "—", ns.status === "busy" ? "warn" : "ok")],
+      ["uptime", esc(((h.uptime_secs||0)/3600).toFixed(1)) + " h"],
+      ["mode", esc(h.mode)], ["kcore", esc(JSON.stringify(h.kcore))],
+      ["nas", bool(h.nas)], ["local_llm", bool(h.local_llm)],
+      ["pending", esc(h.pending_tasks)],
+      ["active_goal", esc(ns.active_goal ? (ns.active_goal.goal||"").slice(0,60) : "—")],
+      ["sessions", esc((ns.active_sessions||[]).join(", ") || "—")],
+      ["session $", esc(cg.session_usd ?? "—") + " / day " + esc(cg.daily_usd ?? "—")],
+    ]);
+    setErr("nodeErr");
+    renderTiers(s); renderPeers(s); renderAgents(s); return s;
+  } catch (e) { setErr("nodeErr", e); setErr("tiersErr", e); setErr("peersErr", e); setErr("agentsErr", e); }
+}
+
+function renderTiers(s) {
+  const tiers = s && s.routing && s.routing.tiers || {};
+  const names = Object.keys(tiers);
+  $("tiers").innerHTML = names.length
+    ? "<table><tr><th></th><th>tier</th><th>latency</th><th>last ok</th><th>error</th></tr>" +
+      names.map(n => { const t = tiers[n];
+        return `<tr><td>${bool(t.healthy)}</td><td>${esc(n)}</td>
+          <td>${esc(t.latency_ms||0)} ms</td><td title="${esc(fmtT(t.last_ok))}">${esc(ago(t.last_ok))}</td>
+          <td class="muted">${esc((t.error||"").slice(0,60))}</td></tr>`; }).join("") + "</table>"
+    : '<span class="muted">no tiers</span>';
+}
+
+function renderPeers(s) {
+  const peers = s.peers || {};
+  const names = Object.keys(peers);
+  const ic = s.intercom || {};
+  $("peers").innerHTML =
+    (names.length ? "<table><tr><th></th><th>peer</th><th>last ok</th><th>error</th></tr>" +
+      names.map(n => { const p = peers[n];
+        return `<tr><td>${bool(p.healthy)}</td><td>${esc(n)}</td>
+          <td title="${esc(fmtT(p.last_ok))}">${esc(ago(p.last_ok))}</td>
+          <td class="muted">${esc((p.error||"").slice(0,50))}</td></tr>`; }).join("") + "</table>"
+      : '<span class="muted">no peers</span>') +
+    (ic.outbox_pending !== undefined || ic.conversations !== undefined
+      ? `<div class="small muted" style="margin-top:6px">intercom: ${esc(JSON.stringify(ic).slice(0,200))}</div>` : "");
+}
+
+async function loadTasks() {
+  try {
+    const d = await post("/v1/tasks", {action: "list"});
+    const tasks = d.tasks || [];
+    const cols = [["in_progress","進行中"],["awaiting_operator","判断待ち"],
+                  ["waiting","待ち / on_hold"],["done","完了"],["other","その他"]];
+    const bucket = t => t.status === "on_hold" ? "waiting"
+      : ["in_progress","awaiting_operator","waiting","done"].includes(t.status) ? t.status : "other";
+    $("tasks").innerHTML = cols.map(([key,label]) => {
+      const list = tasks.filter(t => bucket(t) === key);
+      const shown = key === "done" ? list.slice(-10).reverse() : list.slice().reverse();
+      return `<div class="col"><h3>${label} (${list.length})</h3>` +
+        (shown.map(t => `<div class="card"><div class="t">${esc(t.title)}</div>
+          <div class="m">${pill(t.kind,"accent")}${pill(t.status)} ${esc(t.node||"")} · ${esc(ago(t.updated))}
+          ${t.notes && t.notes.length ? " · " + t.notes.length + " notes" : ""}</div></div>`).join("")
+         || '<div class="muted small">—</div>') + `</div>`;
+    }).join("");
+    setErr("tasksErr");
+  } catch (e) { setErr("tasksErr", e); }
+}
+
+async function loadCommitments() {
+  try {
+    const d = await post("/v1/commitments", {action: "list"});
+    const list = d.commitments || [];
+    $("commitments").innerHTML = list.length ? list.map(c => {
+      const goal = c.goal || c.question || c.id || "";
+      return `<div class="card"><div class="t">${esc(goal).slice(0,160)}</div>
+        <div class="m">${pill(c.state || c.status || "?")} ${esc(c.id||"")}
+        ${c.next_action ? " · next: " + esc(String(c.next_action).slice(0,60)) : ""}</div></div>`;
+    }).join("") : '<span class="muted">no open commitments</span>';
+    setErr("commitmentsErr");
+  } catch (e) { setErr("commitmentsErr", e); }
+}
+
+function renderAgents(s) {
+  const tp = s.task_plane, dels = s.delegations, ap = s.approvals_pending || [];
+  let html = "";
+  if (tp) html += `<div class="small">${pill("task_plane","accent")} ${esc(JSON.stringify(tp).slice(0,240))}</div>`;
+  if (dels) html += `<div class="small" style="margin-top:5px">${pill("delegations")} ${esc(JSON.stringify(dels).slice(0,240))}</div>`;
+  if (ap.length) html += `<div class="small" style="margin-top:5px">${pill("approvals " + ap.length,"warn")} ` +
+    ap.map(a => esc((a.summary || a.tool || a.id || JSON.stringify(a)).slice(0,80))).join("<br>") + `</div>`;
+  if (!html) html = '<span class="muted">—</span>';
+  $("agents").innerHTML = html;
+}
+
+async function loadThoughts() {
+  try {
+    const d = await post("/v1/kamimusuhi/history", {subject: cfg.subject, limit: 30});
+    const turns = (d.turns || []).slice().reverse();
+    $("thoughts").innerHTML = turns.length ? turns.map(t => {
+      const r = t.route || {};
+      const meta = [fmtT(t.ts), t.kind !== "answered" ? t.kind : "",
+        r.tier ? "tier " + r.tier : "", r.model || "",
+        t.latency_ms ? t.latency_ms + "ms" : "",
+        (t.tool_calls||[]).length ? "tools " + t.tool_calls.length : ""].filter(Boolean).join(" · ");
+      const resp = t.response || (t.error ? "⚠ " + t.error : "");
+      return `<div class="turn"><div class="msg">${esc(t.message||"")}</div>
+        ${resp ? `<div class="resp">${esc(String(resp).slice(0,600))}${String(resp).length>600?"…":""}</div>` : ""}
+        <div class="meta">${esc(meta)}</div></div>`;
+    }).join("") : '<span class="muted">no turns for subject ' + esc(cfg.subject) + '</span>';
+    setErr("thoughtsErr");
+  } catch (e) { setErr("thoughtsErr", e); }
+}
+
+async function loadMemory() {
+  try {
+    const d = await post("/v1/kamimusuhi/memory", {limit: 16});
+    const dom = d.domains || {};
+    let html = `<div class="kv">` +
+      ["individual","activation_seq","generated_at"].map(k =>
+        `<dt>${k}</dt><dd>${esc(String(d[k] ?? "—")).slice(0,40)}</dd>`).join("") +
+      ["episodic","relationship"].map(k =>
+        `<dt>${k}</dt><dd>${esc((dom[k]||{}).active ?? "?")} active / ${esc((dom[k]||{}).total ?? "?")} total</dd>`).join("") +
+      `<dt>self_model</dt><dd>${esc((d.self_model && d.self_model.entry_count) || "?")} entries</dd>
+       <dt>pending</dt><dd>${esc((d.pending_proposals||[]).length)} proposals</dd></div>`;
+    const recs = ["episodic","relationship"].flatMap(k =>
+      ((dom[k]||{}).records||[]).map(r => ({dom:k, ...r})));
+    html += `<details style="margin-top:8px"><summary>recent records (${recs.length})</summary>` +
+      (recs.map(r => {
+        const body = typeof r.payload === "string" ? r.payload
+          : (r.payload && (r.payload.text || r.payload.summary || r.payload.fact)) || JSON.stringify(r.payload||{});
+        return `<div class="card"><div class="m">${pill(r.dom,"accent")} ${esc(r.subject_key||"—")}
+          · ${esc(ago(r.created_at))}${r.use_count!==undefined?" · ×"+r.use_count:""}</div>
+          <div class="t">${esc(String(body).slice(0,240))}</div>
+          ${r.tags&&r.tags.length?`<div class="m">${r.tags.map(t=>pill(t)).join("")}</div>`:""}</div>`;
+      }).join("") || '<div class="muted small">—</div>') + `</details>`;
+    $("memory").innerHTML = html;
+    setErr("memoryErr");
+  } catch (e) { setErr("memoryErr", e); }
+}
+
+async function refresh() {
+  const t0 = Date.now();
+  $("conn").className = "dot";
+  await Promise.allSettled([loadNode(), loadTasks(), loadCommitments(), loadThoughts(), loadMemory()]);
+  const ok = !$("nodeErr").textContent;
+  $("conn").className = "dot " + (ok ? "ok" : "bad");
+  $("connText").textContent = ok ? "connected" : "error";
+  $("stamp").textContent = new Date().toLocaleTimeString() + " · " + (Date.now()-t0) + "ms";
+}
+
+if (!cfg.token) showSetup();
+refresh();
+let timer = setInterval(refresh, 15000);
+$("pollSel").onchange = e => { clearInterval(timer); timer = setInterval(refresh, +e.target.value); };
+</script>
+</body>
+</html>

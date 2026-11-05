@@ -22,6 +22,7 @@ pub mod judge;
 pub mod kcore;
 pub mod library;
 pub mod mcp;
+pub mod memory;
 pub mod probes;
 pub mod remote;
 pub mod router;
