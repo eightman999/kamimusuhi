@@ -141,7 +141,9 @@ fn run() -> Result<String, RuntimeError> {
     if !matches!(
         command.as_str(),
         "talk" | "chat" | "reflect" | "activate" | "memory"
-    ) && (options.message.is_some() || options.subject.is_some() || options.mio_options_present())
+    ) && (options.message.is_some()
+        || options.subject.is_some()
+        || options.mio_options_present())
     {
         return Err(RuntimeError::Usage(
             "--message, --subject and MIO flags are dialogue options".to_owned(),
