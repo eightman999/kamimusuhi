@@ -388,14 +388,28 @@ class DialogueBridge:
             self.seen.popitem(last=False)
 
     async def handle(self, message, bot_id):
-        if not self.config.allows(message):
+        if not self.config.allows(message) or message.id in self.seen:
             return
         mention = rf"<@!?{bot_id}>"
-        if not re.search(mention, message.content) or message.id in self.seen:
-            return
-        text = re.sub(mention, "", message.content).strip()
-        if not text or len(text.encode("utf-8")) > 32768:
-            await self.reply(message, "メンションに続けて、32KiB以内の文章を送ってください。")
+        hint = ""
+        if re.search(mention, message.content):
+            text = re.sub(mention, "", message.content).strip()
+        else:
+            # A reply to one of the bot's own messages is addressed to it even
+            # without a mention. Claim the ID first: resolving the reference
+            # awaits, and a Gateway replay must not slip a second copy through.
+            if getattr(getattr(message, "reference", None), "message_id", None) is None:
+                return
+            self.remember(message)
+            referenced = await self.replied_to_bot(message, bot_id)
+            if referenced is None:
+                return
+            text = message.content.strip()
+            quoted = clip(getattr(referenced, "content", ""), 300)
+            if quoted:
+                hint = f"[reply to: {quoted}]\n"
+        if not text or len((hint + text).encode("utf-8")) > 32768:
+            await self.reply(message, "メンションか澪の発言への返信に続けて、32KiB以内の文章を送ってください。")
             return
         command = COMMAND_RE.fullmatch(text)
         if command:
@@ -407,7 +421,7 @@ class DialogueBridge:
             await self.reply(message, "待ち行列がいっぱいです。少し後で新しいメッセージを送ってください。")
             return
         accepted = asyncio.get_running_loop().create_future()
-        self.queue.put_nowait((message, text, accepted))
+        self.queue.put_nowait((message, hint + text, accepted))
         self.remember(message)
         try:
             ok = await self.reply(message, f"受け付けました。順番に返事します（待ち {self.queue.qsize()} 件）。")
@@ -415,6 +429,20 @@ class DialogueBridge:
         finally:
             if not accepted.done():
                 accepted.set_result(False)
+
+    async def replied_to_bot(self, message, bot_id):
+        """The referenced message, when this is a reply to one the bot sent."""
+        reference = message.reference
+        referenced = getattr(reference, "resolved", None)
+        if referenced is None:
+            try:
+                referenced = await message.channel.fetch_message(reference.message_id)
+            except (discord.HTTPException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                LOG.warning("reply reference lookup failed (%s)", type(exc).__name__)
+                return None
+        if getattr(getattr(referenced, "author", None), "id", None) != bot_id:
+            return None
+        return referenced
 
     async def command(self, message, match):
         """Start or cancel a commitment the operator was told about."""
@@ -577,7 +605,7 @@ class MioClient(discord.Client):
             await self.bridge.handle(message, self.user.id)
 
     async def on_ready(self):
-        LOG.info("Discord mention gateway ready (notices %s)",
+        LOG.info("Discord reply gateway ready (notices %s)",
                  "on" if self.config.notifies else "off")
 
     async def on_error(self, event_method, *args, **kwargs):

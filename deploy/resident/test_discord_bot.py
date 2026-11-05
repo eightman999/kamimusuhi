@@ -23,9 +23,16 @@ def reply(text, background=None):
 
 def message(id=1, guild=10, channel=30, user=20, bot=False, text='<@99> こんにちは', webhook=None):
     return SimpleNamespace(id=id, guild=None if guild is None else SimpleNamespace(id=guild),
-                           channel=SimpleNamespace(id=channel),
+                           channel=SimpleNamespace(id=channel, fetch_message=AsyncMock()),
                            author=SimpleNamespace(id=user, bot=bot), content=text,
-                           webhook_id=webhook, reply=AsyncMock(return_value=SimpleNamespace(id=500 + id)))
+                           webhook_id=webhook, reference=None,
+                           reply=AsyncMock(return_value=SimpleNamespace(id=500 + id)))
+
+
+def replying_to(author_id=99, content='澪の返事', resolved=True, message_id=800):
+    """A `message.reference` to a message by `author_id` (`resolved=None` needs a fetch)."""
+    resolved = SimpleNamespace(author=SimpleNamespace(id=author_id), content=content) if resolved else None
+    return SimpleNamespace(message_id=message_id, resolved=resolved)
 
 
 class BridgeTests(unittest.IsolatedAsyncioTestCase):
@@ -61,6 +68,59 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         for call in event.reply.call_args_list:
             self.assertFalse(call.kwargs['mention_author'])
             self.assertEqual(call.kwargs['allowed_mentions'].to_dict(), {'parse': []})
+
+    async def test_reply_to_bot_is_addressed_without_mention(self):
+        event = message(text='そうなんだ')
+        event.reference = replying_to(content='受け付けました。')
+        await self.bridge.handle(event, 99)
+        await self.drain()
+        # The replied-to text goes along as context on the same subject.
+        self.backend.talk.assert_awaited_once_with('[reply to: 受け付けました。]\nそうなんだ',
+                                                   subject_for(event))
+        self.assertIn('受け付け', event.reply.call_args_list[0].args[0])
+
+    async def test_replies_to_others_and_deleted_parents_are_ignored(self):
+        for reference in [replying_to(author_id=20), replying_to(author_id=98),
+                          SimpleNamespace(message_id=800, resolved=SimpleNamespace(content='x'))]:
+            event = message(text='そうなんだ')
+            event.reference = reference
+            await self.bridge.handle(event, 99)
+            event.reply.assert_not_awaited()
+        await self.drain()
+        self.backend.talk.assert_not_awaited()
+
+    async def test_reply_reference_falls_back_to_fetch_and_survives_failures(self):
+        failed = message(id=2, text='そうなんだ')
+        failed.reference = replying_to(resolved=None)
+        failed.channel.fetch_message.side_effect = discord.NotFound(
+            SimpleNamespace(status=404, reason='Unknown Message'), 'gone')
+        await self.bridge.handle(failed, 99)
+        failed.reply.assert_not_awaited()
+        fetched = message(id=3, text='続きを頼む')
+        fetched.reference = replying_to(resolved=None, message_id=801)
+        fetched.channel.fetch_message.return_value = SimpleNamespace(
+            author=SimpleNamespace(id=99), content='前の返事')
+        await self.bridge.handle(fetched, 99)
+        await self.drain()
+        fetched.channel.fetch_message.assert_awaited_once_with(801)
+        self.backend.talk.assert_awaited_once_with('[reply to: 前の返事]\n続きを頼む',
+                                                   subject_for(fetched))
+
+    async def test_replayed_reply_is_deduped_across_the_reference_fetch(self):
+        gate = asyncio.Event()
+        async def fetch(message_id):
+            await gate.wait()
+            return SimpleNamespace(author=SimpleNamespace(id=99), content='x')
+        event = message(text='そうなんだ')
+        event.reference = replying_to(resolved=None)
+        event.channel.fetch_message.side_effect = fetch
+        first = asyncio.create_task(self.bridge.handle(event, 99))
+        await asyncio.sleep(0)
+        second = asyncio.create_task(self.bridge.handle(event, 99))
+        gate.set()
+        await asyncio.gather(first, second)
+        await self.drain()
+        self.backend.talk.assert_awaited_once()
 
     async def test_same_subject_is_fifo_and_one_at_a_time(self):
         started, finish = asyncio.Event(), asyncio.Event()
@@ -258,6 +318,22 @@ class TaskNoticeTests(unittest.IsolatedAsyncioTestCase):
         await bridge.handle(answer, 99)
         self.assertEqual(backend.task_action.call_args.args[0]['status'], 'cancelled')
         self.assertIn('取り消しました', answer.reply.call_args.args[0])
+        backend.talk.assert_not_awaited()
+        self.assertEqual(bridge.queue.qsize(), 0)
+
+    async def test_a_bare_command_reply_to_the_notice_needs_no_mention(self):
+        backend = self.backend()
+        bridge = DialogueBridge(NOTIFYING, backend)
+        bridge.notices.claim('t1a0dc0000c1', 700, 'promise')
+        event = message(text='取消')
+        event.reference = replying_to(message_id=700)
+        backend.tasks.return_value = [{'id': 't1a0dc0000c1', 'kind': 'promise',
+                                       'status': 'awaiting_operator'}]
+        await bridge.handle(event, 99)
+        backend.task_action.assert_awaited_once_with(
+            {'action': 'update', 'id': 't1a0dc0000c1', 'status': 'cancelled',
+             'note': '操作者が取り消し（Discord）'})
+        self.assertIn('取り消しました', event.reply.call_args.args[0])
         backend.talk.assert_not_awaited()
         self.assertEqual(bridge.queue.qsize(), 0)
 

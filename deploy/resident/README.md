@@ -173,7 +173,7 @@ kamimusuhi intercom retry [id]      # dead-letter の再送
 ## Discord Bot
 
 Discordから同じ個体を呼び出すには [Discord Botの導入手順](discord.md) を参照。
-許可したチャンネルで `@澪 こんにちは` と呼び出すと、FIFOキューから（subjectごとに順番を守って最大2件並行で）対話APIへ渡し、元メッセージへ返信する。
+許可したチャンネルで `@澪 こんにちは` と呼び出すと、FIFOキューから（subjectごとに順番を守って最大2件並行で）対話APIへ渡し、元メッセージへ返信する。澪の発言への返信はメンションなしでも受け付け、返信先の冒頭を `[reply to: …]` として一緒に渡す。
 
 ## Library（参照用データ）
 
