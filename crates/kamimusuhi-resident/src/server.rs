@@ -689,7 +689,10 @@ mod usage_tests {
             (
                 "OPTIONS /v1/tasks HTTP/1.1\r\nHost: localhost\r\n\r\n",
                 "204 No Content",
-                vec!["Access-Control-Allow-Headers", "Access-Control-Allow-Private-Network"],
+                vec![
+                    "Access-Control-Allow-Headers",
+                    "Access-Control-Allow-Private-Network",
+                ],
             ),
             (
                 "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n",

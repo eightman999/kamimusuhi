@@ -75,6 +75,11 @@ pub struct Config {
     /// `judge_required` (see judge.rs).
     #[serde(default)]
     pub tool_judge: ToolJudgeConfig,
+    /// Bounds on the built-in `http_request` tool: which hosts and methods
+    /// it may use. Both are allowlists that fail closed — an empty host
+    /// list (the default) refuses every request (see tools.rs).
+    #[serde(default)]
+    pub tools: ToolsConfig,
     /// Typed node-task delegation (`POST /task`): queueing, retries and
     /// deadlines for work this node hands to a peer — and for work peers
     /// hand to this node (see delegation.rs).
@@ -217,6 +222,37 @@ pub enum JudgeUnavailable {
     Approval,
     /// Refuse the call outright.
     Deny,
+}
+
+/// Policy for the built-in `http_request` tool. Everything not listed here
+/// is refused: the default (no hosts) disables the tool entirely.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolsConfig {
+    /// Hostnames `http_request` may contact. An entry matches the request
+    /// host exactly or as a parent domain (`github.com` admits
+    /// `api.github.com`). Exact hostnames only: no schemes, ports, paths
+    /// or wildcards — and no suffix that is itself public-suffix shaped
+    /// belongs here. Empty (the default) refuses every request.
+    #[serde(default)]
+    pub http_allow_hosts: Vec<String>,
+    /// Uppercase methods `http_request` may use. The default is GET and
+    /// POST; PUT/PATCH/DELETE are opt-in.
+    #[serde(default = "default_http_allow_methods")]
+    pub http_allow_methods: Vec<String>,
+}
+
+fn default_http_allow_methods() -> Vec<String> {
+    vec!["GET".to_owned(), "POST".to_owned()]
+}
+
+impl Default for ToolsConfig {
+    fn default() -> Self {
+        Self {
+            http_allow_hosts: Vec::new(),
+            http_allow_methods: default_http_allow_methods(),
+        }
+    }
 }
 
 /// Commitment engine policy. The engine needs a task plane to act; with
@@ -1087,6 +1123,30 @@ impl Config {
         for lib in &self.libraries {
             if !id_ok(&lib.name) || !lib.path.is_absolute() {
                 return Err(format!("library {:?}: name or path invalid", lib.name));
+            }
+        }
+        for host in &self.tools.http_allow_hosts {
+            // Exact hostnames (or IPs) only: a scheme, port, path, wildcard
+            // or credential would all silently widen the allowlist.
+            let valid = !host.is_empty()
+                && host.len() <= 253
+                && host
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b".-_:".contains(&b));
+            if !valid {
+                return Err(format!(
+                    "tools.http_allow_hosts entry {host:?} is not a hostname"
+                ));
+            }
+        }
+        for method in &self.tools.http_allow_methods {
+            if method.is_empty()
+                || method.len() > 16
+                || !method.bytes().all(|b| b.is_ascii_uppercase())
+            {
+                return Err(format!(
+                    "tools.http_allow_methods entry {method:?} is not an uppercase method"
+                ));
             }
         }
         if let Some(plane) = &self.task_plane {

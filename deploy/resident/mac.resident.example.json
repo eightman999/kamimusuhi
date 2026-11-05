@@ -99,5 +99,17 @@
       "probe_interval_secs": 15,
       "billing": "local"
     }
-  ]
+  ],
+  "tools": {
+    "http_allow_hosts": [
+      "api.github.com",
+      "api.mistral.ai",
+      "127.0.0.1",
+      "localhost"
+    ],
+    "http_allow_methods": [
+      "GET",
+      "POST"
+    ]
+  }
 }
