@@ -140,6 +140,7 @@ fn serve(args: &Args) -> Result<(), String> {
     kamimusuhi_resident::commitments::spawn(&shared);
     kamimusuhi_resident::intercom::spawn(&shared);
     kamimusuhi_resident::delegation::spawn(&shared);
+    kamimusuhi_resident::task_review::spawn(&shared);
     if role == NodeRole::Continuity
         && let Some(k) = kcore_config
     {

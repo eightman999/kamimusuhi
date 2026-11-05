@@ -16,6 +16,7 @@
 
 pub mod audit;
 pub mod c0;
+pub mod commitment;
 pub mod continuity;
 pub mod digest;
 pub mod domain_separation;

@@ -144,13 +144,13 @@ fn version_of(spec: &ExecutorSpec) -> Option<String> {
 pub(crate) fn discover_with(spec: &ExecutorSpec, now: u64) -> CatalogEntry {
     let mut entry = CatalogEntry {
         checked_at: now,
+        harness_version: version_of(spec),
         ..CatalogEntry::default()
     };
     let Some(discover) = &spec.discover else {
-        entry.error = Some("no model discovery configured".to_owned());
+        entry.error = Some(super::catalog::NO_DISCOVERY.to_owned());
         return entry;
     };
-    entry.harness_version = version_of(spec);
     let result = process::run(
         &ProcessSpec {
             program: &spec.command,

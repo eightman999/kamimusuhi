@@ -9,6 +9,7 @@
 //! It never initializes an individual and never writes canonical state.
 
 pub mod approvals;
+pub mod background;
 pub mod capabilities;
 pub mod client;
 pub mod commitments;
@@ -31,6 +32,7 @@ pub mod state;
 pub mod status;
 pub mod task_ledger;
 pub mod task_orchestrator;
+pub mod task_review;
 pub mod task_worktree;
 pub mod tasks;
 pub mod tools;

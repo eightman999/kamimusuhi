@@ -71,7 +71,7 @@ pub struct Task {
     pub id: String,
     pub title: String,
     pub status: TaskStatus,
-    /// dialogue | tool | approval | commit | job | manual | agent
+    /// dialogue | tool | approval | commit | job | manual | agent | delegated | commitment | promise
     pub kind: String,
     /// Node doing the work (`pi`, `llm_master`, …).
     pub node: String,
@@ -360,9 +360,10 @@ pub fn handle(shared: &crate::state::Shared, request: &Value, by: &str) -> (u16,
             );
             (200, json!({"ok": true, "task": updated.map(|t| t.view())}))
         }
+        "start" => crate::background::start(shared, request, by),
         _ => (
             400,
-            json!({"error": "action must be list, create or update"}),
+            json!({"error": "action must be list, create, update or start"}),
         ),
     }
 }
