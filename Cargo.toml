@@ -11,6 +11,9 @@ members = [
     "crates/kamimusuhi-resident",
     "crates/kamimusuhi-node",
     "crates/kamimusuhi-tui",
+    "crates/kamimusuhi-computer-mcp",
+    "crates/kamimusuhi-discord",
+    "crates/kamimusuhi-monitoring",
 ]
 
 [workspace.package]

@@ -25,8 +25,8 @@ if [[ "${1:-}" == "--uninstall" ]]; then
   exit 0
 fi
 
-echo "building kamimusuhi + kamimusuhi-runtime (release) from $REPO"
-cargo build --release --manifest-path "$REPO/Cargo.toml" -p kamimusuhi-resident -p kamimusuhi-runtime
+echo "building kamimusuhi + kamimusuhi-runtime + computer MCP (release) from $REPO"
+cargo build --release --manifest-path "$REPO/Cargo.toml" -p kamimusuhi-resident -p kamimusuhi-runtime -p kamimusuhi-computer-mcp
 
 mkdir -p "$ROOT"/{runtime/bin,config,current_state,cache,spool,logs,worktrees}
 for b in kamimusuhi kamimusuhi-runtime; do
@@ -34,18 +34,19 @@ for b in kamimusuhi kamimusuhi-runtime; do
   mv -f "$ROOT/runtime/bin/$b.new" "$ROOT/runtime/bin/$b"
 done
 
-# computer-use MCP: osascript/screencapture backend, nothing to build. The
+# Native computer-use MCP: osascript/screencapture backend. The
 # launcher pins COMPUTER_DIR under the node root; Accessibility and Screen
 # Recording consent for the responsible process are granted by the operator
 # in System Settings (health_check reports when missing).
 COMPUTER_DIR="$ROOT/mcp/computer"
 install -d "$COMPUTER_DIR/state"
-install -m 644 "$REPO/deploy/resident/computer-mcp.py" "$COMPUTER_DIR/computer-mcp.py"
+install -m 755 "$REPO/target/release/kamimusuhi-computer-mcp" "$COMPUTER_DIR/kamimusuhi-computer-mcp.new"
+mv -f "$COMPUTER_DIR/kamimusuhi-computer-mcp.new" "$COMPUTER_DIR/kamimusuhi-computer-mcp"
 cat > "$COMPUTER_DIR/computer-mcp" <<LAUNCHER
 #!/bin/zsh
 set -euo pipefail
 export COMPUTER_DIR="$COMPUTER_DIR/state"
-exec /usr/bin/env python3 "$COMPUTER_DIR/computer-mcp.py" "\$@"
+exec "$COMPUTER_DIR/kamimusuhi-computer-mcp" "\$@"
 LAUNCHER
 chmod 700 "$COMPUTER_DIR/computer-mcp"
 

@@ -3,6 +3,13 @@
 Raspberry Pi と llm_master の両方で `kamimusuhi-resident`（バイナリ名 `kamimusuhi`）を systemd 常駐させる。
 自己改善・自動実験はこの構成が安定してから追加する。
 
+運用補助も Rust workspace に含める。Computer MCP は `kamimusuhi-computer-mcp`、
+Discord 連携は `kamimusuhi-discord`、Grafana JSON 生成は `kamimusuhi-monitoring`。
+起動・導入方法はそれぞれ [computer-mcp.md](computer-mcp.md)、[discord.md](discord.md)、
+[monitoring/README.md](monitoring/README.md) を参照。
+旧 Python 実装は移植照合用に保持する。研究・学習コード、外部 MCP の依存、
+インストール補助スクリプトは別途扱い、Cloudflare Relay は TypeScript を維持する。
+
 ```text
              NAS (NFS export → /mnt/kamimusuhi, 共有全体は /mnt/nas-share)
           ↗       ↖
