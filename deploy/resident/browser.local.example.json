@@ -1,0 +1,42 @@
+{
+  "node": {
+    "id": "browser-local",
+    "role": "cognition",
+    "listen": "127.0.0.1:7860"
+  },
+  "paths": {
+    "root": "/tmp/kamimusuhi-browser-local"
+  },
+  "mcp_servers": [
+    {
+      "name": "playwright",
+      "command": "npx",
+      "args": [
+        "--no-install",
+        "@playwright/mcp",
+        "--headless",
+        "--isolated",
+        "--browser",
+        "chromium",
+        "--image-responses",
+        "omit"
+      ],
+      "allow": [
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_click",
+        "browser_type",
+        "browser_navigate_back",
+        "browser_wait_for",
+        "browser_close"
+      ],
+      "deny": [
+        "browser_run_code_unsafe",
+        "browser_evaluate",
+        "browser_file_upload"
+      ],
+      "call_timeout_secs": 180,
+      "description": "個体内の隔離 headless Chromium。操作者のブラウザプロフィールを共有しない"
+    }
+  ]
+}

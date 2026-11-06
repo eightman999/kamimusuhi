@@ -63,7 +63,7 @@ fn function(name: &str, description: &str, parameters: Value) -> Value {
 
 pub fn definitions() -> Vec<Value> {
     let lib = json!({"type": "string", "description": "library name from library_list"});
-    vec![
+    let mut tools = vec![
         function(
             "task_list",
             "List the task board: what you, the operator and the system are working on in parallel, with status and predecessor links (depends_on).",
@@ -152,6 +152,13 @@ pub fn definitions() -> Vec<Value> {
                 "required": ["method", "url"]}),
         ),
         function(
+            "curl",
+            "Run a bounded HTTP request written as a curl command (no shell). Supports -X/--request, -H/--header, -d/--data/--data-raw/--json, --url and -s/-S/-f. Inline JSON bodies only; no files, redirects, cookies, proxy or shell expansion. Uses tools.http_allow_hosts and http_allow_methods, a 30s timeout and 32KiB body cap, like http_request. Query strings and fragments are unsupported. Use a header value $ENV:NAME for credentials; never embed credentials in command text.",
+            json!({"type": "object", "properties": {
+                "command": {"type": "string", "maxLength": 65536}},
+                "required": ["command"]}),
+        ),
+        function(
             "self_note",
             "Write down a self-authored working note about yourself (at most a few per turn). kind is what the note claims; text is the note itself (≤1KiB); evidence_refs optionally names the ids it draws on. Notes are scratch state: they come back marked SELF_NOTES — self-authored and unverified — never canonical memory or evidence.",
             json!({"type": "object", "properties": {
@@ -171,7 +178,14 @@ pub fn definitions() -> Vec<Value> {
                 "reason": {"type": "string", "maxLength": 600}},
                 "required": ["param", "value"]}),
         ),
-    ]
+    ];
+    tools.extend(crate::git_tool::definitions());
+    tools.extend(crate::service_control::definitions());
+    tools.extend(crate::agenthub::definitions());
+    tools.extend(crate::agora::definitions());
+    tools.extend(crate::browser::definitions());
+    tools.extend(crate::self_improvement::definitions());
+    tools
 }
 
 fn action_for(name: &str) -> Option<&'static str> {
@@ -397,7 +411,11 @@ fn task_plane_tool(
             Value::Null => json!({}),
             other => other.clone(),
         };
-        return crate::task_orchestrator::tool(shared, name, &args, turn);
+        return if name == "self_improve" {
+            crate::self_improvement::call(shared, &args, turn)
+        } else {
+            crate::task_orchestrator::tool(shared, name, &args, turn)
+        };
     }
     if !request["local_only"].as_bool().unwrap_or(false) {
         let mut forwarded = request.clone();
@@ -427,7 +445,7 @@ fn task_plane_tool(
 /// them, not twice.
 pub fn call(shared: &Shared, request: &Value, turn: Option<&str>) -> (u16, Value) {
     let name = request["name"].as_str().unwrap_or("");
-    if crate::task_orchestrator::TOOL_NAMES.contains(&name) {
+    if name == "self_improve" || crate::task_orchestrator::TOOL_NAMES.contains(&name) {
         return task_plane_tool(shared, name, request, turn);
     }
     // Commitments live in this node's durable store; they are never
@@ -516,8 +534,53 @@ pub fn call(shared: &Shared, request: &Value, turn: Option<&str>) -> (u16, Value
 
 fn call_inner(shared: &Shared, request: &Value, turn: Option<&str>) -> (u16, Value) {
     let name = request["name"].as_str().unwrap_or("");
+    if matches!(
+        name,
+        "git" | "service_control" | "agenthub" | "agora" | "browser" | "self_improve"
+    ) {
+        let args = match &request["arguments"] {
+            Value::String(text) => serde_json::from_str(text).unwrap_or(Value::Null),
+            other => other.clone(),
+        };
+        return match name {
+            "git" => crate::git_tool::call(shared, &args),
+            "service_control" => crate::service_control::call(shared, &args),
+            "agenthub" => crate::agenthub::call(shared, &args),
+            "agora" => crate::agora::call(shared, &args),
+            "browser" => crate::browser::call(shared, &args, request["local_only"] == true),
+            _ => crate::self_improvement::call(shared, &args, turn),
+        };
+    }
     if name.starts_with("mcp__") {
         return call_mcp(shared, name, request);
+    }
+    if name == "curl" {
+        let arguments = match &request["arguments"] {
+            Value::String(text) => serde_json::from_str(text).unwrap_or(Value::Null),
+            other => other.clone(),
+        };
+        let parsed = arguments["command"]
+            .as_str()
+            .ok_or_else(|| "command is required".to_owned())
+            .and_then(crate::curl_tool::parse);
+        let parsed = match parsed {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                return (
+                    200,
+                    json!({"ok": false, "error": {"kind": "invalid", "detail": error}}),
+                );
+            }
+        };
+        let (status, mut reply) =
+            http_request_tool(shared, &parsed.arguments, HTTP_REQUEST_TIMEOUT);
+        if parsed.fail_on_http_error && reply["result"]["status"].as_u64().is_some_and(|s| s >= 400)
+        {
+            reply["ok"] = json!(false);
+            reply["error"] =
+                json!({"kind": "http_status", "detail": "HTTP status is 400 or greater"});
+        }
+        return (status, reply);
     }
     if name == "http_request" {
         // OpenAI tool calls carry arguments as a JSON string; accept both.
@@ -676,11 +739,23 @@ fn clip_utf8(text: &str, max: usize) -> (String, bool) {
 /// success or failure — becomes a structured result the model can read.
 /// The journal records the request's header names and sizes, never a
 /// value or a body, so secrets in arguments are not persisted.
-fn http_request_tool(
+pub(crate) fn http_request_tool(
     shared: &Shared,
     arguments: &Value,
     timeout: std::time::Duration,
 ) -> (u16, Value) {
+    http_request_tool_with_limit(shared, arguments, timeout, MAX_HTTP_BODY)
+}
+
+/// Internal integrations may parse the complete bounded transport response
+/// before projecting it into a small model result. Callers cannot set this cap.
+pub(crate) fn http_request_tool_with_limit(
+    shared: &Shared,
+    arguments: &Value,
+    timeout: std::time::Duration,
+    response_limit: usize,
+) -> (u16, Value) {
+    let response_limit = response_limit.min(http::MAX_RESPONSE_BYTES);
     let fail = |kind: &str, detail: String| {
         (
             200,
@@ -802,7 +877,7 @@ fn http_request_tool(
     );
     match outcome {
         Ok(response) => {
-            let (body, truncated) = clip_utf8(&response.body, MAX_HTTP_BODY);
+            let (body, truncated) = clip_utf8(&response.body, response_limit);
             let lite: serde_json::Map<String, Value> = response
                 .headers
                 .iter()
@@ -1052,7 +1127,7 @@ fn enqueue_for_approval(
     }
 }
 
-fn call_mcp(shared: &Shared, name: &str, request: &Value) -> (u16, Value) {
+pub(crate) fn call_mcp(shared: &Shared, name: &str, request: &Value) -> (u16, Value) {
     let arguments = match &request["arguments"] {
         Value::String(text) => serde_json::from_str(text).unwrap_or_else(|_| json!({})),
         Value::Null => json!({}),
@@ -1160,7 +1235,19 @@ mod tests {
             let name = def["function"]["name"].as_str().expect("name");
             assert!(
                 name.starts_with("task_")
-                    || matches!(name, "http_request" | "self_note" | "improve")
+                    || matches!(
+                        name,
+                        "http_request"
+                            | "curl"
+                            | "self_note"
+                            | "improve"
+                            | "browser"
+                            | "git"
+                            | "service_control"
+                            | "agenthub"
+                            | "agora"
+                            | "self_improve"
+                    )
                     || action_for(name).is_some(),
                 "{name}"
             );
@@ -1255,6 +1342,58 @@ mod tests {
         )
     }
 
+    #[test]
+    fn curl_uses_http_policy_and_records_no_command_secrets() {
+        let (server, url) = http_fixture();
+        let (denied, _dir) = http_shared(Value::Null);
+        let request = json!({"name": "curl", "arguments": {
+            "command": format!("curl -X POST '{url}' -H 'X-Test: secret-header-value' --json '{{\"body\":\"secret-body-value\"}}'")
+        }});
+        let (_, reply) = call(&denied, &request, None);
+        assert_eq!(reply["ok"], false);
+        assert_eq!(server.request_count(), 0);
+
+        let (shared, dir) = http_shared(json!({"http_allow_hosts": ["127.0.0.1"]}));
+        let (_, reply) = call(&shared, &request, None);
+        assert_eq!(reply["ok"], true, "{reply}");
+        let sent = server.requests();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].body, r#"{"body":"secret-body-value"}"#);
+        // Both the task board and HTTP journal omit the command and values.
+        fn scan(path: &std::path::Path) {
+            for entry in std::fs::read_dir(path).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    scan(&path);
+                } else if let Ok(text) = std::fs::read_to_string(&path) {
+                    assert!(!text.contains("secret-header-value"), "{}", path.display());
+                    assert!(!text.contains("secret-body-value"), "{}", path.display());
+                }
+            }
+        }
+        scan(&dir.path().join("spool"));
+    }
+
+    #[test]
+    fn curl_fail_reports_http_status_and_string_arguments_work() {
+        let server = kamimusuhi_testkit::FixtureServer::always(
+            kamimusuhi_testkit::FixtureResponse::RawHttp {
+                response: "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".to_owned(),
+            },
+        ).unwrap();
+        let (shared, _dir) = http_shared(json!({"http_allow_hosts": ["127.0.0.1"]}));
+        for (flag, ok) in [("-sS", true), ("-fsS", false)] {
+            let (_, reply) = call_inner(
+                &shared,
+                &json!({"name": "curl", "arguments":
+                json!({"command": format!("curl {flag} http://127.0.0.1:{}/", server.port())}).to_string()}),
+                None,
+            );
+            assert_eq!(reply["ok"], ok, "{reply}");
+            assert_eq!(reply["result"]["status"], 429);
+        }
+    }
+
     fn http_fixture() -> (kamimusuhi_testkit::FixtureServer, String) {
         let server = kamimusuhi_testkit::FixtureServer::always(
             kamimusuhi_testkit::FixtureResponse::RawHttp {
@@ -1286,6 +1425,38 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn agenthub_internal_response_limit_keeps_public_http_bounded() {
+        let body = json!({"payload": "x".repeat(MAX_HTTP_BODY + 4096)}).to_string();
+        let server = kamimusuhi_testkit::FixtureServer::always(
+            kamimusuhi_testkit::FixtureResponse::RawHttp {
+                response: format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body),
+            },
+        ).expect("fixture");
+        let (shared, _dir) = http_shared(json!({"http_allow_hosts": ["127.0.0.1"]}));
+        let args =
+            json!({"method":"GET", "url":format!("http://127.0.0.1:{}/tasks", server.port())});
+        let (_, public) = http_request_tool(&shared, &args, HTTP_REQUEST_TIMEOUT);
+        assert_eq!(public["result"]["body_truncated"], true);
+        let (_, internal) = http_request_tool_with_limit(
+            &shared,
+            &args,
+            HTTP_REQUEST_TIMEOUT,
+            http::MAX_RESPONSE_BYTES,
+        );
+        assert_eq!(internal["result"]["body_truncated"], false);
+        assert_eq!(internal["result"]["body"], body);
+        let (denied, _dir) = http_shared(Value::Null);
+        let (_, refused) = http_request_tool_with_limit(
+            &denied,
+            &args,
+            HTTP_REQUEST_TIMEOUT,
+            http::MAX_RESPONSE_BYTES,
+        );
+        assert_eq!(refused["error"]["kind"], "denied");
+        assert_eq!(server.request_count(), 2);
     }
 
     #[test]

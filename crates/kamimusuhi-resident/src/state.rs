@@ -113,6 +113,8 @@ pub struct RouteEvent {
 
 pub struct Shared {
     pub config: Config,
+    /// Serializes worktree validation, continuation and application on this node.
+    pub workspace_mutation: Mutex<()>,
     pub started: u64,
     pub boot_epoch: u64,
     pub spool: std::sync::Arc<Spool>,
@@ -204,6 +206,7 @@ impl Shared {
             config.paths.current_state().join("approvals.json"),
         );
         Self {
+            workspace_mutation: Mutex::new(()),
             usage: crate::usage::UsageStore::open(
                 config.paths.current_state().join("usage.sqlite"),
             ),
