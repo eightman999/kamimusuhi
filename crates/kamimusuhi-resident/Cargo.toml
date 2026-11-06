@@ -24,6 +24,7 @@ kamimusuhi-resource-http = { workspace = true }
 kamimusuhi-runtime = { path = "../kamimusuhi-runtime" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+shlex = "2.0"
 # Online snapshot of the canonical SQLite store (`VACUUM INTO`).
 rusqlite = { workspace = true }
 

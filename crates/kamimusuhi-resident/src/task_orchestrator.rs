@@ -851,6 +851,12 @@ fn delegate_in_turn(shared: &Shared, args: &Value, by: &str, turn: Option<&str>)
 /// `task_continue`: a follow-up instruction in the session of a finished
 /// task, on the same harness, model, workspace and permissions.
 pub fn continue_task(shared: &Shared, args: &Value, by: &str) -> (u16, Value) {
+    let Ok(_guard) = shared.workspace_mutation.try_lock() else {
+        return (
+            409,
+            json!({"error": "workspace validation/application in progress"}),
+        );
+    };
     let plane = match plane(shared) {
         Ok(p) => Arc::clone(p),
         Err(e) => return e,
@@ -1109,7 +1115,7 @@ fn run_job(job: Job) {
     let violation = tree_changed;
     // A write task's result is its branch: commit what was left, keep the
     // patch next to the evidence.
-    let (files_changed, diff_stat, patch_path, capture_error) = match &worktree {
+    let (files_changed, diff_stat, patch_path, capture_error, candidate_head) = match &worktree {
         Some(wt) => match task_worktree::capture(
             wt,
             &format!("task {task_id}: {}", clip(&request.objective, 72)),
@@ -1123,11 +1129,12 @@ fn run_job(job: Job) {
                     Some(c.diff_stat),
                     Some(patch.display().to_string()),
                     None,
+                    Some(c.head),
                 )
             }
-            Err(e) => (Vec::new(), None, None, Some(e)),
+            Err(e) => (Vec::new(), None, None, Some(e), None),
         },
-        None => (main_changes.clone(), None, None, None),
+        None => (main_changes.clone(), None, None, None, None),
     };
     let finished_at = unix_now();
     let evidence_id = format!("ev-task-{task_id}");
@@ -1231,6 +1238,7 @@ fn run_job(job: Job) {
     record["worktree"] = json!(worktree.as_ref().map(|w| w.path.display().to_string()));
     record["branch"] = json!(worktree.as_ref().map(|w| w.branch.clone()));
     record["base_commit"] = json!(worktree.as_ref().map(|w| w.base.clone()));
+    record["candidate_head"] = json!(candidate_head);
     record["diff_stat"] = json!(diff_stat);
     record["patch"] = json!(patch_path);
     plane.store_result(&spool, &record);
@@ -1286,6 +1294,7 @@ fn run_job(job: Job) {
             "files_changed": files_changed,
             "diff_stat": diff_stat,
             "eval_passed": grade.as_ref().map(|g| g.passed),
+            "candidate_head": candidate_head,
         }),
     );
 }
@@ -1505,6 +1514,21 @@ fn worktree_busy(shared: &Shared, worktree: &str) -> bool {
 /// `apply` / `discard` (operator): merge a finished write task's branch
 /// into its workspace (`--no-ff`, clean tree only), or drop it.
 pub fn worktree_action(shared: &Shared, args: &Value, by: &str, apply: bool) -> (u16, Value) {
+    let Ok(_guard) = shared.workspace_mutation.try_lock() else {
+        return (
+            409,
+            json!({"error": "workspace validation/application in progress"}),
+        );
+    };
+    worktree_action_locked(shared, args, by, apply)
+}
+
+pub(crate) fn worktree_action_locked(
+    shared: &Shared,
+    args: &Value,
+    by: &str,
+    apply: bool,
+) -> (u16, Value) {
     let plane = match plane(shared) {
         Ok(p) => p,
         Err(e) => return e,

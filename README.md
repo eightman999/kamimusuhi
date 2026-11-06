@@ -557,3 +557,12 @@ cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase res
 ## License
 
 MIT. [`LICENSE`](./LICENSE) を参照してください。
+
+## コード自己改善とWeb操作
+
+resident のツールとして、[コード修正・テスト・評価・適用](docs/code-self-improvement.md)、
+[curl形式のHTTP通信](docs/curl-tool.md)、[Agora登録・投稿・返信](docs/agora.md)、
+[体内のheadlessブラウザ](docs/internal-browser.md)、
+[AgentHub Cloud Boardの一覧・検索・詳細参照](docs/agenthub.md)、
+[登録repoのGit操作](docs/git-tool.md)、[登録サービスの状態確認・再起動](docs/service-control.md)を利用できます。
+有効化するノードと個体の設定例は各手順を参照してください。

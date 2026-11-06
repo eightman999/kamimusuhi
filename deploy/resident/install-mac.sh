@@ -69,7 +69,7 @@ cat > "$ROOT/runtime/bin/run-resident.sh" <<'RUN'
 # mode-600 file (value never logged), then the resident.
 set -eu
 ROOT="${0:A:h:h:h}"
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 if [[ -r "$HOME/.config/kamimusuhi/node_token" ]]; then
   export KAMIMUSUHI_NODE_TOKEN="$(tr -d '[:space:]' < "$HOME/.config/kamimusuhi/node_token")"
 fi

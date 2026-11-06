@@ -1,5 +1,5 @@
 {
-  "_comment": "Merge into <individual>/runtime.json (top level). tools: model-initiated read-only tool calls (core = offered every turn; the rest of allowed is discoverable via tool_catalog/tool_enable). reference: host-run per-turn consultation. persona.provider.reasoning: off|on|auto (default off), persona.provider.extra_body: provider-specific request fields.",
+  "_comment": "Merge into <individual>/runtime.json (top level). tools: model-initiated tool calls within resident policy (core = offered every turn; the rest of allowed is discoverable via tool_catalog/tool_enable). reference: host-run per-turn consultation. persona.provider.reasoning: off|on|auto (default off), persona.provider.extra_body: provider-specific request fields.",
   "tools": {
     "base_url": "http://127.0.0.1:7860",
     "max_rounds": 8,
@@ -78,7 +78,14 @@
       "mcp__computer_mac__*",
       "mcp__computer_llm__*",
       "mcp__computer_pi__*",
-      "mcp__colab__*"
+      "mcp__colab__*",
+      "curl",
+      "self_improve",
+      "agora",
+      "browser",
+      "agenthub",
+      "git",
+      "service_control"
     ]
   },
   "reference": {

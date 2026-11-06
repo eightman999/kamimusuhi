@@ -80,6 +80,9 @@ pub struct Config {
     /// list (the default) refuses every request (see tools.rs).
     #[serde(default)]
     pub tools: ToolsConfig,
+    /// Code self-improvement policy; absent disables autonomous application.
+    #[serde(default)]
+    pub self_improvement: Option<SelfImprovementConfig>,
     /// Typed node-task delegation (`POST /task`): queueing, retries and
     /// deadlines for work this node hands to a peer — and for work peers
     /// hand to this node (see delegation.rs).
@@ -240,6 +243,15 @@ pub struct ToolsConfig {
     /// POST; PUT/PATCH/DELETE are opt-in.
     #[serde(default = "default_http_allow_methods")]
     pub http_allow_methods: Vec<String>,
+    /// Existing private AgentHub worker credential; no new token is issued.
+    #[serde(default)]
+    pub agenthub_token_file: Option<PathBuf>,
+    /// Named Git roots exposed to the individual. Empty disables Git access.
+    #[serde(default)]
+    pub git_repositories: Vec<crate::git_tool::RepositoryConfig>,
+    /// Explicit service-manager targets exposed to the individual.
+    #[serde(default)]
+    pub services: Vec<crate::service_control::ServiceConfig>,
 }
 
 fn default_http_allow_methods() -> Vec<String> {
@@ -251,8 +263,23 @@ impl Default for ToolsConfig {
         Self {
             http_allow_hosts: Vec::new(),
             http_allow_methods: default_http_allow_methods(),
+            agenthub_token_file: None,
+            git_repositories: Vec::new(),
+            services: Vec::new(),
         }
     }
+}
+
+/// Commands are operator configuration, never model-supplied shell text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelfImprovementConfig {
+    pub workspace: String,
+    /// Test commands as argv arrays (no shell expansion).
+    pub tests: Vec<Vec<String>>,
+    /// Independent evaluation/lint/regression commands, also argv arrays.
+    pub evaluation: Vec<Vec<String>>,
+    pub timeout_secs: u64,
 }
 
 /// Commitment engine policy. The engine needs a task plane to act; with
@@ -1163,6 +1190,52 @@ impl Config {
                 return Err(format!(
                     "tools.http_allow_methods entry {method:?} is not an uppercase method"
                 ));
+            }
+        }
+        let mut git_names = std::collections::HashSet::new();
+        for repo in &self.tools.git_repositories {
+            repo.validate()?;
+            if !git_names.insert(&repo.name) {
+                return Err("duplicate Git repository name".to_owned());
+            }
+        }
+        let mut service_names = std::collections::HashSet::new();
+        for service in &self.tools.services {
+            service.validate()?;
+            if !service_names.insert(&service.name) {
+                return Err("duplicate service name".to_owned());
+            }
+        }
+        if self
+            .tools
+            .agenthub_token_file
+            .as_ref()
+            .is_some_and(|p| !p.is_absolute())
+        {
+            return Err("tools.agenthub_token_file must be absolute".to_owned());
+        }
+        if let Some(policy) = &self.self_improvement {
+            if policy.timeout_secs == 0
+                || policy.timeout_secs > 3600
+                || policy.tests.is_empty()
+                || policy.evaluation.is_empty()
+                || policy.tests.iter().chain(&policy.evaluation).any(|cmd| {
+                    cmd.is_empty() || cmd[0].is_empty() || cmd.iter().any(|s| s.contains('\0'))
+                })
+            {
+                return Err(
+                    "self_improvement requires tests, evaluation and timeout_secs=1..3600"
+                        .to_owned(),
+                );
+            }
+            if !self.task_plane.as_ref().is_some_and(|p| {
+                p.workspaces
+                    .iter()
+                    .any(|w| w.name == policy.workspace && w.allow_write)
+            }) {
+                return Err(
+                    "self_improvement.workspace must name an allow_write task workspace".to_owned(),
+                );
             }
         }
         if let Some(plane) = &self.task_plane {

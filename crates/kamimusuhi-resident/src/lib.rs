@@ -8,15 +8,20 @@
 //!
 //! It never initializes an individual and never writes canonical state.
 
+pub mod agenthub;
+pub mod agora;
 pub mod approvals;
 pub mod background;
+pub mod browser;
 pub mod capabilities;
 pub mod client;
 pub mod commitments;
 pub mod config;
+pub mod curl_tool;
 pub mod delegation;
 pub mod dialogue;
 pub mod dialogue_host;
+pub mod git_tool;
 pub mod intercom;
 pub mod jobs;
 pub mod judge;
@@ -27,9 +32,11 @@ pub mod memory;
 pub mod probes;
 pub mod remote;
 pub mod router;
+pub mod self_improvement;
 pub mod self_notes;
 pub mod selfmon;
 pub mod server;
+pub mod service_control;
 pub mod spool;
 pub mod state;
 pub mod status;
