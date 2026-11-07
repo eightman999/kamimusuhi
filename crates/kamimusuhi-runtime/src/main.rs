@@ -113,6 +113,13 @@ options:
 ";
 
 fn main() -> ExitCode {
+    if std::env::args().nth(1).as_deref() == Some("provider-worker") {
+        return if kamimusuhi_runtime::provider_worker::run_stdio().is_ok() {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
     match run() {
         Ok(output) => {
             if !output.is_empty() {

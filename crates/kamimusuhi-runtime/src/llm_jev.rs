@@ -190,7 +190,7 @@ impl CancellationToken {
 }
 
 /// Structured request handed to a language provider.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanguageRequest {
     pub user_text: String,
     pub speech_act: String,
@@ -205,11 +205,11 @@ pub struct LanguageRequest {
     /// Cooperative cancellation for this request. The race injects one shared
     /// token into every per-organ clone; providers that can abort early poll
     /// it. Never serialized or sent to any endpoint.
-    #[serde(skip_serializing)]
+    #[serde(skip)]
     pub cancellation: Option<CancellationToken>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanguageResult {
     pub persona: PersonaTurnResult,
     pub provider: String,
@@ -263,7 +263,7 @@ impl LanguageProviderTelemetry {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanguageProviderTelemetrySnapshot {
     pub calls: u64,
     pub successes: u64,
@@ -285,7 +285,7 @@ fn ewma(previous: Option<u64>, current: u64) -> u64 {
 /// A language-organ candidate exposed to Jev. The endpoint is intentionally
 /// represented only by its public origin; credentials and full paths never
 /// enter the selection request.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanguageProviderCandidate {
     pub id: String,
     pub provider: String,
@@ -314,15 +314,15 @@ pub struct GeneratedLanguageCandidate {
 /// One successful language-organ result presented to Jev for comparison.
 /// The response is wire-only and is never copied into the durable trace or
 /// canonical conversation state before the selected candidate is accepted.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanguageResponseCandidate {
     /// Turn-local anonymous ID. Never encode provider/model identity here.
     pub id: String,
     /// Host-side attribution only. These fields are intentionally absent from
     /// the Jev wire state so model/vendor identity cannot bias comparison.
-    #[serde(skip_serializing)]
+    #[serde(default, skip_serializing)]
     pub provider: String,
-    #[serde(skip_serializing)]
+    #[serde(default, skip_serializing)]
     pub model: String,
     pub latency_ms: u64,
     pub response_bytes: usize,
@@ -331,7 +331,7 @@ pub struct LanguageResponseCandidate {
     pub telemetry: LanguageProviderTelemetrySnapshot,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanguageResponseSelectionRequest {
     pub user_text: String,
     pub speech_act: String,
@@ -339,7 +339,7 @@ pub struct LanguageResponseSelectionRequest {
     pub candidates: Vec<LanguageResponseCandidate>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderSelectionRequest {
     pub user_text: String,
     pub speech_act: String,
@@ -347,7 +347,7 @@ pub struct ProviderSelectionRequest {
     pub candidates: Vec<LanguageProviderCandidate>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderSelectionResult {
     pub provider_id: String,
     pub decision: String,
@@ -362,6 +362,17 @@ pub struct ProviderSelectionResult {
 }
 
 pub trait LanguageProvider: Send + Sync {
+    /// True only for an adapter whose invocation owns and reaps a child process.
+    fn is_process_isolated(&self) -> bool {
+        false
+    }
+
+    /// Update a subprocess adapter's host deadline. Trusted in-process fixtures
+    /// keep the default implementation and use the caller's bounded boundary.
+    fn set_host_timeout(&self, timeout: Duration) {
+        let _ = timeout;
+    }
+
     fn generate(&self, request: &LanguageRequest) -> Result<LanguageResult, ConversationError>;
 
     fn descriptor(&self) -> PersonaBackendDescriptor;
@@ -660,7 +671,7 @@ impl Decision {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionRequest {
     pub kind: DecisionKind,
     pub user_text: String,
@@ -674,7 +685,7 @@ pub struct DecisionRequest {
     pub state: ConversationCoreState,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionResult {
     pub decision: Decision,
     pub confidence: f32,
@@ -688,6 +699,14 @@ pub struct DecisionResult {
 }
 
 pub trait DecisionProvider: Send + Sync {
+    fn is_process_isolated(&self) -> bool {
+        false
+    }
+
+    fn set_host_timeout(&self, timeout: Duration) {
+        let _ = timeout;
+    }
+
     fn decide(&self, request: &DecisionRequest) -> Result<DecisionResult, ConversationError>;
 
     /// Prepare one turn without granting recall or observation results any
@@ -773,7 +792,7 @@ impl DecisionProvider for RuleBasedDecisionProvider {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypesafeConfig {
     pub base_url: String,
     pub model: String,

@@ -567,6 +567,10 @@ pub struct RuntimeConfig {
     /// none of them is a router resource or a source of canonical state.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub language_providers: BTreeMap<String, PersonaProviderConfig>,
+    /// Host deadline per language race, decision call, or repair (1..=600000 ms).
+    /// Independent of the provider's own cooperative transport timeout.
+    #[serde(default = "default_provider_timeout_ms")]
+    pub provider_timeout_ms: u64,
     /// C0 derived-lane runtime knobs. The lane itself lives in the store;
     /// this only configures how often reflection runs and which reflector
     /// fills the slot.
@@ -660,6 +664,10 @@ impl ToolServerSetting {
     }
 }
 
+const fn default_provider_timeout_ms() -> u64 {
+    120_000
+}
+
 impl RuntimeConfig {
     pub const VERSION: u32 = 1;
     pub const FILE_NAME: &'static str = "runtime.json";
@@ -672,6 +680,7 @@ impl RuntimeConfig {
             node_id,
             persona: PersonaSetting::default(),
             language_providers: BTreeMap::new(),
+            provider_timeout_ms: default_provider_timeout_ms(),
             c0: C0Config::default(),
             mio: None,
             resources,
@@ -744,6 +753,15 @@ impl RuntimeConfig {
         self.persona.seed.resolve()
     }
 
+    pub fn provider_timeout(&self) -> Result<std::time::Duration, RuntimeError> {
+        if !(1..=600_000).contains(&self.provider_timeout_ms) {
+            return Err(RuntimeError::Usage(
+                "provider_timeout_ms must be 1..=600000".to_owned(),
+            ));
+        }
+        Ok(std::time::Duration::from_millis(self.provider_timeout_ms))
+    }
+
     pub fn load(path: &Path) -> Result<Self, RuntimeError> {
         let text = std::fs::read_to_string(path).map_err(|source| RuntimeError::ConfigIo {
             path: path.display().to_string(),
@@ -760,6 +778,7 @@ impl RuntimeConfig {
                 supported: Self::VERSION,
             });
         }
+        config.provider_timeout()?;
         if config.node_id.is_nil() {
             return Err(RuntimeError::ConfigMalformed {
                 path: path.display().to_string(),
@@ -900,6 +919,26 @@ mod tests {
         written.set_provider(GENERAL_SLOT, provider());
         written.save(&path).unwrap();
         assert_eq!(RuntimeConfig::load(&path).unwrap(), written);
+    }
+
+    #[test]
+    fn provider_deadline_defaults_for_old_configs_and_refuses_unbounded_values() {
+        let mut value = serde_json::to_value(config()).unwrap();
+        value.as_object_mut().unwrap().remove("provider_timeout_ms");
+        let mut restored: RuntimeConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            restored.provider_timeout().unwrap(),
+            std::time::Duration::from_secs(120)
+        );
+        for invalid in [0, 600_001, u64::MAX] {
+            restored.provider_timeout_ms = invalid;
+            assert!(restored.provider_timeout().is_err());
+        }
+        restored.provider_timeout_ms = 42;
+        assert_eq!(
+            restored.provider_timeout().unwrap(),
+            std::time::Duration::from_millis(42)
+        );
     }
 
     #[test]

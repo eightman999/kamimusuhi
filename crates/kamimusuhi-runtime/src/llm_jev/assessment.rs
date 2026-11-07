@@ -22,7 +22,7 @@ const MAX_BATCH_REQUEST_BYTES: usize = 256 * 1024;
 
 /// A bounded snapshot prepared by the host with explicit source/role labels.
 /// This type belongs in requests only, never in persistent decision traces.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionEvidence {
     pub snapshot_digest: String,
     pub content: Value,
@@ -56,7 +56,7 @@ impl DecisionEvidence {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseAssessmentRequest {
     pub selection: LanguageResponseSelectionRequest,
     pub evidence: DecisionEvidence,
@@ -177,7 +177,7 @@ impl RepairReason {
 /// Metadata only. `gate.decision` is the host-composed decision; its confidence
 /// and probabilities remain the raw Jev values for `raw_gate`, not calibrated
 /// probabilities of correctness. Batch latency is counted once via latency_ms.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseAssessment {
     pub selection: ProviderSelectionResult,
     pub gate: DecisionResult,
@@ -193,7 +193,7 @@ pub struct ResponseAssessment {
     pub latency_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecallCandidate {
     pub id: String,
     pub content: Value,
@@ -201,7 +201,7 @@ pub struct RecallCandidate {
     pub baseline: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnPreparationRequest {
     pub invocation: DecisionRequest,
     pub evidence: DecisionEvidence,
@@ -248,7 +248,7 @@ pub enum ObservationNeed {
 }
 
 /// Metadata only: the snapshot and recall candidate text remain wire-only.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnPreparation {
     pub invocation: DecisionResult,
     pub recall: BTreeMap<String, RecallRelevance>,

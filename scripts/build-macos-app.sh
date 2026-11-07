@@ -30,11 +30,13 @@ VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 OUT="$ROOT/target/macos"
 APP="$OUT/$NAME.app"
 
-cargo build --release -p kamimusuhi-desktop
+cargo build --release -p kamimusuhi-desktop -p kamimusuhi-runtime
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 install -m 755 target/release/kamimusuhi-desktop "$APP/Contents/MacOS/kamimusuhi-desktop"
+# Local dialogue mode executes the same-version provider worker sidecar.
+install -m 755 target/release/kamimusuhi-runtime "$APP/Contents/MacOS/kamimusuhi-runtime"
 
 cat >"$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -69,6 +71,7 @@ if command -v swift >/dev/null 2>&1; then
 fi
 
 # Ad-hoc signature so Gatekeeper treats the locally built bundle as one unit.
+codesign --force --sign - "$APP/Contents/MacOS/kamimusuhi-runtime" >/dev/null 2>&1 || echo "note: worker ad-hoc codesign failed" >&2
 codesign --force --sign - "$APP" >/dev/null 2>&1 || echo "note: ad-hoc codesign failed" >&2
 
 echo "built $APP"

@@ -36,12 +36,44 @@ use crate::llm_jev::{
     LanguageProvider, LanguageProviderCandidate, LanguageProviderTelemetry,
     LanguageProviderTelemetrySnapshot, LanguageResponseCandidate, LanguageResponseSelectionRequest,
     LanguageResult, MAX_JEV_CANDIDATE_RESPONSE_BYTES, ObservationNeed,
-    PRIMARY_LANGUAGE_PROVIDER_ID, PersonaLanguageProvider, ResponseAssessment,
-    ResponseAssessmentRequest, RuleBasedDecisionProvider, TurnPreparationRequest,
-    configured_decision_provider, configured_language_provider,
+    PRIMARY_LANGUAGE_PROVIDER_ID, ResponseAssessment, ResponseAssessmentRequest,
+    RuleBasedDecisionProvider, TurnPreparationRequest,
 };
+use crate::provider_boundary::Boundary;
+use crate::provider_process::ProcessCommand;
+use crate::provider_worker::{ProcessDecisionProvider, ProcessLanguageProvider};
 use crate::research::ResearchCatalog;
 use crate::{Runtime, RuntimeError};
+
+/// Locate the same-version worker, never fall back to in-process execution.
+fn provider_worker_command() -> Result<ProcessCommand, ConversationError> {
+    let path = if let Some(path) = std::env::var_os("KAMIMUSUHI_PROVIDER_WORKER") {
+        let path = std::path::PathBuf::from(path);
+        if !path.is_absolute() || !path.is_file() {
+            return Err(ConversationError::InvalidConfig(
+                "provider worker must be an existing absolute executable path".to_owned(),
+            ));
+        }
+        path
+    } else {
+        let current = std::env::current_exe().map_err(|_| ConversationError::Transport)?;
+        if current
+            .file_name()
+            .is_some_and(|name| name == "kamimusuhi-runtime")
+        {
+            current
+        } else {
+            let parent = current.parent().ok_or(ConversationError::Transport)?;
+            [parent.join("kamimusuhi-runtime"), parent.parent().unwrap_or(parent).join("kamimusuhi-runtime")]
+                .into_iter().find(|p| p.is_file()).ok_or_else(|| ConversationError::InvalidConfig(
+                    "provider worker executable is missing; install kamimusuhi-runtime alongside the host or set KAMIMUSUHI_PROVIDER_WORKER".to_owned()))?
+        }
+    };
+    Ok(ProcessCommand {
+        program: path,
+        args: vec!["provider-worker".to_owned()],
+    })
+}
 
 pub const MAX_INPUT_BYTES: usize = 8_192;
 const HISTORY_BYTES: usize = 16_384;
@@ -273,6 +305,7 @@ fn exploration_key(turn_id: TurnId) -> u64 {
 }
 
 struct LanguageAttempt {
+    boundary_failure: bool,
     provider_id: String,
     elapsed_ms: u64,
     result: Result<crate::llm_jev::LanguageResult, crate::llm_jev::ConversationError>,
@@ -280,11 +313,19 @@ struct LanguageAttempt {
 
 /// Cancels the shared race token when it drops — on acceptance, pool
 /// exhaustion, or any early error return out of the race loop.
-struct CancelOnDrop(CancellationToken);
+struct CancelOnDrop {
+    token: CancellationToken,
+    process_workers: Vec<std::thread::JoinHandle<()>>,
+}
 
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
-        self.0.cancel();
+        self.token.cancel();
+        for worker in self.process_workers.drain(..) {
+            // These are only host supervisors of exec providers: cancellation
+            // kills/reaps their children, so no non-cooperative trait runs here.
+            let _ = worker.join();
+        }
     }
 }
 
@@ -353,6 +394,7 @@ impl LanguageAttempt {
             Ok(result)
         });
         Self {
+            boundary_failure: false,
             provider_id: provider_id.to_owned(),
             elapsed_ms,
             result,
@@ -380,7 +422,12 @@ pub struct DialogueSession {
     debug_trace: bool,
     /// Conversation-side K-CORE state. This is not `KCore::tick()` state.
     core_state: ConversationCoreState,
-    decision_provider: Box<dyn DecisionProvider>,
+    decision_provider: Arc<dyn DecisionProvider>,
+    decision_boundary: Boundary,
+    decision_is_external: bool,
+    provider_boundaries: BTreeMap<String, Boundary>,
+    provider_timeout: Duration,
+    provider_config: crate::config::RuntimeConfig,
     language_providers: BTreeMap<String, Arc<dyn LanguageProvider>>,
     language_candidates: Vec<LanguageProviderCandidate>,
     last_generated_candidates: Vec<GeneratedLanguageCandidate>,
@@ -399,7 +446,10 @@ impl DialogueSession {
             runtime,
             subject,
             privacy,
-            configured_decision_provider(),
+            Box::new(ProcessDecisionProvider::new(
+                provider_worker_command()?,
+                runtime.config().provider_timeout()?,
+            )),
             None,
         )
     }
@@ -436,6 +486,7 @@ impl DialogueSession {
                 "--subject must be 1-80 ASCII letters, digits, '.', '_' or '-'".to_owned(),
             ));
         }
+        let provider_timeout = runtime.config().provider_timeout()?;
         // Configuration and destination failures precede any interaction write.
         runtime.config().persona.check_privacy(privacy)?;
         let persona = runtime.config().build_persona()?;
@@ -449,7 +500,12 @@ impl DialogueSession {
         let override_selected = language_provider_override.is_some();
         let language_provider = match language_provider_override {
             Some(provider) => provider,
-            None => configured_language_provider(persona, language_model.clone())?,
+            None => Box::new(ProcessLanguageProvider::new(
+                provider_worker_command()?,
+                runtime.config().clone(),
+                None,
+                provider_timeout,
+            )) as Box<dyn LanguageProvider>,
         };
         let primary_provider = if override_selected {
             "override".to_owned()
@@ -488,11 +544,12 @@ impl DialogueSession {
                 let persona = runtime.config().build_language_provider(provider_config)?;
                 let model = provider_config.model.clone();
                 let provider_kind = language_provider_kind(provider_config);
-                let provider = PersonaLanguageProvider::with_id(
-                    persona,
-                    id.clone(),
-                    provider_kind,
-                    model.clone(),
+                let _ = persona; // validate configuration before opening a session
+                let provider = ProcessLanguageProvider::new(
+                    provider_worker_command()?,
+                    runtime.config().clone(),
+                    Some(provider_config.clone()),
+                    provider_timeout,
                 );
                 language_providers.insert(id.clone(), Arc::new(provider));
                 language_candidates.push(LanguageProviderCandidate {
@@ -504,7 +561,21 @@ impl DialogueSession {
                 });
             }
         }
-        if decision_provider.is_external() && !privacy.admits(LocalityClass::External) {
+        let decision_provider: Arc<dyn DecisionProvider> = Arc::from(decision_provider);
+        decision_provider.set_host_timeout(provider_timeout);
+        let decision_boundary = Boundary::default();
+        let metadata_provider = Arc::clone(&decision_provider);
+        let decision_is_external = if decision_provider.is_process_isolated() {
+            metadata_provider.is_external()
+        } else {
+            decision_boundary
+                .call(provider_timeout, move || metadata_provider.is_external())
+                .map_err(|_| ConversationError::Timeout)?
+        };
+        for provider in language_providers.values() {
+            provider.set_host_timeout(provider_timeout);
+        }
+        if decision_is_external && !privacy.admits(LocalityClass::External) {
             return Err(RuntimeError::PersonaPrivacy {
                 privacy,
                 locality: LocalityClass::External,
@@ -555,12 +626,37 @@ impl DialogueSession {
             debug_trace: false,
             core_state: ConversationCoreState::default(),
             decision_provider,
+            decision_boundary,
+            decision_is_external,
+            provider_boundaries: language_providers
+                .keys()
+                .map(|id| (id.clone(), Boundary::default()))
+                .collect(),
+            provider_timeout,
+            provider_config: runtime.config().clone(),
             language_providers,
             language_candidates,
             last_generated_candidates: Vec::new(),
             last_generation_latency_ms: 0,
             last_context: None,
         })
+    }
+
+    /// Bound each provider stage independently, including decision and repair.
+    /// An expired in-process call keeps its admission slot until it actually
+    /// returns; subsequent calls cannot accumulate behind it.
+    pub fn set_provider_timeout(&mut self, timeout: Duration) -> Result<(), RuntimeError> {
+        if timeout.is_zero() || timeout > Duration::from_secs(600) {
+            return Err(RuntimeError::Usage(
+                "provider timeout must be >0 and <=600 seconds".to_owned(),
+            ));
+        }
+        self.provider_timeout = timeout;
+        self.decision_provider.set_host_timeout(timeout);
+        for provider in self.language_providers.values() {
+            provider.set_host_timeout(timeout);
+        }
+        Ok(())
     }
 
     /// Surface the assembled workspace on each turn (`--debug-context`).
@@ -626,7 +722,9 @@ impl DialogueSession {
                 message: "language provider id 'primary' is reserved".to_owned(),
             });
         }
-        let provider = provider_config.build_persona()?;
+        let _provider = provider_config.build_persona()?;
+        self.provider_boundaries
+            .insert(id.to_owned(), Boundary::default());
         self.language_providers.remove(id);
         self.language_candidates
             .retain(|candidate| candidate.id != id);
@@ -637,11 +735,20 @@ impl DialogueSession {
             let provider_kind = language_provider_kind(provider_config);
             self.language_providers.insert(
                 id.to_owned(),
-                Arc::new(PersonaLanguageProvider::with_id(
-                    provider,
-                    id,
-                    provider_kind,
-                    model.clone(),
+                Arc::new(ProcessLanguageProvider::new(
+                    provider_worker_command()?,
+                    {
+                        let mut config = self.provider_config.clone();
+                        // Dynamic UI organs previously had no tool access or
+                        // avatar overlay. Preserve that boundary.
+                        config.tools = None;
+                        config.avatar_name = None;
+                        config.avatar_aliases.clear();
+                        config.avatar_self_description = None;
+                        config
+                    },
+                    Some(provider_config.clone()),
+                    self.provider_timeout,
                 )),
             );
             self.language_candidates.push(LanguageProviderCandidate {
@@ -671,7 +778,15 @@ impl DialogueSession {
                 message: "language provider id 'primary' is reserved".to_owned(),
             });
         }
-        let descriptor = provider.descriptor();
+        provider.set_host_timeout(self.provider_timeout);
+        let boundary = Boundary::default();
+        let metadata_provider = Arc::clone(&provider);
+        let descriptor = boundary
+            .call(self.provider_timeout, move || {
+                metadata_provider.descriptor()
+            })
+            .map_err(|_| ConversationError::Timeout)?;
+        self.provider_boundaries.insert(id.to_owned(), boundary);
         self.language_providers.insert(id.to_owned(), provider);
         self.language_candidates
             .retain(|candidate| candidate.id != id);
@@ -693,6 +808,7 @@ impl DialogueSession {
             });
         }
         self.language_providers.remove(id);
+        self.provider_boundaries.remove(id);
         self.language_candidates
             .retain(|candidate| candidate.id != id);
         Ok(())
@@ -717,22 +833,54 @@ impl DialogueSession {
         &self,
         request: &crate::llm_jev::LanguageRequest,
         cancellation: &CancellationToken,
-    ) -> (mpsc::Receiver<LanguageAttempt>, usize) {
+    ) -> (
+        mpsc::Receiver<LanguageAttempt>,
+        usize,
+        Vec<std::thread::JoinHandle<()>>,
+    ) {
         let (tx, rx) = mpsc::channel();
         let count = self.language_providers.len();
+        let mut process_workers = Vec::new();
         for (provider_id, provider) in &self.language_providers {
+            let isolated = provider.is_process_isolated();
             let tx = tx.clone();
             let provider_id = provider_id.clone();
             let provider = Arc::clone(provider);
             let mut request = request.clone();
             request.cancellation = Some(cancellation.clone());
-            std::thread::spawn(move || {
-                let attempt = LanguageAttempt::generate(&provider_id, provider.as_ref(), &request);
-                let _ = tx.send(attempt);
-            });
+            let failure_tx = tx.clone();
+            let failure_id = provider_id.clone();
+            let completed_id = provider_id.clone();
+            let job = move || LanguageAttempt::generate(&provider_id, provider.as_ref(), &request);
+            let sink =
+                move |result: Result<LanguageAttempt, crate::provider_boundary::BoundaryError>| {
+                    let attempt = result.unwrap_or(LanguageAttempt {
+                        boundary_failure: true,
+                        provider_id: completed_id,
+                        elapsed_ms: 0,
+                        result: Err(ConversationError::Timeout),
+                    });
+                    let _ = tx.send(attempt);
+                };
+            let boundary = &self.provider_boundaries[&failure_id];
+            let spawned = if isolated {
+                boundary
+                    .try_spawn_joinable_into(job, sink)
+                    .map(|handle| process_workers.push(handle))
+            } else {
+                boundary.try_spawn_into(job, sink)
+            };
+            if spawned.is_err() {
+                let _ = failure_tx.send(LanguageAttempt {
+                    boundary_failure: true,
+                    provider_id: failure_id,
+                    elapsed_ms: 0,
+                    result: Err(ConversationError::Timeout),
+                });
+            }
         }
         drop(tx);
-        (rx, count)
+        (rx, count, process_workers)
     }
 
     /// Telemetry plus a secret-free record for one attempt. Late attempts are
@@ -757,7 +905,7 @@ impl DialogueSession {
                 // A race-cancelled attempt is not a provider fault: record the
                 // attempt for observability but keep the advisory telemetry —
                 // the success rate Jev sees — free of our own aborts.
-                if !matches!(error, ConversationError::Cancelled) {
+                if !attempt.boundary_failure && !matches!(error, ConversationError::Cancelled) {
                     self.record_provider_failure(
                         &attempt.provider_id,
                         attempt.elapsed_ms,
@@ -841,7 +989,23 @@ impl DialogueSession {
                 "selected language provider is not registered".to_owned(),
             ))
         })?;
-        let attempt = LanguageAttempt::generate(provider_id, provider.as_ref(), request);
+        let provider = Arc::clone(provider);
+        let id = provider_id.to_owned();
+        let request = request.clone();
+        let started = Instant::now();
+        let attempt_result = if provider.is_process_isolated() {
+            Ok(LanguageAttempt::generate(&id, provider.as_ref(), &request))
+        } else {
+            self.provider_boundaries[provider_id].call(self.provider_timeout, move || {
+                LanguageAttempt::generate(&id, provider.as_ref(), &request)
+            })
+        };
+        let attempt = attempt_result.unwrap_or_else(|_| LanguageAttempt {
+            boundary_failure: true,
+            provider_id: provider_id.to_owned(),
+            elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            result: Err(ConversationError::Timeout),
+        });
         self.record_language_attempt(&attempt, 1);
         attempt.result.map_err(RuntimeError::Conversation)
     }
@@ -926,27 +1090,42 @@ impl DialogueSession {
                 fallback.degraded("assess_responses");
                 local_assessment(&assessment_request, &code)?
             }
-            None => match self.decision_provider.assess_responses(&assessment_request) {
-                Ok(assessment) => {
-                    // A provider-claimed fallback is still refused: the remote
-                    // must not lower its own authority. Session-built
-                    // degradation is the only marked fallback that binds here.
-                    if assessment.selection.fallback || assessment.gate.fallback {
-                        return Err(ConversationError::DecisionUnavailable(
-                            "Jev fallback is not allowed for response assessment".to_owned(),
-                        )
-                        .into());
+            None => {
+                let result = {
+                    let provider = Arc::clone(&self.decision_provider);
+                    let request = assessment_request.clone();
+                    if provider.is_process_isolated() {
+                        provider.assess_responses(&request)
+                    } else {
+                        self.decision_boundary
+                            .call(self.provider_timeout, move || {
+                                provider.assess_responses(&request)
+                            })
+                            .unwrap_or(Err(ConversationError::Timeout))
                     }
-                    assessment
+                };
+                match result {
+                    Ok(assessment) => {
+                        // A provider-claimed fallback is still refused: the remote
+                        // must not lower its own authority. Session-built
+                        // degradation is the only marked fallback that binds here.
+                        if assessment.selection.fallback || assessment.gate.fallback {
+                            return Err(ConversationError::DecisionUnavailable(
+                                "Jev fallback is not allowed for response assessment".to_owned(),
+                            )
+                            .into());
+                        }
+                        assessment
+                    }
+                    Err(error) if error.is_unavailable() => {
+                        let code = error.code().to_owned();
+                        let assessment = local_assessment(&assessment_request, &code)?;
+                        fallback.record("assess_responses", &code);
+                        assessment
+                    }
+                    Err(error) => return Err(error.into()),
                 }
-                Err(error) if error.is_unavailable() => {
-                    let code = error.code().to_owned();
-                    let assessment = local_assessment(&assessment_request, &code)?;
-                    fallback.record("assess_responses", &code);
-                    assessment
-                }
-                Err(error) => return Err(error.into()),
-            },
+            }
         };
         let selected_index = candidate_ids
             .iter()
@@ -998,7 +1177,7 @@ impl DialogueSession {
             )));
         }
         runtime.config().persona.check_privacy(self.privacy)?;
-        if self.decision_provider.is_external() && !self.privacy.admits(LocalityClass::External) {
+        if self.decision_is_external && !self.privacy.admits(LocalityClass::External) {
             return Err(RuntimeError::PersonaPrivacy {
                 privacy: self.privacy,
                 locality: LocalityClass::External,
@@ -1223,7 +1402,20 @@ impl DialogueSession {
         // unconfigured deployment runs — rather than hanging or dropping the
         // turn. The degraded result is marked `fallback` and traced. A
         // provider that answered with an invalid contract stays fail-closed.
-        let mut preparation = match self.decision_provider.prepare_turn(&preparation_request) {
+        let preparation_result = {
+            let provider = Arc::clone(&self.decision_provider);
+            let request = preparation_request.clone();
+            if provider.is_process_isolated() {
+                provider.prepare_turn(&request)
+            } else {
+                self.decision_boundary
+                    .call(self.provider_timeout, move || {
+                        provider.prepare_turn(&request)
+                    })
+                    .unwrap_or(Err(ConversationError::Timeout))
+            }
+        };
+        let mut preparation = match preparation_result {
             Ok(preparation) => preparation,
             Err(error) if error.is_unavailable() => {
                 let code = error.code().to_owned();
@@ -1384,9 +1576,12 @@ impl DialogueSession {
         // reason — acceptance, exhaustion, or an early error — so cooperative
         // organs stop instead of running to their own timeout unnoticed.
         let cancellation = CancellationToken::new();
-        let cancel_guard = CancelOnDrop(cancellation);
-        let (attempt_rx, provider_count) =
-            self.start_language_race(&language_request, &cancel_guard.0);
+        let (attempt_rx, provider_count, process_workers) =
+            self.start_language_race(&language_request, &cancellation);
+        let cancel_guard = CancelOnDrop {
+            token: cancellation,
+            process_workers,
+        };
         let mut first_error = None;
         // Every valid generated candidate stays in the pool so a repair
         // re-assessment can reselect among all of them, not only the one the
@@ -1398,8 +1593,12 @@ impl DialogueSession {
         let mut race_assessments = Vec::new();
         let mut received = 0_usize;
 
+        let race_deadline = Instant::now() + self.provider_timeout;
+        let mut completed = BTreeSet::new();
         'race: while received < provider_count {
-            let first = match attempt_rx.recv() {
+            let first = match attempt_rx
+                .recv_timeout(race_deadline.saturating_duration_since(Instant::now()))
+            {
                 Ok(attempt) => attempt,
                 Err(_) => break,
             };
@@ -1428,6 +1627,7 @@ impl DialogueSession {
 
             let mut ready_results = Vec::new();
             for attempt in ready {
+                completed.insert(attempt.provider_id.clone());
                 self.record_language_attempt(&attempt, 0);
                 match attempt.result {
                     Ok(result) => ready_results.push(result),
@@ -1479,11 +1679,34 @@ impl DialogueSession {
                 }
             }
         }
+        if accepted.is_none() && received < provider_count {
+            for id in self
+                .language_providers
+                .keys()
+                .filter(|id| !completed.contains(*id))
+                .cloned()
+                .collect::<Vec<_>>()
+            {
+                self.record_language_attempt(
+                    &LanguageAttempt {
+                        boundary_failure: true,
+                        provider_id: id,
+                        elapsed_ms: u64::try_from(generation_started.elapsed().as_millis())
+                            .unwrap_or(u64::MAX),
+                        result: Err(ConversationError::Timeout),
+                    },
+                    0,
+                );
+            }
+            if first_error.is_none() {
+                first_error = Some(ConversationError::Timeout);
+            }
+        }
         // The race is over: cancel cooperative organs now, then keep the
         // receiver alive a little longer so whatever was already finishing —
         // cancelled organs and slow stragglers — is recorded rather than
         // silently dropped.
-        cancel_guard.0.cancel();
+        cancel_guard.token.cancel();
         drop(cancel_guard);
         self.last_generation_latency_ms =
             u64::try_from(generation_started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -2034,6 +2257,9 @@ mod fanout_tests {
                 metadata.id = id.to_owned();
                 session.language_candidates.push(metadata);
             }
+            session
+                .provider_boundaries
+                .insert(id.to_owned(), Boundary::default());
             session.language_providers.insert(
                 id.to_owned(),
                 Arc::new(CoordinatedProvider {
