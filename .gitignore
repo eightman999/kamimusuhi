@@ -49,3 +49,15 @@ __pycache__/
 
 # Site-specific resident configuration (hosts, NAS, private repos): local only
 /deploy/resident/local/
+
+# Harness marathon: external originals and quotation-bearing/generated reports.
+/research/agent-harness/sources/
+/research/agent-harness/watch/
+/research/agent-harness/extracts.json
+/research/agent-harness/report.html
+/research/agent-harness/digest.json
+/research/agent-harness/digest.html
+/research/agent-harness/queries.jsonl
+/research/agent-harness/fetch-log.jsonl
+/research/agent-harness/raw/
+/docs/harness-marathon/logs/

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-11-08T16:06:48Z",
+  "elapsed_hours": 0.074989,
+  "target_hours": 24.0,
+  "cycle": 0,
+  "current_task": "新規開始: 実験環境・ベースライン・外部調査の準備",
+  "branch": "exp/harness-marathon-20261109",
+  "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
+  "last_ci_passed_commit": null,
+  "last_checkpoint_at": "2026-11-08T16:11:17Z",
+  "active_session_started_at": "2026-11-08T16:06:48Z",
+  "session_elapsed_base_hours": 0.0,
+  "status": "in_progress",
+  "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
+  "next_task": "ベースラインCIの終了コードを記録し、RustXNG sidecar境界の実装とモック試験へ進む"
+}
