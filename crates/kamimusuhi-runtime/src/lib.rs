@@ -22,6 +22,7 @@
 pub mod agent_exec;
 pub mod c0;
 pub mod config;
+pub mod continuity_eval;
 pub mod dialogue;
 pub mod dialogue_recall;
 pub(crate) mod dialogue_recall_links;
@@ -35,6 +36,7 @@ pub mod idle_cognition;
 pub mod inspect;
 pub mod kcore;
 pub mod llm_jev;
+pub mod memory_writeback;
 pub mod mio;
 pub mod organs;
 pub mod provider_bench;
@@ -48,6 +50,7 @@ pub mod route_gate;
 pub mod runtime;
 pub mod scenario;
 pub mod selection;
+pub mod self_context;
 pub mod self_notes;
 pub mod trace;
 

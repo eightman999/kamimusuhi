@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use kamimusuhi_core::c0::{
     ImprovementProposal, OperativeView, ReplayReport, apply_proposal, compare_replay,
 };
-use kamimusuhi_core::evidence::EvidenceKind;
+use kamimusuhi_core::evidence::{EvidenceKind, EvidenceLookup};
 use kamimusuhi_core::ids::{EvidenceId, MemoryId};
 use kamimusuhi_core::memory::{MemoryQuery, MemoryRepository, StateRecord};
 use kamimusuhi_core::mutation::MutationDomain;
@@ -50,8 +50,17 @@ fn assemble_replay(
         params.retrieval.history_messages.clamp(1, 128),
     )?;
     let mut history = Vec::new();
+    let facts = runtime
+        .store()
+        .facts(&records.iter().map(|r| r.evidence_id).collect::<Vec<_>>())?;
     let mut bytes = 0usize;
     for record in records.into_iter().rev() {
+        if facts
+            .get(record.evidence_id)
+            .is_none_or(|f| f.is_corrected || f.root_evidence.is_empty())
+        {
+            continue;
+        }
         let Some(text) = record.payload.get("text").and_then(|t| t.as_str()) else {
             continue;
         };
@@ -96,6 +105,14 @@ fn assemble_replay(
         let admissible: Vec<_> = pool
             .into_iter()
             .filter(|memory| memory.record.is_valid_at(now))
+            .filter(|memory| {
+                crate::self_context::current_sources(
+                    runtime.store(),
+                    runtime.individual_id(),
+                    &memory.record.evidence_refs,
+                )
+                .unwrap_or(false)
+            })
             .collect();
         let individual_id = runtime.individual_id();
         let declared = select_declared(
@@ -107,6 +124,12 @@ fn assemble_replay(
                     && record.subject_key.as_deref() == Some(subject)
                     && record.lifecycle_state.is_current()
                     && record.is_valid_at(now)
+                    && crate::self_context::current_sources(
+                        runtime.store(),
+                        individual_id,
+                        &record.evidence_refs,
+                    )
+                    .unwrap_or(false)
             },
             input_text,
             &params.retrieval,
@@ -142,8 +165,8 @@ fn assemble_replay(
     let head = runtime.head()?;
     // Self notes ride the same lane the live path reads — a replay that
     // skipped them would measure a workspace the model never sees.
-    let self_notes =
-        crate::self_notes::latest(&runtime.paths().dir, params.retrieval.self_notes_max);
+    let self_context = crate::self_context::prepare(runtime, &view.self_model)?;
+    let self_notes = crate::self_context::working_notes(runtime, params.retrieval.self_notes_max)?;
     let workspace = WorkspaceBuilder::new(runtime.individual_id(), runtime.now())
         .with_continuity(&head)
         .with_current_input(&CurrentInput {
@@ -151,7 +174,7 @@ fn assemble_replay(
             text: input_text.to_owned(),
         })
         .with_memories(&memories)
-        .with_self_state(&view.self_model)
+        .with_self_state(&self_context.snapshot)
         .with_active_policy(params, activation_seq)
         .with_recalled_evidence(&recalled)
         .with_self_notes(&self_notes)
@@ -243,6 +266,13 @@ pub fn replay_proposal(
                 },
             );
             turn_input.envelope.conversation_history = history.clone();
+            let self_context = crate::self_context::prepare(runtime, &view.self_model)?;
+            turn_input.envelope.continuity_context = Some(crate::self_context::index(
+                runtime,
+                subject,
+                &self_context,
+                None,
+            )?);
             if let Some(seed) = &seed {
                 turn_input.envelope = turn_input.envelope.with_seed(seed.clone());
             }

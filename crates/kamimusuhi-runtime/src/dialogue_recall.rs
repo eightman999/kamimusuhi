@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use kamimusuhi_core::c0::OperativeParams;
-use kamimusuhi_core::evidence::{EvidenceKind, EvidenceRecord};
+use kamimusuhi_core::evidence::{EvidenceKind, EvidenceLookup, EvidenceRecord};
 use kamimusuhi_core::ids::{EvidenceId, IndividualId, MemoryId};
 use kamimusuhi_core::memory::{AttributedMemory, MemoryQuery, MemoryRepository, StateRecord};
 use kamimusuhi_core::mutation::MutationDomain;
@@ -142,11 +142,33 @@ impl RecallPool {
                     .limited(EPISODIC_POOL_LIMIT),
             )?
         };
-        let evidence_pool = if params.retrieval.evidence_top_k == 0 {
+        let mut evidence_pool = if params.retrieval.evidence_top_k == 0 {
             Vec::new()
         } else {
             store.c0_evidence_pool(individual_id, params.retrieval.evidence_pool)?
         };
+        let facts = store.facts(
+            &evidence_pool
+                .iter()
+                .map(|r| r.evidence_id)
+                .collect::<Vec<_>>(),
+        )?;
+        evidence_pool.retain(|r| {
+            facts
+                .get(r.evidence_id)
+                .is_some_and(|f| !f.is_corrected && !f.root_evidence.is_empty())
+        });
+        let mut current_pool = Vec::new();
+        for memory in episodic_pool {
+            if crate::self_context::current_sources(
+                store,
+                individual_id,
+                &memory.record.evidence_refs,
+            )? {
+                current_pool.push(memory);
+            }
+        }
+        let episodic_pool = current_pool;
         let scope = RecallScope {
             individual_id,
             subject,
@@ -166,7 +188,15 @@ impl RecallPool {
             store,
             store,
             &admissible,
-            |record| scope.admits_record(record),
+            |record| {
+                scope.admits_record(record)
+                    && crate::self_context::current_sources(
+                        store,
+                        individual_id,
+                        &record.evidence_refs,
+                    )
+                    .unwrap_or(false)
+            },
             query,
             &params.retrieval,
             now,

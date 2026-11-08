@@ -204,12 +204,15 @@ pub fn run_with_reflector(
         }
     }
 
+    let mut projected_view = operative.view.clone();
+    projected_view.self_model =
+        crate::self_context::prepare(runtime, &operative.view.self_model)?.snapshot;
     let input = ReflectionInput {
         individual_id: individual,
         subject_key: Some(subject.to_owned()),
         episodes: presented.clone(),
         memory_records,
-        operative: operative.view.clone(),
+        operative: projected_view,
         metrics,
         pending_proposals: pending,
         activation_seq: operative.activation_seq,
@@ -300,6 +303,12 @@ pub fn run_with_reflector(
         // --- improvement drafts → pending proposals ------------------------------
         let mut proposals_created = Vec::new();
         for draft in &output.improvement_drafts {
+            if draft.kind == c0::ImprovementKind::SelfUpdate
+                && !crate::self_context::current_evidence(runtime, &draft.evidence_refs)?
+            {
+                drafts_rejected.push(serde_json::json!({"target":draft.target,"reason":"self evidence missing, foreign or corrected"}));
+                continue;
+            }
             match validate_improvement_draft(draft, &allowed, &operative.view) {
                 Ok((kind, target, target_key, old_value)) => {
                     let proposal = ImprovementProposal {

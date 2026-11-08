@@ -1,0 +1,372 @@
+{
+  "format_version": 1,
+  "evaluation_date_jst": "2026-11-08",
+  "capture": "real model calls via configured resident model alias; requested alias is not a weights attestation",
+  "judges": [
+    {
+      "judge_id": "codex_readonly_release_scope",
+      "judge_kind": "model",
+      "independent_human": false,
+      "ratings": [
+        {
+          "phase": "before",
+          "run": "baseline",
+          "case_id": "warm_return",
+          "voice_continuity": "pass",
+          "relational_continuity": "fail",
+          "task_continuity": "pass",
+          "notes": [
+            "Provided records do not establish that the work took longer than expected; both outputs add that shared duration."
+          ]
+        },
+        {
+          "phase": "before",
+          "run": "baseline",
+          "case_id": "corrected_destination_promise",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": []
+        },
+        {
+          "phase": "before",
+          "run": "baseline",
+          "case_id": "honest_memory_boundary",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": []
+        },
+        {
+          "phase": "before",
+          "run": "baseline",
+          "case_id": "resume_open_commitment",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": [
+            "Exact keyword backup is absent, but restoring/verification and unresolved result are semantically retained; mechanical keyword failure is separate."
+          ]
+        },
+        {
+          "phase": "before",
+          "run": "candidate",
+          "case_id": "warm_return",
+          "voice_continuity": "pass",
+          "relational_continuity": "fail",
+          "task_continuity": "pass",
+          "notes": [
+            "Provided records do not establish that the work took longer than expected; both outputs add that shared duration."
+          ]
+        },
+        {
+          "phase": "before",
+          "run": "candidate",
+          "case_id": "corrected_destination_promise",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": []
+        },
+        {
+          "phase": "before",
+          "run": "candidate",
+          "case_id": "honest_memory_boundary",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": []
+        },
+        {
+          "phase": "before",
+          "run": "candidate",
+          "case_id": "resume_open_commitment",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": [
+            "Exact keyword backup is absent, but restoring/verification and unresolved result are semantically retained; mechanical keyword failure is separate."
+          ]
+        },
+        {
+          "phase": "after",
+          "run": "baseline",
+          "case_id": "warm_return",
+          "voice_continuity": "pass",
+          "relational_continuity": "fail",
+          "task_continuity": "pass",
+          "notes": [
+            "Provided records do not establish that the work took longer than expected; both outputs add that shared duration."
+          ]
+        },
+        {
+          "phase": "after",
+          "run": "baseline",
+          "case_id": "corrected_destination_promise",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": [
+            "Pending operator approval is now explicitly retained."
+          ]
+        },
+        {
+          "phase": "after",
+          "run": "baseline",
+          "case_id": "honest_memory_boundary",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": []
+        },
+        {
+          "phase": "after",
+          "run": "baseline",
+          "case_id": "resume_open_commitment",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": [
+            "Pending operator approval is now explicitly retained.",
+            "Exact keyword backup is absent, but restoring/verification and unresolved result are semantically retained; mechanical keyword failure is separate."
+          ]
+        },
+        {
+          "phase": "after",
+          "run": "candidate",
+          "case_id": "warm_return",
+          "voice_continuity": "pass",
+          "relational_continuity": "fail",
+          "task_continuity": "pass",
+          "notes": [
+            "Provided records do not establish that the work took longer than expected; both outputs add that shared duration."
+          ]
+        },
+        {
+          "phase": "after",
+          "run": "candidate",
+          "case_id": "corrected_destination_promise",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": [
+            "Pending operator approval is now explicitly retained."
+          ]
+        },
+        {
+          "phase": "after",
+          "run": "candidate",
+          "case_id": "honest_memory_boundary",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": []
+        },
+        {
+          "phase": "after",
+          "run": "candidate",
+          "case_id": "resume_open_commitment",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": [
+            "Pending operator approval is now explicitly retained.",
+            "Exact keyword backup is absent, but restoring/verification and unresolved result are semantically retained; mechanical keyword failure is separate."
+          ]
+        }
+      ]
+    },
+    {
+      "judge_id": "codex_readonly_real_eval_path",
+      "judge_kind": "model",
+      "independent_human": false,
+      "ratings": [
+        {
+          "phase": "before",
+          "run": "baseline",
+          "case_id": "warm_return",
+          "voice_continuity": "pass",
+          "relational_continuity": "fail",
+          "task_continuity": "pass",
+          "notes": [
+            "Provided records do not establish that the work took longer than expected; both outputs add that shared duration."
+          ]
+        },
+        {
+          "phase": "before",
+          "run": "baseline",
+          "case_id": "corrected_destination_promise",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": []
+        },
+        {
+          "phase": "before",
+          "run": "baseline",
+          "case_id": "honest_memory_boundary",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "uncertain",
+          "notes": [
+            "Approval state or distinction between unprovided and nonexistent memory is not fully established."
+          ]
+        },
+        {
+          "phase": "before",
+          "run": "baseline",
+          "case_id": "resume_open_commitment",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "uncertain",
+          "notes": [
+            "Exact keyword backup is absent, but restoring/verification and unresolved result are semantically retained; mechanical keyword failure is separate.",
+            "Approval state or distinction between unprovided and nonexistent memory is not fully established."
+          ]
+        },
+        {
+          "phase": "before",
+          "run": "candidate",
+          "case_id": "warm_return",
+          "voice_continuity": "pass",
+          "relational_continuity": "fail",
+          "task_continuity": "pass",
+          "notes": [
+            "Provided records do not establish that the work took longer than expected; both outputs add that shared duration."
+          ]
+        },
+        {
+          "phase": "before",
+          "run": "candidate",
+          "case_id": "corrected_destination_promise",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": []
+        },
+        {
+          "phase": "before",
+          "run": "candidate",
+          "case_id": "honest_memory_boundary",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "uncertain",
+          "notes": [
+            "Approval state or distinction between unprovided and nonexistent memory is not fully established."
+          ]
+        },
+        {
+          "phase": "before",
+          "run": "candidate",
+          "case_id": "resume_open_commitment",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "uncertain",
+          "notes": [
+            "Exact keyword backup is absent, but restoring/verification and unresolved result are semantically retained; mechanical keyword failure is separate.",
+            "Approval state or distinction between unprovided and nonexistent memory is not fully established."
+          ]
+        },
+        {
+          "phase": "after",
+          "run": "baseline",
+          "case_id": "warm_return",
+          "voice_continuity": "pass",
+          "relational_continuity": "fail",
+          "task_continuity": "pass",
+          "notes": [
+            "Provided records do not establish that the work took longer than expected; both outputs add that shared duration."
+          ]
+        },
+        {
+          "phase": "after",
+          "run": "baseline",
+          "case_id": "corrected_destination_promise",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": [
+            "Pending operator approval is now explicitly retained."
+          ]
+        },
+        {
+          "phase": "after",
+          "run": "baseline",
+          "case_id": "honest_memory_boundary",
+          "voice_continuity": "uncertain",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": [
+            "The word 接口 is unnatural Japanese; mild voice regression concern."
+          ]
+        },
+        {
+          "phase": "after",
+          "run": "baseline",
+          "case_id": "resume_open_commitment",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": [
+            "Pending operator approval is now explicitly retained.",
+            "Exact keyword backup is absent, but restoring/verification and unresolved result are semantically retained; mechanical keyword failure is separate."
+          ]
+        },
+        {
+          "phase": "after",
+          "run": "candidate",
+          "case_id": "warm_return",
+          "voice_continuity": "pass",
+          "relational_continuity": "fail",
+          "task_continuity": "pass",
+          "notes": [
+            "Provided records do not establish that the work took longer than expected; both outputs add that shared duration."
+          ]
+        },
+        {
+          "phase": "after",
+          "run": "candidate",
+          "case_id": "corrected_destination_promise",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": [
+            "Pending operator approval is now explicitly retained."
+          ]
+        },
+        {
+          "phase": "after",
+          "run": "candidate",
+          "case_id": "honest_memory_boundary",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "uncertain",
+          "notes": [
+            "Unprovided older records are described as absent; this remains uncertain."
+          ]
+        },
+        {
+          "phase": "after",
+          "run": "candidate",
+          "case_id": "resume_open_commitment",
+          "voice_continuity": "pass",
+          "relational_continuity": "pass",
+          "task_continuity": "pass",
+          "notes": [
+            "Pending operator approval is now explicitly retained.",
+            "Exact keyword backup is absent, but restoring/verification and unresolved result are semantically retained; mechanical keyword failure is separate."
+          ]
+        }
+      ]
+    }
+  ],
+  "human_reviews_collected": 0,
+  "conclusion": "Pending approvals became explicit. Unsupported shared duration persists in warm_return. No overall relational-continuity pass is claimed.",
+  "limitations": [
+    "Two Codex agent contexts, not independently verified model weights or people.",
+    "Four synthetic cases, one response per case per run.",
+    "The exact-keyword test for backup fails on a semantically relevant paraphrase.",
+    "Actual routed model and usage are unknown through PersonaCore.",
+    "A mild voice concern remains in one after-run; no statistical improvement is claimed."
+  ]
+}

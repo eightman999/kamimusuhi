@@ -121,6 +121,11 @@ fn counts(dir: &Path) -> [i64; 4] {
     })
 }
 
+fn verified_writebacks(dir: &Path) -> i64 {
+    let connection = rusqlite::Connection::open(dir.join("kamimusuhi.sqlite")).unwrap();
+    connection.query_row("SELECT count(*) FROM evidence_records WHERE json_extract(payload_json, '$.event') = 'memory_writeback_verified'",[],|row|row.get(0)).unwrap()
+}
+
 fn identity(dir: &Path) -> (String, String, String, i64, i64) {
     let connection = rusqlite::Connection::open(dir.join("kamimusuhi.sqlite")).unwrap();
     connection
@@ -246,7 +251,8 @@ fn talk_reopens_in_a_new_process_with_raw_evidence_history_and_the_same_head() {
     );
     assert_eq!(payload["delivery"], "output_surface_accepted");
     assert_eq!(identity(dir.path()), before);
-    assert_eq!(counts(dir.path()), [2, 2, 6, 0]);
+    assert_eq!(counts(dir.path()), [2, 2, 8, 0]);
+    assert_eq!(verified_writebacks(dir.path()), 2);
     assert_eq!(config_bytes(dir.path()), configured);
 }
 
@@ -289,7 +295,8 @@ fn piped_chat_emits_two_responses_and_quit_prevents_a_third_turn() {
         serde_json::from_str(section(&second, "CONVERSATION_HISTORY").unwrap()).unwrap();
     assert_eq!(history[0].text, "  一行目  ");
     assert_eq!(history[1].text, "最初の返事。");
-    assert_eq!(counts(dir.path()), [1, 2, 6, 0]);
+    assert_eq!(counts(dir.path()), [1, 2, 8, 0]);
+    assert_eq!(verified_writebacks(dir.path()), 2);
 }
 
 /// `--quiet` is the resident's protocol mode: JSON lines in, one complete

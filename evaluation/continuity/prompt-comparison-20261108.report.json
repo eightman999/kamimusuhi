@@ -1,0 +1,278 @@
+{
+  "format_version": 1,
+  "evaluator": "paired-continuity-v1",
+  "suite_id": "synthetic-continuity-prompt-change-20261108",
+  "dataset_digest": "sha256:be904c726f1b2b80984af5d750eba78b1fd5f987b03ff2ff66ec03bafab34d7b",
+  "baseline_run_id": "prompt-before",
+  "candidate_run_id": "prompt-after",
+  "capture_kind": "model_output",
+  "baseline_conditions": {
+    "model": "kamimusuhi",
+    "prompt_digest": "sha256:c8fde954df5899ae43b133d67705943a98534e1404ce801a53ffb8b0152ea9a0",
+    "sampling_digest": "sha256:b6bbc8e596669525921db7f6291d35ee0b6656f1865be1274d7b80f14a9afebe",
+    "tools_digest": "sha256:e72ecbfd6188a52be49c2711501c91f6318f14183c03b8745579dc9bbe2a2513",
+    "memory_digest": "sha256:1ed6eab580e287ecee76bc56835b37de391afe1cbca45305bcabce599e4dd98a"
+  },
+  "candidate_conditions": {
+    "model": "kamimusuhi",
+    "prompt_digest": "sha256:0b333b6fa0a179325b4dbe7bdc8352807b27286dcc35921259194a6529b1290f",
+    "sampling_digest": "sha256:b6bbc8e596669525921db7f6291d35ee0b6656f1865be1274d7b80f14a9afebe",
+    "tools_digest": "sha256:e72ecbfd6188a52be49c2711501c91f6318f14183c03b8745579dc9bbe2a2513",
+    "memory_digest": "sha256:1ed6eab580e287ecee76bc56835b37de391afe1cbca45305bcabce599e4dd98a"
+  },
+  "changed_conditions": [
+    "prompt"
+  ],
+  "cases": [
+    {
+      "case_id": "warm_return",
+      "context_digest": "sha256:45297aae0ab0d36d488cb29c4bd03b009b8043d2cb3e815a6b56045057880f88",
+      "baseline": {
+        "output_digest": "sha256:746f0466fb1ed5044ce3cbbc1fda4a385bf0891d217da1ec0787e73d765be690",
+        "mechanical": {
+          "required_text": true,
+          "forbidden_text": true,
+          "declared_evidence_coverage": true,
+          "commitment_mentions": true
+        },
+        "human": [
+          {
+            "axis": "voice_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "relational_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "task_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          }
+        ],
+        "status": "unverified"
+      },
+      "candidate": {
+        "output_digest": "sha256:eaf7b2b4d8bccea1a8056e61794b100b145f63c7074dda68360f3bb00fee668e",
+        "mechanical": {
+          "required_text": true,
+          "forbidden_text": true,
+          "declared_evidence_coverage": true,
+          "commitment_mentions": true
+        },
+        "human": [
+          {
+            "axis": "voice_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "relational_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "task_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          }
+        ],
+        "status": "unverified"
+      },
+      "changed_output": true,
+      "regressions": []
+    },
+    {
+      "case_id": "corrected_destination_promise",
+      "context_digest": "sha256:6aafc0f465570649b5b0099d39a35d515514c168e6087a62963cd55ae2255eb9",
+      "baseline": {
+        "output_digest": "sha256:2b6b344de75e24d6ee0d495f147a433d9da800b12d8d270ae53a3dd997316478",
+        "mechanical": {
+          "required_text": true,
+          "forbidden_text": true,
+          "declared_evidence_coverage": true,
+          "commitment_mentions": true
+        },
+        "human": [
+          {
+            "axis": "voice_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "relational_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "task_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          }
+        ],
+        "status": "unverified"
+      },
+      "candidate": {
+        "output_digest": "sha256:5d88d48b11a06dc1fb060d9182550744fea18a1d43da7cab2805e1ae55e5c62c",
+        "mechanical": {
+          "required_text": true,
+          "forbidden_text": true,
+          "declared_evidence_coverage": true,
+          "commitment_mentions": true
+        },
+        "human": [
+          {
+            "axis": "voice_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "relational_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "task_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          }
+        ],
+        "status": "unverified"
+      },
+      "changed_output": true,
+      "regressions": []
+    },
+    {
+      "case_id": "honest_memory_boundary",
+      "context_digest": "sha256:b49a69e2f82e1f8cb7b90ee26bd5c427f740c7c51bac13bf4f75a336620e99f4",
+      "baseline": {
+        "output_digest": "sha256:1d3da72b14b16c0009146014afb2f7a5b33c125eb6e30bed200958b2231128ee",
+        "mechanical": {
+          "required_text": true,
+          "forbidden_text": true,
+          "declared_evidence_coverage": true,
+          "commitment_mentions": true
+        },
+        "human": [
+          {
+            "axis": "voice_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "relational_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "task_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          }
+        ],
+        "status": "unverified"
+      },
+      "candidate": {
+        "output_digest": "sha256:2286450fe6f519bcb943f13d59d34b2ab33a7d815b853a58f10fd22eac88166a",
+        "mechanical": {
+          "required_text": true,
+          "forbidden_text": true,
+          "declared_evidence_coverage": true,
+          "commitment_mentions": true
+        },
+        "human": [
+          {
+            "axis": "voice_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "relational_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "task_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          }
+        ],
+        "status": "unverified"
+      },
+      "changed_output": true,
+      "regressions": []
+    },
+    {
+      "case_id": "resume_open_commitment",
+      "context_digest": "sha256:be17f4478339e6bd1ab991ead29fd93361ee819a075be136757104051b922a7e",
+      "baseline": {
+        "output_digest": "sha256:b0d327986a76b5d9e9bede861bedae60131b8cb8cb6adcb8d592c83a9fffdbef",
+        "mechanical": {
+          "required_text": false,
+          "forbidden_text": true,
+          "declared_evidence_coverage": true,
+          "commitment_mentions": true
+        },
+        "human": [
+          {
+            "axis": "voice_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "relational_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "task_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          }
+        ],
+        "status": "fail"
+      },
+      "candidate": {
+        "output_digest": "sha256:d7e5c7ef0dc53df4bcec852e5f21f9e9042daa00a6c814e66b29259fbcac184b",
+        "mechanical": {
+          "required_text": false,
+          "forbidden_text": true,
+          "declared_evidence_coverage": true,
+          "commitment_mentions": true
+        },
+        "human": [
+          {
+            "axis": "voice_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "relational_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          },
+          {
+            "axis": "task_continuity",
+            "reviewers": 0,
+            "status": "unverified"
+          }
+        ],
+        "status": "fail"
+      },
+      "changed_output": true,
+      "regressions": []
+    }
+  ],
+  "candidate_status": "fail",
+  "comparison_status": "fail",
+  "limits": [
+    "exact fragment checks measure contract coverage, not natural-language entailment; negated mentions can match",
+    "declared evidence IDs are capture metadata, not proof that a claim follows from the cited source",
+    "commitment mentions do not establish real-world execution or completion",
+    "voice and relational continuity require at least two distinct human reviewer IDs per requested axis; identity and independence need operator verification",
+    "recorded condition/context digests must be captured honestly by the caller; this evaluator does not attest remote model weights or capture provenance",
+    "fixture results demonstrate evaluation mechanics, not real-model continuity or personality preservation"
+  ]
+}

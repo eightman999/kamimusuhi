@@ -37,6 +37,14 @@ path = "src/bin/kamimusuhi-selection.rs"
 name = "kamimusuhi-evolution"
 path = "src/bin/kamimusuhi-evolution.rs"
 
+[[bin]]
+name = "continuity-eval"
+path = "src/bin/continuity-eval.rs"
+
+[[bin]]
+name = "continuity-capture"
+path = "src/bin/continuity-capture.rs"
+
 [dependencies]
 kamimusuhi-core = { workspace = true }
 kamimusuhi-persona-http = { workspace = true }

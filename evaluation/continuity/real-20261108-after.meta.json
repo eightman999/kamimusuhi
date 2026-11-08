@@ -1,0 +1,91 @@
+{
+  "capture_kind": "model_output",
+  "captures": [
+    {
+      "actual_model": null,
+      "case_id": "warm_return",
+      "discarded_proposals": 0,
+      "latency_ms": 1160,
+      "requested_model": "kamimusuhi",
+      "run_id": "baseline",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "corrected_destination_promise",
+      "discarded_proposals": 0,
+      "latency_ms": 1116,
+      "requested_model": "kamimusuhi",
+      "run_id": "baseline",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "honest_memory_boundary",
+      "discarded_proposals": 0,
+      "latency_ms": 1636,
+      "requested_model": "kamimusuhi",
+      "run_id": "baseline",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "resume_open_commitment",
+      "discarded_proposals": 0,
+      "latency_ms": 1735,
+      "requested_model": "kamimusuhi",
+      "run_id": "baseline",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "warm_return",
+      "discarded_proposals": 0,
+      "latency_ms": 1497,
+      "requested_model": "kamimusuhi",
+      "run_id": "candidate",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "corrected_destination_promise",
+      "discarded_proposals": 0,
+      "latency_ms": 1019,
+      "requested_model": "kamimusuhi",
+      "run_id": "candidate",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "honest_memory_boundary",
+      "discarded_proposals": 0,
+      "latency_ms": 1115,
+      "requested_model": "kamimusuhi",
+      "run_id": "candidate",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "resume_open_commitment",
+      "discarded_proposals": 0,
+      "latency_ms": 1110,
+      "requested_model": "kamimusuhi",
+      "run_id": "candidate",
+      "usage": null
+    }
+  ],
+  "comparison_status": "fail",
+  "format_version": 1,
+  "identity_context_supplied": true,
+  "limits": [
+    "same synthetic context repeated; not old/new build causal comparison",
+    "actual returned model and usage unavailable through PersonaCore; null means unknown",
+    "no human reviews collected; AI judgments must remain separate",
+    "max-requests bounds logical Persona invocations; existing adapter can make bounded repair HTTP calls",
+    "no tools offered, no canonical DB opened, proposals discarded"
+  ],
+  "logical_requests": 8,
+  "max_logical_requests": 8,
+  "suite_id": "synthetic-continuity-voice-relations-20261108",
+  "transport_timeout_ms_cap": 120000
+}

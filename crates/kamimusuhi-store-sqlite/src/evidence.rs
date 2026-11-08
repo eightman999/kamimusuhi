@@ -327,6 +327,178 @@ impl EvidenceLookup for SqliteStore {
     }
 }
 
+fn append_in(
+    conn: &Connection,
+    record: NewEvidence,
+    now: UtcTimestamp,
+) -> Result<EvidenceRecord, EvidenceError> {
+    if record.evidence_id.is_nil() || record.individual_id.is_nil() {
+        return Err(invalid("evidence has a nil id"));
+    }
+    if !individual_exists(conn, record.individual_id)? {
+        return Err(EvidenceError::IndividualNotFound(record.individual_id));
+    }
+
+    let stored = EvidenceRecord {
+        evidence_id: record.evidence_id,
+        individual_id: record.individual_id,
+        session_id: record.session_id,
+        turn_id: record.turn_id,
+        kind: record.kind,
+        origin_class: record.origin_class,
+        payload: record.payload,
+        source: record.source,
+        retention_class: record.retention_class,
+        created_at: now,
+    };
+
+    // Append-oriented: an identical re-append is a no-op, a differing one
+    // is an error. Nothing overwrites an existing record.
+    if let Some(existing) = get_in(conn, record.evidence_id)? {
+        let same = existing.individual_id == stored.individual_id
+            && existing.session_id == stored.session_id
+            && existing.turn_id == stored.turn_id
+            && existing.kind == stored.kind
+            && existing.origin_class == stored.origin_class
+            && existing.payload == stored.payload
+            && existing.source == stored.source
+            && existing.retention_class == stored.retention_class;
+        return if same {
+            Ok(existing)
+        } else {
+            Err(EvidenceError::AlreadyExists(record.evidence_id))
+        };
+    }
+
+    conn.execute(
+        &format!(
+            "INSERT INTO evidence_records({EVIDENCE_COLUMNS})
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
+        ),
+        params![
+            stored.evidence_id.to_string(),
+            stored.individual_id.to_string(),
+            stored.session_id.map(|s| s.to_string()),
+            stored.turn_id.map(|t| t.to_string()),
+            stored.kind.as_str(),
+            stored.origin_class.as_str(),
+            stored.payload.to_string(),
+            stored.source.source_id,
+            stored
+                .source
+                .source_sequence
+                .map(|s| to_i64(s, "source_sequence"))
+                .transpose()?,
+            stored.source.content_digest,
+            stored.retention_class.as_str(),
+            stored.created_at.unix_millis(),
+        ],
+    )
+    .map_err(map_sqlite)?;
+    let landed = get_in(conn, record.evidence_id)?
+        .ok_or_else(|| corrupt("appended evidence is missing before commit"))?;
+    if landed != stored {
+        return Err(corrupt("appended evidence readback mismatch"));
+    }
+    Ok(landed)
+}
+
+fn link_in(
+    conn: &Connection,
+    link: &NewEvidenceLink,
+    now: UtcTimestamp,
+) -> Result<EvidenceLink, EvidenceError> {
+    if link.from_evidence_id == link.to_evidence_id {
+        return Err(invalid("an evidence record cannot link to itself"));
+    }
+    let from = get_in(conn, link.from_evidence_id)?
+        .ok_or(EvidenceError::NotFound(link.from_evidence_id))?;
+    let to =
+        get_in(conn, link.to_evidence_id)?.ok_or(EvidenceError::NotFound(link.to_evidence_id))?;
+    if from.individual_id != to.individual_id {
+        return Err(invalid(
+            "evidence lineage cannot cross individuals".to_owned(),
+        ));
+    }
+    conn.execute(
+        "INSERT INTO evidence_links(from_evidence_id, to_evidence_id, relation, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(from_evidence_id, to_evidence_id, relation) DO NOTHING",
+        params![
+            link.from_evidence_id.to_string(),
+            link.to_evidence_id.to_string(),
+            link.relation.as_str(),
+            now.unix_millis()
+        ],
+    )
+    .map_err(map_sqlite)?;
+    let created_at: i64 = conn
+        .query_row(
+            "SELECT created_at FROM evidence_links
+                 WHERE from_evidence_id = ?1 AND to_evidence_id = ?2 AND relation = ?3",
+            params![
+                link.from_evidence_id.to_string(),
+                link.to_evidence_id.to_string(),
+                link.relation.as_str()
+            ],
+            |r| r.get(0),
+        )
+        .map_err(map_sqlite)?;
+    Ok(EvidenceLink {
+        from_evidence_id: link.from_evidence_id,
+        to_evidence_id: link.to_evidence_id,
+        relation: link.relation,
+        created_at: UtcTimestamp::from_unix_millis(created_at),
+    })
+}
+
+impl SqliteStore {
+    /// Append evidence and its lineage as one atomic operation. A failed link
+    /// cannot leave a visible, unsupported utterance in subsequent context.
+    /// Repeating an identical append/link set is idempotent, as for append/link.
+    pub fn append_with_links(
+        &self,
+        record: NewEvidence,
+        links: &[NewEvidenceLink],
+    ) -> Result<EvidenceRecord, EvidenceError> {
+        if links
+            .iter()
+            .any(|link| link.from_evidence_id != record.evidence_id)
+        {
+            return Err(invalid(
+                "atomic lineage must originate at the appended evidence",
+            ));
+        }
+        let now = self.clock().now_utc();
+        let mut conn = self.conn().map_err(|e| EvidenceError::Backend {
+            message: e.to_string(),
+        })?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite)?;
+        let stored = append_in(&tx, record, now)?;
+        for link in links {
+            link_in(&tx, link, now)?;
+        }
+        let landed_links = links_in(&tx, "from_evidence_id", stored.evidence_id)?;
+        if links.iter().any(|link| {
+            !landed_links.iter().any(|landed| {
+                landed.from_evidence_id == link.from_evidence_id
+                    && landed.to_evidence_id == link.to_evidence_id
+                    && landed.relation == link.relation
+            })
+        }) {
+            return Err(corrupt("atomic lineage readback mismatch"));
+        }
+        // A link trigger can also affect the evidence; verify the final landing.
+        if get_in(&tx, stored.evidence_id)?.as_ref() != Some(&stored) {
+            return Err(corrupt("atomic evidence readback mismatch"));
+        }
+        tx.commit().map_err(map_sqlite)?;
+        Ok(stored)
+    }
+}
+
 impl SqliteStore {
     /// Recent raw dialogue from one operator-selected channel, oldest first.
     /// Generated-but-unemitted system events and other people's channels are
@@ -526,79 +698,7 @@ impl EvidenceStore for SqliteStore {
     }
 
     fn append(&self, record: NewEvidence) -> Result<EvidenceRecord, EvidenceError> {
-        if record.evidence_id.is_nil() || record.individual_id.is_nil() {
-            return Err(invalid("evidence has a nil id"));
-        }
-        let now = self.clock().now_utc();
-        let mut conn = self.conn().map_err(|e| EvidenceError::Backend {
-            message: e.to_string(),
-        })?;
-        let tx = conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(map_sqlite)?;
-        if !individual_exists(&tx, record.individual_id)? {
-            return Err(EvidenceError::IndividualNotFound(record.individual_id));
-        }
-
-        let stored = EvidenceRecord {
-            evidence_id: record.evidence_id,
-            individual_id: record.individual_id,
-            session_id: record.session_id,
-            turn_id: record.turn_id,
-            kind: record.kind,
-            origin_class: record.origin_class,
-            payload: record.payload,
-            source: record.source,
-            retention_class: record.retention_class,
-            created_at: now,
-        };
-
-        // Append-oriented: an identical re-append is a no-op, a differing one
-        // is an error. Nothing overwrites an existing record.
-        if let Some(existing) = get_in(&tx, record.evidence_id)? {
-            let same = existing.individual_id == stored.individual_id
-                && existing.session_id == stored.session_id
-                && existing.turn_id == stored.turn_id
-                && existing.kind == stored.kind
-                && existing.origin_class == stored.origin_class
-                && existing.payload == stored.payload
-                && existing.source == stored.source
-                && existing.retention_class == stored.retention_class;
-            return if same {
-                Ok(existing)
-            } else {
-                Err(EvidenceError::AlreadyExists(record.evidence_id))
-            };
-        }
-
-        tx.execute(
-            &format!(
-                "INSERT INTO evidence_records({EVIDENCE_COLUMNS})
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
-            ),
-            params![
-                stored.evidence_id.to_string(),
-                stored.individual_id.to_string(),
-                stored.session_id.map(|s| s.to_string()),
-                stored.turn_id.map(|t| t.to_string()),
-                stored.kind.as_str(),
-                stored.origin_class.as_str(),
-                stored.payload.to_string(),
-                stored.source.source_id,
-                stored
-                    .source
-                    .source_sequence
-                    .map(|s| to_i64(s, "source_sequence"))
-                    .transpose()?,
-                stored.source.content_digest,
-                stored.retention_class.as_str(),
-                stored.created_at.unix_millis(),
-            ],
-        )
-        .map_err(map_sqlite)?;
-        tx.commit().map_err(map_sqlite)?;
-        get_in(&conn, record.evidence_id)?
-            .ok_or_else(|| corrupt("appended evidence is missing right after commit"))
+        self.append_with_links(record, &[])
     }
 
     fn get(&self, evidence_id: EvidenceId) -> Result<Option<EvidenceRecord>, EvidenceError> {
@@ -609,9 +709,6 @@ impl EvidenceStore for SqliteStore {
     }
 
     fn link(&self, link: NewEvidenceLink) -> Result<EvidenceLink, EvidenceError> {
-        if link.from_evidence_id == link.to_evidence_id {
-            return Err(invalid("an evidence record cannot link to itself"));
-        }
         let now = self.clock().now_utc();
         let mut conn = self.conn().map_err(|e| EvidenceError::Backend {
             message: e.to_string(),
@@ -619,46 +716,9 @@ impl EvidenceStore for SqliteStore {
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sqlite)?;
-        let from = get_in(&tx, link.from_evidence_id)?
-            .ok_or(EvidenceError::NotFound(link.from_evidence_id))?;
-        let to = get_in(&tx, link.to_evidence_id)?
-            .ok_or(EvidenceError::NotFound(link.to_evidence_id))?;
-        if from.individual_id != to.individual_id {
-            return Err(invalid(
-                "evidence lineage cannot cross individuals".to_owned(),
-            ));
-        }
-        tx.execute(
-            "INSERT INTO evidence_links(from_evidence_id, to_evidence_id, relation, created_at)
-             VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(from_evidence_id, to_evidence_id, relation) DO NOTHING",
-            params![
-                link.from_evidence_id.to_string(),
-                link.to_evidence_id.to_string(),
-                link.relation.as_str(),
-                now.unix_millis()
-            ],
-        )
-        .map_err(map_sqlite)?;
-        let created_at: i64 = tx
-            .query_row(
-                "SELECT created_at FROM evidence_links
-                 WHERE from_evidence_id = ?1 AND to_evidence_id = ?2 AND relation = ?3",
-                params![
-                    link.from_evidence_id.to_string(),
-                    link.to_evidence_id.to_string(),
-                    link.relation.as_str()
-                ],
-                |r| r.get(0),
-            )
-            .map_err(map_sqlite)?;
+        let stored = link_in(&tx, &link, now)?;
         tx.commit().map_err(map_sqlite)?;
-        Ok(EvidenceLink {
-            from_evidence_id: link.from_evidence_id,
-            to_evidence_id: link.to_evidence_id,
-            relation: link.relation,
-            created_at: UtcTimestamp::from_unix_millis(created_at),
-        })
+        Ok(stored)
     }
 
     fn links_from(&self, evidence_id: EvidenceId) -> Result<Vec<EvidenceLink>, EvidenceError> {

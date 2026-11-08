@@ -213,6 +213,77 @@ pub struct SelfEntry {
     pub proposal_id: Option<C0ProposalId>,
 }
 
+/// Intake bounds keep the always-carried self model small. Historical
+/// snapshots are not rewritten or truncated to satisfy these limits.
+pub const SELF_ENTRY_MAX_BYTES: usize = 2048;
+pub const SELF_SNAPSHOT_MAX_BYTES: usize = 24 * 1024;
+pub const SELF_MAX_ENTRIES: usize = 64;
+pub const SELF_MAX_EVIDENCE_REFS: usize = 8;
+pub const SELF_KEY_MAX_BYTES: usize = 128;
+
+/// Equality for duplicate detection is deliberately syntactic. Whitespace
+/// differences in strings are ignored; paraphrases and contradictions are
+/// not inferred to be equivalent by this guard.
+fn same_self_value(left: &serde_json::Value, right: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match (left, right) {
+        (Value::String(left), Value::String(right)) => left
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .eq(right.chars().filter(|c| !c.is_whitespace())),
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| same_self_value(left, right))
+        }
+        (Value::Object(left), Value::Object(right)) => {
+            left.len() == right.len()
+                && left.iter().all(|(key, value)| {
+                    right
+                        .get(key)
+                        .is_some_and(|other| same_self_value(value, other))
+                })
+        }
+        _ => left == right,
+    }
+}
+
+/// An aggregate update must not quietly drop old keys or list members.
+/// Scalars can be explicitly replaced, including scalar leaves in an object.
+/// Retraction of an aggregate member needs a separate, inspectable operation;
+/// this replacement path is not one.
+fn preserves_self_members(old: &serde_json::Value, new: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match old {
+        Value::Object(old) => new.as_object().is_some_and(|new| {
+            old.iter().all(|(key, value)| {
+                new.get(key)
+                    .is_some_and(|next| preserves_self_members(value, next))
+            })
+        }),
+        Value::Array(old) => new.as_array().is_some_and(|new| {
+            // Count duplicate members too; matching one new element twice
+            // would silently discard an existing occurrence.
+            let mut matched = vec![false; new.len()];
+            old.iter().all(|value| {
+                if let Some(index) = new
+                    .iter()
+                    .enumerate()
+                    .position(|(index, next)| !matched[index] && same_self_value(value, next))
+                {
+                    matched[index] = true;
+                    true
+                } else {
+                    false
+                }
+            })
+        }),
+        _ => true,
+    }
+}
+
 /// The self model as stored inside an activation snapshot:
 /// field -> entries. Ordered maps keep serialization deterministic.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -651,6 +722,15 @@ pub fn validate_improvement_draft(
         reason: reason.to_owned(),
     };
 
+    if draft.kind == ImprovementKind::SelfUpdate
+        && (draft.evidence_refs.len() > SELF_MAX_EVIDENCE_REFS
+            || draft.evidence_refs.iter().collect::<BTreeSet<_>>().len()
+                != draft.evidence_refs.len())
+    {
+        return Err(reject(
+            "self update requires at most eight distinct evidence references",
+        ));
+    }
     for id in &draft.evidence_refs {
         let Some(kind) = allowed_evidence.get(id) else {
             return Err(reject(&format!("cited evidence {id} was not presented")));
@@ -705,6 +785,18 @@ pub fn validate_improvement_draft(
             if draft.evidence_refs.is_empty() {
                 return Err(reject("self update cites no evidence"));
             }
+            if draft.target_key.as_ref().is_some_and(|key| {
+                key.trim().is_empty() || key.len() > SELF_KEY_MAX_BYTES || key.trim() != key
+            }) {
+                return Err(reject(
+                    "self key must be nonempty, trimmed and at most 128 UTF-8 bytes",
+                ));
+            }
+            let value_bytes = serde_json::to_vec(&draft.proposed_value)
+                .map_err(|_| reject("self value cannot be serialized"))?;
+            if value_bytes.len() > SELF_ENTRY_MAX_BYTES {
+                return Err(reject("self value exceeds 2048 UTF-8 bytes"));
+            }
             let old_value = current
                 .self_model
                 .fields
@@ -715,6 +807,55 @@ pub fn validate_improvement_draft(
                         .find(|e| e.key == draft.target_key)
                         .map(|e| e.value.clone())
                 });
+            if let Some(old) = &old_value {
+                let same_sources = current
+                    .self_model
+                    .field(field)
+                    .iter()
+                    .find(|entry| entry.key == draft.target_key)
+                    .is_some_and(|entry| {
+                        entry.evidence_refs.iter().collect::<BTreeSet<_>>()
+                            == draft.evidence_refs.iter().collect::<BTreeSet<_>>()
+                    });
+                if same_self_value(old, &draft.proposed_value) && same_sources {
+                    return Err(reject("self update makes no content change"));
+                }
+                if !preserves_self_members(old, &draft.proposed_value) {
+                    return Err(reject(
+                        "self update would silently remove aggregate members",
+                    ));
+                }
+            }
+            if current.self_model.field(field).iter().any(|entry| {
+                entry.key != draft.target_key
+                    && same_self_value(&entry.value, &draft.proposed_value)
+            }) {
+                return Err(reject(
+                    "self value duplicates another key in the same field",
+                ));
+            }
+            let mut candidate = current.self_model.clone();
+            candidate.apply(
+                field,
+                SelfEntry {
+                    key: draft.target_key.clone(),
+                    value: draft.proposed_value.clone(),
+                    confidence: draft.confidence,
+                    evidence_refs: draft.evidence_refs.clone(),
+                    // Include the actual serialized footprint of a proposal id.
+                    proposal_id: Some(C0ProposalId::from_u128(0)),
+                },
+            );
+            if candidate.entry_count() > SELF_MAX_ENTRIES {
+                return Err(reject("self model exceeds 64 entries"));
+            }
+            if serde_json::to_vec(&candidate)
+                .map_err(|_| reject("self model cannot be serialized"))?
+                .len()
+                > SELF_SNAPSHOT_MAX_BYTES
+            {
+                return Err(reject("self model exceeds 24 KiB"));
+            }
             Ok((
                 draft.kind,
                 field.as_str().to_owned(),

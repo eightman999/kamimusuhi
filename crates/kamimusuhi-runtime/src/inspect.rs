@@ -162,7 +162,7 @@ pub fn inspect(runtime: &Runtime) -> Result<InspectReport, RuntimeError> {
         resources_used,
     };
 
-    let operative = crate::c0::operative(runtime).unwrap_or_default();
+    let operative = crate::c0::operative(runtime)?;
     let proposals = store.c0_proposals(individual.individual_id, None)?;
     let mut proposal_counts: std::collections::BTreeMap<String, usize> =
         std::collections::BTreeMap::new();
@@ -239,7 +239,8 @@ pub fn memory_report(
     let individual = runtime.individual_id();
     let store = runtime.store();
     let limit = limit.clamp(1, 200);
-    let operative = crate::c0::operative(runtime).unwrap_or_default();
+    let operative = crate::c0::operative(runtime)?;
+    let self_context = crate::self_context::prepare(runtime, &operative.view.self_model)?;
 
     let query = |domain: MutationDomain| {
         let q = MemoryQuery::current(individual).in_domain(domain);
@@ -297,6 +298,8 @@ pub fn memory_report(
         "generated_at": runtime.now().to_rfc3339(),
         "activation_seq": operative.activation_seq,
         "self_model": operative.view.self_model,
+        "self_projection": self_context.audit,
+        "memory_writeback": crate::memory_writeback::status(runtime)?,
         "operative_params": operative.view.params,
         "pending_proposals": pending
             .iter()

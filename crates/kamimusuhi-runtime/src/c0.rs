@@ -19,8 +19,8 @@ use kamimusuhi_core::c0::{
 };
 use kamimusuhi_core::continuity::WriterIdentity;
 use kamimusuhi_core::evidence::{
-    EvidenceKind, EvidenceRecord, EvidenceSource, EvidenceStore, NewEvidence, NewEvidenceLink,
-    RetentionClass,
+    EvidenceKind, EvidenceLookup, EvidenceRecord, EvidenceSource, EvidenceStore, NewEvidence,
+    NewEvidenceLink, RetentionClass,
 };
 use kamimusuhi_core::ids::{
     C0ActivationId, C0ProposalId, EvidenceId, IndividualId, ProposalId, SessionId, TurnId,
@@ -57,8 +57,7 @@ pub struct Operative {
 /// Read the operative view in force. Head 0 = documented defaults, and the
 /// defaults are part of the type, not an implicit runtime choice.
 pub fn operative(runtime: &Runtime) -> Result<Operative, RuntimeError> {
-    let seq = runtime.store().c0_head(runtime.individual_id())?;
-    let view = runtime.store().c0_view(runtime.individual_id())?;
+    let (seq, view) = runtime.store().c0_view_with_head(runtime.individual_id())?;
     Ok(Operative {
         activation_seq: seq,
         view,
@@ -125,7 +124,14 @@ pub fn retrieve_memories(
             .take(params.retrieval.episodic_top_k)
             .map(|(_, m)| m),
     );
-    Ok(memories)
+    let mut current = Vec::new();
+    for memory in memories {
+        if crate::self_context::current_sources(store, individual_id, &memory.record.evidence_refs)?
+        {
+            current.push(memory);
+        }
+    }
+    Ok(current)
 }
 
 /// Score an episodic pool against the query and rank it best-first. Highest
@@ -166,9 +172,16 @@ pub fn recall_evidence(
         return Ok(Vec::new());
     }
     let pool = store.c0_evidence_pool(individual_id, params.retrieval.evidence_pool)?;
+    let facts = store.facts(&pool.iter().map(|r| r.evidence_id).collect::<Vec<_>>())?;
     let mut scored: Vec<(f64, EvidenceRecord)> = pool
         .into_iter()
         .filter(|r| {
+            if facts
+                .get(r.evidence_id)
+                .is_none_or(|f| f.is_corrected || f.root_evidence.is_empty())
+            {
+                return false;
+            }
             matches!(
                 r.kind,
                 EvidenceKind::UserUtterance | EvidenceKind::AgentUtterance

@@ -2,9 +2,10 @@
 //!
 //! Order comes from configuration (`local` → `llm_master` → `hai`). Healthy
 //! tiers are tried first in that order; a tier that fails a live request is
-//! marked unhealthy and the next one is tried. Health probes restore a tier
-//! as soon as it answers again, so the primary is used again automatically
-//! after recovery.
+//! marked unhealthy and the next one is tried. A failed completion also
+//! benches the tier for a bounded retry interval: a successful models probe
+//! cannot prove that generation recovered. A real completion success clears
+//! that bench immediately.
 
 use std::time::{Duration, Instant};
 
@@ -233,6 +234,11 @@ pub fn plan<'a>(
     let lane = route_lane(shared, request);
     let gate = RouteGate {
         fast_chat_ttft_ceiling_ms: Some(shared.config.routing.fast_chat_latency_ceiling_ms),
+        // Models probes observe availability, not whether generation works.
+        // Bench from the first live completion failure, even after many
+        // earlier successes; the shared gate's bounded retry still applies.
+        failure_window_min: 1,
+        failure_rate_threshold: 0.0,
         ..Default::default()
     };
     let health = shared
@@ -849,6 +855,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::spool::Spool;
+    use kamimusuhi_testkit::http_fixture::{FixtureResponse, FixtureServer};
 
     fn shared() -> (Shared, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -872,6 +879,134 @@ mod tests {
 
     fn names(plan: &[(&TierConfig, String)]) -> Vec<String> {
         plan.iter().map(|(t, _)| t.name.clone()).collect()
+    }
+
+    fn completion_failure_fixture(
+        first: FixtureResponse,
+    ) -> (
+        Shared,
+        tempfile::TempDir,
+        FixtureServer,
+        FixtureServer,
+        RouteRequest,
+    ) {
+        let primary = FixtureServer::start(vec![first, FixtureResponse::ok("recovered")]).unwrap();
+        let fallback = FixtureServer::always(FixtureResponse::ok("fallback")).unwrap();
+        let (mut s, dir) = shared();
+        let mut hai = s.config.tiers[2].clone();
+        hai.base_url = primary.base_url();
+        hai.timeout_secs = 1;
+        let mut backup = s.config.tiers[1].clone();
+        backup.name = "backup".to_owned();
+        backup.base_url = fallback.base_url();
+        s.config.tiers = vec![hai, backup];
+        for name in ["hai", "backup"] {
+            s.set_tier(name, Ok(Value::Null), 1);
+        }
+        let request = RouteRequest {
+            body: json!({"model": "kamimusuhi", "kamimusuhi_route_lane": "DEEP_REASONING",
+                "messages": [{"role": "user", "content": "fixture request"}]}),
+            local_only: false,
+        };
+        (s, dir, primary, fallback, request)
+    }
+
+    #[test]
+    fn first_completion_timeout_survives_models_probe_until_bounded_retry() {
+        let (s, _dir, primary, fallback, request) =
+            completion_failure_fixture(FixtureResponse::Silence { ms: 1_100 });
+        let first = route(&s, &request);
+        assert_eq!(first.status, 200);
+        assert_eq!(first.tier.as_deref(), Some("backup"));
+        assert_eq!(primary.request_count(), 1);
+        assert_eq!(fallback.request_count(), 1);
+        assert_eq!(
+            s.route_health
+                .lock()
+                .unwrap()
+                .get("hai")
+                .unwrap()
+                .window_requests,
+            1
+        );
+
+        // A successful /models probe used to restore the failed completion
+        // tier immediately. It must not erase the separate live observation.
+        s.set_tier("hai", Ok(json!({"models": 1})), 1);
+        assert!(s.tier_healthy("hai"));
+        assert_eq!(names(&plan(&s, &request).unwrap()), ["backup"]);
+        let second = route(&s, &request);
+        assert_eq!(second.tier.as_deref(), Some("backup"));
+        assert_eq!(primary.request_count(), 1);
+        assert_eq!(fallback.request_count(), 2);
+
+        // Age the live observation instead of waiting a minute. Only the
+        // existing failure deadline changes; a models probe is not recovery.
+        let retry_after = RouteGate::default().failure_retry_after;
+        s.route_health
+            .lock()
+            .unwrap()
+            .get_mut("hai")
+            .last_failure_at = Some(Instant::now() - retry_after - Duration::from_secs(1));
+        assert!(
+            names(&plan(&s, &request).unwrap())
+                .iter()
+                .any(|name| name == "hai")
+        );
+        let retried = route(&s, &request);
+        assert_eq!(retried.status, 200);
+        assert_eq!(retried.tier.as_deref(), Some("hai"));
+        assert_eq!(primary.request_count(), 2);
+        assert!(
+            s.route_health
+                .lock()
+                .unwrap()
+                .get("hai")
+                .unwrap()
+                .last_failure_at
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_real_completion_success_clears_the_first_failure_bench_before_expiry() {
+        let (s, _dir, primary, _fallback, request) =
+            completion_failure_fixture(FixtureResponse::Status { code: 503 });
+        assert_eq!(route(&s, &request).tier.as_deref(), Some("backup"));
+        s.set_tier("hai", Ok(Value::Null), 1);
+        assert_eq!(names(&plan(&s, &request).unwrap()), ["backup"]);
+        assert!(
+            s.route_health
+                .lock()
+                .unwrap()
+                .get("hai")
+                .unwrap()
+                .last_failure_at
+                .is_some()
+        );
+
+        // Explicit operator routing can verify recovery while auto routing
+        // remains benched, just as an already in-flight request can succeed.
+        let forced = RouteRequest {
+            body: json!({"model": "hai", "messages": [{"role": "user", "content": "fixture recovery"}]}),
+            local_only: false,
+        };
+        assert_eq!(route(&s, &forced).status, 200);
+        assert_eq!(primary.request_count(), 2);
+        assert!(
+            s.route_health
+                .lock()
+                .unwrap()
+                .get("hai")
+                .unwrap()
+                .last_failure_at
+                .is_none()
+        );
+        assert!(
+            names(&plan(&s, &request).unwrap())
+                .iter()
+                .any(|name| name == "hai")
+        );
     }
 
     fn completion_server(reply: Value) -> (String, std::thread::JoinHandle<()>) {
@@ -1614,6 +1749,8 @@ mod tests {
             s.tier_healthy("paid"),
             "budget rejection is policy, not provider health failure"
         );
+        assert!(s.route_health.lock().unwrap().get("paid").is_none());
+        assert_eq!(names(&plan(&s, &req).expect("still eligible")), ["paid"]);
         assert_eq!(
             s.cost_guard
                 .lock()

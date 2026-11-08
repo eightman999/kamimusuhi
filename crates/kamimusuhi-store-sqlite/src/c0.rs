@@ -9,16 +9,15 @@
 //! by the runtime, so the immutable record always says what the lane did.
 
 use kamimusuhi_core::c0::{
-    Activation, C0Error, ImprovementProposal, OperativeView, ProposalStatus, apply_proposal,
+    Activation, C0Error, ImprovementDraft, ImprovementKind, ImprovementProposal, OperativeView,
+    ProposalStatus, apply_proposal, validate_improvement_draft,
 };
 use kamimusuhi_core::evidence::EvidenceRecord;
-use kamimusuhi_core::ids::{
-    C0ActivationId, C0EvaluationId, C0ProposalId, EvidenceId, IndividualId, TurnId,
-};
+use kamimusuhi_core::ids::{C0ActivationId, C0EvaluationId, C0ProposalId, IndividualId, TurnId};
 use kamimusuhi_core::time::UtcTimestamp;
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::evidence::EVIDENCE_COLUMNS;
+use crate::evidence::{EVIDENCE_COLUMNS, facts_in};
 use crate::store::SqliteStore;
 
 /// A recorded evaluation row.
@@ -71,10 +70,13 @@ fn proposal_from_row(row: &rusqlite::Row<'_>) -> Result<ImprovementProposal, rus
         target_key: row.get(4)?,
         old_value: row
             .get::<_, Option<String>>(5)?
-            .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null)),
+            .map(|s| serde_json::from_str(&s))
+            .transpose()
+            .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?,
         proposed_value: serde_json::from_str(&row.get::<_, String>(6)?)
-            .unwrap_or(serde_json::Value::Null),
-        evidence_refs: serde_json::from_str(&row.get::<_, String>(7)?).unwrap_or_default(),
+            .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?,
+        evidence_refs: serde_json::from_str(&row.get::<_, String>(7)?)
+            .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?,
         expected_effect: row.get(8)?,
         status: status
             .parse()
@@ -84,7 +86,9 @@ fn proposal_from_row(row: &rusqlite::Row<'_>) -> Result<ImprovementProposal, rus
         rejection_reason: row.get(10)?,
         reflection_id: row
             .get::<_, Option<String>>(11)?
-            .map(|s| s.parse().unwrap_or(EvidenceId::from_u128(0))),
+            .map(|s| s.parse())
+            .transpose()
+            .map_err(|_| rusqlite::Error::InvalidParameterName("bad reflection id".to_owned()))?,
         created_at: UtcTimestamp::from_unix_millis(row.get(12)?),
         decided_at: row
             .get::<_, Option<i64>>(13)?
@@ -131,10 +135,137 @@ fn activation_from_row(row: &rusqlite::Row<'_>) -> Result<Activation, rusqlite::
 const ACTIVATION_COLUMNS: &str = "activation_seq, activation_id, individual_id, proposal_id,
      predecessor_seq, params_json, self_json, rolled_back_at, created_at";
 
+/// Verify the selected branch against the proposals that produced it. A valid
+/// JSON snapshot can still have lost a lesson; parsing alone cannot detect that.
+/// Follow predecessor links rather than sequence ranges so rollback branches
+/// never leak into the active view. The caller holds one SQLite snapshot.
+fn verified_view_at(
+    conn: &Connection,
+    individual_id: IndividualId,
+    mut seq: u64,
+) -> Result<OperativeView, C0Error> {
+    let mut branch = Vec::new();
+    while seq != 0 {
+        let activation = conn
+            .query_row(
+                &format!("SELECT {ACTIVATION_COLUMNS} FROM c0_activations WHERE individual_id = ?1 AND activation_seq = ?2"),
+                params![individual_id.to_string(), seq as i64],
+                activation_from_row,
+            )
+            .optional()
+            .map_err(backend)?
+            .ok_or_else(|| C0Error::CorruptRow(format!("missing activation {seq}")))?;
+        if activation.predecessor_seq >= seq {
+            return Err(C0Error::CorruptRow(format!(
+                "invalid predecessor at activation {seq}"
+            )));
+        }
+        let proposal = conn
+            .query_row(
+                &format!("SELECT {PROPOSAL_COLUMNS} FROM c0_proposals WHERE proposal_id = ?1"),
+                params![activation.proposal_id.to_string()],
+                proposal_from_row,
+            )
+            .optional()
+            .map_err(backend)?
+            .ok_or_else(|| C0Error::CorruptRow(format!("missing proposal at activation {seq}")))?;
+        if proposal.individual_id != individual_id
+            || proposal.status != ProposalStatus::Accepted
+            || proposal.activation_seq != Some(seq)
+        {
+            return Err(C0Error::CorruptRow(format!(
+                "proposal binding mismatch at activation {seq}"
+            )));
+        }
+        seq = activation.predecessor_seq;
+        branch.push((activation, proposal));
+    }
+    let mut view = OperativeView::default();
+    for (activation, proposal) in branch.into_iter().rev() {
+        view = apply_proposal(&view, &proposal);
+        if view != activation.view {
+            return Err(C0Error::CorruptRow(format!(
+                "projection mismatch at activation {}",
+                activation.activation_seq
+            )));
+        }
+    }
+    Ok(view)
+}
+
+/// Intake and activation can be separated by another update or a correction.
+/// Recheck new self claims against the transaction's current view/evidence;
+/// historical branch reconstruction deliberately does not apply new policy.
+fn validate_self_activation(
+    conn: &Connection,
+    proposal: &ImprovementProposal,
+    current: &OperativeView,
+) -> Result<(), C0Error> {
+    if proposal.kind != ImprovementKind::SelfUpdate {
+        return Ok(());
+    }
+    let facts = facts_in(conn, &proposal.evidence_refs).map_err(|e| C0Error::Backend {
+        message: e.to_string(),
+    })?;
+    let mut roots = std::collections::BTreeSet::new();
+    for id in &proposal.evidence_refs {
+        let fact = facts.get(*id).ok_or_else(|| C0Error::MalformedProposal {
+            reason: "self activation cites missing evidence".to_owned(),
+        })?;
+        if fact.individual_id != proposal.individual_id
+            || fact.is_corrected
+            || fact.root_evidence.is_empty()
+        {
+            return Err(C0Error::MalformedProposal {
+                reason: "self activation requires current, individual-owned rooted evidence"
+                    .to_owned(),
+            });
+        }
+        roots.extend(fact.root_evidence.iter().copied());
+    }
+    let roots: Vec<_> = roots.into_iter().collect();
+    let root_facts = facts_in(conn, &roots).map_err(|e| C0Error::Backend {
+        message: e.to_string(),
+    })?;
+    for id in roots {
+        if root_facts
+            .get(id)
+            .is_none_or(|fact| fact.individual_id != proposal.individual_id || fact.is_corrected)
+        {
+            return Err(C0Error::MalformedProposal {
+                reason: "self activation has missing, foreign or corrected roots".to_owned(),
+            });
+        }
+    }
+    let allowed = facts
+        .facts()
+        .iter()
+        .map(|fact| (fact.evidence_id, fact.kind))
+        .collect();
+    let draft = ImprovementDraft {
+        kind: proposal.kind,
+        target: proposal.target.clone(),
+        target_key: proposal.target_key.clone(),
+        proposed_value: proposal.proposed_value.clone(),
+        evidence_refs: proposal.evidence_refs.clone(),
+        expected_effect: proposal.expected_effect.clone(),
+        risk: proposal.risk.clone(),
+        confidence: proposal.confidence,
+    };
+    validate_improvement_draft(&draft, &allowed, current).map_err(|rejection| {
+        C0Error::MalformedProposal {
+            reason: rejection.reason,
+        }
+    })?;
+    Ok(())
+}
+
 impl SqliteStore {
     /// Insert a pending proposal. Returns `false` when the id already exists —
     /// intake is idempotent, and a duplicate submission is not a new proposal.
     pub fn c0_insert_proposal(&self, proposal: &ImprovementProposal) -> Result<bool, C0Error> {
+        let evidence_refs = serde_json::to_string(&proposal.evidence_refs)
+            .map_err(|e| C0Error::CorruptRow(e.to_string()))?;
         let conn = self.conn().map_err(|e| C0Error::Backend {
             message: e.to_string(),
         })?;
@@ -152,8 +283,7 @@ impl SqliteStore {
                     proposal.target_key,
                     proposal.old_value.as_ref().map(|v| v.to_string()),
                     proposal.proposed_value.to_string(),
-                    serde_json::to_string(&proposal.evidence_refs)
-                        .unwrap_or_else(|_| "[]".to_owned()),
+                    evidence_refs,
                     proposal.expected_effect,
                     proposal.status.as_str(),
                     proposal.rejection_reason,
@@ -321,15 +451,34 @@ impl SqliteStore {
     }
 
     /// The operative view in force: the snapshot at the current head, or
-    /// defaults when nothing has ever been activated.
+    /// defaults when nothing has ever been activated. Every snapshot on the
+    /// selected branch must agree with its proposal history. Reading never
+    /// repairs, silently clears, or advances a corrupt projection.
     pub fn c0_view(&self, individual_id: IndividualId) -> Result<OperativeView, C0Error> {
-        let head = self.c0_head(individual_id)?;
-        if head == 0 {
-            return Ok(OperativeView::default());
-        }
-        self.c0_activation(individual_id, head)?
-            .map(|a| a.view)
-            .ok_or_else(|| C0Error::CorruptRow(format!("head points at missing activation {head}")))
+        self.c0_view_with_head(individual_id).map(|(_, view)| view)
+    }
+
+    /// The head and its verified view from the same SQLite read transaction.
+    /// Callers attaching the activation sequence to context must use this pair
+    /// rather than combining two reads across another process's activation.
+    pub fn c0_view_with_head(
+        &self,
+        individual_id: IndividualId,
+    ) -> Result<(u64, OperativeView), C0Error> {
+        let mut conn = self.conn().map_err(|e| C0Error::Backend {
+            message: e.to_string(),
+        })?;
+        let tx = conn.transaction().map_err(backend)?;
+        let head = tx
+            .query_row(
+                "SELECT activation_seq FROM c0_head WHERE individual_id = ?1",
+                params![individual_id.to_string()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(backend)?
+            .unwrap_or(0) as u64;
+        verified_view_at(&tx, individual_id, head).map(|view| (head, view))
     }
 
     /// Apply an accepted proposal as a new activation. One atomic write:
@@ -372,27 +521,8 @@ impl SqliteStore {
             .map_err(backend)?
             .unwrap_or(0) as u64;
 
-        let view_at_head = if head == 0 {
-            OperativeView::default()
-        } else {
-            tx.query_row(
-                "SELECT params_json, self_json FROM c0_activations \
-                 WHERE individual_id = ?1 AND activation_seq = ?2",
-                params![proposal.individual_id.to_string(), head as i64],
-                |row| {
-                    Ok(OperativeView {
-                        params: serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or_default(),
-                        self_model: serde_json::from_str(&row.get::<_, String>(1)?)
-                            .unwrap_or_default(),
-                    })
-                },
-            )
-            .optional()
-            .map_err(backend)?
-            .ok_or_else(|| {
-                C0Error::CorruptRow(format!("head points at missing activation {head}"))
-            })?
-        };
+        let view_at_head = verified_view_at(&tx, proposal.individual_id, head)?;
+        validate_self_activation(&tx, &proposal, &view_at_head)?;
 
         let next_view = apply_proposal(&view_at_head, &proposal);
         // Sequence numbers keep counting even across a rollback: a branch
@@ -416,6 +546,10 @@ impl SqliteStore {
             rolled_back_at: None,
             created_at: now,
         };
+        let params_json = serde_json::to_string(&activation.view.params)
+            .map_err(|e| C0Error::CorruptRow(e.to_string()))?;
+        let self_json = serde_json::to_string(&activation.view.self_model)
+            .map_err(|e| C0Error::CorruptRow(e.to_string()))?;
         tx.execute(
             &format!(
                 "INSERT INTO c0_activations ({ACTIVATION_COLUMNS}) \
@@ -427,9 +561,8 @@ impl SqliteStore {
                 proposal.individual_id.to_string(),
                 proposal_id.to_string(),
                 head as i64,
-                serde_json::to_string(&activation.view.params).unwrap_or_else(|_| "{}".to_owned()),
-                serde_json::to_string(&activation.view.self_model)
-                    .unwrap_or_else(|_| "{}".to_owned()),
+                params_json,
+                self_json,
                 now.unix_millis(),
             ],
         )
@@ -471,6 +604,22 @@ impl SqliteStore {
         )
         .map_err(backend)?;
 
+        // Read back inside the transaction. A trigger or a failed projection
+        // must not acknowledge a successful write or commit a moved head.
+        let stored_head: i64 = tx
+            .query_row(
+                "SELECT activation_seq FROM c0_head WHERE individual_id = ?1",
+                params![proposal.individual_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(backend)?;
+        if stored_head != next_seq as i64
+            || verified_view_at(&tx, proposal.individual_id, next_seq)? != activation.view
+        {
+            return Err(C0Error::CorruptRow(
+                "activation readback mismatch".to_owned(),
+            ));
+        }
         tx.commit().map_err(backend)?;
         Ok(activation)
     }

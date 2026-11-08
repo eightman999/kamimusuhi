@@ -118,6 +118,8 @@ fn memory(runtime: &Runtime, session: &DialogueSession) -> Result<serde_json::Va
         "relationship": records["relationship"],
         "episodic": records["episodic"],
         "self_model": operative.view.self_model,
+        "self_projection": crate::self_context::prepare(runtime, &operative.view.self_model)?.audit,
+        "memory_writeback": crate::memory_writeback::status(runtime)?,
         "operative_params": operative.view.params,
         "pending_proposals": pending
             .iter()

@@ -236,6 +236,14 @@ impl Manifest {
             "compiled_replay_implementation".to_owned(),
             content_digest(include_bytes!("c0/replay.rs")),
         );
+        components.insert(
+            "compiled_self_context_implementation".to_owned(),
+            content_digest(include_bytes!("self_context.rs")),
+        );
+        components.insert(
+            "compiled_memory_writeback_implementation".to_owned(),
+            content_digest(include_bytes!("memory_writeback.rs")),
+        );
         if let Some(provider) = &config.c0.reflector.provider {
             insert(
                 &mut components,

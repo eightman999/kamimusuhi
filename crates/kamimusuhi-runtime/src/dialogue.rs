@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 use kamimusuhi_core::continuity::WriterIdentity;
 use kamimusuhi_core::digest::{content_digest, json_digest};
 use kamimusuhi_core::evidence::{
-    EvidenceKind, EvidenceSource, EvidenceStore, NewEvidence, NewSession, NewTurn, RetentionClass,
+    EvidenceKind, EvidenceLookup, EvidenceRelation, EvidenceSource, EvidenceStore, NewEvidence,
+    NewEvidenceLink, NewSession, NewTurn, RetentionClass,
 };
 use kamimusuhi_core::ids::{EvidenceId, IndividualId, MemoryId, SessionId, TurnId};
 use kamimusuhi_core::memory::MemoryUsage;
@@ -90,6 +91,7 @@ fn decision_evidence(input: &PersonaTurnInput) -> Result<DecisionEvidence, Conve
         "episodic": envelope.episodic,
         "recalled_evidence": envelope.recalled_evidence,
         "durable_self": envelope.durable_self,
+        "continuity_context": envelope.continuity_context,
         "active_policy": envelope.active_policy,
         "observed_runtime": envelope.observed_runtime,
         "mio_observation": envelope.mio_observation,
@@ -171,6 +173,8 @@ pub struct TurnC0 {
     /// Canonical drafts submitted and how many were activated.
     pub drafts_submitted: usize,
     pub drafts_activated: usize,
+    /// Evidence readback and admission counts, not a claim that memory is semantically correct.
+    pub memory_writeback: serde_json::Value,
     /// In-scope records the recall layer skipped because their declared
     /// validity window does not cover this turn.
     pub recall_expired_skipped: usize,
@@ -1242,6 +1246,7 @@ impl DialogueSession {
         // The operative view in force this turn: retrieval knobs, conversation
         // policy and the self model all come from the derived lane's head.
         let operative = c0::operative(runtime)?;
+        let self_context = crate::self_context::prepare(runtime, &operative.view.self_model)?;
         // Genome connection: `cognition.working_memory_span` scales how much
         // conversation history this turn replays. The lane's parameter is
         // untouched; only this turn's window is scaled.
@@ -1250,6 +1255,7 @@ impl DialogueSession {
             .history_messages(operative.view.params.retrieval.history_messages);
         let history = self.history(runtime, history_window)?;
         let turn_id = TurnId::generate(runtime.ids().as_ref());
+        let pending_writeback = crate::memory_writeback::begin(runtime, self.session_id, turn_id)?;
         runtime.store().record_turn(NewTurn {
             turn_id,
             session_id: self.session_id,
@@ -1303,15 +1309,15 @@ impl DialogueSession {
         // from the bounded file beside the store, staged under their own
         // domain so they arrive marked self-authored — never canonical
         // evidence, memory or seed. The lane reads its unscaled param.
-        let self_notes = crate::self_notes::latest(
-            &runtime.paths().dir,
+        let self_notes = crate::self_context::working_notes(
+            runtime,
             operative.view.params.retrieval.self_notes_max,
-        );
+        )?;
         let mut workspace = WorkspaceBuilder::new(self.individual_id, runtime.now())
             .with_continuity(&head)
             .with_current_input(&current_input)
             .with_memories(&memories)
-            .with_self_state(&operative.view.self_model)
+            .with_self_state(&self_context.snapshot)
             .with_active_policy(&operative.view.params, operative.activation_seq)
             .with_recalled_evidence(&recalled_evidence)
             .with_self_notes(&self_notes)
@@ -1412,6 +1418,12 @@ impl DialogueSession {
         if let Some(seed) = runtime.config().persona_seed()? {
             input.envelope = input.envelope.with_seed(seed);
         }
+        input.envelope.continuity_context = Some(crate::self_context::index(
+            runtime,
+            &self.subject,
+            &self_context,
+            Some(turn_id),
+        )?);
         input.envelope.conversation_history = history.clone();
         input.envelope.observed_runtime = Some(observed.clone());
         input.envelope.mio_observation = mio_context.clone();
@@ -1523,7 +1535,7 @@ impl DialogueSession {
             .with_continuity(&head)
             .with_current_input(&input.input)
             .with_memories(&memories)
-            .with_self_state(&operative.view.self_model)
+            .with_self_state(&self_context.snapshot)
             .with_active_policy(&operative.view.params, operative.activation_seq)
             .with_recalled_evidence(&recalled_evidence)
             .with_self_notes(&self_notes)
@@ -1558,6 +1570,7 @@ impl DialogueSession {
             "episodic_memories": input.envelope.episodic,
             "recalled_evidence": input.envelope.recalled_evidence,
             "self_state": input.envelope.durable_self,
+            "continuity_context": input.envelope.continuity_context,
             "active_policy": input.envelope.active_policy,
             "self_notes": input.envelope.self_notes,
             "open_threads": self.open_threads(runtime, &operative.view)?,
@@ -2061,7 +2074,33 @@ impl DialogueSession {
         };
         emit(&reply)
             .map_err(|error| RuntimeError::Usage(format!("response output failed: {error}")))?;
-        let emitted_evidence_id = self.append(
+        // Conservatively connect new utterances to the retained material the
+        // model was shown. Later source corrections must also retire echoes.
+        let mut roots = BTreeSet::from([input_evidence_id]);
+        roots.extend(history.iter().map(|message| message.evidence_id));
+        for note in &self_notes {
+            for reference in &note.evidence_refs {
+                if let Ok(id) = reference
+                    .strip_prefix("evidence:")
+                    .unwrap_or(reference)
+                    .parse::<EvidenceId>()
+                    && runtime
+                        .store()
+                        .get(id)?
+                        .is_some_and(|record| record.individual_id == self.individual_id)
+                {
+                    roots.insert(id);
+                }
+            }
+        }
+        for entry in self_context.snapshot.fields.values().flatten() {
+            roots.extend(entry.evidence_refs.iter().copied());
+        }
+        for memory in &memories {
+            roots.extend(memory.record.evidence_refs.iter().copied());
+        }
+        roots.extend(recalled_evidence.iter().map(|r| r.evidence_id));
+        let emitted_evidence_id = self.append_with_sources(
             runtime,
             turn_id,
             EvidenceKind::AgentUtterance,
@@ -2071,6 +2110,7 @@ impl DialogueSession {
                 "backend": reply.persona_backend, "delivery": "output_surface_accepted",
                 "human_acknowledgement": false
             }),
+            &roots,
         )?;
         runtime.trace().record_with(
             TraceEventKind::FinalExpression,
@@ -2107,13 +2147,23 @@ impl DialogueSession {
                 evaluator: kamimusuhi_core::c0::EVALUATOR_KIND.to_owned(),
                 created_at: runtime.now(),
             })?;
-        let _ = emitted_evidence_id;
+        let writeback = crate::memory_writeback::finish(
+            runtime,
+            pending_writeback,
+            input_evidence_id,
+            generated_evidence_id,
+            emitted_evidence_id,
+            &draft_outcomes,
+        )?;
+        workspace_context["memory_writeback"] = writeback.clone();
+        self.last_context = Some(workspace_context.clone());
         Ok(DialogueReply {
             c0: Some(TurnC0 {
                 activation_seq: operative.activation_seq,
                 memories_surfaced: metrics.memories_surfaced,
                 drafts_submitted: draft_outcomes.len(),
                 drafts_activated,
+                memory_writeback: writeback,
                 recall_expired_skipped: recall_stats.expired_skipped,
                 recall_link_hits: recall_stats.link_hits,
                 recall_knot_hits: recall_stats.knot_hits,
@@ -2163,9 +2213,18 @@ impl DialogueSession {
             &self.source_id,
             limit.clamp(1, 128),
         )?;
+        let facts = runtime
+            .store()
+            .facts(&records.iter().map(|r| r.evidence_id).collect::<Vec<_>>())?;
         let mut bytes = 0;
         let mut messages = Vec::new();
         for record in records.into_iter().rev() {
+            if facts
+                .get(record.evidence_id)
+                .is_none_or(|f| f.is_corrected || f.root_evidence.is_empty())
+            {
+                continue;
+            }
             let Some(text) = record.payload.get("text").and_then(|v| v.as_str()) else {
                 continue;
             };
@@ -2195,23 +2254,53 @@ impl DialogueSession {
         origin_class: OriginClass,
         payload: serde_json::Value,
     ) -> Result<EvidenceId, RuntimeError> {
-        let evidence_id = EvidenceId::generate(runtime.ids().as_ref());
-        let digest = json_digest(&payload);
-        runtime.store().append(NewEvidence {
-            evidence_id,
-            individual_id: self.individual_id,
-            session_id: Some(self.session_id),
-            turn_id: Some(turn_id),
+        self.append_with_sources(
+            runtime,
+            turn_id,
             kind,
             origin_class,
             payload,
-            source: EvidenceSource {
-                source_id: Some(self.source_id.clone()),
-                source_sequence: None,
-                content_digest: Some(digest.clone()),
+            &BTreeSet::new(),
+        )
+    }
+
+    fn append_with_sources(
+        &self,
+        runtime: &Runtime,
+        turn_id: TurnId,
+        kind: EvidenceKind,
+        origin_class: OriginClass,
+        payload: serde_json::Value,
+        roots: &BTreeSet<EvidenceId>,
+    ) -> Result<EvidenceId, RuntimeError> {
+        let evidence_id = EvidenceId::generate(runtime.ids().as_ref());
+        let digest = json_digest(&payload);
+        let links = roots
+            .iter()
+            .map(|root| NewEvidenceLink {
+                from_evidence_id: evidence_id,
+                to_evidence_id: *root,
+                relation: EvidenceRelation::DerivedFrom,
+            })
+            .collect::<Vec<_>>();
+        runtime.store().append_with_links(
+            NewEvidence {
+                evidence_id,
+                individual_id: self.individual_id,
+                session_id: Some(self.session_id),
+                turn_id: Some(turn_id),
+                kind,
+                origin_class,
+                payload,
+                source: EvidenceSource {
+                    source_id: Some(self.source_id.clone()),
+                    source_sequence: None,
+                    content_digest: Some(digest.clone()),
+                },
+                retention_class: RetentionClass::Standard,
             },
-            retention_class: RetentionClass::Standard,
-        })?;
+            &links,
+        )?;
         runtime.trace().record_with(
             TraceEventKind::EvidenceRecorded,
             TraceCorrelation {

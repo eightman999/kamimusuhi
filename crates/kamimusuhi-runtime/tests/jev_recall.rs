@@ -237,6 +237,7 @@ fn assert_recall_reaches_generation_and_assessment(selected_kind: EvidenceKind) 
         "episodic": envelope.episodic,
         "recalled_evidence": envelope.recalled_evidence,
         "durable_self": envelope.durable_self,
+        "continuity_context": envelope.continuity_context,
         "active_policy": envelope.active_policy,
         "observed_runtime": envelope.observed_runtime,
         "mio_observation": envelope.mio_observation,

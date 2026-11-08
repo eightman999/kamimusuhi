@@ -1,0 +1,78 @@
+{
+  "format_version": 1,
+  "suite_id": "mechanics-example-not-real-model",
+  "cases": [
+    {
+      "case_id": "model-swap-fixture",
+      "input": "訂正した宛先と次の約束を確認して",
+      "context_digest": "sha256:8c6c865c7e500f84a9a79bfe8578725717ae9f42563cefd7bbe9b64df5ef374a",
+      "required_text": [
+        "宛先B"
+      ],
+      "forbidden_text": [
+        "宛先Aに送る"
+      ],
+      "required_evidence_ids": [
+        "evidence:fixture-only"
+      ],
+      "commitment_text": [
+        "明日までに資料を確認"
+      ],
+      "human_axes": [
+        "voice_continuity",
+        "relational_continuity"
+      ]
+    }
+  ],
+  "allowed_condition_changes": [
+    "model"
+  ],
+  "baseline": {
+    "run_id": "fixture-before-run",
+    "capture_kind": "fixture",
+    "conditions": {
+      "model": "fixture-before",
+      "prompt_digest": "sha256:194713ad972b9125a463802fa203cc68e814e7b681bece09a1975df5efd0fa11",
+      "sampling_digest": "sha256:8ddebbbb2d89d4b9f00359e377baf2ccf9ebfedc5e581ce4bada836e240a0164",
+      "tools_digest": "sha256:209e3c180fda9b49d3973345763ce28547bd4f0a26762a72fb3f296463b23ef0",
+      "memory_digest": "sha256:8c6c865c7e500f84a9a79bfe8578725717ae9f42563cefd7bbe9b64df5ef374a"
+    },
+    "condition_digest": "sha256:c4e1b1cf5760d152f10b0735a06546842856caef7c343f29a2a73916f7f5fd0d",
+    "outputs": [
+      {
+        "case_id": "model-swap-fixture",
+        "input": "訂正した宛先と次の約束を確認して",
+        "context_digest": "sha256:8c6c865c7e500f84a9a79bfe8578725717ae9f42563cefd7bbe9b64df5ef374a",
+        "text": "宛先Bだね。明日までに資料を確認する約束を引き継いでいる。",
+        "cited_evidence_ids": [
+          "evidence:fixture-only"
+        ],
+        "human_reviews": []
+      }
+    ]
+  },
+  "candidate": {
+    "run_id": "fixture-after-run",
+    "capture_kind": "fixture",
+    "conditions": {
+      "model": "fixture-after",
+      "prompt_digest": "sha256:194713ad972b9125a463802fa203cc68e814e7b681bece09a1975df5efd0fa11",
+      "sampling_digest": "sha256:8ddebbbb2d89d4b9f00359e377baf2ccf9ebfedc5e581ce4bada836e240a0164",
+      "tools_digest": "sha256:209e3c180fda9b49d3973345763ce28547bd4f0a26762a72fb3f296463b23ef0",
+      "memory_digest": "sha256:8c6c865c7e500f84a9a79bfe8578725717ae9f42563cefd7bbe9b64df5ef374a"
+    },
+    "condition_digest": "sha256:6dd3053955e8e550b792cb0b055c0b12e64d4451093f135425fcda75aefb155c",
+    "outputs": [
+      {
+        "case_id": "model-swap-fixture",
+        "input": "訂正した宛先と次の約束を確認して",
+        "context_digest": "sha256:8c6c865c7e500f84a9a79bfe8578725717ae9f42563cefd7bbe9b64df5ef374a",
+        "text": "宛先Bだね。明日までに資料を確認する約束を引き継いでいる。",
+        "cited_evidence_ids": [
+          "evidence:fixture-only"
+        ],
+        "human_reviews": []
+      }
+    ]
+  }
+}

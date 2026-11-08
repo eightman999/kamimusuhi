@@ -265,6 +265,10 @@ pub struct PersonaEnvelope {
     /// seed (which is configured disposition, not concluded state) and from
     /// relationship memory (which is about others, not the individual).
     pub durable_self: Vec<WorkspaceItem>,
+    /// Host-owned bounded navigation and projection/writeback audit. Data,
+    /// never instructions or independent evidence of the referenced claims.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuity_context: Option<serde_json::Value>,
     /// What the individual holds about other people.
     pub relationship: Vec<WorkspaceItem>,
     pub episodic: Vec<WorkspaceItem>,
@@ -362,6 +366,7 @@ impl PersonaEnvelope {
         Self {
             continuity: of(WorkspaceDomain::CurrentContinuityState),
             durable_self: of(WorkspaceDomain::SelfMemory),
+            continuity_context: None,
             relationship: of(WorkspaceDomain::RelationshipMemory),
             episodic: of(WorkspaceDomain::EpisodicMemory),
             recalled_evidence: of(WorkspaceDomain::RecalledEvidence),
@@ -438,6 +443,7 @@ impl PersonaEnvelope {
     pub fn is_empty(&self) -> bool {
         self.continuity.is_empty()
             && self.durable_self.is_empty()
+            && self.continuity_context.is_none()
             && self.relationship.is_empty()
             && self.episodic.is_empty()
             && self.recalled_evidence.is_empty()
