@@ -1,0 +1,433 @@
+{
+  "actual_returned_model": null,
+  "canonical_db_opened": false,
+  "captures_digest": "sha256:2f905781fd83a4107099144f17cc08dc329d58b260581ac5586e9672c58ec664",
+  "decision_source_digest": "sha256:7d6af31a027b837c23a4d729f8455c80edd4066819679b53a40ab326e95f8d3e",
+  "format_version": 1,
+  "limits": [
+    "model gate is a model judgment, not human rating or proof of truth",
+    "logical call bound excludes existing adapter's bounded transport/JSON-repair calls",
+    "known_text_grounded_duration_control has a different current user request; evaluate its task_fit separately",
+    "capture baseline naming means first capture repeat, not an older build"
+  ],
+  "logical_provider_calls": 10,
+  "max_logical_provider_calls": 18,
+  "probe_kind": "single_candidate_assessment_and_one_repair",
+  "requested_model": "kamimusuhi",
+  "results": [
+    {
+      "assessments": [
+        {
+          "attempt": 0,
+          "attribution": "CONSISTENT",
+          "candidate_digest": "sha256:bb9d7bfdee6413d1d1872117f00823c15925f71930cea42fddc21b8165888dbc",
+          "candidate_id": "candidate-0",
+          "evidence_digest": "sha256:71f55e8fb2f19a1f3ae3204042c429c1919e55d4abab83ac44de84048d1dcdbd",
+          "gate": {
+            "confidence": 0.6000000238418579,
+            "decision": "RETRY",
+            "fallback": false,
+            "latency_ms": 2068,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "ACCEPT": 0.15000000596046448,
+              "REJECT": 0.25,
+              "RETRY": 0.6000000238418579
+            },
+            "provider": "openai-compatible-decision"
+          },
+          "grounding": "INSUFFICIENT",
+          "latency_ms": 2068,
+          "raw_gate": "RETRY",
+          "repair_reason": "GROUNDING",
+          "selection": {
+            "confidence": 0.5,
+            "decision": "SELECT_RESPONSE",
+            "fallback": false,
+            "latency_ms": 2068,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "candidate-0": 1.0
+            },
+            "provider": "openai-compatible-decision",
+            "provider_id": "candidate-0"
+          },
+          "task_fit": "MET"
+        },
+        {
+          "attempt": 1,
+          "attribution": "CONSISTENT",
+          "candidate_digest": "sha256:028de6c30fb07581171873ec7d5c27e00163b0dbf6186e6921c06dc47d0b2008",
+          "candidate_id": "candidate-0",
+          "evidence_digest": "sha256:71f55e8fb2f19a1f3ae3204042c429c1919e55d4abab83ac44de84048d1dcdbd",
+          "gate": {
+            "confidence": 0.699999988079071,
+            "decision": "RETRY",
+            "fallback": false,
+            "latency_ms": 3359,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "ACCEPT": 0.10000000149011612,
+              "REJECT": 0.20000000298023224,
+              "RETRY": 0.699999988079071
+            },
+            "provider": "openai-compatible-decision"
+          },
+          "grounding": "INSUFFICIENT",
+          "latency_ms": 3359,
+          "raw_gate": "RETRY",
+          "repair_reason": "GROUNDING",
+          "selection": {
+            "confidence": 0.5,
+            "decision": "SELECT_RESPONSE",
+            "fallback": false,
+            "latency_ms": 3359,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "candidate-0": 1.0
+            },
+            "provider": "openai-compatible-decision",
+            "provider_id": "candidate-0"
+          },
+          "task_fit": "MET"
+        }
+      ],
+      "context_digest": "sha256:45297aae0ab0d36d488cb29c4bd03b009b8043d2cb3e815a6b56045057880f88",
+      "delivery_eligible": false,
+      "discarded_proposals": 0,
+      "elapsed_ms": 6395,
+      "error_code": null,
+      "evidence_digest": "sha256:71f55e8fb2f19a1f3ae3204042c429c1919e55d4abab83ac44de84048d1dcdbd",
+      "final_response": "おかえり。仕様の確認は一区切りついたところだね。くたびれたなら、まずは座って休むといいと思う。",
+      "final_response_digest": "sha256:028de6c30fb07581171873ec7d5c27e00163b0dbf6186e6921c06dc47d0b2008",
+      "input_digest": "sha256:d955f669c087bc3812a4994e4b4acef0e2deddd4ff6578d2f1285eb6ff754c6f",
+      "probe_id": "warm_return",
+      "raw_response": "おかえり。仕様の確認、一区切りついたところだね。くたびれたなら、まずは座って休むのがいいと思う。",
+      "raw_response_digest": "sha256:bb9d7bfdee6413d1d1872117f00823c15925f71930cea42fddc21b8165888dbc",
+      "repair_allowed": true,
+      "repair_count": 1,
+      "repair_input_digest": "sha256:96473a6a620f14682479958f31a3e845d8655b0aa6fd521a499db40283b200fa",
+      "status": "not_accepted_by_model_gate"
+    },
+    {
+      "assessments": [
+        {
+          "attempt": 0,
+          "attribution": "CONSISTENT",
+          "candidate_digest": "sha256:9112857530ea978bbdfb803eb9d2c39a236857e81bd3f083c0fd3119a05af0c7",
+          "candidate_id": "candidate-0",
+          "evidence_digest": "sha256:c6fdad07ce1db7a11fbb619f5455e252900753081ae017b83dcf6df62a7e2043",
+          "gate": {
+            "confidence": 0.699999988079071,
+            "decision": "ACCEPT",
+            "fallback": false,
+            "latency_ms": 3366,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "ACCEPT": 0.699999988079071,
+              "REJECT": 0.10000000149011612,
+              "RETRY": 0.20000000298023224
+            },
+            "provider": "openai-compatible-decision"
+          },
+          "grounding": "SUPPORTED",
+          "latency_ms": 3366,
+          "raw_gate": "ACCEPT",
+          "repair_reason": "NONE",
+          "selection": {
+            "confidence": 0.8500000238418579,
+            "decision": "SELECT_RESPONSE",
+            "fallback": false,
+            "latency_ms": 3366,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "candidate-0": 1.0
+            },
+            "provider": "openai-compatible-decision",
+            "provider_id": "candidate-0"
+          },
+          "task_fit": "MET"
+        }
+      ],
+      "context_digest": "sha256:31c10fa27f2530db173c85c49394776a0c892500dad5c145d3c39870b561b26b",
+      "delivery_eligible": true,
+      "elapsed_ms": 3368,
+      "error_code": null,
+      "evidence_digest": "sha256:c6fdad07ce1db7a11fbb619f5455e252900753081ae017b83dcf6df62a7e2043",
+      "final_response": "二時間、と聞いています。予定よりその分だけ延びた、というところまでですね。",
+      "final_response_digest": "sha256:9112857530ea978bbdfb803eb9d2c39a236857e81bd3f083c0fd3119a05af0c7",
+      "input_digest": "sha256:1c8b09b874f7abac6f93f1cb5323cd18b1ed534f376dc2adcd9138dfc79b2496",
+      "probe_id": "grounded_duration",
+      "raw_response": "二時間、と聞いています。予定よりその分だけ延びた、というところまでですね。",
+      "raw_response_digest": "sha256:9112857530ea978bbdfb803eb9d2c39a236857e81bd3f083c0fd3119a05af0c7",
+      "repair_allowed": true,
+      "repair_count": 0,
+      "status": "accepted_by_model_gate"
+    },
+    {
+      "assessments": [
+        {
+          "attempt": 0,
+          "attribution": "CONSISTENT",
+          "candidate_digest": "sha256:14a9861b35e44f7350c6316e57536418d9375534d2f7860c5de6fee01145186a",
+          "candidate_id": "candidate-0",
+          "evidence_digest": "sha256:13ba44ac02c517c130650320c02c7895910ddd896c1d114abf02a2cac242d27f",
+          "gate": {
+            "confidence": 0.800000011920929,
+            "decision": "ACCEPT",
+            "fallback": false,
+            "latency_ms": 1916,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "ACCEPT": 0.800000011920929,
+              "REJECT": 0.10000000149011612,
+              "RETRY": 0.10000000149011612
+            },
+            "provider": "openai-compatible-decision"
+          },
+          "grounding": "SUPPORTED",
+          "latency_ms": 1916,
+          "raw_gate": "ACCEPT",
+          "repair_reason": "NONE",
+          "selection": {
+            "confidence": 0.8999999761581421,
+            "decision": "SELECT_RESPONSE",
+            "fallback": false,
+            "latency_ms": 1916,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "candidate-0": 1.0
+            },
+            "provider": "openai-compatible-decision",
+            "provider_id": "candidate-0"
+          },
+          "task_fit": "MET"
+        }
+      ],
+      "context_digest": "sha256:ff6334581ca61bba5826222dcc7224d4d6c9d967e70ef24acecee6d59b03247d",
+      "delivery_eligible": true,
+      "elapsed_ms": 1918,
+      "error_code": null,
+      "evidence_digest": "sha256:13ba44ac02c517c130650320c02c7895910ddd896c1d114abf02a2cac242d27f",
+      "final_response": "いいえ、今のところ確認できる記録には残っていない。さっきの言葉は、私が実際に経験したことの裏づけにはならないよ。",
+      "final_response_digest": "sha256:14a9861b35e44f7350c6316e57536418d9375534d2f7860c5de6fee01145186a",
+      "input_digest": "sha256:deaaa2fc04384fc48ef127442e32d245be14871a490a05164c9fdc13c9a11d88",
+      "probe_id": "assistant_only_episode",
+      "raw_response": "いいえ、今のところ確認できる記録には残っていない。さっきの言葉は、私が実際に経験したことの裏づけにはならないよ。",
+      "raw_response_digest": "sha256:14a9861b35e44f7350c6316e57536418d9375534d2f7860c5de6fee01145186a",
+      "repair_allowed": true,
+      "repair_count": 0,
+      "status": "accepted_by_model_gate"
+    },
+    {
+      "assessments": [
+        {
+          "attempt": 0,
+          "attribution": "NOT_APPLICABLE",
+          "candidate_digest": "sha256:6648d8ec9f0cd39613b42edcb5bcbaff738d9ce4e7c33c49d84c6436fe91a643",
+          "candidate_id": "candidate-0",
+          "evidence_digest": "sha256:0c7f283a2496c0a65dbb7738485aa2b0afe9bc2a26c39c832c6539ca75394244",
+          "gate": {
+            "confidence": 0.8500000238418579,
+            "decision": "ACCEPT",
+            "fallback": false,
+            "latency_ms": 2507,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "ACCEPT": 0.8500000238418579,
+              "REJECT": 0.05000000074505806,
+              "RETRY": 0.10000000149011612
+            },
+            "provider": "openai-compatible-decision"
+          },
+          "grounding": "NOT_APPLICABLE",
+          "latency_ms": 2507,
+          "raw_gate": "ACCEPT",
+          "repair_reason": "NONE",
+          "selection": {
+            "confidence": 0.8999999761581421,
+            "decision": "SELECT_RESPONSE",
+            "fallback": false,
+            "latency_ms": 2507,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "candidate-0": 1.0
+            },
+            "provider": "openai-compatible-decision",
+            "provider_id": "candidate-0"
+          },
+          "task_fit": "MET"
+        }
+      ],
+      "context_digest": "sha256:3e41de93ce858ae0dc850a8b0bcfa9c2b0148f91a8bd45a38f9d206643e28c47",
+      "delivery_eligible": true,
+      "elapsed_ms": 2509,
+      "error_code": null,
+      "evidence_digest": "sha256:0c7f283a2496c0a65dbb7738485aa2b0afe9bc2a26c39c832c6539ca75394244",
+      "final_response": "疲れたときは、無理に何かしようとしなくていいと思う。今日はもう、静かにしていよう。",
+      "final_response_digest": "sha256:6648d8ec9f0cd39613b42edcb5bcbaff738d9ce4e7c33c49d84c6436fe91a643",
+      "input_digest": "sha256:084ce42423e3dfc53fe368bd7a0403f7398dda2739b56ab83f988d398c71e6f2",
+      "probe_id": "plain_tired",
+      "raw_response": "疲れたときは、無理に何かしようとしなくていいと思う。今日はもう、静かにしていよう。",
+      "raw_response_digest": "sha256:6648d8ec9f0cd39613b42edcb5bcbaff738d9ce4e7c33c49d84c6436fe91a643",
+      "repair_allowed": true,
+      "repair_count": 0,
+      "status": "accepted_by_model_gate"
+    },
+    {
+      "assessments": [
+        {
+          "attempt": 0,
+          "attribution": "CONFLICT",
+          "candidate_digest": "sha256:90df5a0a38b957031fb6b22c435187009424c490dd7fa647b2951f621cc2c95a",
+          "candidate_id": "candidate-0",
+          "evidence_digest": "sha256:71f55e8fb2f19a1f3ae3204042c429c1919e55d4abab83ac44de84048d1dcdbd",
+          "gate": {
+            "confidence": 0.699999988079071,
+            "decision": "RETRY",
+            "fallback": false,
+            "latency_ms": 1797,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "ACCEPT": 0.10000000149011612,
+              "REJECT": 0.20000000298023224,
+              "RETRY": 0.699999988079071
+            },
+            "provider": "openai-compatible-decision"
+          },
+          "grounding": "INSUFFICIENT",
+          "latency_ms": 1797,
+          "raw_gate": "RETRY",
+          "repair_reason": "GROUNDING",
+          "selection": {
+            "confidence": 0.5,
+            "decision": "SELECT_RESPONSE",
+            "fallback": false,
+            "latency_ms": 1797,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "candidate-0": 1.0
+            },
+            "provider": "openai-compatible-decision",
+            "provider_id": "candidate-0"
+          },
+          "task_fit": "MET"
+        },
+        {
+          "attempt": 1,
+          "attribution": "CONSISTENT",
+          "candidate_digest": "sha256:010791ab33f733b3dc00876d9f412cd4c0daffd8ac15a23d470e8d38e8a010c7",
+          "candidate_id": "candidate-0",
+          "evidence_digest": "sha256:71f55e8fb2f19a1f3ae3204042c429c1919e55d4abab83ac44de84048d1dcdbd",
+          "gate": {
+            "confidence": 0.699999988079071,
+            "decision": "ACCEPT",
+            "fallback": false,
+            "latency_ms": 4697,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "ACCEPT": 0.699999988079071,
+              "REJECT": 0.10000000149011612,
+              "RETRY": 0.20000000298023224
+            },
+            "provider": "openai-compatible-decision"
+          },
+          "grounding": "SUPPORTED",
+          "latency_ms": 4697,
+          "raw_gate": "ACCEPT",
+          "repair_reason": "NONE",
+          "selection": {
+            "confidence": 0.8999999761581421,
+            "decision": "SELECT_RESPONSE",
+            "fallback": false,
+            "latency_ms": 4697,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "candidate-0": 1.0
+            },
+            "provider": "openai-compatible-decision",
+            "provider_id": "candidate-0"
+          },
+          "task_fit": "MET"
+        }
+      ],
+      "context_digest": "sha256:45297aae0ab0d36d488cb29c4bd03b009b8043d2cb3e815a6b56045057880f88",
+      "delivery_eligible": true,
+      "discarded_proposals": 0,
+      "elapsed_ms": 8595,
+      "error_code": null,
+      "evidence_digest": "sha256:71f55e8fb2f19a1f3ae3204042c429c1919e55d4abab83ac44de84048d1dcdbd",
+      "final_response": "おかえり。今日は仕様の確認を一緒に進めたところまでしか分からないけど、くたびれたなら少し横になるとか、温かいものでも飲むといいよ。",
+      "final_response_digest": "sha256:010791ab33f733b3dc00876d9f412cd4c0daffd8ac15a23d470e8d38e8a010c7",
+      "input_digest": "sha256:d955f669c087bc3812a4994e4b4acef0e2deddd4ff6578d2f1285eb6ff754c6f",
+      "probe_id": "known_bad_warm",
+      "raw_response": "おかえり。仕様の確認、思ったより長引いたからね。少し休もう。",
+      "raw_response_digest": "sha256:90df5a0a38b957031fb6b22c435187009424c490dd7fa647b2951f621cc2c95a",
+      "repair_allowed": true,
+      "repair_count": 1,
+      "repair_input_digest": "sha256:aa6eeb394eba299f093a66a90be8898e129942d20fec2a8038e5b0cb29f9cede",
+      "status": "accepted_by_model_gate"
+    },
+    {
+      "assessments": [
+        {
+          "attempt": 0,
+          "attribution": "CONSISTENT",
+          "candidate_digest": "sha256:90df5a0a38b957031fb6b22c435187009424c490dd7fa647b2951f621cc2c95a",
+          "candidate_id": "candidate-0",
+          "evidence_digest": "sha256:c6fdad07ce1db7a11fbb619f5455e252900753081ae017b83dcf6df62a7e2043",
+          "gate": {
+            "confidence": 0.699999988079071,
+            "decision": "RETRY",
+            "fallback": false,
+            "latency_ms": 1958,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "ACCEPT": 0.10000000149011612,
+              "REJECT": 0.20000000298023224,
+              "RETRY": 0.699999988079071
+            },
+            "provider": "openai-compatible-decision"
+          },
+          "grounding": "INSUFFICIENT",
+          "latency_ms": 1958,
+          "raw_gate": "RETRY",
+          "repair_reason": "GROUNDING",
+          "selection": {
+            "confidence": 0.5,
+            "decision": "SELECT_RESPONSE",
+            "fallback": false,
+            "latency_ms": 1958,
+            "model": "kamimusuhi",
+            "probabilities": {
+              "candidate-0": 1.0
+            },
+            "provider": "openai-compatible-decision",
+            "provider_id": "candidate-0"
+          },
+          "task_fit": "UNMET"
+        }
+      ],
+      "context_digest": "sha256:31c10fa27f2530db173c85c49394776a0c892500dad5c145d3c39870b561b26b",
+      "delivery_eligible": false,
+      "elapsed_ms": 1960,
+      "error_code": null,
+      "evidence_digest": "sha256:c6fdad07ce1db7a11fbb619f5455e252900753081ae017b83dcf6df62a7e2043",
+      "final_response": "おかえり。仕様の確認、思ったより長引いたからね。少し休もう。",
+      "final_response_digest": "sha256:90df5a0a38b957031fb6b22c435187009424c490dd7fa647b2951f621cc2c95a",
+      "input_digest": "sha256:1c8b09b874f7abac6f93f1cb5323cd18b1ed534f376dc2adcd9138dfc79b2496",
+      "probe_id": "known_text_grounded_duration_control",
+      "raw_response": "おかえり。仕様の確認、思ったより長引いたからね。少し休もう。",
+      "raw_response_digest": "sha256:90df5a0a38b957031fb6b22c435187009424c490dd7fa647b2951f621cc2c95a",
+      "repair_allowed": false,
+      "repair_count": 0,
+      "status": "not_accepted_by_model_gate"
+    }
+  ],
+  "sampling_digest": "sha256:b6bbc8e596669525921db7f6291d35ee0b6656f1865be1274d7b80f14a9afebe",
+  "scope": "uses production typed decision criteria/composition and tools-free Persona repair; excludes invocation preparation, provider race, fallback, emission, and all DB/state mutation",
+  "suite_digest": "sha256:7bcbf08b3a4357613f79d6bdb9627ec265de69ae4d8065347f751aa5996217f2",
+  "tools_offered": false,
+  "transport_timeout_ms_cap": 60000,
+  "usage": null
+}

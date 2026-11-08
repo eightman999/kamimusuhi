@@ -1,0 +1,237 @@
+{
+  "format_version": 1,
+  "files": [
+    {
+      "path": "raw/before-retry.json",
+      "sha256": "4ba5e9829235df0762355f022311efbde4f34fd00bfe0aacad2f6b8f98873428",
+      "source_name": "before-retry.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "raw/before-retry.meta.json",
+      "sha256": "9cf7b4cc383f4123c81cbe8967b51656937d60da4b0acf2e0f80a243ca1780c3",
+      "source_name": "before-retry.meta.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "raw/after.json",
+      "sha256": "d1eaa23792f53ec77c4c2df46519a5973dbdc9c7b66972e0766ba4254f741e6f",
+      "source_name": "after.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "raw/after.meta.json",
+      "sha256": "52f3e654682ebc452cdfe0f7f186b0a1bf92a9b9b359f68af83c2227df6ae1be",
+      "source_name": "after.meta.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "raw/after-v2-retry.json",
+      "sha256": "7aab059aa5f19de746f7e7ffcda7bcccce0140b25424b9555c011883a5baeda4",
+      "source_name": "after-v2-retry.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "raw/after-v2-retry.meta.json",
+      "sha256": "7dd2ab76e684a06ae63ce2bb3c9e92d77f1698b4d6dbc7e74534d935468e6b3d",
+      "source_name": "after-v2-retry.meta.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "raw/after-v3.json",
+      "sha256": "74b4f63d617890307efa2daccacb669ef185dbc5fe80115e37e4577a7671b112",
+      "source_name": "after-v3.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "raw/after-v3.meta.json",
+      "sha256": "f3080b73cfd180206d5b8ada1516615b7d3a49582557a7876b103ebf92a4b99b",
+      "source_name": "after-v3.meta.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "raw/plain-diagnostic-output.json",
+      "sha256": "42ff8ab24b954f7752a450a4e573a2a9d823565daf7b58026ef4ca258f9a57fa",
+      "source_name": "plain-diagnostic-output.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "raw/plain-diagnostic-meta.json",
+      "sha256": "27bceaaa55116192f23e4edac17addd53e46d651ac3dc2e781704088e3151e5a",
+      "source_name": "plain-diagnostic-meta.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "probes/grounding-probe.json",
+      "sha256": "6225a3f0ef05df2469279dc18489d47e7f9fa208b1301851d55c4230f496317d",
+      "source_name": "grounding-probe.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "probes/grounding-probe-v1.json",
+      "sha256": "6225a3f0ef05df2469279dc18489d47e7f9fa208b1301851d55c4230f496317d",
+      "source_name": "grounding-probe-v1.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "probes/grounding-probe-v2.json",
+      "sha256": "2ee142195b4a3d4f33f597b0a67c1e9e1e1cbfa615bf6db1d34a238e89ec4aac",
+      "source_name": "grounding-probe-v2.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "probes/guarded-after_v3-baseline.json",
+      "sha256": "2424f157097fc27bb52a4174bb0ce6a2c7b984ed0698da77052325b1f1891d13",
+      "source_name": "guarded-after_v3-baseline.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "probes/guarded-after_v3-candidate.json",
+      "sha256": "60d0ee695ce0c833c8807aad32401f759219d41abac338a59e9786fdaa3b1176",
+      "source_name": "guarded-after_v3-candidate.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "probes/guarded-before-baseline.json",
+      "sha256": "9fcdcbce5e94860cf2195c36ee0d8a30cd2bc3910c03092110ea643a289c2d30",
+      "source_name": "guarded-before-baseline.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "probes/guarded-before-candidate.json",
+      "sha256": "9e82c3bc5b46bdb857a4c57f4417490e17baec369339f3aec7250819e2a97a49",
+      "source_name": "guarded-before-candidate.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "probes/guarded-final-baseline.json",
+      "sha256": "89c1d036ae978d1dbcf60575ab3378610b9f48262a96a5544a3263265fc20a79",
+      "source_name": "guarded-final-baseline.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "probes/guarded-final-candidate.json",
+      "sha256": "21b9bfc92ebe353fee549e845531475fd3ffa52de6c4700c3fcc730318131357",
+      "source_name": "guarded-final-candidate.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "blind/blind-final-map.json",
+      "sha256": "4775ba0411f2bc19fd8f1eea67563d3890f781e6dc8cc5748ebc7ad21564a76b",
+      "source_name": "blind-final-map.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "blind/blind-final-samples.json",
+      "sha256": "16bfd8aa3217f5a57d4f77acc46913e62f955811c26d794501d6b05c61fed257",
+      "source_name": "blind-final-samples.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "blind/blind-guarded-map.json",
+      "sha256": "1fdee853de49a3b737af1f8a9558814fd0b14a8375a560906d511709fbf9873e",
+      "source_name": "blind-guarded-map.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "blind/blind-guarded-samples.json",
+      "sha256": "4f790b15ac18d52c0cc25555a8a71c7769d67e48451d47d4f05b275bd5a72703",
+      "source_name": "blind-guarded-samples.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "blind/blind-map.json",
+      "sha256": "1b799cab404f324d3ff912e2a71c32588c7fa73e033341ffc0f5273dac2e5d8a",
+      "source_name": "blind-map.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "blind/blind-samples.json",
+      "sha256": "2c197897af851d48a897508be357a09bbd72f13934b67e994c4973dcd42a3359",
+      "source_name": "blind-samples.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "blind/blind-v2-map.json",
+      "sha256": "f2a1356b567b71f3ebafb8074b5b575ccf796987e3cafb0a84c21b3c1125455d",
+      "source_name": "blind-v2-map.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "blind/blind-v2-samples.json",
+      "sha256": "cc0215303419200b13af6a298a1c3538331b47c6a745c15a043db92b64ddec63",
+      "source_name": "blind-v2-samples.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "blind/review-a.json",
+      "sha256": "1c3e68e8742f27ea41dbbff19390158e7625a0b30de47eacd5703dcaf7d972aa",
+      "source_name": "review-a.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "blind/review-b.json",
+      "sha256": "66f3b3f4c335dfd29565e938e17c03f0c7f03a289ad9ddd33f8fff26fc3612fc",
+      "source_name": "review-b.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "blind/review-c.json",
+      "sha256": "4f07a24a7295aecc0342b50c5588d4369c539d6cf16621b72d6c71078420c66e",
+      "source_name": "review-c.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "blind/review-d.json",
+      "sha256": "2690914ae96b6dd680cab79729fe8c2838201bf5deb8a1fba31c0429c56d86f5",
+      "source_name": "review-d.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "blind/review-e.json",
+      "sha256": "11eb77f98c5654c19ef506a9ef0f9dc7972d2074a720e22270a41b56efdf263f",
+      "source_name": "review-e.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    },
+    {
+      "path": "blind/review-f.json",
+      "sha256": "0b8816917888ac395cc707cb95b8aa364ae5079840a3aeedd5a3a49323797bbe",
+      "source_name": "review-f.json",
+      "synthetic_content_only": true,
+      "sanitization": "allowlisted JSON; no credential/config/identity files; string scan found no URL, local home path or credential markers; bytes unchanged"
+    }
+  ],
+  "sanitization_scope": "Allowlisted synthetic artifacts only. Excludes configuration, identity context files, credentials, binaries, targets, production DB/data, and unrestricted logs."
+}

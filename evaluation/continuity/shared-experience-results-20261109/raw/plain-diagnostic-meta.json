@@ -1,0 +1,37 @@
+{
+  "capture_kind": "model_output",
+  "captures": [
+    {
+      "actual_model": null,
+      "case_id": "plain_tired",
+      "discarded_proposals": 0,
+      "latency_ms": 1871,
+      "requested_model": "kamimusuhi",
+      "run_id": "baseline",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "plain_tired",
+      "discarded_proposals": 0,
+      "latency_ms": 1452,
+      "requested_model": "kamimusuhi",
+      "run_id": "candidate",
+      "usage": null
+    }
+  ],
+  "comparison_status": "unverified",
+  "format_version": 1,
+  "identity_context_supplied": true,
+  "limits": [
+    "same synthetic context repeated; not old/new build causal comparison",
+    "actual returned model and usage unavailable through PersonaCore; null means unknown",
+    "no human reviews collected; AI judgments must remain separate",
+    "max-requests bounds logical Persona invocations; existing adapter can make bounded repair HTTP calls",
+    "no tools offered, no canonical DB opened, proposals discarded"
+  ],
+  "logical_requests": 2,
+  "max_logical_requests": 2,
+  "suite_id": "shared-experience-voice-relations-20261109",
+  "transport_timeout_ms_cap": 120000
+}

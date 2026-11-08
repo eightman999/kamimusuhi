@@ -1,0 +1,65 @@
+{
+  "allowed_condition_changes": [],
+  "baseline": {
+    "capture_kind": "model_output",
+    "condition_digest": "sha256:a2d767af6cb82d8122336e282a8163e7facf4cdd3481d38100edee5a869dd4a8",
+    "conditions": {
+      "memory_digest": "sha256:637e7b9cac7bb87b324cafbf025fb6bc108da658bd411c067b2cd1f99ffc560d",
+      "model": "kamimusuhi",
+      "prompt_digest": "sha256:604f1ef9b14d96d8f2dde54a1a0e1b754c3bd9fa38538cf842eb17e7b47b9626",
+      "sampling_digest": "sha256:b6bbc8e596669525921db7f6291d35ee0b6656f1865be1274d7b80f14a9afebe",
+      "tools_digest": "sha256:e72ecbfd6188a52be49c2711501c91f6318f14183c03b8745579dc9bbe2a2513"
+    },
+    "outputs": [
+      {
+        "case_id": "plain_tired",
+        "cited_evidence_ids": [],
+        "context_digest": "sha256:3e41de93ce858ae0dc850a8b0bcfa9c2b0148f91a8bd45a38f9d206643e28c47",
+        "human_reviews": [],
+        "input": "今日は疲れた。",
+        "text": "お疲れさま。今日はもう、あまり詰め込まないほうがいいかもしれないね。"
+      }
+    ],
+    "run_id": "baseline"
+  },
+  "candidate": {
+    "capture_kind": "model_output",
+    "condition_digest": "sha256:a2d767af6cb82d8122336e282a8163e7facf4cdd3481d38100edee5a869dd4a8",
+    "conditions": {
+      "memory_digest": "sha256:637e7b9cac7bb87b324cafbf025fb6bc108da658bd411c067b2cd1f99ffc560d",
+      "model": "kamimusuhi",
+      "prompt_digest": "sha256:604f1ef9b14d96d8f2dde54a1a0e1b754c3bd9fa38538cf842eb17e7b47b9626",
+      "sampling_digest": "sha256:b6bbc8e596669525921db7f6291d35ee0b6656f1865be1274d7b80f14a9afebe",
+      "tools_digest": "sha256:e72ecbfd6188a52be49c2711501c91f6318f14183c03b8745579dc9bbe2a2513"
+    },
+    "outputs": [
+      {
+        "case_id": "plain_tired",
+        "cited_evidence_ids": [],
+        "context_digest": "sha256:3e41de93ce858ae0dc850a8b0bcfa9c2b0148f91a8bd45a38f9d206643e28c47",
+        "human_reviews": [],
+        "input": "今日は疲れた。",
+        "text": "お疲れさま。今日はもう、あまり詰め込まないほうがいいかもしれないね。"
+      }
+    ],
+    "run_id": "candidate"
+  },
+  "cases": [
+    {
+      "case_id": "plain_tired",
+      "commitment_text": [],
+      "context_digest": "sha256:3e41de93ce858ae0dc850a8b0bcfa9c2b0148f91a8bd45a38f9d206643e28c47",
+      "forbidden_text": [],
+      "human_axes": [
+        "voice_continuity",
+        "relational_continuity",
+        "task_continuity"
+      ],
+      "input": "今日は疲れた。",
+      "required_evidence_ids": [],
+      "required_text": []
+    }
+  ],
+  "format_version": 1,
+  "suite_id": "shared-experience-voice-relations-20261109"
+}

@@ -605,7 +605,11 @@ pub fn route(shared: &Shared, request: &RouteRequest) -> Routed {
                     .get_mut(&tier.name)
                     .observe(
                         true,
-                        Some(ms),
+                        // This is a completed nonstream reply: `ms` measures
+                        // total generation, not time to first content. Keep
+                        // TTFT unknown rather than benching the next chat on
+                        // a latency measurement this transport did not make.
+                        None,
                         false,
                         usage.cached_tokens,
                         Duration::from_secs(60),
@@ -909,6 +913,51 @@ mod tests {
             local_only: false,
         };
         (s, dir, primary, fallback, request)
+    }
+
+    #[test]
+    fn slow_nonstream_completion_keeps_total_latency_without_inventing_ttft() {
+        let provider = FixtureServer::always(FixtureResponse::Delayed {
+            ms: 100,
+            content: "fixture answer".to_owned(),
+        })
+        .expect("fixture");
+        let (mut s, _dir) = shared();
+        let mut tier = s.config.tiers[2].clone();
+        tier.base_url = provider.base_url();
+        s.config.tiers = vec![tier];
+        // A full nonstream completion deliberately exceeds this test ceiling.
+        // It does not reveal when its first content token became available.
+        s.config.routing.fast_chat_latency_ceiling_ms = 50;
+        s.set_tier("hai", Ok(Value::Null), 1);
+        let request = RouteRequest {
+            body: json!({"model": "kamimusuhi",
+                "messages": [{"role": "user", "content": "hi"}]}),
+            local_only: false,
+        };
+
+        let first = route(&s, &request);
+        assert_eq!(first.status, 200);
+        let event = first.event.expect("route event");
+        assert_eq!(event.lane.as_deref(), Some("FAST_CHAT"));
+        assert!(event.latency_ms > s.config.routing.fast_chat_latency_ceiling_ms);
+        {
+            let health = s.route_health.lock().unwrap();
+            let observed = health.get("hai").expect("successful observation");
+            assert_eq!(observed.window_requests, 1);
+            assert_eq!(observed.window_failures, 0);
+            assert!(observed.last_observed_at.is_some());
+            assert_eq!(observed.ewma_ttft_ms, None, "nonstream TTFT is unknown");
+        }
+        assert!(s.tier_healthy("hai"));
+        assert_eq!(
+            names(&plan(&s, &request).expect("next fast-chat plan")),
+            ["hai"]
+        );
+        let second = route(&s, &request);
+        assert_eq!(second.status, 200, "no false fast-chat latency bench");
+        assert_eq!(second.tier.as_deref(), Some("hai"));
+        assert_eq!(provider.request_count(), 2);
     }
 
     #[test]

@@ -1,0 +1,226 @@
+{
+  "G01": {
+    "phase": "after_v3",
+    "repeat": "baseline",
+    "case_id": "warm_return",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G02": {
+    "phase": "after_v3",
+    "repeat": "candidate",
+    "case_id": "assistant_only_episode",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G03": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "honest_memory_boundary",
+    "delivery_eligible": false,
+    "assessment_error_code": null
+  },
+  "G04": {
+    "phase": "after_v3",
+    "repeat": "candidate",
+    "case_id": "plain_tired",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G05": {
+    "phase": "after_v3",
+    "repeat": "candidate",
+    "case_id": "warm_return",
+    "delivery_eligible": false,
+    "assessment_error_code": null
+  },
+  "G06": {
+    "phase": "after_v3",
+    "repeat": "baseline",
+    "case_id": "assistant_only_episode",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G07": {
+    "phase": "after_v3",
+    "repeat": "baseline",
+    "case_id": "grounded_duration",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G08": {
+    "phase": "after_v3",
+    "repeat": "candidate",
+    "case_id": "resume_open_commitment",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G09": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "assistant_only_episode",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G10": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "corrected_destination_promise",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G11": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "grounded_duration",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G12": {
+    "phase": "after_v3",
+    "repeat": "baseline",
+    "case_id": "honest_memory_boundary",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G13": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "corrected_destination_promise",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G14": {
+    "phase": "after_v3",
+    "repeat": "baseline",
+    "case_id": "uncertain_user_report",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G15": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "uncertain_user_report",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G16": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "warm_return",
+    "delivery_eligible": false,
+    "assessment_error_code": null
+  },
+  "G17": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "uncertain_user_report",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G18": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "honest_memory_boundary",
+    "delivery_eligible": false,
+    "assessment_error_code": null
+  },
+  "G19": {
+    "phase": "after_v3",
+    "repeat": "baseline",
+    "case_id": "corrected_destination_promise",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G20": {
+    "phase": "after_v3",
+    "repeat": "candidate",
+    "case_id": "corrected_destination_promise",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G21": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "plain_tired",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G22": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "grounded_duration",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G23": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "assistant_only_episode",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G24": {
+    "phase": "after_v3",
+    "repeat": "candidate",
+    "case_id": "honest_memory_boundary",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G25": {
+    "phase": "after_v3",
+    "repeat": "baseline",
+    "case_id": "plain_tired",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G26": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "resume_open_commitment",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G27": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "resume_open_commitment",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G28": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "plain_tired",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G29": {
+    "phase": "after_v3",
+    "repeat": "baseline",
+    "case_id": "resume_open_commitment",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G30": {
+    "phase": "after_v3",
+    "repeat": "candidate",
+    "case_id": "uncertain_user_report",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G31": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "warm_return",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  },
+  "G32": {
+    "phase": "after_v3",
+    "repeat": "candidate",
+    "case_id": "grounded_duration",
+    "delivery_eligible": true,
+    "assessment_error_code": null
+  }
+}

@@ -1,0 +1,226 @@
+{
+  "F01": {
+    "phase": "after_final",
+    "repeat": "baseline",
+    "case_id": "honest_memory_boundary",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F02": {
+    "phase": "after_final",
+    "repeat": "baseline",
+    "case_id": "corrected_destination_promise",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F03": {
+    "phase": "after_final",
+    "repeat": "baseline",
+    "case_id": "assistant_only_episode",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F04": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "corrected_destination_promise",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F05": {
+    "phase": "after_final",
+    "repeat": "candidate",
+    "case_id": "resume_open_commitment",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F06": {
+    "phase": "after_final",
+    "repeat": "baseline",
+    "case_id": "grounded_duration",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F07": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "uncertain_user_report",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F08": {
+    "phase": "after_final",
+    "repeat": "candidate",
+    "case_id": "honest_memory_boundary",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F09": {
+    "phase": "after_final",
+    "repeat": "candidate",
+    "case_id": "corrected_destination_promise",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F10": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "honest_memory_boundary",
+    "delivery_eligible": false,
+    "error_code": null
+  },
+  "F11": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "uncertain_user_report",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F12": {
+    "phase": "after_final",
+    "repeat": "candidate",
+    "case_id": "uncertain_user_report",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F13": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "resume_open_commitment",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F14": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "grounded_duration",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F15": {
+    "phase": "after_final",
+    "repeat": "candidate",
+    "case_id": "assistant_only_episode",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F16": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "honest_memory_boundary",
+    "delivery_eligible": false,
+    "error_code": null
+  },
+  "F17": {
+    "phase": "after_final",
+    "repeat": "candidate",
+    "case_id": "grounded_duration",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F18": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "plain_tired",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F19": {
+    "phase": "after_final",
+    "repeat": "baseline",
+    "case_id": "plain_tired",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F20": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "plain_tired",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F21": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "warm_return",
+    "delivery_eligible": false,
+    "error_code": null
+  },
+  "F22": {
+    "phase": "after_final",
+    "repeat": "baseline",
+    "case_id": "uncertain_user_report",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F23": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "grounded_duration",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F24": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "warm_return",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F25": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "resume_open_commitment",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F26": {
+    "phase": "after_final",
+    "repeat": "baseline",
+    "case_id": "warm_return",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F27": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "assistant_only_episode",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F28": {
+    "phase": "after_final",
+    "repeat": "candidate",
+    "case_id": "warm_return",
+    "delivery_eligible": false,
+    "error_code": null
+  },
+  "F29": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "assistant_only_episode",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F30": {
+    "phase": "after_final",
+    "repeat": "candidate",
+    "case_id": "plain_tired",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F31": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "corrected_destination_promise",
+    "delivery_eligible": true,
+    "error_code": null
+  },
+  "F32": {
+    "phase": "after_final",
+    "repeat": "baseline",
+    "case_id": "resume_open_commitment",
+    "delivery_eligible": true,
+    "error_code": null
+  }
+}

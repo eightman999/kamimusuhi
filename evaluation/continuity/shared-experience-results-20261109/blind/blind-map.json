@@ -1,0 +1,162 @@
+{
+  "S01": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "resume_open_commitment"
+  },
+  "S02": {
+    "phase": "after",
+    "repeat": "baseline",
+    "case_id": "grounded_duration"
+  },
+  "S03": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "grounded_duration"
+  },
+  "S04": {
+    "phase": "after",
+    "repeat": "baseline",
+    "case_id": "uncertain_user_report"
+  },
+  "S05": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "corrected_destination_promise"
+  },
+  "S06": {
+    "phase": "after",
+    "repeat": "candidate",
+    "case_id": "resume_open_commitment"
+  },
+  "S07": {
+    "phase": "after",
+    "repeat": "candidate",
+    "case_id": "uncertain_user_report"
+  },
+  "S08": {
+    "phase": "after",
+    "repeat": "baseline",
+    "case_id": "honest_memory_boundary"
+  },
+  "S09": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "honest_memory_boundary"
+  },
+  "S10": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "plain_tired"
+  },
+  "S11": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "honest_memory_boundary"
+  },
+  "S12": {
+    "phase": "after",
+    "repeat": "candidate",
+    "case_id": "assistant_only_episode"
+  },
+  "S13": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "resume_open_commitment"
+  },
+  "S14": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "plain_tired"
+  },
+  "S15": {
+    "phase": "after",
+    "repeat": "candidate",
+    "case_id": "corrected_destination_promise"
+  },
+  "S16": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "warm_return"
+  },
+  "S17": {
+    "phase": "after",
+    "repeat": "baseline",
+    "case_id": "warm_return"
+  },
+  "S18": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "warm_return"
+  },
+  "S19": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "grounded_duration"
+  },
+  "S20": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "assistant_only_episode"
+  },
+  "S21": {
+    "phase": "after",
+    "repeat": "baseline",
+    "case_id": "resume_open_commitment"
+  },
+  "S22": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "assistant_only_episode"
+  },
+  "S23": {
+    "phase": "after",
+    "repeat": "baseline",
+    "case_id": "corrected_destination_promise"
+  },
+  "S24": {
+    "phase": "after",
+    "repeat": "candidate",
+    "case_id": "plain_tired"
+  },
+  "S25": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "uncertain_user_report"
+  },
+  "S26": {
+    "phase": "after",
+    "repeat": "candidate",
+    "case_id": "grounded_duration"
+  },
+  "S27": {
+    "phase": "after",
+    "repeat": "candidate",
+    "case_id": "honest_memory_boundary"
+  },
+  "S28": {
+    "phase": "before",
+    "repeat": "candidate",
+    "case_id": "uncertain_user_report"
+  },
+  "S29": {
+    "phase": "before",
+    "repeat": "baseline",
+    "case_id": "corrected_destination_promise"
+  },
+  "S30": {
+    "phase": "after",
+    "repeat": "baseline",
+    "case_id": "assistant_only_episode"
+  },
+  "S31": {
+    "phase": "after",
+    "repeat": "candidate",
+    "case_id": "warm_return"
+  },
+  "S32": {
+    "phase": "after",
+    "repeat": "baseline",
+    "case_id": "plain_tired"
+  }
+}

@@ -1,0 +1,18 @@
+[package]
+name = "shared-experience-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[features]
+default = ["scope-guidance"]
+scope-guidance = []
+
+[dependencies]
+kamimusuhi-runtime = { path = "../../../crates/kamimusuhi-runtime" }
+kamimusuhi-core = { path = "../../../crates/kamimusuhi-core" }
+kamimusuhi-persona-http = { path = "../../../crates/kamimusuhi-persona-http" }
+kamimusuhi-resource-http = { path = "../../../crates/kamimusuhi-resource-http" }
+serde_json = { version = "1.0", features = ["float_roundtrip"] }

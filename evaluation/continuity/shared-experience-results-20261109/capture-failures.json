@@ -1,0 +1,28 @@
+{
+  "format_version": 1,
+  "failures": [
+    {
+      "attempt": "before-initial",
+      "source_stderr_filename": "before.stderr",
+      "error": "provider capture failed for run candidate case plain_tired",
+      "attempted_logical_calls_inferred": 13,
+      "attempted_count_basis": "sequential eight-case baseline then candidate; candidate plain_tired is fifth case",
+      "error_code": null,
+      "cause": "unknown",
+      "partial_raw_outputs_persisted": false,
+      "successful_replacement_capture": "raw/before-retry.json"
+    },
+    {
+      "attempt": "candidate2-initial",
+      "source_stderr_filename": "after-v2.stderr",
+      "error": "provider capture failed for run baseline case plain_tired",
+      "attempted_logical_calls_inferred": 5,
+      "attempted_count_basis": "sequential eight-case baseline; plain_tired is fifth case",
+      "error_code": null,
+      "cause": "unknown",
+      "partial_raw_outputs_persisted": false,
+      "successful_replacement_capture": "raw/after-v2-retry.json"
+    }
+  ],
+  "limitation": "The old capture CLI persisted a complete file only; partial generations from these failed attempts were lost. Attempted counts are inferred logical calls including the failing call, not transport calls or confirmed successful generations. No network/provider cause is established. The single-case plain_tired diagnostic completed twice; it is supplemental, not a replacement for the fixed suite."
+}

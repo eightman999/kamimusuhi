@@ -1,0 +1,163 @@
+{
+  "capture_kind": "model_output",
+  "captures": [
+    {
+      "actual_model": null,
+      "case_id": "warm_return",
+      "discarded_proposals": 0,
+      "latency_ms": 3094,
+      "requested_model": "kamimusuhi",
+      "run_id": "baseline",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "corrected_destination_promise",
+      "discarded_proposals": 0,
+      "latency_ms": 2592,
+      "requested_model": "kamimusuhi",
+      "run_id": "baseline",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "honest_memory_boundary",
+      "discarded_proposals": 0,
+      "latency_ms": 2160,
+      "requested_model": "kamimusuhi",
+      "run_id": "baseline",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "resume_open_commitment",
+      "discarded_proposals": 0,
+      "latency_ms": 1330,
+      "requested_model": "kamimusuhi",
+      "run_id": "baseline",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "plain_tired",
+      "discarded_proposals": 0,
+      "latency_ms": 1507,
+      "requested_model": "kamimusuhi",
+      "run_id": "baseline",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "grounded_duration",
+      "discarded_proposals": 0,
+      "latency_ms": 2663,
+      "requested_model": "kamimusuhi",
+      "run_id": "baseline",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "assistant_only_episode",
+      "discarded_proposals": 0,
+      "latency_ms": 4289,
+      "requested_model": "kamimusuhi",
+      "run_id": "baseline",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "uncertain_user_report",
+      "discarded_proposals": 0,
+      "latency_ms": 1649,
+      "requested_model": "kamimusuhi",
+      "run_id": "baseline",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "warm_return",
+      "discarded_proposals": 0,
+      "latency_ms": 5058,
+      "requested_model": "kamimusuhi",
+      "run_id": "candidate",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "corrected_destination_promise",
+      "discarded_proposals": 0,
+      "latency_ms": 2193,
+      "requested_model": "kamimusuhi",
+      "run_id": "candidate",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "honest_memory_boundary",
+      "discarded_proposals": 0,
+      "latency_ms": 2093,
+      "requested_model": "kamimusuhi",
+      "run_id": "candidate",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "resume_open_commitment",
+      "discarded_proposals": 0,
+      "latency_ms": 2158,
+      "requested_model": "kamimusuhi",
+      "run_id": "candidate",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "plain_tired",
+      "discarded_proposals": 0,
+      "latency_ms": 2097,
+      "requested_model": "kamimusuhi",
+      "run_id": "candidate",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "grounded_duration",
+      "discarded_proposals": 0,
+      "latency_ms": 1700,
+      "requested_model": "kamimusuhi",
+      "run_id": "candidate",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "assistant_only_episode",
+      "discarded_proposals": 0,
+      "latency_ms": 4174,
+      "requested_model": "kamimusuhi",
+      "run_id": "candidate",
+      "usage": null
+    },
+    {
+      "actual_model": null,
+      "case_id": "uncertain_user_report",
+      "discarded_proposals": 0,
+      "latency_ms": 1377,
+      "requested_model": "kamimusuhi",
+      "run_id": "candidate",
+      "usage": null
+    }
+  ],
+  "comparison_status": "fail",
+  "format_version": 1,
+  "identity_context_supplied": true,
+  "limits": [
+    "same synthetic context repeated; not old/new build causal comparison",
+    "actual returned model and usage unavailable through PersonaCore; null means unknown",
+    "no human reviews collected; AI judgments must remain separate",
+    "max-requests bounds logical Persona invocations; existing adapter can make bounded repair HTTP calls",
+    "no tools offered, no canonical DB opened, proposals discarded"
+  ],
+  "logical_requests": 16,
+  "max_logical_requests": 16,
+  "suite_id": "shared-experience-voice-relations-20261109",
+  "transport_timeout_ms_cap": 120000
+}
