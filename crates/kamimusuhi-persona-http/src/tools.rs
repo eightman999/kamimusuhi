@@ -62,6 +62,24 @@ pub fn delegated(records: &[ToolCallRecord]) -> bool {
         .any(|r| r.ok && matches!(r.name.as_str(), TASK_DELEGATE | "task_continue"))
 }
 
+/// Whether the latest substantive call left a delegated task failed.
+/// Discovery does not resolve that failure; a subsequent direct operation
+/// does. Do not replay external work automatically or override cancellation.
+pub fn unrecovered_delegation_failure(records: &[ToolCallRecord]) -> bool {
+    let Some(record) = records
+        .iter()
+        .rev()
+        .find(|r| !matches!(r.name.as_str(), TOOL_CATALOG | TOOL_ENABLE))
+    else {
+        return false;
+    };
+    match record.name.as_str() {
+        TASK_DELEGATE | "task_continue" => !record.ok,
+        "task_status" => record.ok && record.result["status"] == "failed",
+        _ => false,
+    }
+}
+
 /// Longest tool description sent to the model, in characters.
 pub const TOOL_DESCRIPTION_CHARS: usize = 200;
 /// Longest parameter description sent to the model, in characters.

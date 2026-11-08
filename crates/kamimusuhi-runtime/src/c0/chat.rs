@@ -206,14 +206,15 @@ pub fn run_repl(
             eprint!("あなた > ");
             std::io::stderr().flush().map_err(io_error)?;
         }
+        let frame_limit = if quiet { 128 * 1024 } else { MAX_INPUT_BYTES };
         let mut bytes = Vec::new();
-        let read = std::io::Read::take(&mut *input, (MAX_INPUT_BYTES + 2) as u64)
+        let read = std::io::Read::take(&mut *input, (frame_limit + 2) as u64)
             .read_until(b'\n', &mut bytes)
             .map_err(io_error)?;
         if read == 0 {
             break;
         }
-        if read == MAX_INPUT_BYTES + 2 && !bytes.ends_with(b"\n") {
+        if read == frame_limit + 2 && !bytes.ends_with(b"\n") {
             return Err(RuntimeError::Usage(format!(
                 "input exceeds {MAX_INPUT_BYTES} bytes"
             )));
@@ -221,7 +222,7 @@ pub fn run_repl(
         let line = String::from_utf8(bytes)
             .map_err(|_| RuntimeError::Usage("input must be UTF-8".to_owned()))?;
         let text = line.trim_end_matches(['\r', '\n']);
-        if text.len() > MAX_INPUT_BYTES {
+        if text.len() > frame_limit {
             return Err(RuntimeError::Usage(format!(
                 "input exceeds {MAX_INPUT_BYTES} bytes"
             )));
@@ -255,6 +256,13 @@ pub fn run_repl(
                         // read only by this process's own HTTP calls during
                         // the turn below.
                         kamimusuhi_resource_http::http::set_turn(Some(turn));
+                    }
+                    if let Some(context) = request
+                        .as_ref()
+                        .ok()
+                        .and_then(|v| v.get("identity_context"))
+                    {
+                        runtime.set_identity_context(context.clone())?;
                     }
                     let reply = session.turn(runtime, message, |reply| {
                         serde_json::to_writer(&mut *output, reply)?;

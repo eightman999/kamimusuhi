@@ -70,7 +70,7 @@ if mode == 'hang' or mode == 'hang-'+str(operation): hang()
 if mode == 'hang-repair' and request.get('request',{}).get('persona_input',{}).get('envelope',{}).get('response_guidance'):
     hang()
 if mode == 'healthy': time.sleep(0.025)
-if operation != 'language': request['config'] = None
+if operation != 'language': request['config'] = {'backend': 'rule_based'}
 raw = (json.dumps(request)+'\n').encode('utf-8')
 env = os.environ.copy()
 env.pop('TYPESAFE_API_KEY', None)

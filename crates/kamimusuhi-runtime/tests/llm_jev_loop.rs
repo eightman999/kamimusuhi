@@ -232,6 +232,8 @@ fn prepared(server: &FixtureServer) -> (tempfile::TempDir, Runtime) {
         seed: config.persona.seed.clone(),
     };
     runtime.save_config(config).unwrap();
+    let review = runtime.identity_status().unwrap();
+    runtime.accept_identity(&review.review_token).unwrap();
     (dir, runtime)
 }
 
@@ -277,6 +279,8 @@ fn fanout_session(
         )
         .unwrap();
     runtime.save_config(config).unwrap();
+    let review = runtime.identity_status().unwrap();
+    runtime.accept_identity(&review.review_token).unwrap();
     let mut session = DialogueSession::start_with_decision_provider(
         &mut runtime,
         "alice",
@@ -982,6 +986,8 @@ fn privacy_excludes_external_organs_and_refuses_external_judging_before_network(
     blocked.base_url = external.base_url();
     config.set_language_provider("external", blocked).unwrap();
     runtime.save_config(config).unwrap();
+    let review = runtime.identity_status().unwrap();
+    runtime.accept_identity(&review.review_token).unwrap();
     let mut session = DialogueSession::start_with_decision_provider(
         &mut runtime,
         "alice",
@@ -1255,6 +1261,8 @@ fn jev_selects_anonymous_generated_response_from_ready_race_batch() {
         )
         .unwrap();
     runtime.save_config(config).unwrap();
+    let review = runtime.identity_status().unwrap();
+    runtime.accept_identity(&review.review_token).unwrap();
     let decision_provider = Box::new(JevDecisionProvider::new(TypesafeConfig {
         base_url: systemone_base_url(&server),
         model: "jev-1.13.0".to_owned(),

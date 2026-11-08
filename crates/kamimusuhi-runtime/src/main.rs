@@ -43,6 +43,8 @@ const USAGE: &str = "\
 kamimusuhi-runtime <command> [options]
 
 commands:
+  identity-status   inspect model/prompt identity declarations (read-only)
+  identity-accept   accept exactly --review-token <token> after inspection
   init              prepare a runtime directory; creates an individual only
                     when the canonical database holds none
   inspect           read-only report of identity, lineage, memory, Library
@@ -55,6 +57,8 @@ commands:
   chat              interactive text conversation; /quit or EOF to stop,
                     /status /memory /reflect /rollback /context /help
   reflect           run one reflection cycle now; JSON report on stdout
+  cogitate          reflect on new experience once after idle/cooldown checks;
+                    requires --subject; never creates a user turn
   rollback          move the derived lane back one activation; JSON on stdout
   activate          gate + apply a pending C0 proposal (--proposal-id <hex>)
   propose           queue a pending C0 param proposal for operator review
@@ -145,6 +149,31 @@ fn run() -> Result<String, RuntimeError> {
         .next()
         .ok_or_else(|| RuntimeError::Usage(format!("no command given\n\n{USAGE}")))?;
     let options = Options::parse(args)?;
+    if matches!(command.as_str(), "identity-status" | "identity-accept") {
+        let mut runtime = Runtime::open(options.dir()?, options.runtime_options())?;
+        if let Some(path) = &options.identity_context_file {
+            let raw = std::fs::read(path).map_err(|_| {
+                RuntimeError::Usage("identity context file cannot be read".to_owned())
+            })?;
+            let context = serde_json::from_slice(&raw)
+                .map_err(|_| RuntimeError::Usage("invalid identity context JSON".to_owned()))?;
+            runtime.set_identity_context(context)?;
+        }
+        if command == "identity-accept" {
+            let token = options.review_token.as_deref().ok_or_else(|| {
+                RuntimeError::Usage(
+                    "identity-accept requires --review-token from identity-status".to_owned(),
+                )
+            })?;
+            runtime.accept_identity(token)?;
+        }
+        return encode(&runtime.identity_status()?);
+    }
+    if options.review_token.is_some() || options.identity_context_file.is_some() {
+        return Err(RuntimeError::Usage(
+            "identity review options require identity-status or identity-accept".to_owned(),
+        ));
+    }
     if options.source_root.is_some() && command != "research-check" {
         return Err(RuntimeError::Usage(
             "--source-root is only supported by research-check".to_owned(),
@@ -166,7 +195,7 @@ fn run() -> Result<String, RuntimeError> {
     }
     if !matches!(
         command.as_str(),
-        "talk" | "chat" | "reflect" | "activate" | "memory"
+        "talk" | "chat" | "reflect" | "cogitate" | "activate" | "memory"
     ) && (options.message.is_some()
         || options.subject.is_some()
         || options.mio_options_present())
@@ -253,6 +282,7 @@ fn run() -> Result<String, RuntimeError> {
         }
         "talk" | "chat" => run_dialogue(&command, &options),
         "reflect" | "rollback" | "activate" | "propose" => run_c0_command(&command, &options),
+        "cogitate" => run_idle_cognition(&options),
         "--help" | "-h" | "help" => Ok(USAGE.to_owned()),
         other => Err(RuntimeError::Usage(format!(
             "unknown command {other:?}\n\n{USAGE}"
@@ -372,6 +402,37 @@ fn run_dialogue(command: &str, options: &Options) -> Result<String, RuntimeError
     runtime.stopping();
     result?;
     Ok(String::new())
+}
+
+fn run_idle_cognition(options: &Options) -> Result<String, RuntimeError> {
+    if options.message.is_some()
+        || options.phase.is_some()
+        || options.resource.is_some()
+        || options.persona.is_some()
+        || options.persona_url.is_some()
+        || options.persona_model.is_some()
+        || options.persona_auth_env.is_some()
+        || options.persona_locality.is_some()
+        || options.mio_options_present()
+        || options.urgency.is_some()
+        || options.quiet
+        || options.debug
+        || options.debug_context
+    {
+        return Err(RuntimeError::Usage("cogitate uses the reviewed runtime configuration; only --dir, --subject and --privacy select its work".to_owned()));
+    }
+    let subject = options
+        .subject
+        .as_deref()
+        .ok_or_else(|| RuntimeError::Usage("cogitate requires --subject".to_owned()))?;
+    let mut runtime = Runtime::open(options.dir()?, options.runtime_options())?;
+    let report = kamimusuhi_runtime::idle_cognition::run(
+        &mut runtime,
+        subject,
+        options.privacy.unwrap_or(PrivacyConstraint::LocalOnly),
+    )?;
+    runtime.stopping();
+    encode(&report)
 }
 
 /// Standalone derived-lane commands: `reflect` and `activate` read + decide;
@@ -504,6 +565,8 @@ struct Options {
     reason: Option<String>,
     limit: Option<usize>,
     json: bool,
+    review_token: Option<String>,
+    identity_context_file: Option<String>,
 }
 
 impl Options {
@@ -593,6 +656,8 @@ impl Options {
                 "--param" => options.param = Some(value()?),
                 "--value" => options.value = Some(value()?),
                 "--reason" => options.reason = Some(value()?),
+                "--review-token" => options.review_token = Some(value()?),
+                "--identity-context-file" => options.identity_context_file = Some(value()?),
                 "--limit" => {
                     let raw = value()?;
                     options.limit = Some(raw.parse().map_err(|_| {

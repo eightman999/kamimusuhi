@@ -50,6 +50,10 @@ pub struct Config {
     pub snapshot: Option<SnapshotConfig>,
     #[serde(default)]
     pub dialogue: Option<DialogueConfig>,
+    /// Poll explicitly selected subjects for bounded idle cognition. The
+    /// runtime's c0.idle policy owns eligibility, persistence and API budgets.
+    #[serde(default)]
+    pub cognition: Option<CognitionConfig>,
     #[serde(default)]
     pub libraries: Vec<LibraryConfig>,
     /// MCP servers this node runs (stdio). Their tools join `/v1/tools`.
@@ -88,6 +92,47 @@ pub struct Config {
     /// hand to this node (see delegation.rs).
     #[serde(default)]
     pub delegation: DelegationConfig,
+}
+
+/// Subjects to poll while no foreground turn is running. Absence of this
+/// block disables the scheduler; subjects are never inferred from history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CognitionConfig {
+    pub subjects: Vec<String>,
+    #[serde(default = "default_cognition_poll")]
+    pub poll_interval_secs: u64,
+    #[serde(default = "default_cognition_timeout")]
+    pub timeout_secs: u64,
+}
+
+const fn default_cognition_poll() -> u64 {
+    30
+}
+
+const fn default_cognition_timeout() -> u64 {
+    180
+}
+
+impl CognitionConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        let unique: std::collections::BTreeSet<_> = self.subjects.iter().collect();
+        if self.subjects.is_empty()
+            || self.subjects.len() > 32
+            || unique.len() != self.subjects.len()
+            || self
+                .subjects
+                .iter()
+                .any(|subject| !crate::dialogue::valid_subject(subject))
+        {
+            return Err("cognition.subjects must contain 1-32 unique dialogue subjects".to_owned());
+        }
+        if !(1..=3600).contains(&self.poll_interval_secs) || !(1..=600).contains(&self.timeout_secs)
+        {
+            return Err("cognition poll/timeout limits are invalid".to_owned());
+        }
+        Ok(())
+    }
 }
 
 /// Delegation lifecycle bounds. Defaults are sized for a light node on a
@@ -718,6 +763,9 @@ pub struct TierConfig {
     pub base_url: String,
     /// Model sent to the backend when the client asks for `kamimusuhi`.
     pub model: String,
+    /// Operator-reviewed upstream response model names; never learned automatically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub identity_model_aliases: Vec<String>,
     #[serde(default)]
     pub auth_env: Option<String>,
     #[serde(default = "default_tier_timeout")]
@@ -773,6 +821,21 @@ pub struct TierConfig {
     /// for `FAST_CHAT`). Privacy, health and spend limits still apply.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prefer_lanes: Vec<kamimusuhi_runtime::route_gate::RouteLane>,
+}
+
+impl TierConfig {
+    pub fn validate_identity_model_aliases(&self) -> Result<(), String> {
+        if self.identity_model_aliases.len() > 16
+            || self.identity_model_aliases.iter().any(|alias| {
+                alias.is_empty()
+                    || alias.len() > 256
+                    || alias.chars().any(|c| c.is_whitespace() || c.is_control())
+            })
+        {
+            return Err("IDENTITY_MODEL_ALIASES_INVALID".to_owned());
+        }
+        Ok(())
+    }
 }
 
 const fn default_tier_timeout() -> u64 {
@@ -1064,8 +1127,15 @@ impl Config {
         if !self.paths.root.is_absolute() {
             return Err("paths.root must be absolute".to_owned());
         }
+        if let Some(cognition) = &self.cognition {
+            cognition.validate()?;
+            if self.dialogue.is_none() {
+                return Err("cognition requires dialogue configuration".to_owned());
+            }
+        }
         let mut names = std::collections::HashSet::new();
         for tier in &self.tiers {
+            tier.validate_identity_model_aliases()?;
             if !id_ok(&tier.name) || !names.insert(tier.name.as_str()) {
                 return Err(format!(
                     "tier name {:?} is invalid or duplicated",

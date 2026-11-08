@@ -147,6 +147,7 @@ fn respond(
         204 => "No Content",
         400 => "Bad Request",
         401 => "Unauthorized",
+        409 => "Conflict",
         404 => "Not Found",
         413 => "Payload Too Large",
         431 => "Request Header Fields Too Large",
@@ -222,7 +223,7 @@ fn handle(shared: &Shared, stream: TcpStream) {
                     ("Access-Control-Allow-Methods", "GET, POST, OPTIONS".into()),
                     (
                         "Access-Control-Allow-Headers",
-                        "Authorization, Content-Type, X-Kamimusuhi-Route, X-Kamimusuhi-Turn".into(),
+                        "Authorization, Content-Type, X-Kamimusuhi-Route, X-Kamimusuhi-Turn, X-Kamimusuhi-Identity-Expected".into(),
                     ),
                     ("Access-Control-Allow-Private-Network", "true".into()),
                     ("Access-Control-Max-Age", "86400".into()),
@@ -253,6 +254,19 @@ fn handle(shared: &Shared, stream: TcpStream) {
             &json!({"error": {"message": "bearer token required", "type": "unauthorized"}}),
             &[],
         ),
+        ("GET", "/v1/identity-context") => match crate::identity::context(shared) {
+            Ok(context) => json_response(
+                stream,
+                200,
+                &context,
+                &[("Cache-Control", "no-store".into())],
+            ),
+            Err(reason) => json_response(stream, 503, &json!({"error":reason}), &[]),
+        },
+        ("GET", "/v1/identity") => match crate::identity::declaration(&shared.config) {
+            Ok(declaration) => json_response(stream, 200, &declaration, &[]),
+            Err(reason) => json_response(stream, 503, &json!({"error":reason}), &[]),
+        },
         ("GET", "/status") => json_response(stream, 200, &shared.status(), &[]),
         ("GET", "/metrics") => {
             let body = shared.usage.prometheus();
@@ -494,6 +508,15 @@ fn models(shared: &Shared, stream: TcpStream, request: &Request) {
 }
 
 fn chat(shared: &Shared, stream: TcpStream, request: &Request) {
+    if !crate::identity::matches_pin(shared, request.header(crate::identity::HEADER)) {
+        json_response(
+            stream,
+            409,
+            &json!({"error":{"message":"IDENTITY_ROUTE_CHANGED","type":"identity_review_required"}}),
+            &[],
+        );
+        return;
+    }
     shared.requests.fetch_add(1, Ordering::Relaxed);
     let Ok(body) = serde_json::from_slice::<Value>(&request.body) else {
         json_response(
@@ -504,6 +527,19 @@ fn chat(shared: &Shared, stream: TcpStream, request: &Request) {
         );
         return;
     };
+    if request.header(crate::identity::HEADER).is_some()
+        && body
+            .get("kamimusuhi_identity_pins")
+            .is_none_or(|pins| crate::identity::supplied_pins(pins).is_err())
+    {
+        json_response(
+            stream,
+            409,
+            &json!({"error":{"message":"IDENTITY_ROUTE_CONTEXT_REQUIRED","type":"identity_review_required"}}),
+            &[],
+        );
+        return;
+    }
     if !body.get("messages").is_some_and(Value::is_array) {
         json_response(
             stream,
@@ -560,6 +596,35 @@ fn talk(shared: &Shared, stream: TcpStream, request: &Request) {
 #[cfg(test)]
 mod usage_tests {
     use super::*;
+
+    #[test]
+    fn identity_mismatch_rejects_before_routing_or_counting_model_calls() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = serde_json::from_value(json!({
+            "node": {"id": "test", "role": "cognition", "listen": "127.0.0.1:0"},
+            "paths": {"root": dir.path()},
+        }))
+        .unwrap();
+        let spool = crate::spool::Spool::new(dir.path().join("spool"), "test").unwrap();
+        let shared = Arc::new(Shared::new(config, spool, 1, None));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let s = Arc::clone(&shared);
+        let worker = thread::spawn(move || handle(&s, listener.accept().unwrap().0));
+        let mut client = TcpStream::connect(addr).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let body = r#"{"model":"kamimusuhi","messages":[]}"#;
+        write!(client, "POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\n{}: {}\r\nContent-Length: {}\r\n\r\n{}",
+            crate::identity::HEADER, "0".repeat(64), body.len(), body).unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        worker.join().unwrap();
+        assert!(response.starts_with("HTTP/1.1 409"), "{response}");
+        assert!(response.contains("IDENTITY_ROUTE_CHANGED"), "{response}");
+        assert_eq!(shared.requests.load(Ordering::Relaxed), 0);
+    }
 
     #[test]
     fn history_query_is_bounded_and_rejects_invalid_filters() {

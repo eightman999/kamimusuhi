@@ -128,6 +128,7 @@ pub struct Shared {
     pub account: RwLock<Option<ProbeResult>>,
     pub gpu: RwLock<Option<ProbeResult>>,
     pub kcore: RwLock<Value>,
+    pub cognition: RwLock<Value>,
     pub snapshot: RwLock<Value>,
     pub last_route: RwLock<Option<RouteEvent>>,
     /// Bounded local usage history, independent of the NAS delivery spool.
@@ -258,6 +259,7 @@ impl Shared {
             account: RwLock::new(None),
             gpu: RwLock::new(None),
             kcore: RwLock::new(json!({"state": "disabled"})),
+            cognition: RwLock::new(json!({"state": "disabled"})),
             snapshot: RwLock::new(Value::Null),
             last_route: RwLock::new(None),
             route_health: Mutex::new(ProviderStateBook::default()),
@@ -380,6 +382,8 @@ impl Shared {
             "gpu": read(&self.gpu).map(|g| g.detail),
             "dialogue_hosts": self.dialogue_hosts.host_count(),
             "pending_tasks": self.delegations.pending_count(),
+            "identity_declaration": crate::identity::declaration(&self.config)
+                .unwrap_or_else(|reason| json!({"version":1,"error":reason})),
         })
     }
 
@@ -495,6 +499,7 @@ impl Shared {
             },
             "hai_account": read(&self.account).map(|a| a.view()),
             "kcore": read(&self.kcore),
+            "cognition": read(&self.cognition),
             "snapshot": read(&self.snapshot),
             "mcp": self.mcp.iter().map(|m| m.status()).collect::<Vec<_>>(),
             "jobs": read(&*self.jobs),

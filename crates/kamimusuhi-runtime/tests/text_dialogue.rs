@@ -30,6 +30,9 @@ fn prepared(server: &FixtureServer) -> (tempfile::TempDir, Runtime) {
     )
     .unwrap();
     let mut config = runtime.config().clone();
+    // These fixtures isolate expression transport and evidence retention.
+    // The API decision loop has its own process-level fixtures.
+    config.decision = kamimusuhi_runtime::config::DecisionSetting::RuleBased;
     config.persona = PersonaSetting {
         backend: PersonaBackendKind::OpenaiCompatible,
         provider: Some(PersonaProviderConfig {
@@ -47,6 +50,8 @@ fn prepared(server: &FixtureServer) -> (tempfile::TempDir, Runtime) {
         seed: config.persona.seed.clone(),
     };
     runtime.save_config(config).unwrap();
+    let review = runtime.identity_status().unwrap();
+    runtime.accept_identity(&review.review_token).unwrap();
     (dir, runtime)
 }
 
@@ -256,6 +261,8 @@ fn privacy_is_rejected_before_a_session_or_interaction_write_or_network_call() {
     let mut config = runtime.config().clone();
     config.persona.provider.as_mut().unwrap().locality = LocalityClass::External;
     runtime.save_config(config).unwrap();
+    let review = runtime.identity_status().unwrap();
+    runtime.accept_identity(&review.review_token).unwrap();
     let before = counts(dir.path());
     let head = runtime.head().unwrap();
     let trace_before = std::fs::read_to_string(dir.path().join("trace.jsonl")).unwrap();

@@ -17,6 +17,8 @@ use kamimusuhi_core::resources::{RegistryError, ResourceCallLogError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
+    #[error(transparent)]
+    IdentityGate(#[from] crate::identity_gate::GateError),
     #[error("runtime directory {path} could not be prepared: {message}")]
     DirectoryIo { path: String, message: String },
     #[error("runtime config {path} could not be read: {message}")]
@@ -87,6 +89,10 @@ pub enum RuntimeError {
     /// reading stderr sees the same classification the trace records.
     #[error("persona turn failed [{code}]: {0}", code = .0.code())]
     Persona(#[from] PersonaError),
+    /// Reflection reached intake; a later replay/provider error must not
+    /// cause the same source batch to be generated and applied again.
+    #[error("reflection did not finish after intake began: {0}")]
+    ReflectionAfterIntake(Box<RuntimeError>),
     #[error("conversation provider failed [{code}]: {0}", code = .0.code())]
     Conversation(#[from] crate::llm_jev::ConversationError),
     #[error("mutation was not activated: {reason}")]

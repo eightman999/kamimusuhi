@@ -642,6 +642,10 @@ impl PersonaError {
 /// itself. It does not change who Kamimusuhi is: identity lives in the
 /// canonical store, and nothing here can reach it.
 pub trait PersonaCore: Send + Sync {
+    /// Host-validated routing/model declarations for one execution snapshot.
+    /// Implementations that do no external inference need no routing pins.
+    fn set_identity_context(&self, _context: serde_json::Value) {}
+
     /// Which backend this is. Reported alongside every turn so a final
     /// expression can always be attributed to what generated it.
     fn descriptor(&self) -> PersonaBackendDescriptor;

@@ -17,7 +17,7 @@ use super::{
 };
 
 const MAX_EVIDENCE_BYTES: usize = 64 * 1024;
-const MAX_BATCH_STATE_BYTES: usize = 128 * 1024;
+pub(super) const MAX_BATCH_STATE_BYTES: usize = 128 * 1024;
 const MAX_BATCH_REQUEST_BYTES: usize = 256 * 1024;
 
 /// A bounded snapshot prepared by the host with explicit source/role labels.
@@ -64,7 +64,7 @@ pub struct ResponseAssessmentRequest {
 }
 
 impl ResponseAssessmentRequest {
-    fn validate(&self) -> Result<(), ConversationError> {
+    pub(super) fn validate(&self) -> Result<(), ConversationError> {
         self.evidence.validate()?;
         if self.selection.candidates.is_empty() {
             return Err(invalid("no generated response candidates were supplied"));
@@ -209,7 +209,7 @@ pub struct TurnPreparationRequest {
 }
 
 impl TurnPreparationRequest {
-    fn validate(&self) -> Result<(), ConversationError> {
+    pub(super) fn validate(&self) -> Result<(), ConversationError> {
         self.evidence.validate()?;
         if self.invocation.kind != DecisionKind::InvocationGate {
             return Err(invalid("turn preparation requires an invocation gate"));
@@ -446,7 +446,7 @@ const RECALL: &[(&str, &str)] = &[
 ];
 
 #[derive(Debug, Clone, Serialize)]
-struct ChoiceQuestion {
+pub(super) struct ChoiceQuestion {
     #[serde(rename = "type")]
     kind: &'static str,
     instructions: String,
@@ -454,7 +454,7 @@ struct ChoiceQuestion {
 }
 
 impl ChoiceQuestion {
-    fn new(instructions: impl Into<String>, criteria: &[(&str, &str)]) -> Self {
+    pub(super) fn new(instructions: impl Into<String>, criteria: &[(&str, &str)]) -> Self {
         Self {
             kind: "choice",
             instructions: instructions.into(),
@@ -467,7 +467,7 @@ impl ChoiceQuestion {
 }
 
 #[derive(Debug, Clone)]
-struct ChoiceAnswer {
+pub(super) struct ChoiceAnswer {
     choice: String,
     confidence: f32,
     probabilities: BTreeMap<String, f32>,
@@ -486,36 +486,13 @@ impl JevDecisionProvider {
         )?;
         let questions = preparation_questions(request);
         let (answers, latency_ms) = self.send_batch(&state, &questions)?;
-        let invocation = self.batch_gate(
-            &answers["invocation_gate"],
-            DecisionKind::InvocationGate,
+        compose_preparation(
+            request,
+            &answers,
             latency_ms,
-        )?;
-        let observation = match answers["observation_need"].choice.as_str() {
-            "NONE" => ObservationNeed::None,
-            "RECALL" => ObservationNeed::Recall,
-            "RUNTIME" => ObservationNeed::Runtime,
-            "RESEARCH" => ObservationNeed::Research,
-            "CLARIFY" => ObservationNeed::Clarify,
-            _ => return Err(invalid("unknown observation choice")),
-        };
-        let mut recall = BTreeMap::new();
-        for (index, candidate) in request.recall_candidates.iter().enumerate() {
-            let relevance = match answers[&format!("recall_{index}")].choice.as_str() {
-                "RELEVANT" => RecallRelevance::Relevant,
-                "IRRELEVANT" => RecallRelevance::Irrelevant,
-                "UNCERTAIN" => RecallRelevance::Uncertain,
-                _ => return Err(invalid("unknown recall relevance choice")),
-            };
-            recall.insert(candidate.id.clone(), relevance);
-        }
-        Ok(TurnPreparation {
-            invocation,
-            recall,
-            observation,
-            evidence_digest: request.evidence.snapshot_digest.clone(),
-            latency_ms,
-        })
+            "typesafe-systemone",
+            &self.config.model,
+        )
     }
 
     pub(super) fn assess_responses_batch(
@@ -539,134 +516,13 @@ impl JevDecisionProvider {
         answers: &BTreeMap<String, ChoiceAnswer>,
         latency_ms: u64,
     ) -> Result<ResponseAssessment, ConversationError> {
-        let choice = &answers["response_candidate"];
-        let candidate = request
-            .selection
-            .candidates
-            .iter()
-            .find(|candidate| candidate.id == choice.choice)
-            .ok_or_else(|| invalid("selected response candidate is not available"))?;
-        let grounding = match answers[&format!("grounding_{}", candidate.id)]
-            .choice
-            .as_str()
-        {
-            "SUPPORTED" => GroundingAssessment::Supported,
-            "CONTRADICTED" => GroundingAssessment::Contradicted,
-            "INSUFFICIENT" => GroundingAssessment::Insufficient,
-            "NOT_APPLICABLE" => GroundingAssessment::NotApplicable,
-            _ => return Err(invalid("unknown grounding choice")),
-        };
-        let attribution = match answers[&format!("attribution_{}", candidate.id)]
-            .choice
-            .as_str()
-        {
-            "CONSISTENT" => AttributionAssessment::Consistent,
-            "CONFLICT" => AttributionAssessment::Conflict,
-            "UNCLEAR" => AttributionAssessment::Unclear,
-            "NOT_APPLICABLE" => AttributionAssessment::NotApplicable,
-            _ => return Err(invalid("unknown attribution choice")),
-        };
-        let task_fit = match answers[&format!("task_fit_{}", candidate.id)]
-            .choice
-            .as_str()
-        {
-            "MET" => TaskFitAssessment::Met,
-            "UNMET" => TaskFitAssessment::Unmet,
-            "UNCLEAR" => TaskFitAssessment::Unclear,
-            _ => return Err(invalid("unknown task fit choice")),
-        };
-        let mut repair_reason = match answers[&format!("repair_reason_{}", candidate.id)]
-            .choice
-            .as_str()
-        {
-            "NONE" => RepairReason::None,
-            "GROUNDING" => RepairReason::Grounding,
-            "ATTRIBUTION" => RepairReason::Attribution,
-            "TASK_FIT" => RepairReason::TaskFit,
-            "LANGUAGE" => RepairReason::Language,
-            _ => return Err(invalid("unknown repair reason choice")),
-        };
-        let mut gate = self.batch_gate(
-            &answers[&format!("response_gate_{}", candidate.id)],
-            DecisionKind::ResponseGate,
+        compose_assessment(
+            request,
+            answers,
             latency_ms,
-        )?;
-        let raw_gate = gate.decision;
-        let failure = if matches!(
-            grounding,
-            GroundingAssessment::Contradicted | GroundingAssessment::Insufficient
-        ) {
-            Some(RepairReason::Grounding)
-        } else if matches!(
-            attribution,
-            AttributionAssessment::Conflict | AttributionAssessment::Unclear
-        ) {
-            Some(RepairReason::Attribution)
-        } else if matches!(
-            task_fit,
-            TaskFitAssessment::Unmet | TaskFitAssessment::Unclear
-        ) {
-            Some(RepairReason::TaskFit)
-        } else {
-            None
-        };
-        if let Some(reason) = failure {
-            repair_reason = reason;
-            if gate.decision != Decision::Reject {
-                gate.decision = Decision::Retry;
-            }
-        }
-        // Independent batch answers can disagree. A concrete repair reason
-        // prevents delivery even when every other answer says ACCEPT/pass.
-        // Conversely, an unspecified reason stays unspecified; the host can
-        // supply generic repair guidance without inventing a quality label.
-        if gate.decision == Decision::Accept && repair_reason != RepairReason::None {
-            gate.decision = Decision::Retry;
-        }
-        Ok(ResponseAssessment {
-            selection: ProviderSelectionResult {
-                provider_id: candidate.id.clone(),
-                decision: "SELECT_RESPONSE".to_owned(),
-                confidence: choice.confidence,
-                probabilities: choice.probabilities.clone(),
-                provider: "typesafe-systemone".to_owned(),
-                model: self.config.model.clone(),
-                latency_ms,
-                fallback: false,
-                fallback_reason: None,
-            },
-            gate,
-            raw_gate,
-            candidate_id: candidate.id.clone(),
-            candidate_digest: candidate.response_digest.clone(),
-            attempt: request.attempts[&candidate.id],
-            evidence_digest: request.evidence.snapshot_digest.clone(),
-            grounding,
-            attribution,
-            task_fit,
-            repair_reason,
-            latency_ms,
-        })
-    }
-
-    fn batch_gate(
-        &self,
-        answer: &ChoiceAnswer,
-        kind: DecisionKind,
-        latency_ms: u64,
-    ) -> Result<DecisionResult, ConversationError> {
-        let decision = Decision::parse(kind, &answer.choice)
-            .ok_or_else(|| invalid("gate choice is outside the declared vocabulary"))?;
-        Ok(DecisionResult {
-            decision,
-            confidence: answer.confidence,
-            probabilities: answer.probabilities.clone(),
-            provider: "typesafe-systemone".to_owned(),
-            model: self.config.model.clone(),
-            latency_ms,
-            fallback: false,
-            fallback_reason: None,
-        })
+            "typesafe-systemone",
+            &self.config.model,
+        )
     }
 
     fn send_batch(
@@ -705,7 +561,202 @@ impl JevDecisionProvider {
     }
 }
 
-fn preparation_questions(request: &TurnPreparationRequest) -> BTreeMap<String, ChoiceQuestion> {
+/// Compose provider-neutral classifications without granting the model authority.
+pub(super) fn compose_preparation(
+    request: &TurnPreparationRequest,
+    answers: &BTreeMap<String, ChoiceAnswer>,
+    latency_ms: u64,
+    provider: &str,
+    model: &str,
+) -> Result<TurnPreparation, ConversationError> {
+    let invocation = batch_gate(
+        &answers["invocation_gate"],
+        DecisionKind::InvocationGate,
+        latency_ms,
+        provider,
+        model,
+    )?;
+    let observation = match answers["observation_need"].choice.as_str() {
+        "NONE" => ObservationNeed::None,
+        "RECALL" => ObservationNeed::Recall,
+        "RUNTIME" => ObservationNeed::Runtime,
+        "RESEARCH" => ObservationNeed::Research,
+        "CLARIFY" => ObservationNeed::Clarify,
+        _ => return Err(invalid("unknown observation choice")),
+    };
+    let mut recall = BTreeMap::new();
+    for (index, candidate) in request.recall_candidates.iter().enumerate() {
+        let relevance = match answers[&format!("recall_{index}")].choice.as_str() {
+            "RELEVANT" => RecallRelevance::Relevant,
+            "IRRELEVANT" => RecallRelevance::Irrelevant,
+            "UNCERTAIN" => RecallRelevance::Uncertain,
+            _ => return Err(invalid("unknown recall relevance choice")),
+        };
+        recall.insert(candidate.id.clone(), relevance);
+    }
+    Ok(TurnPreparation {
+        invocation,
+        recall,
+        observation,
+        evidence_digest: request.evidence.snapshot_digest.clone(),
+        latency_ms,
+    })
+}
+
+pub(super) fn compose_assessment(
+    request: &ResponseAssessmentRequest,
+    answers: &BTreeMap<String, ChoiceAnswer>,
+    latency_ms: u64,
+    provider: &str,
+    model: &str,
+) -> Result<ResponseAssessment, ConversationError> {
+    let choice = &answers["response_candidate"];
+    let candidate = request
+        .selection
+        .candidates
+        .iter()
+        .find(|candidate| candidate.id == choice.choice)
+        .ok_or_else(|| invalid("selected response candidate is not available"))?;
+    let grounding = match answers[&format!("grounding_{}", candidate.id)]
+        .choice
+        .as_str()
+    {
+        "SUPPORTED" => GroundingAssessment::Supported,
+        "CONTRADICTED" => GroundingAssessment::Contradicted,
+        "INSUFFICIENT" => GroundingAssessment::Insufficient,
+        "NOT_APPLICABLE" => GroundingAssessment::NotApplicable,
+        _ => return Err(invalid("unknown grounding choice")),
+    };
+    let attribution = match answers[&format!("attribution_{}", candidate.id)]
+        .choice
+        .as_str()
+    {
+        "CONSISTENT" => AttributionAssessment::Consistent,
+        "CONFLICT" => AttributionAssessment::Conflict,
+        "UNCLEAR" => AttributionAssessment::Unclear,
+        "NOT_APPLICABLE" => AttributionAssessment::NotApplicable,
+        _ => return Err(invalid("unknown attribution choice")),
+    };
+    let task_fit = match answers[&format!("task_fit_{}", candidate.id)]
+        .choice
+        .as_str()
+    {
+        "MET" => TaskFitAssessment::Met,
+        "UNMET" => TaskFitAssessment::Unmet,
+        "UNCLEAR" => TaskFitAssessment::Unclear,
+        _ => return Err(invalid("unknown task fit choice")),
+    };
+    let mut repair_reason = match answers[&format!("repair_reason_{}", candidate.id)]
+        .choice
+        .as_str()
+    {
+        "NONE" => RepairReason::None,
+        "GROUNDING" => RepairReason::Grounding,
+        "ATTRIBUTION" => RepairReason::Attribution,
+        "TASK_FIT" => RepairReason::TaskFit,
+        "LANGUAGE" => RepairReason::Language,
+        _ => return Err(invalid("unknown repair reason choice")),
+    };
+    let mut gate = batch_gate(
+        &answers[&format!("response_gate_{}", candidate.id)],
+        DecisionKind::ResponseGate,
+        latency_ms,
+        provider,
+        model,
+    )?;
+    let raw_gate = gate.decision;
+    let failure = if matches!(
+        grounding,
+        GroundingAssessment::Contradicted | GroundingAssessment::Insufficient
+    ) {
+        Some(RepairReason::Grounding)
+    } else if matches!(
+        attribution,
+        AttributionAssessment::Conflict | AttributionAssessment::Unclear
+    ) {
+        Some(RepairReason::Attribution)
+    } else if matches!(
+        task_fit,
+        TaskFitAssessment::Unmet | TaskFitAssessment::Unclear
+    ) {
+        Some(RepairReason::TaskFit)
+    } else {
+        None
+    };
+    if let Some(reason) = failure {
+        repair_reason = reason;
+        if gate.decision != Decision::Reject {
+            gate.decision = Decision::Retry;
+        }
+    }
+    // Independent batch answers can disagree. A concrete repair reason
+    // prevents delivery even when every other answer says ACCEPT/pass.
+    // Conversely, an unspecified reason stays unspecified; the host can
+    // supply generic repair guidance without inventing a quality label.
+    if gate.decision == Decision::Accept && repair_reason != RepairReason::None {
+        gate.decision = Decision::Retry;
+    }
+    Ok(ResponseAssessment {
+        selection: selection_result(choice, "SELECT_RESPONSE", latency_ms, provider, model),
+        gate,
+        raw_gate,
+        candidate_id: candidate.id.clone(),
+        candidate_digest: candidate.response_digest.clone(),
+        attempt: request.attempts[&candidate.id],
+        evidence_digest: request.evidence.snapshot_digest.clone(),
+        grounding,
+        attribution,
+        task_fit,
+        repair_reason,
+        latency_ms,
+    })
+}
+
+pub(super) fn batch_gate(
+    answer: &ChoiceAnswer,
+    kind: DecisionKind,
+    latency_ms: u64,
+    provider: &str,
+    model: &str,
+) -> Result<DecisionResult, ConversationError> {
+    let decision = Decision::parse(kind, &answer.choice)
+        .ok_or_else(|| invalid("gate choice is outside the declared vocabulary"))?;
+    Ok(DecisionResult {
+        decision,
+        confidence: answer.confidence,
+        probabilities: answer.probabilities.clone(),
+        provider: provider.to_owned(),
+        model: model.to_owned(),
+        latency_ms,
+        fallback: false,
+        fallback_reason: None,
+    })
+}
+
+/// Attribute an already validated single-candidate choice to its decision API.
+pub(super) fn selection_result(
+    answer: &ChoiceAnswer,
+    decision: &str,
+    latency_ms: u64,
+    provider: &str,
+    model: &str,
+) -> ProviderSelectionResult {
+    ProviderSelectionResult {
+        provider_id: answer.choice.clone(),
+        decision: decision.to_owned(),
+        confidence: answer.confidence,
+        probabilities: answer.probabilities.clone(),
+        provider: provider.to_owned(),
+        model: model.to_owned(),
+        latency_ms,
+        fallback: false,
+        fallback_reason: None,
+    }
+}
+
+pub(super) fn preparation_questions(
+    request: &TurnPreparationRequest,
+) -> BTreeMap<String, ChoiceQuestion> {
     let mut questions = BTreeMap::from([
         (
             "invocation_gate".to_owned(),
@@ -750,7 +801,9 @@ fn preparation_questions(request: &TurnPreparationRequest) -> BTreeMap<String, C
     questions
 }
 
-fn assessment_questions(request: &ResponseAssessmentRequest) -> BTreeMap<String, ChoiceQuestion> {
+pub(super) fn assessment_questions(
+    request: &ResponseAssessmentRequest,
+) -> BTreeMap<String, ChoiceQuestion> {
     let mut questions = BTreeMap::from([(
         "response_candidate".to_owned(),
         ChoiceQuestion {
@@ -814,7 +867,7 @@ fn assessment_questions(request: &ResponseAssessmentRequest) -> BTreeMap<String,
     questions
 }
 
-fn batch_body(
+pub(super) fn batch_body(
     model: &str,
     state: &str,
     questions: &BTreeMap<String, ChoiceQuestion>,
@@ -838,7 +891,7 @@ fn batch_body(
     )
 }
 
-fn parse_batch_answers(
+pub(super) fn parse_batch_answers(
     body: &str,
     questions: &BTreeMap<String, ChoiceQuestion>,
 ) -> Result<BTreeMap<String, ChoiceAnswer>, ConversationError> {
@@ -921,7 +974,7 @@ fn parse_batch_answers(
         .collect()
 }
 
-fn bounded_json(
+pub(super) fn bounded_json(
     value: &impl Serialize,
     limit: usize,
     message: &'static str,

@@ -472,6 +472,10 @@ fn execute(
         runtime.stopping();
     }
     let mut runtime = Runtime::open(dir, options)?;
+    // This harness explicitly owns the freshly created experimental individual
+    // and authorizes its declared genome policy before its first turn.
+    let review = runtime.identity_status()?;
+    runtime.accept_identity(&review.review_token)?;
     let mut session =
         DialogueSession::start(&mut runtime, "harness", PrivacyConstraint::LocalOnly)?;
     for (turn_index, message) in config.scenario.turns.iter().enumerate() {

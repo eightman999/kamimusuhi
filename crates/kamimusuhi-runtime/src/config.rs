@@ -248,6 +248,19 @@ pub enum ReasoningSetting {
     Auto,
 }
 
+/// Which engine performs the host's bounded preparation and quality decisions.
+/// Auto keeps a configured Jev, otherwise uses the primary Persona API. A
+/// deterministic fixture without an API retains local rule-based decisions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionSetting {
+    #[default]
+    Auto,
+    PersonaApi,
+    Typesafe,
+    RuleBased,
+}
+
 impl ReasoningSetting {
     pub const fn to_backend(self) -> kamimusuhi_persona_http::ReasoningMode {
         match self {
@@ -263,6 +276,29 @@ fn default_persona_locality() -> LocalityClass {
 }
 
 impl PersonaProviderConfig {
+    /// Decision calls borrow this provider's transport, never its voice or
+    /// tools. Memory authority continues to belong to the host/kernel.
+    pub(crate) fn build_decision_backend(&self) -> Result<OpenAiCompatiblePersona, RuntimeError> {
+        if self.locality == LocalityClass::InProcess {
+            return Err(RuntimeError::PersonaConfig {
+                message: "HTTP decision backend cannot declare in_process locality".to_owned(),
+            });
+        }
+        let config =
+            PersonaBackendConfig::new(self.backend_id, self.base_url.clone(), self.model.clone())
+                .with_timeout_ms(self.timeout_ms)
+                .with_auth_env(self.auth_env.clone())
+                .with_trust_anchors(match &self.tls_root_ca_path {
+                    Some(path) => TrustAnchors::PemFile(path.clone()),
+                    None => TrustAnchors::Webpki,
+                })
+                .with_extra_body(self.extra_body.clone());
+        config
+            .validate()
+            .map_err(|message| RuntimeError::PersonaConfig { message })?;
+        Ok(OpenAiCompatiblePersona::new(config))
+    }
+
     /// Validate and build one language-organ Persona without changing the
     /// configured primary Persona setting. Additional GUI-registered organs
     /// use this same adapter and the same secret boundary.
@@ -529,6 +565,9 @@ pub struct C0Config {
     /// Run a reflection cycle every N turns in `chat`. 0 = only on `/reflect`
     /// or the `reflect` command.
     pub reflection_interval_turns: u32,
+    /// Bounds for input-free reflection; the resident's cognition config
+    /// explicitly enables scheduling. Manual `reflect` remains independent.
+    pub idle: crate::idle_cognition::IdleCognitionPolicy,
     /// Whether a gate-passed proposal activates immediately. When false the
     /// gate still runs and records its decision; activation stays manual.
     pub auto_activate: bool,
@@ -542,6 +581,7 @@ impl Default for C0Config {
     fn default() -> Self {
         Self {
             reflection_interval_turns: 0,
+            idle: crate::idle_cognition::IdleCognitionPolicy::default(),
             auto_activate: true,
             replay_turns: 4,
             reflector: ReflectorSetting::default(),
@@ -562,6 +602,8 @@ pub struct RuntimeConfig {
     /// candidate, never confused with a delegated resource.
     #[serde(default)]
     pub persona: PersonaSetting,
+    #[serde(default)]
+    pub decision: DecisionSetting,
     /// Extra language organs registered by the operator. They are separate
     /// from the primary Persona and are offered to Jev as turn-local choices;
     /// none of them is a router resource or a source of canonical state.
@@ -679,6 +721,7 @@ impl RuntimeConfig {
             config_version: Self::VERSION,
             node_id,
             persona: PersonaSetting::default(),
+            decision: DecisionSetting::default(),
             language_providers: BTreeMap::new(),
             provider_timeout_ms: default_provider_timeout_ms(),
             c0: C0Config::default(),
@@ -701,6 +744,11 @@ impl RuntimeConfig {
             .build_with(self.tools.as_ref(), &self.avatar_identity())
     }
 
+    /// Replay evaluates an expression, never repeats its historical tools.
+    pub fn build_replay_persona(&self) -> Result<Box<dyn PersonaCore>, RuntimeError> {
+        self.persona.build_with(None, &self.avatar_identity())
+    }
+
     /// Build an additional language organ with the same tool access as the
     /// primary Persona.
     pub fn build_language_provider(
@@ -720,6 +768,41 @@ impl RuntimeConfig {
 
     /// Build the reflector this config selects. `Mirror` resolves against the
     /// persona setting, so the default needs no extra configuration.
+    pub fn reflector_locality(&self) -> Result<LocalityClass, RuntimeError> {
+        match self.c0.reflector.backend {
+            ReflectorBackend::Fake => Ok(LocalityClass::InProcess),
+            ReflectorBackend::Mirror if self.persona.backend == PersonaBackendKind::Fake => {
+                Ok(LocalityClass::InProcess)
+            }
+            ReflectorBackend::Mirror => self
+                .persona
+                .provider
+                .as_ref()
+                .map(|provider| provider.locality)
+                .ok_or_else(|| RuntimeError::PersonaConfig {
+                    message: "mirror reflector needs a persona provider entry".to_owned(),
+                }),
+            ReflectorBackend::OpenaiCompatible => self
+                .c0
+                .reflector
+                .provider
+                .as_ref()
+                .map(|provider| provider.locality)
+                .ok_or_else(|| RuntimeError::PersonaConfig {
+                    message: "openai-compatible reflector needs a provider entry".to_owned(),
+                }),
+        }
+    }
+
+    pub fn check_reflector_privacy(&self, privacy: PrivacyConstraint) -> Result<(), RuntimeError> {
+        let locality = self.reflector_locality()?;
+        if privacy.admits(locality) {
+            Ok(())
+        } else {
+            Err(RuntimeError::PersonaPrivacy { privacy, locality })
+        }
+    }
+
     pub fn build_reflector(&self) -> Result<Box<dyn kamimusuhi_core::c0::Reflector>, RuntimeError> {
         match self.c0.reflector.backend {
             ReflectorBackend::Fake => Ok(Box::new(kamimusuhi_testkit::FakeReflector::default())),

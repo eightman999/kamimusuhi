@@ -176,6 +176,7 @@ fn run_turn(
     message: &str,
     turn: &str,
     timeout: Duration,
+    identity_context: Option<&Value>,
 ) -> Result<Value, HostError> {
     if !host.alive() {
         return Err(HostError::Dead(
@@ -183,7 +184,11 @@ fn run_turn(
             host.stderr_tail(),
         ));
     }
-    let request = serde_json::json!({"message": message, "turn": turn}).to_string();
+    let mut request = serde_json::json!({"message": message, "turn": turn});
+    if let Some(context) = identity_context {
+        request["identity_context"] = context.clone();
+    }
+    let request = request.to_string();
     host.stdin
         .write_all(request.as_bytes())
         .and_then(|()| host.stdin.write_all(b"\n"))
@@ -343,12 +348,24 @@ impl HostPool {
         turn_id: &str,
         timeout: Duration,
     ) -> Result<TurnOutcome, HostError> {
+        self.turn_with_identity(spec, message, turn_id, timeout, None)
+    }
+
+    /// Same protocol with an authenticated parent-owned identity context.
+    pub fn turn_with_identity(
+        &self,
+        spec: &HostSpec,
+        message: &str,
+        turn_id: &str,
+        timeout: Duration,
+        identity_context: Option<&Value>,
+    ) -> Result<TurnOutcome, HostError> {
         // Up to two attempts: the second only after a provably-unanswered
         // first, and always on a fresh process.
         for attempt in 0..2 {
             let mut host = self.checkout(spec)?;
             let reused = host.turns > 0;
-            match run_turn(&mut host, message, turn_id, timeout) {
+            match run_turn(&mut host, message, turn_id, timeout, identity_context) {
                 Ok(reply) => {
                     host.turns += 1;
                     host.last_used = Instant::now();
@@ -453,6 +470,25 @@ mod tests {
     #[cfg(unix)]
     fn pool() -> HostPool {
         HostPool::new(Duration::from_secs(1800), 8)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn identity_context_is_refreshed_on_each_warm_host_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = fake_host_script(dir.path(), "printf '%s\\n' \"$line\"");
+        let pool = pool();
+        let first = serde_json::json!({"version":1,"declarations":{"self":"first"}});
+        let second = serde_json::json!({"version":1,"declarations":{"self":"changed"}});
+        let a = pool
+            .turn_with_identity(&spec, "hi", "t1", Duration::from_secs(5), Some(&first))
+            .unwrap();
+        let b = pool
+            .turn_with_identity(&spec, "hi", "t2", Duration::from_secs(5), Some(&second))
+            .unwrap();
+        assert_eq!(a.pid, b.pid);
+        assert_eq!(a.reply["identity_context"], first);
+        assert_eq!(b.reply["identity_context"], second);
     }
 
     #[cfg(unix)]

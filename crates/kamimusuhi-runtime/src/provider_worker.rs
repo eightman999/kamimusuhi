@@ -14,17 +14,62 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::config::{PersonaProviderConfig, RuntimeConfig};
+use crate::config::{DecisionSetting, PersonaBackendKind, PersonaProviderConfig, RuntimeConfig};
 use crate::llm_jev::{
     ConversationError, DecisionProvider, DecisionRequest, DecisionResult, FallbackDecisionProvider,
     JevDecisionProvider, LanguageProvider, LanguageRequest, LanguageResponseSelectionRequest,
-    LanguageResult, PersonaLanguageProvider, ProviderSelectionRequest, ProviderSelectionResult,
-    ResponseAssessment, ResponseAssessmentRequest, RuleBasedDecisionProvider, TurnPreparation,
-    TurnPreparationRequest, TypesafeConfig, configured_language_provider,
+    LanguageResult, OpenAiDecisionProvider, PersonaLanguageProvider, ProviderSelectionRequest,
+    ProviderSelectionResult, ResponseAssessment, ResponseAssessmentRequest,
+    RuleBasedDecisionProvider, TurnPreparation, TurnPreparationRequest, TypesafeConfig,
+    configured_language_provider,
 };
 use crate::provider_process::ProcessCommand;
 
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
+
+/// Non-secret, host-selected implementation of the cognitive decision slot.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(tag = "backend", content = "provider", rename_all = "snake_case")]
+pub enum DecisionProviderConfig {
+    #[default]
+    RuleBased,
+    Typesafe(TypesafeConfig),
+    PersonaApi(Box<PersonaProviderConfig>),
+}
+
+impl DecisionProviderConfig {
+    fn from_runtime(config: &RuntimeConfig) -> Result<Self, ConversationError> {
+        let typesafe = TypesafeConfig::from_env();
+        match config.decision {
+            DecisionSetting::RuleBased => Ok(Self::RuleBased),
+            DecisionSetting::Typesafe => typesafe.map(Self::Typesafe).ok_or_else(|| {
+                ConversationError::InvalidConfig(
+                    "TypeSafe decision backend is not configured".to_owned(),
+                )
+            }),
+            DecisionSetting::Auto if typesafe.is_some() => {
+                Ok(Self::Typesafe(typesafe.expect("configured")))
+            }
+            DecisionSetting::Auto if config.persona.backend == PersonaBackendKind::Fake => {
+                Ok(Self::RuleBased)
+            }
+            DecisionSetting::Auto | DecisionSetting::PersonaApi => {
+                if config.persona.backend != PersonaBackendKind::OpenaiCompatible {
+                    return Err(ConversationError::InvalidConfig(
+                        "API decisions require an API Persona".to_owned(),
+                    ));
+                }
+                let provider = config.persona.provider.clone().ok_or_else(|| {
+                    ConversationError::InvalidConfig("API decision provider is missing".to_owned())
+                })?;
+                provider.build_decision_backend().map_err(|_| {
+                    ConversationError::InvalidConfig("invalid API decision provider".to_owned())
+                })?;
+                Ok(Self::PersonaApi(Box::new(provider)))
+            }
+        }
+    }
+}
 
 /// The closed set of worker operations. No database, session, or arbitrary
 /// executable command is supplied to the worker through this frame.
@@ -35,30 +80,42 @@ pub enum WorkerRequest {
         config: Box<RuntimeConfig>,
         provider: Option<PersonaProviderConfig>,
         request: Value,
+        #[serde(default)]
+        identity_context: Value,
     },
     Decide {
         #[serde(default)]
-        config: Option<TypesafeConfig>,
+        config: DecisionProviderConfig,
+        #[serde(default)]
+        identity_context: Value,
         request: DecisionRequest,
     },
     Prepare {
         #[serde(default)]
-        config: Option<TypesafeConfig>,
+        config: DecisionProviderConfig,
+        #[serde(default)]
+        identity_context: Value,
         request: TurnPreparationRequest,
     },
     Assess {
         #[serde(default)]
-        config: Option<TypesafeConfig>,
+        config: DecisionProviderConfig,
+        #[serde(default)]
+        identity_context: Value,
         request: ResponseAssessmentRequest,
     },
     SelectProvider {
         #[serde(default)]
-        config: Option<TypesafeConfig>,
+        config: DecisionProviderConfig,
+        #[serde(default)]
+        identity_context: Value,
         request: ProviderSelectionRequest,
     },
     SelectResponse {
         #[serde(default)]
-        config: Option<TypesafeConfig>,
+        config: DecisionProviderConfig,
+        #[serde(default)]
+        identity_context: Value,
         request: LanguageResponseSelectionRequest,
     },
 }
@@ -227,13 +284,24 @@ impl WorkerReply {
     }
 }
 
-fn decision_provider(config: Option<TypesafeConfig>) -> Box<dyn DecisionProvider> {
-    match config {
-        Some(config) => Box::new(FallbackDecisionProvider::new(Box::new(
-            JevDecisionProvider::new(config),
-        ))),
-        None => Box::new(RuleBasedDecisionProvider),
-    }
+fn decision_provider(
+    config: DecisionProviderConfig,
+    identity_context: Value,
+) -> Result<Box<dyn DecisionProvider>, ConversationError> {
+    let provider: Box<dyn DecisionProvider> = match config {
+        DecisionProviderConfig::Typesafe(config) => Box::new(FallbackDecisionProvider::new(
+            Box::new(JevDecisionProvider::new(config)),
+        )),
+        DecisionProviderConfig::RuleBased => Box::new(RuleBasedDecisionProvider),
+        DecisionProviderConfig::PersonaApi(config) => Box::new(OpenAiDecisionProvider::new(
+            config.build_decision_backend().map_err(|_| {
+                ConversationError::InvalidConfig("invalid API decision provider".to_owned())
+            })?,
+            config.locality,
+        )),
+    };
+    provider.set_identity_context(identity_context);
+    Ok(provider)
 }
 
 /// Execute one typed operation. The worker opens no canonical SQLite store.
@@ -245,6 +313,7 @@ pub fn execute(request: WorkerRequest) -> WorkerReply {
             config,
             provider,
             request,
+            identity_context,
         } => WorkerReply::from_result((|| {
             let request: LanguageRequest = serde_json::from_value(request).map_err(|_| {
                 ConversationError::Malformed("invalid worker language request".to_owned())
@@ -255,6 +324,7 @@ pub fn execute(request: WorkerRequest) -> WorkerReply {
                         "invalid language worker configuration".to_owned(),
                     )
                 })?;
+                persona.set_identity_context(identity_context.clone());
                 Box::new(PersonaLanguageProvider::new(
                     persona,
                     crate::dialogue_setup::language_provider_kind(&provider),
@@ -272,25 +342,51 @@ pub fn execute(request: WorkerRequest) -> WorkerReply {
                     .as_ref()
                     .map(|p| p.model.clone())
                     .unwrap_or_else(|| persona.descriptor().name);
+                persona.set_identity_context(identity_context);
                 configured_language_provider(persona, model)?
             };
             language.generate(&request)
         })()),
-        WorkerRequest::Decide { config, request } => {
-            WorkerReply::from_result(decision_provider(config).decide(&request))
-        }
-        WorkerRequest::Prepare { config, request } => {
-            WorkerReply::from_result(decision_provider(config).prepare_turn(&request))
-        }
-        WorkerRequest::Assess { config, request } => {
-            WorkerReply::from_result(decision_provider(config).assess_responses(&request))
-        }
-        WorkerRequest::SelectProvider { config, request } => {
-            WorkerReply::from_result(decision_provider(config).select_language_provider(&request))
-        }
-        WorkerRequest::SelectResponse { config, request } => {
-            WorkerReply::from_result(decision_provider(config).select_language_response(&request))
-        }
+        WorkerRequest::Decide {
+            config,
+            identity_context,
+            request,
+        } => WorkerReply::from_result(
+            decision_provider(config, identity_context)
+                .and_then(|provider| provider.decide(&request)),
+        ),
+        WorkerRequest::Prepare {
+            config,
+            identity_context,
+            request,
+        } => WorkerReply::from_result(
+            decision_provider(config, identity_context)
+                .and_then(|provider| provider.prepare_turn(&request)),
+        ),
+        WorkerRequest::Assess {
+            config,
+            identity_context,
+            request,
+        } => WorkerReply::from_result(
+            decision_provider(config, identity_context)
+                .and_then(|provider| provider.assess_responses(&request)),
+        ),
+        WorkerRequest::SelectProvider {
+            config,
+            identity_context,
+            request,
+        } => WorkerReply::from_result(
+            decision_provider(config, identity_context)
+                .and_then(|provider| provider.select_language_provider(&request)),
+        ),
+        WorkerRequest::SelectResponse {
+            config,
+            identity_context,
+            request,
+        } => WorkerReply::from_result(
+            decision_provider(config, identity_context)
+                .and_then(|provider| provider.select_language_response(&request)),
+        ),
     }
 }
 
@@ -346,6 +442,7 @@ fn invoke<T: DeserializeOwned>(
 }
 
 pub struct ProcessLanguageProvider {
+    identity_context: std::sync::Mutex<Value>,
     command: ProcessCommand,
     config: RuntimeConfig,
     provider: Option<PersonaProviderConfig>,
@@ -363,12 +460,20 @@ impl ProcessLanguageProvider {
             command,
             config,
             provider,
+            identity_context: std::sync::Mutex::new(Value::Null),
             timeout_ms: AtomicU64::new(millis(timeout)),
         }
     }
 }
 
 impl LanguageProvider for ProcessLanguageProvider {
+    fn set_identity_context(&self, context: Value) {
+        *self
+            .identity_context
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = context;
+    }
+
     fn is_process_isolated(&self) -> bool {
         true
     }
@@ -395,6 +500,11 @@ impl LanguageProvider for ProcessLanguageProvider {
                 config: Box::new(self.config.clone()),
                 provider: self.provider.clone(),
                 request: payload,
+                identity_context: self
+                    .identity_context
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clone(),
             },
             Duration::from_millis(self.timeout_ms.load(Ordering::Relaxed)),
             request.cancellation.as_ref(),
@@ -422,7 +532,8 @@ impl LanguageProvider for ProcessLanguageProvider {
 pub struct ProcessDecisionProvider {
     command: ProcessCommand,
     timeout_ms: AtomicU64,
-    config: Option<TypesafeConfig>,
+    config: DecisionProviderConfig,
+    identity_context: std::sync::Mutex<Value>,
 }
 
 impl ProcessDecisionProvider {
@@ -430,8 +541,32 @@ impl ProcessDecisionProvider {
         Self {
             command,
             timeout_ms: AtomicU64::new(millis(timeout)),
-            config: TypesafeConfig::from_env(),
+            config: TypesafeConfig::from_env().map_or(
+                DecisionProviderConfig::RuleBased,
+                DecisionProviderConfig::Typesafe,
+            ),
+            identity_context: std::sync::Mutex::new(Value::Null),
         }
+    }
+
+    pub fn for_runtime(
+        command: ProcessCommand,
+        timeout: Duration,
+        config: &RuntimeConfig,
+    ) -> Result<Self, ConversationError> {
+        Ok(Self {
+            command,
+            timeout_ms: AtomicU64::new(millis(timeout)),
+            config: DecisionProviderConfig::from_runtime(config)?,
+            identity_context: std::sync::Mutex::new(Value::Null),
+        })
+    }
+
+    fn identity_context(&self) -> Value {
+        self.identity_context
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     fn call<T: DeserializeOwned>(&self, request: WorkerRequest) -> Result<T, ConversationError> {
@@ -445,6 +580,21 @@ impl ProcessDecisionProvider {
 }
 
 impl DecisionProvider for ProcessDecisionProvider {
+    fn locality(&self) -> kamimusuhi_core::routing::LocalityClass {
+        match &self.config {
+            DecisionProviderConfig::RuleBased => kamimusuhi_core::routing::LocalityClass::InProcess,
+            DecisionProviderConfig::Typesafe(_) => {
+                kamimusuhi_core::routing::LocalityClass::External
+            }
+            DecisionProviderConfig::PersonaApi(config) => config.locality,
+        }
+    }
+    fn set_identity_context(&self, context: Value) {
+        *self
+            .identity_context
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = context;
+    }
     fn is_process_isolated(&self) -> bool {
         true
     }
@@ -454,6 +604,7 @@ impl DecisionProvider for ProcessDecisionProvider {
     fn decide(&self, request: &DecisionRequest) -> Result<DecisionResult, ConversationError> {
         self.call(WorkerRequest::Decide {
             config: self.config.clone(),
+            identity_context: self.identity_context(),
             request: request.clone(),
         })
     }
@@ -463,6 +614,7 @@ impl DecisionProvider for ProcessDecisionProvider {
     ) -> Result<TurnPreparation, ConversationError> {
         self.call(WorkerRequest::Prepare {
             config: self.config.clone(),
+            identity_context: self.identity_context(),
             request: request.clone(),
         })
     }
@@ -472,6 +624,7 @@ impl DecisionProvider for ProcessDecisionProvider {
     ) -> Result<ResponseAssessment, ConversationError> {
         self.call(WorkerRequest::Assess {
             config: self.config.clone(),
+            identity_context: self.identity_context(),
             request: request.clone(),
         })
     }
@@ -481,6 +634,7 @@ impl DecisionProvider for ProcessDecisionProvider {
     ) -> Result<ProviderSelectionResult, ConversationError> {
         self.call(WorkerRequest::SelectProvider {
             config: self.config.clone(),
+            identity_context: self.identity_context(),
             request: request.clone(),
         })
     }
@@ -490,11 +644,18 @@ impl DecisionProvider for ProcessDecisionProvider {
     ) -> Result<ProviderSelectionResult, ConversationError> {
         self.call(WorkerRequest::SelectResponse {
             config: self.config.clone(),
+            identity_context: self.identity_context(),
             request: request.clone(),
         })
     }
     fn is_external(&self) -> bool {
-        self.config.is_some()
+        match &self.config {
+            DecisionProviderConfig::RuleBased => false,
+            DecisionProviderConfig::Typesafe(_) => true,
+            DecisionProviderConfig::PersonaApi(config) => {
+                config.locality == kamimusuhi_core::routing::LocalityClass::External
+            }
+        }
     }
 }
 

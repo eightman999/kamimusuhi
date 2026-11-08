@@ -84,6 +84,8 @@ fn prepared(persona: &FixtureServer, mio: &FixtureServer) -> (tempfile::TempDir,
     )
     .unwrap();
     let mut config = runtime.config().clone();
+    // MIO fixtures isolate provenance/transport, not API decision quality.
+    config.decision = kamimusuhi_runtime::config::DecisionSetting::RuleBased;
     config.persona = PersonaSetting {
         backend: PersonaBackendKind::OpenaiCompatible,
         provider: Some(PersonaProviderConfig {
@@ -102,6 +104,8 @@ fn prepared(persona: &FixtureServer, mio: &FixtureServer) -> (tempfile::TempDir,
     };
     config.mio = Some(binding(mio));
     runtime.save_config(config).unwrap();
+    let review = runtime.identity_status().unwrap();
+    runtime.accept_identity(&review.review_token).unwrap();
     (dir, runtime)
 }
 
@@ -495,35 +499,51 @@ fn success(output: Output) -> Value {
 fn cli_pin_persists_across_processes_disconnects_and_never_forwards_persona_auth_to_mio() {
     let dir = tempfile::tempdir().unwrap();
     success(run(dir.path(), "init", &[]));
+    let path = dir.path().join("runtime.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    config["decision"] = json!("rule_based");
+    std::fs::write(path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
     let mio =
         FixtureServer::always(json_response(&snapshot(FixedClock::BASELINE_UNIX_MILLIS))).unwrap();
     let persona = FixtureServer::always(FixtureResponse::ok("API fixture reply")).unwrap();
-    let first = success(run(
+    let persona_url = persona.base_url();
+    let observation_url = mio_url(&mio);
+    let flags = &[
+        "--message",
+        "PRIVATE_CLI_USER_INPUT",
+        "--persona",
+        "openai-compatible",
+        "--persona-url",
+        &persona_url,
+        "--persona-model",
+        "mio-cli-fixture",
+        "--persona-locality",
+        "local-host",
+        "--persona-auth-env",
+        "KAMIMUSUHI_MIO_FIXTURE_KEY",
+        "--mio-url",
+        &observation_url,
+        "--mio-experiment",
+        EXPERIMENT,
+        "--mio-genome",
+        GENOME,
+        "--mio-max-age-secs",
+        "60",
+    ];
+    let refused = run(dir.path(), "talk", flags);
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("identity change requires explicit acceptance")
+    );
+    assert_eq!(persona.request_count(), 0);
+    let review = success(run(dir.path(), "identity-status", &[]));
+    success(run(
         dir.path(),
-        "talk",
-        &[
-            "--message",
-            "PRIVATE_CLI_USER_INPUT",
-            "--persona",
-            "openai-compatible",
-            "--persona-url",
-            &persona.base_url(),
-            "--persona-model",
-            "mio-cli-fixture",
-            "--persona-locality",
-            "local-host",
-            "--persona-auth-env",
-            "KAMIMUSUHI_MIO_FIXTURE_KEY",
-            "--mio-url",
-            &mio_url(&mio),
-            "--mio-experiment",
-            EXPERIMENT,
-            "--mio-genome",
-            GENOME,
-            "--mio-max-age-secs",
-            "60",
-        ],
+        "identity-accept",
+        &["--review-token", review["review_token"].as_str().unwrap()],
     ));
+    let first = success(run(dir.path(), "talk", flags));
     assert_eq!(
         first["mio_observation"]["observation"]["connection"],
         "connected"

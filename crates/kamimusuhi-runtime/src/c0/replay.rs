@@ -166,6 +166,8 @@ pub fn replay_proposal(
     subject: &str,
     proposal: &ImprovementProposal,
 ) -> Result<ReplayReport, RuntimeError> {
+    let _identity_lease = runtime.lock_identity()?;
+    runtime.ensure_identity()?;
     let operative = lane::operative(runtime)?;
     let candidate = apply_proposal(&operative.view, proposal);
     let source_id = format!("text-chat:{subject}");
@@ -174,9 +176,10 @@ pub fn replay_proposal(
     // oldest first for a stable comparison order.
     let pool = runtime
         .store()
-        .c0_evidence_pool(runtime.individual_id(), 256)?;
+        .recent_conversation(runtime.individual_id(), &source_id, 128)?;
     let mut inputs: Vec<String> = pool
         .iter()
+        .rev()
         .filter(|r| {
             r.kind == EvidenceKind::UserUtterance
                 && r.source.source_id.as_deref() == Some(source_id.as_str())
@@ -200,7 +203,14 @@ pub fn replay_proposal(
         });
     }
 
-    let persona = runtime.config().build_persona()?;
+    let persona = runtime.config().build_replay_persona()?;
+    let manifest = runtime.identity_manifest()?;
+    let mut identity_context = runtime.identity_context().clone();
+    if identity_context.is_null() {
+        identity_context = serde_json::json!({});
+    }
+    identity_context["model_hashes"] = serde_json::json!(manifest.allowed_model_hashes);
+    persona.set_identity_context(identity_context);
     let seed = runtime.config().persona_seed()?;
     let mut baseline = Vec::new();
     let mut candidate_metrics = Vec::new();
@@ -237,6 +247,7 @@ pub fn replay_proposal(
                 turn_input.envelope = turn_input.envelope.with_seed(seed.clone());
             }
             let result = persona.turn(turn_input)?;
+            runtime.ensure_identity()?;
             out.push(eval::measure_turn(
                 text,
                 &result.response_intent,
@@ -247,4 +258,124 @@ pub fn replay_proposal(
         }
     }
     Ok(compare_replay(&baseline, &candidate_metrics))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kamimusuhi_core::ids::PersonaBackendId;
+    use kamimusuhi_core::mutation::OriginClass;
+    use kamimusuhi_core::routing::LocalityClass;
+    use kamimusuhi_testkit::http_fixture::{FixtureResponse, FixtureServer};
+    use serde_json::json;
+
+    fn api_runtime(server: &FixtureServer, tools: &FixtureServer) -> (tempfile::TempDir, Runtime) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut runtime = Runtime::init(
+            dir.path(),
+            crate::RuntimeOptions::deterministic(0x1D1F),
+            crate::ResourceImplementation::FakeA,
+        )
+        .unwrap();
+        let mut config = runtime.config().clone();
+        config.persona.backend = crate::config::PersonaBackendKind::OpenaiCompatible;
+        config.persona.provider = Some(
+            serde_json::from_value(json!({
+                "backend_id": PersonaBackendId::from_u128(0x1D1F),
+                "locality": LocalityClass::LocalHost,
+                "base_url": server.base_url(), "model": "replay-fixture", "timeout_ms": 1000,
+            }))
+            .unwrap(),
+        );
+        config.tools = Some(
+            serde_json::from_value(json!({
+                "base_url": tools.base_url().trim_end_matches("/v1"),
+            }))
+            .unwrap(),
+        );
+        runtime.save_config(config).unwrap();
+        let status = runtime.identity_status().unwrap();
+        runtime.accept_identity(&status.review_token).unwrap();
+        lane::narrate(
+            &runtime,
+            None,
+            None,
+            EvidenceKind::UserUtterance,
+            OriginClass::Reported,
+            json!({"text": "過去の依頼を評価して"}),
+            "text-chat:alice",
+            &[],
+        )
+        .unwrap();
+        (dir, runtime)
+    }
+
+    #[test]
+    fn replay_never_discovers_or_calls_configured_tools_and_uses_subject_inputs() {
+        let server = FixtureServer::always(FixtureResponse::ok("評価用の応答です。")).unwrap();
+        let tools = FixtureServer::always(FixtureResponse::ok("{}")).unwrap();
+        let (_dir, runtime) = api_runtime(&server, &tools);
+        // Other people and unrelated events cannot crowd out Alice's input.
+        for _ in 0..260 {
+            lane::narrate(
+                &runtime,
+                None,
+                None,
+                EvidenceKind::UserUtterance,
+                OriginClass::Reported,
+                json!({"text": "bob-private"}),
+                "text-chat:bob",
+                &[],
+            )
+            .unwrap();
+        }
+        let proposal = lane::propose_param(
+            &runtime,
+            "conversation.max_response_chars",
+            json!(200),
+            None,
+        )
+        .unwrap();
+        let report = replay_proposal(&runtime, "alice", &proposal).unwrap();
+        assert_eq!(report.turns, 1);
+        assert!(report.all_completed);
+        assert_eq!(server.request_count(), 2);
+        assert_eq!(tools.request_count(), 0);
+        for request in server.requests() {
+            let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+            assert!(body.get("tools").is_none());
+            assert!(!request.body.contains("bob-private"));
+        }
+    }
+
+    #[test]
+    fn replay_binds_requests_to_reviewed_routes_and_rejects_undeclared_models() {
+        let server = FixtureServer::always(FixtureResponse::ok("評価用の応答です。")).unwrap();
+        let tools = FixtureServer::always(FixtureResponse::ok("{}")).unwrap();
+        let (_dir, mut runtime) = api_runtime(&server, &tools);
+        let origin = server.base_url().trim_end_matches("/v1").to_owned();
+        let pin = format!("sha256:{}", "b".repeat(64));
+        runtime
+            .set_identity_context(json!({"route_pins": {origin.clone(): pin}}))
+            .unwrap();
+        let status = runtime.identity_status().unwrap();
+        runtime.accept_identity(&status.review_token).unwrap();
+        let proposal = lane::propose_param(
+            &runtime,
+            "conversation.max_response_chars",
+            json!(200),
+            None,
+        )
+        .unwrap();
+        let head = runtime.head().unwrap();
+        assert!(matches!(
+            replay_proposal(&runtime, "alice", &proposal),
+            Err(RuntimeError::Persona(_))
+        ));
+        assert_eq!(runtime.head().unwrap(), head);
+        assert_eq!(tools.request_count(), 0);
+        assert_eq!(server.request_count(), 1);
+        let body: serde_json::Value = serde_json::from_str(&server.requests()[0].body).unwrap();
+        assert_eq!(body["kamimusuhi_identity_pins"][&origin], pin);
+    }
 }

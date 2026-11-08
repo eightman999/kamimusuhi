@@ -236,6 +236,39 @@ pub fn submit_drafts(
     cached_writer: &mut Option<WriterIdentity>,
     drafts: Vec<ProposalDraft>,
 ) -> Result<Vec<DraftOutcome>, RuntimeError> {
+    submit_drafts_scoped(runtime, session_id, turn_id, cached_writer, drafts, None)
+}
+
+/// Reflection cycles have independent draft-index namespaces even outside a
+/// dialogue session. The caller supplies a fresh host-owned cycle scope.
+pub(crate) fn submit_reflection_drafts(
+    runtime: &Runtime,
+    session_id: Option<SessionId>,
+    turn_id: Option<TurnId>,
+    cached_writer: &mut Option<WriterIdentity>,
+    drafts: Vec<ProposalDraft>,
+    cycle_scope: &str,
+) -> Result<Vec<DraftOutcome>, RuntimeError> {
+    submit_drafts_scoped(
+        runtime,
+        session_id,
+        turn_id,
+        cached_writer,
+        drafts,
+        Some(cycle_scope),
+    )
+}
+
+fn submit_drafts_scoped(
+    runtime: &Runtime,
+    session_id: Option<SessionId>,
+    turn_id: Option<TurnId>,
+    cached_writer: &mut Option<WriterIdentity>,
+    drafts: Vec<ProposalDraft>,
+    cycle_scope: Option<&str>,
+) -> Result<Vec<DraftOutcome>, RuntimeError> {
+    let _identity_lease = runtime.lock_identity()?;
+    runtime.ensure_identity()?;
     let mut outcomes = Vec::new();
     if drafts.is_empty() {
         return Ok(outcomes);
@@ -243,6 +276,29 @@ pub fn submit_drafts(
     // Claim and submit as one step with respect to other processes.
     let _lock = runtime.lock_writer()?;
     for (index, draft) in drafts.into_iter().enumerate() {
+        if let Some(report) = crate::faithfulness::assess_draft(runtime, &draft)?
+            && !report.is_faithful()
+        {
+            let proposal_id = ProposalId::generate(runtime.ids().as_ref());
+            runtime.trace().record_with(
+                TraceEventKind::MutationDecided,
+                TraceCorrelation {
+                    proposal_id: Some(proposal_id),
+                    ..TraceCorrelation::default()
+                },
+                serde_json::json!({
+                    "activated": false,
+                    "reason_code": report.reason_code,
+                    "faithfulness": report,
+                }),
+            );
+            outcomes.push(DraftOutcome {
+                proposal_id,
+                activated: false,
+                reason_code: report.reason_code.to_owned(),
+            });
+            continue;
+        }
         let writer = ensure_writer(runtime, cached_writer)?;
         let head = runtime.head()?;
         let proposal = MutationProposal::from_draft(
@@ -254,7 +310,10 @@ pub fn submit_drafts(
                 requested_by: writer,
                 policy_version: MutationPolicyV0::VERSION,
                 idempotency_key: format!(
-                    "{}/{}/draft-{index}",
+                    "{}{}/{}/draft-{index}",
+                    cycle_scope
+                        .map(|scope| format!("{scope}/"))
+                        .unwrap_or_default(),
                     session_id
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "no-session".to_owned()),

@@ -20,6 +20,8 @@ fn init(dir: &std::path::Path) {
     let mut config = runtime.config().clone();
     config.c0.reflector.backend = ReflectorBackend::Fake;
     runtime.save_config(config).unwrap();
+    let review = runtime.identity_status().unwrap();
+    runtime.accept_identity(&review.review_token).unwrap();
     runtime.stopping();
 }
 

@@ -819,6 +819,8 @@ pub struct ReflectionOutput {
 /// and hints, and everything it returns passes through intake validation
 /// before anything is persisted.
 pub trait Reflector: Send + Sync {
+    /// Bind remote reflection to the host-reviewed routes and model set.
+    fn set_identity_context(&self, _context: serde_json::Value) {}
     fn descriptor(&self) -> crate::persona::PersonaBackendDescriptor;
     fn reflect(
         &self,

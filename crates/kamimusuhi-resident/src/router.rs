@@ -287,6 +287,7 @@ fn upstream_body(
         // Host-only policy hints must never be forwarded to providers.
         map.remove("kamimusuhi_private");
         map.remove("kamimusuhi_route_lane");
+        map.remove("kamimusuhi_identity_pins");
         for field in &tier.strip_fields {
             if !matches!(field.as_str(), "model" | "stream" | "messages") {
                 map.remove(field);
@@ -315,13 +316,33 @@ fn upstream_body(
 /// Send an already-shaped upstream body to `tier` and validate the reply.
 /// Callers build the body once with [`upstream_body`] so the same JSON
 /// that a guard priced is the JSON on the wire.
-fn call_tier(tier: &TierConfig, upstream: &Value) -> Result<Value, String> {
+fn call_tier(
+    tier: &TierConfig,
+    upstream: &Value,
+    identity_pin: Option<&str>,
+    identity_pins: Option<&Value>,
+) -> Result<Value, String> {
     let mut headers: Vec<Header> = bearer(tier.auth_env.as_deref())?;
     if tier.peer_local_only {
         headers.push(Header {
             name: ROUTE_HEADER.to_owned(),
             value: "local".to_owned(),
         });
+    }
+    if let Some(pin) = identity_pin {
+        headers.push(Header {
+            name: crate::identity::HEADER.to_owned(),
+            value: pin.to_owned(),
+        });
+    }
+    let mut upstream = upstream.clone();
+    if identity_pin.is_some()
+        && let Some(pins) = identity_pins
+    {
+        upstream
+            .as_object_mut()
+            .ok_or("invalid upstream request")?
+            .insert("kamimusuhi_identity_pins".to_owned(), pins.clone());
     }
     let endpoint = Endpoint::parse(&tier.base_url, "/chat/completions")?;
     let response = http::post_json(
@@ -410,8 +431,34 @@ pub(crate) fn call_tier_guarded(
     model: &str,
     body: &Value,
 ) -> Result<GuardedReply, String> {
+    let identity_pins = body.get("kamimusuhi_identity_pins");
+    if let Some(pins) = identity_pins {
+        crate::identity::supplied_pins(pins)?;
+    }
+    let identity_pin = if let Some(pins) = identity_pins {
+        if crate::identity::is_peer(shared, &tier.base_url)? {
+            Some(
+                pins[crate::identity::canonical_endpoint(&tier.base_url)?]
+                    .as_str()
+                    .ok_or("IDENTITY_PEER_UNVERIFIED")?
+                    .to_owned(),
+            )
+        } else {
+            None
+        }
+    } else {
+        crate::identity::peer_pin(shared, &tier.base_url)?
+    };
+    if tier.peer_local_only && identity_pin.is_none() {
+        return Err("IDENTITY_PEER_UNVERIFIED".to_owned());
+    }
     if tier.billing != Some(TierBilling::Metered) {
-        let reply = call_tier(tier, &upstream_body(tier, model, body, None))?;
+        let reply = call_tier(
+            tier,
+            &upstream_body(tier, model, body, None),
+            identity_pin.as_deref(),
+            identity_pins,
+        )?;
         let usage = usage_of(&reply);
         let (cost_usd, cost_kind) = cost_of(tier, &usage);
         return Ok(GuardedReply {
@@ -445,7 +492,7 @@ pub(crate) fn call_tier_guarded(
     guard
         .permit(estimate)
         .map_err(|error| format!("cost guard: {error}"))?;
-    match call_tier(tier, &upstream) {
+    match call_tier(tier, &upstream, identity_pin.as_deref(), identity_pins) {
         Ok(reply) => {
             let usage = usage_of(&reply);
             let (reported_cost, reported_kind) = cost_of(tier, &usage);
@@ -929,6 +976,7 @@ mod tests {
             name: "t".into(),
             base_url: "http://x/v1".into(),
             model: "m".into(),
+            identity_model_aliases: Vec::new(),
             auth_env: None,
             timeout_secs: 1,
             condition: TierCondition::Always,
@@ -1662,6 +1710,44 @@ mod tests {
         assert!(matches!(listener.accept(), Err(error)
             if error.kind() == std::io::ErrorKind::WouldBlock));
         assert_eq!(s.cost_guard.lock().unwrap().spent_usd(), 0.0);
+    }
+
+    #[test]
+    fn accepted_peer_snapshot_is_forwarded_and_vendor_body_is_clean() {
+        let reply = json!({"choices":[{"message":{"content":"ok"}}]});
+        let (url, server) = capturing_completion_server(reply.clone());
+        let (mut s, _dir) = shared();
+        s.config.peers = serde_json::from_value(json!([{
+            "id":"peer", "role":"cognition", "url":url
+        }]))
+        .unwrap();
+        let mut tier = s.config.tiers[0].clone();
+        tier.base_url = url.clone();
+        tier.peer_local_only = true;
+        let base = crate::identity::canonical_endpoint(&url).unwrap();
+        let pins = json!({base: format!("sha256:{}", "a".repeat(64))});
+        let body = json!({"messages":[], "kamimusuhi_identity_pins":pins});
+        call_tier_guarded(&s, &tier, "kamimusuhi", &body).unwrap();
+        assert_eq!(server.join().unwrap()["kamimusuhi_identity_pins"], pins);
+        let missing = json!({"messages":[], "kamimusuhi_identity_pins":{}});
+        assert_eq!(
+            call_tier_guarded(&s, &tier, "kamimusuhi", &missing)
+                .err()
+                .unwrap(),
+            "IDENTITY_PEER_UNVERIFIED"
+        );
+
+        let (vendor_url, vendor) = capturing_completion_server(reply);
+        tier.base_url = vendor_url;
+        tier.peer_local_only = false;
+        call_tier_guarded(&s, &tier, "model", &body).unwrap();
+        assert!(
+            vendor
+                .join()
+                .unwrap()
+                .get("kamimusuhi_identity_pins")
+                .is_none()
+        );
     }
 
     #[test]

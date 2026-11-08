@@ -19,7 +19,9 @@ use kamimusuhi_resource_http::http::post_json;
 use kamimusuhi_resource_http::{Endpoint, Header, HttpError, TrustAnchors};
 use serde::{Deserialize, Serialize};
 
+mod api;
 mod assessment;
+pub use api::OpenAiDecisionProvider;
 // Public so integration tests, soak runs and offline harnesses can build
 // scripted organs, but excluded from the documented API surface — these
 // helpers are internal test infrastructure, not a stability contract.
@@ -362,6 +364,8 @@ pub struct ProviderSelectionResult {
 }
 
 pub trait LanguageProvider: Send + Sync {
+    fn set_identity_context(&self, _context: serde_json::Value) {}
+
     /// True only for an adapter whose invocation owns and reaps a child process.
     fn is_process_isolated(&self) -> bool {
         false
@@ -699,6 +703,15 @@ pub struct DecisionResult {
 }
 
 pub trait DecisionProvider: Send + Sync {
+    /// Bind a decision to the same reviewed routes/models as language calls.
+    fn set_identity_context(&self, _context: serde_json::Value) {}
+    fn locality(&self) -> kamimusuhi_core::routing::LocalityClass {
+        if self.is_external() {
+            kamimusuhi_core::routing::LocalityClass::External
+        } else {
+            kamimusuhi_core::routing::LocalityClass::InProcess
+        }
+    }
     fn is_process_isolated(&self) -> bool {
         false
     }
@@ -1396,6 +1409,14 @@ impl FallbackDecisionProvider {
 }
 
 impl DecisionProvider for FallbackDecisionProvider {
+    fn set_identity_context(&self, context: serde_json::Value) {
+        self.primary.set_identity_context(context);
+    }
+
+    fn locality(&self) -> kamimusuhi_core::routing::LocalityClass {
+        self.primary.locality()
+    }
+
     fn prepare_turn(
         &self,
         request: &TurnPreparationRequest,
@@ -1719,6 +1740,13 @@ impl ConversationError {
         match self {
             Self::Timeout | Self::Transport | Self::Tls(_) => true,
             Self::HttpStatus(code) => *code == 429 || *code >= 500,
+            Self::Persona(
+                PersonaError::Timeout { .. }
+                | PersonaError::Transport { .. }
+                | PersonaError::Tls { .. }
+                | PersonaError::RateLimited { .. },
+            ) => true,
+            Self::Persona(PersonaError::HttpStatus { status, .. }) => *status >= 500,
             _ => false,
         }
     }

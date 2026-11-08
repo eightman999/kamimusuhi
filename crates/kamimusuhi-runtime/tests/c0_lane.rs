@@ -33,6 +33,8 @@ fn init(dir: &std::path::Path) -> Runtime {
     // so evaluator and actor are distinct components here.
     config.c0.reflector.backend = ReflectorBackend::Fake;
     runtime.save_config(config).unwrap();
+    let review = runtime.identity_status().unwrap();
+    runtime.accept_identity(&review.review_token).unwrap();
     runtime
 }
 
@@ -427,12 +429,24 @@ fn swapping_the_persona_backend_preserves_identity_and_history() {
             .c0_evidence_pool(individual, 512)
             .unwrap()
             .len();
-        // Swap the configured backend. Config rewrite only — no canonical
-        // write, no new identity.
+        // Swap the configured backend: operator review is required, while
+        // canonical identity and existing history remain unchanged.
         let mut config = runtime.config().clone();
         config.persona.backend = kamimusuhi_runtime::config::PersonaBackendKind::OpenaiCompatible;
         config.persona.provider = None; // not called in this test
         runtime.save_config(config).unwrap();
+        assert_eq!(
+            runtime.identity_status().unwrap().state,
+            kamimusuhi_runtime::identity_gate::GateState::AcceptRequired
+        );
+        assert!(
+            runtime.ensure_identity().is_err(),
+            "backend drift requires review"
+        );
+        assert_eq!(runtime.individual_id(), individual);
+        let review = runtime.identity_status().unwrap();
+        runtime.accept_identity(&review.review_token).unwrap();
+        runtime.ensure_identity().unwrap();
         runtime.stopping();
     }
     let runtime = reopen(dir.path());

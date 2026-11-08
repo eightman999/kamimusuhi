@@ -192,6 +192,7 @@ pub struct Runtime {
     trace: TraceRecorder,
     boot_id: BootId,
     individual: Individual,
+    identity_context: serde_json::Value,
 }
 
 impl std::fmt::Debug for Runtime {
@@ -238,6 +239,7 @@ impl Runtime {
 
         // Adopt an existing individual; create one only for an empty store.
         let existing = store.individuals()?;
+        let newly_created = existing.is_empty();
         let individual = match existing.len() {
             0 => {
                 let bootstrap = store.create_individual(NewIndividual {
@@ -267,7 +269,7 @@ impl Runtime {
         let genome = Genome::new_default();
         genome.save(&paths.genome())?;
 
-        Self::assemble(
+        let runtime = Self::assemble(
             paths,
             config,
             genome,
@@ -277,7 +279,14 @@ impl Runtime {
             boot_id,
             individual,
             trace_max_bytes,
-        )
+        )?;
+        if newly_created {
+            crate::identity_gate::Gate::enroll_new(
+                &runtime.paths.dir,
+                &runtime.identity_manifest()?,
+            )?;
+        }
+        Ok(runtime)
     }
 
     /// Open an initialized runtime and restore its individual from disk.
@@ -372,7 +381,24 @@ impl Runtime {
         );
         let kernel = ContinuityKernel::new(store, MutationPolicyV0, Arc::clone(&clocks.wall));
 
+        let identity_context = match std::env::var("KAMIMUSUHI_IDENTITY_DECLARATIONS") {
+            Ok(value) if value.len() > 64 * 1024 => {
+                return Err(
+                    crate::identity_gate::GateError::Invalid("IDENTITY_CONTEXT_TOO_LARGE").into(),
+                );
+            }
+            Ok(value) => serde_json::from_str(&value).map_err(|_| {
+                crate::identity_gate::GateError::Invalid("IDENTITY_CONTEXT_INVALID")
+            })?,
+            Err(std::env::VarError::NotPresent) => serde_json::Value::Null,
+            Err(_) => {
+                return Err(
+                    crate::identity_gate::GateError::Invalid("IDENTITY_CONTEXT_INVALID").into(),
+                );
+            }
+        };
         let runtime = Self {
+            identity_context,
             paths,
             config,
             genome,
@@ -394,6 +420,100 @@ impl Runtime {
             }),
         );
         Ok(runtime)
+    }
+
+    pub fn identity_manifest(&self) -> Result<crate::identity_gate::Manifest, RuntimeError> {
+        self.identity_manifest_for(&self.config, self.identity_context.clone())
+    }
+
+    pub fn identity_manifest_for(
+        &self,
+        config: &RuntimeConfig,
+        context: serde_json::Value,
+    ) -> Result<crate::identity_gate::Manifest, RuntimeError> {
+        Ok(crate::identity_gate::Manifest::capture_with_declarations(
+            config,
+            crate::identity_gate::Binding {
+                individual_id: self.individual.individual_id,
+                root_commit_id: self.individual.root_commit_id,
+            },
+            context,
+        )?)
+    }
+
+    pub fn identity_status(&self) -> Result<crate::identity_gate::GateStatus, RuntimeError> {
+        let config = RuntimeConfig::load(&self.paths.config())?;
+        let candidate = self.identity_manifest_for(&config, self.identity_context.clone())?;
+        Ok(crate::identity_gate::Gate::status(
+            &self.paths.dir,
+            &candidate,
+        )?)
+    }
+
+    /// Accept only the exact reviewed declaration; never replaces the individual.
+    pub fn accept_identity(&self, review_token: &str) -> Result<(), RuntimeError> {
+        let lease = self.identity_lease_file()?;
+        lease
+            .lock()
+            .map_err(|_| crate::identity_gate::GateError::Storage)?;
+        let _writer = self.lock_writer()?;
+        let config = RuntimeConfig::load(&self.paths.config())?;
+        let candidate = self.identity_manifest_for(&config, self.identity_context.clone())?;
+        Ok(crate::identity_gate::Gate::accept(
+            &self.paths.dir,
+            &candidate,
+            review_token,
+        )?)
+    }
+
+    /// Both current disk declarations and the actual in-memory configuration
+    /// must match the accepted revision. Read-only opening remains available.
+    pub fn ensure_identity(&self) -> Result<(), RuntimeError> {
+        let config = RuntimeConfig::load(&self.paths.config())?;
+        let candidate = self.identity_manifest_for(&config, self.identity_context.clone())?;
+        crate::identity_gate::Gate::ensure(&self.paths.dir, &candidate)?;
+        crate::identity_gate::Gate::ensure(&self.paths.dir, &self.identity_manifest()?)?;
+        Ok(())
+    }
+
+    pub fn set_identity_context(&mut self, context: serde_json::Value) -> Result<(), RuntimeError> {
+        if serde_json::to_vec(&context)
+            .map_err(|_| crate::identity_gate::GateError::Invalid("IDENTITY_CONTEXT_INVALID"))?
+            .len()
+            > 64 * 1024
+        {
+            return Err(
+                crate::identity_gate::GateError::Invalid("IDENTITY_CONTEXT_TOO_LARGE").into(),
+            );
+        }
+        self.identity_manifest_for(&self.config, context.clone())?
+            .validate()?;
+        self.identity_context = context;
+        Ok(())
+    }
+
+    pub fn identity_context(&self) -> &serde_json::Value {
+        &self.identity_context
+    }
+
+    fn identity_lease_file(&self) -> Result<std::fs::File, RuntimeError> {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(self.paths.dir.join("identity-use.lock"))
+            .map_err(|_| crate::identity_gate::GateError::Storage.into())
+    }
+
+    /// A dispatch/reflection/commit lease. Acceptance takes the exclusive
+    /// lease before the writer lock; normal model turns remain concurrent.
+    pub fn lock_identity(&self) -> Result<std::fs::File, RuntimeError> {
+        let lease = self.identity_lease_file()?;
+        lease
+            .lock_shared()
+            .map_err(|_| crate::identity_gate::GateError::Storage)?;
+        Ok(lease)
     }
 
     /// Take writer authority for this process, fencing out older epochs.

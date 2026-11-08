@@ -279,6 +279,19 @@ pub fn render(status: &Value) -> (String, bool) {
             s(kcore["last_output"].get("at"))
         );
     }
+    let cognition = &status["cognition"];
+    if !cognition.is_null() {
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "COGNITION  state={} subject={} last_run={} reason={}",
+            s(cognition.get("state")),
+            s(cognition.get("subject")),
+            s(cognition.get("last_run")),
+            s(cognition.get("reason")),
+        );
+        all_ok &= cognition["state"] != "failed";
+    }
     if let Some(servers) = status["mcp"].as_array().filter(|s| !s.is_empty()) {
         let _ = writeln!(out);
         let _ = writeln!(out, "MCP");

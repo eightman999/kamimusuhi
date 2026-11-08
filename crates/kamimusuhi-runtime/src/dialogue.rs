@@ -424,10 +424,11 @@ pub struct DialogueSession {
     core_state: ConversationCoreState,
     decision_provider: Arc<dyn DecisionProvider>,
     decision_boundary: Boundary,
-    decision_is_external: bool,
+    decision_locality: LocalityClass,
     provider_boundaries: BTreeMap<String, Boundary>,
     provider_timeout: Duration,
     provider_config: crate::config::RuntimeConfig,
+    identity_digest: String,
     language_providers: BTreeMap<String, Arc<dyn LanguageProvider>>,
     language_candidates: Vec<LanguageProviderCandidate>,
     last_generated_candidates: Vec<GeneratedLanguageCandidate>,
@@ -446,10 +447,11 @@ impl DialogueSession {
             runtime,
             subject,
             privacy,
-            Box::new(ProcessDecisionProvider::new(
+            Box::new(ProcessDecisionProvider::for_runtime(
                 provider_worker_command()?,
                 runtime.config().provider_timeout()?,
-            )),
+                runtime.config(),
+            )?),
             None,
         )
     }
@@ -486,6 +488,9 @@ impl DialogueSession {
                 "--subject must be 1-80 ASCII letters, digits, '.', '_' or '-'".to_owned(),
             ));
         }
+        let _identity_lease = runtime.lock_identity()?;
+        runtime.ensure_identity()?;
+        let identity_digest = runtime.identity_manifest()?.digest;
         let provider_timeout = runtime.config().provider_timeout()?;
         // Configuration and destination failures precede any interaction write.
         runtime.config().persona.check_privacy(privacy)?;
@@ -565,20 +570,20 @@ impl DialogueSession {
         decision_provider.set_host_timeout(provider_timeout);
         let decision_boundary = Boundary::default();
         let metadata_provider = Arc::clone(&decision_provider);
-        let decision_is_external = if decision_provider.is_process_isolated() {
-            metadata_provider.is_external()
+        let decision_locality = if decision_provider.is_process_isolated() {
+            metadata_provider.locality()
         } else {
             decision_boundary
-                .call(provider_timeout, move || metadata_provider.is_external())
+                .call(provider_timeout, move || metadata_provider.locality())
                 .map_err(|_| ConversationError::Timeout)?
         };
         for provider in language_providers.values() {
             provider.set_host_timeout(provider_timeout);
         }
-        if decision_is_external && !privacy.admits(LocalityClass::External) {
+        if !privacy.admits(decision_locality) {
             return Err(RuntimeError::PersonaPrivacy {
                 privacy,
-                locality: LocalityClass::External,
+                locality: decision_locality,
             });
         }
         runtime.config().persona_seed()?;
@@ -627,13 +632,14 @@ impl DialogueSession {
             core_state: ConversationCoreState::default(),
             decision_provider,
             decision_boundary,
-            decision_is_external,
+            decision_locality,
             provider_boundaries: language_providers
                 .keys()
                 .map(|id| (id.clone(), Boundary::default()))
                 .collect(),
             provider_timeout,
             provider_config: runtime.config().clone(),
+            identity_digest,
             language_providers,
             language_candidates,
             last_generated_candidates: Vec::new(),
@@ -667,6 +673,14 @@ impl DialogueSession {
     /// Include the secret-free Jev/LLM/core decision trace in replies.
     pub fn set_debug_trace(&mut self, enabled: bool) {
         self.debug_trace = enabled;
+    }
+
+    fn ensure_session_identity(&self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        runtime.ensure_identity()?;
+        if runtime.identity_manifest()?.digest != self.identity_digest {
+            return Err(crate::identity_gate::GateError::Blocked("SESSION_IDENTITY_STALE").into());
+        }
+        Ok(())
     }
 
     /// Latest attempt metadata remains available even when Jev rejects or fails.
@@ -722,6 +736,18 @@ impl DialogueSession {
                 message: "language provider id 'primary' is reserved".to_owned(),
             });
         }
+        // A live session may only reattach the declaration it captured at
+        // creation. New model/prompt declarations require review and a new
+        // session; changing only the process cannot bypass FI3.
+        let declared = self.provider_config.language_providers.get(id);
+        if declared.and_then(|value| serde_json::to_value(value).ok())
+            != serde_json::to_value(provider_config).ok()
+        {
+            return Err(crate::identity_gate::GateError::Blocked(
+                "SESSION_PROVIDER_DECLARATION_CHANGED",
+            )
+            .into());
+        }
         let _provider = provider_config.build_persona()?;
         self.provider_boundaries
             .insert(id.to_owned(), Boundary::default());
@@ -762,6 +788,9 @@ impl DialogueSession {
         Ok(())
     }
 
+    /// Trusted embedding/test injection boundary: the host supplying executable
+    /// Rust provider code is responsible for its declaration. This is not a
+    /// configuration or remote-input API.
     /// Register an in-process language organ directly, bypassing the
     /// operator-config path used by `set_language_provider`. Tests and
     /// offline harnesses use this to attach scripted organs; the provider
@@ -1163,6 +1192,18 @@ impl DialogueSession {
         text: &str,
         emit: impl FnOnce(&DialogueReply) -> std::io::Result<()>,
     ) -> Result<DialogueReply, RuntimeError> {
+        let _identity_lease = runtime.lock_identity()?;
+        self.ensure_session_identity(runtime)?;
+        let manifest = runtime.identity_manifest()?;
+        let mut context = runtime.identity_context().clone();
+        if context.is_null() {
+            context = serde_json::json!({});
+        }
+        context["model_hashes"] = serde_json::json!(manifest.allowed_model_hashes);
+        for provider in self.language_providers.values() {
+            provider.set_identity_context(context.clone());
+        }
+        self.decision_provider.set_identity_context(context);
         let turn_started = Instant::now();
         self.last_generated_candidates.clear();
         self.last_generation_latency_ms = 0;
@@ -1177,10 +1218,10 @@ impl DialogueSession {
             )));
         }
         runtime.config().persona.check_privacy(self.privacy)?;
-        if self.decision_is_external && !self.privacy.admits(LocalityClass::External) {
+        if !self.privacy.admits(self.decision_locality) {
             return Err(RuntimeError::PersonaPrivacy {
                 privacy: self.privacy,
-                locality: LocalityClass::External,
+                locality: self.decision_locality,
             });
         }
         for id in self.language_providers.keys() {
@@ -1871,7 +1912,12 @@ impl DialogueSession {
         let language_provider_name = language_result.provider.clone();
         let language_model = language_result.model.clone();
         let language_latency_ms = language_result.latency_ms;
-        let result = language_result.persona;
+        self.ensure_session_identity(runtime)?;
+        let mut result = language_result.persona;
+        crate::faithfulness::reject_persona_references(
+            &mut result.proposals,
+            &language_request.persona_input,
+        );
         // FIO rule: a record warms only when the reply actually referenced
         // it — its 32-hex id must appear in the response text or in a tool
         // call's serialized arguments/result. Injected-but-unreferenced

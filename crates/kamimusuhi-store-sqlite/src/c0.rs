@@ -571,13 +571,36 @@ impl SqliteStore {
         scope: Option<&str>,
         limit: usize,
     ) -> Result<Vec<C0Evaluation>, C0Error> {
+        self.c0_evaluations_filtered(individual_id, scope, None, limit)
+    }
+
+    /// Restrict before LIMIT so other subjects can neither leak nor crowd out
+    /// the selected subject's measured turn history.
+    pub fn c0_evaluations_for_subject(
+        &self,
+        individual_id: IndividualId,
+        scope: Option<&str>,
+        subject: &str,
+        limit: usize,
+    ) -> Result<Vec<C0Evaluation>, C0Error> {
+        self.c0_evaluations_filtered(individual_id, scope, Some(subject), limit)
+    }
+
+    fn c0_evaluations_filtered(
+        &self,
+        individual_id: IndividualId,
+        scope: Option<&str>,
+        subject: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<C0Evaluation>, C0Error> {
         let conn = self.conn().map_err(|e| C0Error::Backend {
             message: e.to_string(),
         })?;
         let sql = "SELECT evaluation_id, individual_id, scope, subject_key, turn_id, \
              proposal_id, metrics_json, evaluator, created_at FROM c0_evaluations \
              WHERE individual_id = ?1 AND (?2 IS NULL OR scope = ?2) \
-             ORDER BY created_at DESC, evaluation_id LIMIT ?3";
+               AND (?3 IS NULL OR subject_key = ?3) \
+             ORDER BY created_at DESC, evaluation_id LIMIT ?4";
         let mut stmt = conn.prepare(sql).map_err(backend)?;
         let map = |row: &rusqlite::Row<'_>| -> Result<C0Evaluation, rusqlite::Error> {
             Ok(C0Evaluation {
@@ -604,7 +627,10 @@ impl SqliteStore {
             })
         };
         let rows = stmt
-            .query_map(params![individual_id.to_string(), scope, limit as i64], map)
+            .query_map(
+                params![individual_id.to_string(), scope, subject, limit as i64],
+                map,
+            )
             .map_err(backend)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(backend)
     }

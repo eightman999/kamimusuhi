@@ -47,6 +47,43 @@ fn run_with_env(
     child.wait_with_output().unwrap()
 }
 
+// Fixture-only operator workflow: attempt the configured invocation, inspect
+// the exact review token after FI3 refuses it, then explicitly accept and retry.
+// Production CLI behavior remains refusal until a separate acceptance command.
+fn run_with_operator_review(
+    dir: &Path,
+    command: &str,
+    flags: &[&str],
+    stdin: Option<&str>,
+    environment: &[(&str, &str)],
+) -> Output {
+    let before = counts(dir);
+    let refused = run_with_env(dir, command, flags, stdin, environment);
+    if !refused.status.success()
+        && String::from_utf8_lossy(&refused.stderr)
+            .contains("identity change requires explicit acceptance")
+    {
+        assert!(refused.stdout.is_empty());
+        assert_eq!(counts(dir), before, "unreviewed config executed a turn");
+        let review: serde_json::Value =
+            serde_json::from_str(&success(run(dir, "identity-status", &[], None))).unwrap();
+        let token = review["review_token"].as_str().unwrap();
+        success(run(
+            dir,
+            "identity-accept",
+            &["--review-token", token],
+            None,
+        ));
+        run_with_env(dir, command, flags, stdin, environment)
+    } else {
+        refused
+    }
+}
+
+fn run_reviewed(dir: &Path, command: &str, flags: &[&str], stdin: Option<&str>) -> Output {
+    run_with_operator_review(dir, command, flags, stdin, &[])
+}
+
 fn success(output: Output) -> String {
     assert!(
         output.status.success(),
@@ -59,6 +96,13 @@ fn success(output: Output) -> String {
 fn initialized() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     success(run(dir.path(), "init", &[], None));
+    // These scripts provide expression replies only; API decision behavior is
+    // covered by api_decision_loop through the same production child workers.
+    let path = dir.path().join("runtime.json");
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    config["decision"] = serde_json::json!("rule_based");
+    std::fs::write(path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
     dir
 }
 
@@ -141,7 +185,7 @@ fn talk_reopens_in_a_new_process_with_raw_evidence_history_and_the_same_head() {
     ])
     .unwrap();
     let raw = "  改行と空白を保つ原文。\n次の行  ";
-    let first: serde_json::Value = serde_json::from_str(&success(run(
+    let first: serde_json::Value = serde_json::from_str(&success(run_reviewed(
         dir.path(),
         "talk",
         &[
@@ -164,7 +208,7 @@ fn talk_reopens_in_a_new_process_with_raw_evidence_history_and_the_same_head() {
     assert_eq!(first["response"], "プロセス1の返事。");
     let configured = config_bytes(dir.path());
     // The next process receives only the saved directory and a new input.
-    let second: serde_json::Value = serde_json::from_str(&success(run(
+    let second: serde_json::Value = serde_json::from_str(&success(run_reviewed(
         dir.path(),
         "talk",
         &["--message", "前の原文は？", "--subject", "alice"],
@@ -214,7 +258,7 @@ fn piped_chat_emits_two_responses_and_quit_prevents_a_third_turn() {
         FixtureResponse::ok("次の返事。"),
     ])
     .unwrap();
-    let output = success(run(
+    let output = success(run_reviewed(
         dir.path(),
         "chat",
         &[
@@ -267,7 +311,7 @@ fn quiet_chat_speaks_one_json_reply_per_input_line() {
         "not-json\n",
         "{\"message\": \"\"}\n",
     );
-    let output = success(run(
+    let output = success(run_reviewed(
         dir.path(),
         "chat",
         &[
@@ -330,7 +374,7 @@ fn quiet_is_rejected_for_talk() {
 #[test]
 fn debug_trace_exposes_decisions_and_latency_without_provider_secrets() {
     let dir = initialized();
-    let output: serde_json::Value = serde_json::from_str(&success(run(
+    let output: serde_json::Value = serde_json::from_str(&success(run_reviewed(
         dir.path(),
         "talk",
         &["--persona", "fake", "--message", "こんにちは", "--debug"],
@@ -355,7 +399,7 @@ fn the_default_fake_requires_explicit_selection_on_each_invocation() {
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("--persona fake"));
     assert_eq!(counts(dir.path()), [0, 0, 0, 0]);
     assert_eq!(config_bytes(dir.path()), config);
-    let accepted: serde_json::Value = serde_json::from_str(&success(run(
+    let accepted: serde_json::Value = serde_json::from_str(&success(run_reviewed(
         dir.path(),
         "talk",
         &["--message", "こんにちは", "--persona", "fake"],
@@ -408,7 +452,7 @@ fn local_only_is_default_and_privacy_rejections_preserve_config_and_interactions
     assert_eq!(server.request_count(), 0);
     assert_eq!(counts(dir.path()), [0, 0, 0, 0]);
     assert_eq!(config_bytes(dir.path()), config_before);
-    success(run(
+    success(run_reviewed(
         dir.path(),
         "talk",
         &[
@@ -452,7 +496,7 @@ fn api_auth_reads_the_named_environment_on_each_process_without_persisting_its_v
     const NEXT_KEY: &str = "dummy-kamimusuhi-fixture-api-key-next-not-real";
     let dir = initialized();
     let server = FixtureServer::always(FixtureResponse::ok("認証付きfixture応答。")).unwrap();
-    let first = run_with_env(
+    let first = run_with_operator_review(
         dir.path(),
         "talk",
         &[
@@ -491,7 +535,7 @@ fn api_auth_reads_the_named_environment_on_each_process_without_persisting_its_v
 
     // The saved configuration retains the environment variable's name. A
     // different child environment supplies its current value at call time.
-    let second = run_with_env(
+    let second = run_with_operator_review(
         dir.path(),
         "talk",
         &[
@@ -526,7 +570,7 @@ fn api_endpoint_switch_does_not_forward_the_previous_endpoints_credential() {
     let dir = initialized();
     let original = FixtureServer::always(FixtureResponse::ok("元のendpoint。")).unwrap();
     let replacement = FixtureServer::always(FixtureResponse::ok("別のendpoint。")).unwrap();
-    let first = run_with_env(
+    let first = run_with_operator_review(
         dir.path(),
         "talk",
         &[
@@ -555,7 +599,7 @@ fn api_endpoint_switch_does_not_forward_the_previous_endpoints_credential() {
         "original endpoint did not receive its configured credential"
     );
 
-    let switched = run_with_env(
+    let switched = run_with_operator_review(
         dir.path(),
         "talk",
         &[

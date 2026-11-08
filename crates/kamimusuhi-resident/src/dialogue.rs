@@ -132,6 +132,10 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
             json!({"error": "individual is not initialized on this node"}),
         );
     }
+    let identity_context = match crate::identity::context(shared) {
+        Ok(context) => context,
+        Err(reason) => return (409, json!({"error":reason})),
+    };
     let _slot = GATE.admit(subject, config.max_concurrent);
     let task_id = shared.tasks.create(
         &shared.spool,
@@ -173,17 +177,21 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
     // one process keeps the DialogueSession warm across turns, so the
     // individual's relationship memory and session continuity carry over
     // instead of being born and dying per turn.
-    let outcome = shared.dialogue_hosts.turn(
+    let outcome = shared.dialogue_hosts.turn_with_identity(
         &crate::dialogue_host::HostSpec {
             runtime_binary: config.runtime_binary.clone(),
             dir: config.dir.clone(),
             subject: subject.to_owned(),
             privacy: config.privacy.clone(),
-            env: Vec::new(),
+            env: vec![(
+                crate::identity::CONTEXT_ENV.to_owned(),
+                identity_context.to_string(),
+            )],
         },
         message,
         &task_id,
         Duration::from_secs(config.timeout_secs),
+        Some(&identity_context),
     );
     // This turn's own routing event, not whichever turn routed last.
     let turn_route = shared.end_turn(&task_id);

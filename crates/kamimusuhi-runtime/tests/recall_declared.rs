@@ -18,7 +18,6 @@ use kamimusuhi_core::mutation::{
 };
 use kamimusuhi_core::persona::{PersonaBackendDescriptor, PersonaTurnInput};
 use kamimusuhi_core::routing::PrivacyConstraint;
-use kamimusuhi_core::time::UtcTimestamp;
 use kamimusuhi_core::workspace::SourceRef;
 use kamimusuhi_runtime::c0::{reflection, replay};
 use kamimusuhi_runtime::dialogue::DialogueSession;
@@ -367,14 +366,12 @@ fn a_reflector_may_declare_recall_metadata_on_a_capture() {
     .unwrap();
     let (session, third_evidence, relationship_id) = capture_setup(&mut runtime);
 
-    let valid_to = runtime.now().unix_millis() / 1_000 + 3_600;
     let reflector = FakeReflector::default().with_episodic_declared(json!({
         "tags": ["weather", "preference"],
         "links": [
             format!("evidence:{third_evidence}"),
             format!("state:{relationship_id}"),
         ],
-        "valid_to": valid_to,
     }));
     let mut writer = None;
     reflection::run_with_reflector(
@@ -399,15 +396,12 @@ fn a_reflector_may_declare_recall_metadata_on_a_capture() {
             MemoryLink::State(relationship_id),
         ]
     );
-    assert_eq!(
-        record.valid_to(),
-        Some(UtcTimestamp::from_unix_millis(valid_to * 1_000))
-    );
+    assert_eq!(record.valid_to(), None);
     assert_eq!(record.valid_from(), None);
 }
 
 #[test]
-fn malformed_declared_metadata_is_dropped_but_the_capture_survives() {
+fn malformed_declared_metadata_refuses_the_whole_capture() {
     let dir = tempfile::tempdir().unwrap();
     let mut runtime = Runtime::init(
         dir.path(),
@@ -422,7 +416,7 @@ fn malformed_declared_metadata_is_dropped_but_the_capture_survives() {
         "links": [
             42,
             "state:not-hex",
-            // Well-formed but never presented to the reflector: dropped.
+            // Well-formed but never presented: the whole item must be refused.
             format!("state:{}", MemoryId::from_u128(0xDEAD)),
         ],
         "valid_from": "not-a-time",
@@ -439,13 +433,17 @@ fn malformed_declared_metadata_is_dropped_but_the_capture_survives() {
     )
     .unwrap();
 
-    let record = captured_episode(&runtime);
-    assert!(record.tags().is_empty());
-    assert!(record.links().is_empty());
-    assert_eq!(record.valid_from(), None);
-    assert_eq!(record.valid_to(), None);
-    // The draft itself survived — only the malformed fields were dropped.
-    assert!(record.payload["summary"].is_string());
+    let records = MemoryRepository::retrieve(
+        runtime.store(),
+        &MemoryQuery::current(runtime.individual_id())
+            .in_domain(MutationDomain::Episodic)
+            .about(FIXTURE_USER_SUBJECT),
+    )
+    .unwrap();
+    assert!(
+        records.is_empty(),
+        "malformed identifiers must not be repaired into accepted state"
+    );
 }
 
 // ---------------------------------------------------------------------------
