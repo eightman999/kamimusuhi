@@ -179,7 +179,9 @@ fn failed_transport_never_publishes_a_complete_capture() {
     let dir = tempfile::tempdir().unwrap();
     let server = FixtureServer::always(FixtureResponse::Status { code: 503 }).unwrap();
     prepare(dir.path(), &server);
-    assert!(!command(dir.path(), &[]).status.success());
+    let output = command(dir.path(), &[]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("(HTTP_STATUS)"));
     assert!(server.request_count() > 0);
     assert!(!dir.path().join("paired.json").exists());
     assert!(!dir.path().join("meta.json").exists());

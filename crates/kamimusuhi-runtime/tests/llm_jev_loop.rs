@@ -871,11 +871,18 @@ fn retry_replaces_one_candidate_and_reselects_without_a_third_generation() {
         let retry_prompt = retry_generation["messages"][1]["content"].as_str().unwrap();
         let guidance = prompt_section(retry_prompt, "RESPONSE_GUIDANCE");
         assert_eq!(guidance["reason_code"], "GROUNDING");
+        assert!(guidance["previous_response"].is_null());
         assert_eq!(
             guidance["previous_response_digest"],
             kamimusuhi_core::digest::content_digest(b"old response")
         );
         assert!(!guidance["instruction"].as_str().unwrap().is_empty());
+        assert!(
+            guidance["instruction"]
+                .as_str()
+                .unwrap()
+                .contains("HOST_EVIDENCE_SCOPE")
+        );
     }
 }
 

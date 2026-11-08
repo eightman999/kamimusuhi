@@ -1781,11 +1781,15 @@ impl DialogueSession {
                 // Replace only the retried organ's candidate, then let Jev compare
                 // the repaired candidate. The old candidate can no longer be accepted.
                 let mut repair_request = language_request.clone();
-                let repair = assessment.repair_reason.as_instruction().unwrap_or(
+                let repair_instruction = assessment
+                    .repair_reason
+                    .instruction_for_evidence(&assessment_evidence);
+                let repair = repair_instruction.as_deref().unwrap_or(
                     "先の候補を見直し、相手の質問と提示された根拠に合う短い日本語の回答を作り直してください。",
                 );
                 // Preserve any observation/clarification instruction as well
-                // as the original input. The rejected prose is wire-only.
+                // as the original input. Grounding repair rebuilds from its
+                // evidence, without re-presenting the unsupported prose.
                 let instruction = match &language_request.persona_input.envelope.response_guidance {
                     Some(guidance) => format!("{}\n{repair}", guidance.instruction),
                     None => repair.to_owned(),
@@ -1794,12 +1798,14 @@ impl DialogueSession {
                     reason_code: assessment.repair_reason.as_str().to_owned(),
                     instruction,
                     previous_response_digest: Some(assessment.candidate_digest.clone()),
-                    previous_response: Some(
-                        language_results[selected_index]
-                            .persona
-                            .response_intent
-                            .clone(),
-                    ),
+                    previous_response: (assessment.repair_reason
+                        != crate::llm_jev::RepairReason::Grounding)
+                        .then(|| {
+                            language_results[selected_index]
+                                .persona
+                                .response_intent
+                                .clone()
+                        }),
                 });
                 repair_request.constraints.push(repair.to_owned());
                 let retried_provider_id = language_results[selected_index].provider_id.clone();

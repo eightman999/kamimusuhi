@@ -238,10 +238,11 @@ fn run_capture(
     let mut outputs = Vec::new();
     for c in &suite.cases {
         let start = Instant::now();
-        let result = persona.turn(c.turn_input.clone()).map_err(|_| {
+        let result = persona.turn(c.turn_input.clone()).map_err(|error| {
             format!(
-                "provider capture failed for run {run_id} case {}",
-                c.case_id
+                "provider capture failed for run {run_id} case {} ({})",
+                c.case_id,
+                error.code()
             )
         })?;
         if result.response_intent.trim().is_empty()
