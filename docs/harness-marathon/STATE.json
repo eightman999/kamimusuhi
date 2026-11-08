@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 0.784681,
+  "elapsed_hours": 0.807778,
   "target_hours": 24.0,
   "cycle": 4,
   "current_task": "中断checkpoint: HTTP status/未完了保持修正済み、web_search/research統合は未着手",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": null,
-  "last_checkpoint_at": "2026-11-08T22:39:43Z",
-  "active_session_started_at": "2026-11-08T22:30:27Z",
-  "session_elapsed_base_hours": 0.6301502683333333,
+  "last_checkpoint_at": "2026-11-08T22:41:06Z",
+  "active_session_started_at": null,
+  "session_elapsed_base_hours": 0.807778,
   "status": "paused_interrupted",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
   "next_task": "RESUME.mdを読み、既存CI失敗の隔離再現→web_search.rs実装→承認judge統合へ進む",
@@ -20,6 +20,12 @@
       "ended_at": "2026-11-08T16:44:36Z",
       "elapsed_hours": 0.63015,
       "end_evidence": "対象crate clippyログのmtime"
+    },
+    {
+      "started_at": "2026-11-08T22:30:27Z",
+      "ended_at": "2026-11-08T22:41:06Z",
+      "elapsed_hours": 0.177628,
+      "end_evidence": "中断後のcheckpoint保存までの実作業"
     }
   ],
   "excluded_idle_interval": {
@@ -36,5 +42,7 @@
     2,
     3
   ],
-  "last_verified_change_commit": "785f2493a73d9c864f805d41ff2203d1cb5f089c"
+  "last_verified_change_commit": "9049783f0cd05d53cedcd8f297c67d73c14dfb2a",
+  "resume_guide": "docs/harness-marathon/RESUME.md",
+  "evaluation": "evaluation/harness/marathon-20261109.json"
 }

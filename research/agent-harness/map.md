@@ -16,24 +16,44 @@
 
 ## 用語
 
-0周目の探索中。検索結果だけで得た情報には（未確認）を付ける。
+- Agent-Computer Interface — https://arxiv.org/abs/2405.15793 （原著本文の保存は未完了）
+- checkpoint / idempotency key / unknown outcome — https://docs.langchain.com/oss/python/langgraph/fault-tolerance
+- compaction / structured note-taking — https://www.anthropic.com/research/effective-context-engineering-for-ai-agents
+- finite response sequence / dependency evidence — https://microsoft.github.io/waza/guides/dependency-recovery/
+- indirect prompt injection / sandbox boundary — https://platform.claude.com/docs/en/managed-agents/secure-deployment-risks
 
 ## 人
 
-探索中。
+- Justin Young — 長時間ハーネス記事の著者欄。https://www.anthropic.com/research/effective-harnesses-for-long-running-agents
+- John Yang、Carlos E. Jimenezほか — SWE-agent論文の著者欄。https://arxiv.org/abs/2405.15793
+- MaryCache — imozuruの公開repo・MIT帰属。https://github.com/MaryCache/imozuru
+- 個別所属は独立確認していない。
 
 ## 媒体
 
-探索中。固定の媒体一覧で終了条件を作らない。
+- Anthropic実装者の記事・Claude Platform公式文書。
+- LangGraph公式の継続実行・障害回復文書。
+- Microsoft waza公式の決定的fixture評価。
+- NeurIPS proceedings / arXivの原著。
+- GitHubの公開実装（仕様・ライセンス・版を固定して読む）。
 
 ## 原文（sources/）
 
 | 論文・資料 | ファイル | 元のURL | どこから来たか（周・動き） |
 |---|---|---|---|
+| 〔本人〕長時間ハーネス | web-primary-excerpts.txt:47–60、web-primary-follow.txt:5–43 | https://www.anthropic.com/research/effective-harnesses-for-long-running-agents | 英語探索と日本語探索。Web抽出本文のみ |
+| 〔公式〕冪等性と障害回復 | web-primary-follow.txt:100–150（Retry boundaries and idempotency） | https://docs.langchain.com/oss/python/langgraph/fault-tolerance | 英語探索。Web抽出本文のみ |
+| 〔本人〕コンテキスト管理 | web-primary-follow.txt:160–175（Compaction） | https://www.anthropic.com/research/effective-context-engineering-for-ai-agents | 英語探索。Web抽出本文のみ |
+| 〔本人〕複数agentの運用 | web-primary-follow.txt:188–196（Production reliability） | https://www.anthropic.com/research/multi-agent-research-system | 英語探索。Web抽出本文のみ |
+| 〔公式〕決定的な障害注入 | web-primary-excerpts.txt:434–439 | https://microsoft.github.io/waza/guides/dependency-recovery/ | 英語探索。Web抽出本文のみ |
+| 〔公式〕外部入力と権限境界 | web-primary-follow.txt:400–404 | https://platform.claude.com/docs/en/managed-agents/secure-deployment-risks | 英語探索。Web抽出本文のみ |
 
 原文はignoreされた `sources/` にのみ保存する。この表は位置とリンクのみを公開する。
 
+`fetch.py` は7URLともコンテナの名前解決でFAILした。安全設定を緩めず、認可済みWeb取得による本文抽出をローカルへ保存した。これはHTML/PDF全文の保存成功とは区別する。抽出ファイルは公開しないので、別コンテナではURLと節名から再取得する。
+
 ## 次の手がかり
 
-- 英語の一次情報探索と、日本語の用語探索の結果を比較する。
-- RustXNG fullと組み込み検索に同じ問いを渡し、取得成功とURL集合の重なりを分けて記録する。
+- 長時間ハーネス記事のquickstartリンクをたどったが、Web取得は制限付きURLとして失敗した。原文保存＋リンク先の取得という1周は未完了。
+- 同じ検索語 `agent harness long running checkpoint resume` をRustXNGへGET/POST。両方HTTP200だが結果0件・不応答engine9。組み込み検索は一次情報を返した。空集合とのURL一致は0件だが、環境障害があるため検索品質・飽和率の比較には使わない。
+- 中断により調査は未完了。全論点の原文位置や70%飽和を満たしたと判定しない。

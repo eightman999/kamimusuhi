@@ -126,3 +126,12 @@
 - 元HEADのCI再試験はfmt/clippy/provider-worker buildまでPASS。workspace testで `agent_exec::executor::tests::an_attached_server_is_started_reused_and_reaped` の既存FAILを観測。その後の中断でセッションとプロセスが消え、最終終了コードが無いため全体はSKIP（中断・既存FAIL観測）とする。
 - imozuruの直接取得はDNSでFAIL。Web抽出本文の保存は成功したが、全文保存・1周完了・飽和は未達。
 - 24時間未達。REPORT.mdは作らず、STATEをpaused_interruptedとして保存する。
+
+### 公開commitと最終checkpoint
+
+- 初期記録: `aba0a9d431afd54aee975253df328815c77acfd4`。
+- HTTP status境界: `785f2493a73d9c864f805d41ff2203d1cb5f089c`。
+- 未完了作業の保持: `9049783f0cd05d53cedcd8f297c67d73c14dfb2a`。
+- 最終 `cargo fmt --all -- --check` と `git diff --check`: PASS。
+- 計測値と実行済み/未実行の区別を `evaluation/harness/marathon-20261109.json` に保存した。
+- 最後のcheckpoint commitにはBLOCKED/RESUME/map/logとRustXNG設定overlayを含める。取得原文・raw応答・長い引用は含めない。

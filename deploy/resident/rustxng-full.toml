@@ -1,0 +1,19 @@
+# RustXNG is an independently installed process; no RustXNG code is linked.
+# Select this overlay with RUSTXNG_SETTINGS when using --profile full.
+# These are public configuration keys, not a copy of the upstream settings.
+[server]
+limiter = false
+
+[search]
+formats = ["html", "json"]
+ban_time_on_fail = 0
+max_ban_time_on_fail = 0
+empty_result_limit = 0
+
+[search.suspended_times]
+SearxEngineAccessDenied = 0
+SearxEngineCaptcha = 0
+SearxEngineTooManyRequests = 0
+cf_SearxEngineCaptcha = 0
+cf_SearxEngineAccessDenied = 0
+recaptcha_SearxEngineCaptcha = 0

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "status": "interrupted_checkpoint",
+  "baseline_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
+  "scope": "Deterministic local fixtures; not a real-model task-success benchmark",
+  "measurements": [
+    {
+      "name": "http_error_false_success",
+      "commit": "785f2493a73d9c864f805d41ff2203d1cb5f089c",
+      "statuses": [302, 400, 401, 403, 429, 500, 503],
+      "before": {"incorrect_successes": 7, "cases": 7},
+      "after": {"incorrect_successes": 0, "cases": 7},
+      "requests_per_case": 1,
+      "control_cases_passed": 2,
+      "command": "cargo test --offline -p kamimusuhi-persona-http",
+      "after_exit_code": 0,
+      "after_crate_tests_passed": 64,
+      "clippy": "PASS"
+    },
+    {
+      "name": "unfinished_work_survives_history_retention_and_reload",
+      "commit": "9049783f0cd05d53cedcd8f297c67d73c14dfb2a",
+      "before": {"tasks_retained": 0, "task_states": 4, "commitments_retained": 0, "commitment_states": 3},
+      "after": {"tasks_retained": 4, "task_states": 4, "commitments_retained": 3, "commitment_states": 3},
+      "terminal_task_history_limit": 400,
+      "terminal_commitment_history_limit": 200,
+      "command": "cargo test --offline -p kamimusuhi-resident --lib retention_preserves_unfinished",
+      "before_exit_code": 101,
+      "after_exit_code": 0,
+      "after_tests_passed": 2
+    }
+  ],
+  "manual_rustxng_smoke": {
+    "version": "0.31.0",
+    "profile": "full",
+    "binary_sha256": "1f1dad6cf79415b3a52a23ae950af90f77d3650afef8d0d2015773af8f7ec8de",
+    "sha256_file_verified": true,
+    "release_digest_verified": true,
+    "health_status": 200,
+    "health_body": "OK",
+    "get_json_status": 200,
+    "post_form_json_status": 200,
+    "result_count_each": 0,
+    "unresponsive_engines_each": 9,
+    "child_reaped": true,
+    "limitation": "Search-engine reachability and search quality were not established"
+  },
+  "baseline_ci": {
+    "first_result": "FAIL",
+    "first_exit_code": 101,
+    "first_stage": "clippy; diagnostic not retained",
+    "retry_result": "SKIP_INTERRUPTED_WITH_OBSERVED_EXISTING_FAILURE",
+    "retry_completed_stages": ["fmt", "clippy", "provider-worker build"],
+    "observed_failed_test": "agent_exec::executor::tests::an_attached_server_is_started_reused_and_reaped",
+    "retry_final_exit_code": null
+  },
+  "final_format_check": "PASS",
+  "resident_web_search_integrated": false,
+  "resident_imozuru_integrated": false,
+  "research_saturation_established": false
+}
