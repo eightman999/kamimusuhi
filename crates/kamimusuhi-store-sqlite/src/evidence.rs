@@ -13,7 +13,7 @@ use kamimusuhi_core::evidence::{
     EvidenceRelation, EvidenceSnapshot, EvidenceSource, EvidenceStore, NewEvidence,
     NewEvidenceLink, NewSession, NewTurn, RetentionClass, Session, Turn, resolve_roots,
 };
-use kamimusuhi_core::ids::{EvidenceId, IndividualId, SessionId};
+use kamimusuhi_core::ids::{EvidenceId, IndividualId, SessionId, TurnId};
 use kamimusuhi_core::mutation::OriginClass;
 use kamimusuhi_core::time::UtcTimestamp;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -500,6 +500,50 @@ impl SqliteStore {
 }
 
 impl SqliteStore {
+    /// Bounded, insertion-ordered evidence for an operator-reviewed turn.
+    /// Validate ownership rather than silently filtering out corrupt rows.
+    pub fn evidence_for_turn(
+        &self,
+        individual_id: IndividualId,
+        turn_id: TurnId,
+    ) -> Result<Vec<EvidenceRecord>, EvidenceError> {
+        let conn = self.conn().map_err(|e| EvidenceError::Backend {
+            message: e.to_string(),
+        })?;
+        let owner = conn
+            .query_row(
+                "SELECT individual_id FROM turns WHERE turn_id = ?1",
+                [turn_id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(map_sqlite)?;
+        if owner.as_deref() != Some(individual_id.to_string().as_str()) {
+            return Err(invalid("turn is missing or belongs to another individual"));
+        }
+        let mut statement = conn
+            .prepare(&format!(
+                "SELECT {EVIDENCE_COLUMNS} FROM evidence_records
+                 WHERE turn_id = ?1 ORDER BY rowid LIMIT 4097"
+            ))
+            .map_err(map_sqlite)?;
+        let records = statement
+            .query_map([turn_id.to_string()], read_evidence_row)
+            .map_err(map_sqlite)?
+            .map(|row| build_evidence(row.map_err(map_sqlite)?))
+            .collect::<Result<Vec<_>, EvidenceError>>()?;
+        if records.len() > 4096 {
+            return Err(invalid("turn evidence exceeds the review limit"));
+        }
+        if records
+            .iter()
+            .any(|record| record.individual_id != individual_id)
+        {
+            return Err(corrupt("turn evidence ownership mismatch"));
+        }
+        Ok(records)
+    }
+
     /// Recent raw dialogue from one operator-selected channel, oldest first.
     /// Generated-but-unemitted system events and other people's channels are
     /// excluded. SQLite insertion order also works with fixed test clocks.

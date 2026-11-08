@@ -25,6 +25,7 @@
 use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
 
+use kamimusuhi_core::ids::TurnId;
 use kamimusuhi_core::routing::{LocalityClass, PrivacyConstraint, Urgency};
 use kamimusuhi_runtime::config::GENERAL_SLOT;
 use kamimusuhi_runtime::dialogue::{DialogueSession, MAX_INPUT_BYTES};
@@ -52,6 +53,10 @@ commands:
   memory            read-only JSON memory report: per-domain counts, newest
                     records, self model and pending proposals
                     (--subject <id> scopes records, --limit <n> per domain)
+  writeback-review  inspect an incomplete turn for operator abandonment;
+                    requires --turn-id and --reason, returns a review token
+  writeback-abort   record audited abandonment without deleting evidence;
+                    requires the same --turn-id/--reason and --review-token
   demo-continuity   run one phase of the deterministic restart scenario
   talk              answer --message once; JSON on stdout
   chat              interactive text conversation; /quit or EOF to stop,
@@ -110,7 +115,10 @@ options:
   --param <key>     propose only: operative param (retrieval.*, conversation.*,
                     reflection.* — the closed vocabulary)
   --value <json>    propose only: the proposed value, as JSON
-  --reason <text>   propose only: why the change is expected to help
+  --reason <text>   propose: why the change is expected to help;
+                    writeback-review/abort: operator's failure resolution reason
+  --turn-id <hex>   writeback-review/abort: exact incomplete turn to resolve
+  --review-token <token>  identity-accept or writeback-abort: exact reviewed token
   --limit <n>       recall-eval: evaluate at most the newest N link-declaring
                     episodic records; memory: newest N records per domain
   --json            recall-eval/memory: JSON report on stdout (the default)
@@ -149,6 +157,65 @@ fn run() -> Result<String, RuntimeError> {
         .next()
         .ok_or_else(|| RuntimeError::Usage(format!("no command given\n\n{USAGE}")))?;
     let options = Options::parse(args)?;
+    let writeback_command = matches!(command.as_str(), "writeback-review" | "writeback-abort");
+    if options.turn_id.is_some() && !writeback_command {
+        return Err(RuntimeError::Usage(
+            "--turn-id requires writeback-review or writeback-abort".to_owned(),
+        ));
+    }
+    if writeback_command {
+        // Validate the operator-only vocabulary before opening the runtime.
+        // In particular, a recovery command cannot accidentally run dialogue.
+        if options.has_writeback_incompatible_options() {
+            return Err(RuntimeError::Usage(
+                "writeback commands accept only --dir, --turn-id, --reason and --review-token"
+                    .to_owned(),
+            ));
+        }
+        let turn_id = options
+            .turn_id
+            .as_deref()
+            .ok_or_else(|| RuntimeError::Usage("writeback commands require --turn-id".to_owned()))?
+            .parse::<TurnId>()
+            .map_err(|_| RuntimeError::Usage("--turn-id must be a valid turn ID".to_owned()))?;
+        let reason = options
+            .reason
+            .as_deref()
+            .filter(|r| !r.trim().is_empty())
+            .ok_or_else(|| {
+                RuntimeError::Usage("writeback commands require a nonempty --reason".to_owned())
+            })?;
+        let token = if command == "writeback-abort" {
+            Some(
+                options
+                    .review_token
+                    .as_deref()
+                    .filter(|t| !t.is_empty())
+                    .ok_or_else(|| {
+                        RuntimeError::Usage(
+                            "writeback-abort requires --review-token from writeback-review"
+                                .to_owned(),
+                        )
+                    })?,
+            )
+        } else {
+            if options.review_token.is_some() {
+                return Err(RuntimeError::Usage(
+                    "--review-token is only accepted by writeback-abort".to_owned(),
+                ));
+            }
+            None
+        };
+        let runtime = Runtime::open(options.dir()?, options.runtime_options())?;
+        let report = match token {
+            Some(token) => {
+                kamimusuhi_runtime::memory_writeback::abort(&runtime, turn_id, reason, token)?
+            }
+            None => kamimusuhi_runtime::memory_writeback::review_abort(&runtime, turn_id, reason)?,
+        };
+        runtime.stopping();
+        return encode(&report);
+    }
     if matches!(command.as_str(), "identity-status" | "identity-accept") {
         let mut runtime = Runtime::open(options.dir()?, options.runtime_options())?;
         if let Some(path) = &options.identity_context_file {
@@ -566,6 +633,7 @@ struct Options {
     limit: Option<usize>,
     json: bool,
     review_token: Option<String>,
+    turn_id: Option<String>,
     identity_context_file: Option<String>,
 }
 
@@ -657,6 +725,7 @@ impl Options {
                 "--value" => options.value = Some(value()?),
                 "--reason" => options.reason = Some(value()?),
                 "--review-token" => options.review_token = Some(value()?),
+                "--turn-id" => options.turn_id = Some(value()?),
                 "--identity-context-file" => options.identity_context_file = Some(value()?),
                 "--limit" => {
                     let raw = value()?;
@@ -697,6 +766,33 @@ impl Options {
         self.dir
             .as_deref()
             .ok_or_else(|| RuntimeError::Usage(format!("--dir is required\n\n{USAGE}")))
+    }
+
+    fn has_writeback_incompatible_options(&self) -> bool {
+        self.source_root.is_some()
+            || self.message.is_some()
+            || self.subject.is_some()
+            || self.mio_options_present()
+            || self.phase.is_some()
+            || self.resource.is_some()
+            || self.id_seed.is_some()
+            || self.clock.is_some()
+            || self.privacy.is_some()
+            || self.urgency.is_some()
+            || self.persona.is_some()
+            || self.persona_url.is_some()
+            || self.persona_model.is_some()
+            || self.persona_auth_env.is_some()
+            || self.persona_locality.is_some()
+            || self.debug_context
+            || self.debug
+            || self.quiet
+            || self.proposal_id.is_some()
+            || self.param.is_some()
+            || self.value.is_some()
+            || self.limit.is_some()
+            || self.json
+            || self.identity_context_file.is_some()
     }
 
     fn mio_options_present(&self) -> bool {

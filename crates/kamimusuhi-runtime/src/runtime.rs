@@ -516,6 +516,22 @@ impl Runtime {
         Ok(lease)
     }
 
+    /// Operator maintenance must not resolve a turn that is still running.
+    /// Use the same lease held across dispatch through durable writeback, but
+    /// refuse contention instead of waiting and changing a reviewed snapshot.
+    pub fn try_lock_identity_exclusive(&self) -> Result<std::fs::File, RuntimeError> {
+        let lease = self.identity_lease_file()?;
+        match lease.try_lock() {
+            Ok(()) => Ok(lease),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                Err(RuntimeError::Usage("MEMORY_WRITEBACK_BUSY".to_owned()))
+            }
+            Err(std::fs::TryLockError::Error(_)) => {
+                Err(crate::identity_gate::GateError::Storage.into())
+            }
+        }
+    }
+
     /// Take writer authority for this process, fencing out older epochs.
     ///
     /// This writes to the canonical store (a new epoch row and its audit
