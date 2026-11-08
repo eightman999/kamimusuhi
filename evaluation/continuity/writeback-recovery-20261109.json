@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "date_jst": "2026-11-09",
+  "authorization": "explicit user approval for audited resolution of the two production markers, deployment, verification, commit and push",
+  "source_commit": "3fbe19d085fdc51c462b1383f8021669b391b8e2",
+  "source_archive_sha256": "2a2e857b209fe756f492abb685a009ab39005a09bc94424ff142a3da36634a16",
+  "resolution_event": "memory_writeback_aborted",
+  "resolution_semantics": "operator abandoned incomplete attempt; not successful writeback, certified delivery, or memory admission",
+  "local_regression": {
+    "unique_passed": 548,
+    "failed_after_fixture_correction": 0,
+    "ignored": 6,
+    "new_api_and_cli_tests": 11,
+    "clippy": "pass"
+  },
+  "nodes": [
+    {
+      "node": "mac",
+      "failure_resolution": {
+        "node": "mac",
+        "status": "pass",
+        "target_turn": "8b032aab189142018f58e1d62d64b5f6",
+        "unresolved_before": 1,
+        "unresolved_after": 0,
+        "aborted": 1,
+        "original_marker_preserved": true,
+        "original_records_preserved": true,
+        "audit_events_added": 1,
+        "audit_lineage_verified": true,
+        "verified_events_fabricated": 0,
+        "idempotent_retry": true,
+        "canonical_and_writer_epochs_preserved": true,
+        "settings_and_credential_metadata_preserved": true,
+        "verification": "after resident restart",
+        "boot_epoch": 59,
+        "identity_state": "continue",
+        "provider_workers": 0,
+        "pending_tasks": 0,
+        "writeback_state": "no_unresolved_turns",
+        "binaries": {
+          "kamimusuhi": "4c1206c657fd1a21da730f49c84597882196bc8c0ee6213d0308c48757626c90",
+          "kamimusuhi-runtime": "55221804bc5344389f64e8918ba4d4eb801470fcc676846039ec4c83b64abb67"
+        }
+      },
+      "post_resolution_conversation_smoke": {
+        "node": "mac",
+        "status": "pass",
+        "turn_id": "c786f1ab59214c809f12886f3139860e",
+        "elapsed_secs": 25.691,
+        "response": "確認しました。",
+        "writeback_verified": true,
+        "api_decision_loop": true,
+        "tools": 0,
+        "decision_fallbacks": 0,
+        "unresolved": 0,
+        "aborted": 1
+      },
+      "restart": {
+        "node": "mac",
+        "before_epoch": 58,
+        "after_epoch": 59,
+        "unresolved": 0,
+        "aborted": 1
+      }
+    },
+    {
+      "node": "pi",
+      "failure_resolution": {
+        "node": "pi",
+        "status": "pass",
+        "target_turn": "3e0936e242c24ee8a49d2e9eb3e65915",
+        "unresolved_before": 1,
+        "unresolved_after": 0,
+        "aborted": 1,
+        "original_marker_preserved": true,
+        "original_records_preserved": true,
+        "audit_events_added": 1,
+        "audit_lineage_verified": true,
+        "verified_events_fabricated": 0,
+        "idempotent_retry": true,
+        "canonical_and_writer_epochs_preserved": true,
+        "settings_and_credential_metadata_preserved": true,
+        "verification": "after resident restart",
+        "boot_epoch": 75,
+        "identity_state": "continue",
+        "provider_workers": 0,
+        "pending_tasks": 0,
+        "writeback_state": "no_unresolved_turns",
+        "binaries": {
+          "kamimusuhi": "3d81ad403bc19f23c73ad7dfc5b8aa5a2e6cf090d4e98165972b47816e099315",
+          "kamimusuhi-runtime": "ecdcee83ffba44384037e412df428e1b3b495dded5bee0b3d333e5cdb85d2896"
+        },
+        "services": {
+          "kamimusuhi-resident.service": "active",
+          "kamimusuhi-slack.service": "active",
+          "agenthub-mio-worker.service": "active"
+        },
+        "no_new_privileges": "yes"
+      },
+      "post_resolution_conversation_smoke": {
+        "node": "pi",
+        "status": "pass",
+        "turn_id": "d456a406e92b48e6a9a2af4ec2e25a5f",
+        "elapsed_secs": 24.14,
+        "response": "確認しました。",
+        "writeback_verified": true,
+        "api_decision_loop": true,
+        "tools": 0,
+        "decision_fallbacks": 0,
+        "unresolved": 0,
+        "aborted": 1
+      },
+      "restart": {
+        "node": "pi",
+        "before_epoch": 74,
+        "after_epoch": 75,
+        "unresolved": 0,
+        "aborted": 1
+      }
+    }
+  ],
+  "limitations": [
+    "Only the two operator-reviewed incomplete attempts were resolved; no automatic failure abandonment was introduced.",
+    "No human style/relationship rating or long-term self-model growth was measured.",
+    "A marker with recorded AgentUtterance or without UserUtterance requires a different recovery review and is refused."
+  ],
+  "ci_fixture_followup": {
+    "initial_rust_ci_run": 42492788618,
+    "initial_rust_ci_result": "failed in pre-existing retry fixture",
+    "cause": "fixed two-candidate judge response assumed both HTTP replies arrived inside the 10ms ready batch",
+    "change_scope": "tests/llm_jev_loop.rs only; deployed application sources unchanged",
+    "deterministic_arrival_orders": [
+      "primary first",
+      "backup first"
+    ],
+    "http_generation_and_retry_retained": true,
+    "initial_backup_success_and_digest_checked": true,
+    "old_candidate_reassessment_or_delivery_forbidden": true,
+    "target_tests_passed": 19,
+    "target_tests_failed": 0,
+    "clippy": "pass"
+  }
+}

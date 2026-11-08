@@ -5,8 +5,8 @@
 //! Jev -> language organ -> Jev without making a live API claim.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 
 use kamimusuhi_core::evidence::EvidenceStore;
 use kamimusuhi_core::ids::PersonaBackendId;
@@ -889,34 +889,212 @@ fn failed_retry_never_reuses_old_or_other_candidates() {
             "RESPONSE_TOO_LARGE",
         ),
     ] {
-        let primary =
-            FixtureServer::start(vec![FixtureResponse::ok("old response"), replacement]).unwrap();
-        let backup = FixtureServer::always(FixtureResponse::ok("unused backup")).unwrap();
-        let judge = FixtureServer::start(vec![
-            jev_preparation("SPEAK"),
-            jev_assessment("primary", &[("primary", "RETRY"), ("backup", "ACCEPT")]),
-        ])
-        .unwrap();
-        let (_dir, mut runtime, mut session) = fanout_session(&primary, &backup, &judge);
-        assert!(
-            session
-                .turn(&mut runtime, "こんにちは", |_| panic!(
-                    "must not deliver"
-                ))
-                .is_err()
-        );
-        assert_eq!(primary.request_count(), 2);
-        assert_eq!(backup.request_count(), 1);
-        assert_eq!(judge.request_count(), 2);
-        let failure = session.last_generated_candidates().last().unwrap();
-        assert_eq!(failure.id, "primary");
-        assert_eq!(failure.attempt, 1);
-        assert_eq!(failure.error_code.as_deref(), Some(code));
-        assert!(
-            session.history_for_display(&runtime).unwrap().iter().all(
-                |message| message.role != kamimusuhi_core::persona::ConversationRole::Assistant
+        for primary_first in [true, false] {
+            let primary = FixtureServer::start(vec![
+                FixtureResponse::ok("old response"),
+                replacement.clone(),
+            ])
+            .unwrap();
+            let backup = FixtureServer::always(FixtureResponse::ok("unused backup")).unwrap();
+            let order = Arc::new(FailedRetryOrder::default());
+            let (_dir, mut runtime) = prepared(&primary);
+            let primary_provider = PersonaLanguageProvider::with_id(
+                runtime.config().build_persona().unwrap(),
+                "primary",
+                "fixture-language",
+                "fixture-language",
+            );
+            let mut backup_config = runtime.config().persona.provider.clone().unwrap();
+            backup_config.backend_id = PersonaBackendId::from_u128(0xBEEF);
+            backup_config.base_url = backup.base_url();
+            backup_config.model = "backup-language".to_owned();
+            let backup_provider = PersonaLanguageProvider::with_id(
+                backup_config.build_persona().unwrap(),
+                "backup",
+                "backup-language",
+                "backup-language",
+            );
+            let mut session = DialogueSession::start_with_providers(
+                &mut runtime,
+                "alice",
+                PrivacyConstraint::Unconstrained,
+                Box::new(FailedRetryDecisionProvider {
+                    order: Arc::clone(&order),
+                }),
+                Some(Box::new(OrderedFailedRetryLanguageProvider {
+                    inner: primary_provider,
+                    wait_for_first_assessment: !primary_first,
+                    calls: AtomicUsize::new(0),
+                    order: Arc::clone(&order),
+                })),
             )
+            .unwrap();
+            session
+                .add_language_provider(
+                    "backup",
+                    Arc::new(OrderedFailedRetryLanguageProvider {
+                        inner: backup_provider,
+                        wait_for_first_assessment: primary_first,
+                        calls: AtomicUsize::new(0),
+                        order: Arc::clone(&order),
+                    }),
+                )
+                .unwrap();
+            assert!(
+                session
+                    .turn(&mut runtime, "こんにちは", |_| panic!(
+                        "must not deliver"
+                    ))
+                    .is_err()
+            );
+            assert_eq!(primary.request_count(), 2);
+            assert_eq!(backup.request_count(), 1);
+            // The second organ cannot finish until the first batch was
+            // assessed. Both arrival orders are exercised without relying on
+            // the production race's tiny ready-batch grace period.
+            let expected_order = if primary_first {
+                vec![vec!["old response"], vec!["unused backup"]]
+            } else {
+                vec![vec!["unused backup"], vec!["old response"]]
+            };
+            assert_eq!(*order.assessed.lock().unwrap(), expected_order);
+            assert_eq!(session.last_generated_candidates().len(), 3);
+            // Both initial candidates remain successful generated alternatives
+            // in the host pool. The old wire fixture's unselected backup
+            // ACCEPT was not retained by compose_assessment; only the selected
+            // primary's RETRY gate reaches the race. Here too, failure must
+            // stop before reselecting this still-valid backup or old primary.
+            let initial = &session.last_generated_candidates()[..2];
+            assert!(
+                initial
+                    .iter()
+                    .all(|candidate| candidate.error_code.is_none())
+            );
+            let backup_candidate = initial
+                .iter()
+                .find(|candidate| candidate.id == "backup")
+                .unwrap();
+            assert_eq!(
+                backup_candidate.response_digest.as_deref(),
+                Some(kamimusuhi_core::digest::content_digest(b"unused backup").as_str())
+            );
+            let failure = session.last_generated_candidates().last().unwrap();
+            assert_eq!(failure.id, "primary");
+            assert_eq!(failure.attempt, 1);
+            assert_eq!(failure.error_code.as_deref(), Some(code));
+            assert!(session.history_for_display(&runtime).unwrap().iter().all(
+                |message| message.role != kamimusuhi_core::persona::ConversationRole::Assistant
+            ));
+        }
+    }
+}
+
+/// Only this failure-path test uses a local decision provider. The wire tests
+/// above keep testing Jev's typed HTTP contract; this oracle concerns failed
+/// regeneration, which must hold for every possible ready-candidate subset.
+#[derive(Default)]
+struct FailedRetryOrder {
+    assessed: Mutex<Vec<Vec<String>>>,
+    first_assessed: Condvar,
+}
+
+struct OrderedFailedRetryLanguageProvider {
+    inner: PersonaLanguageProvider,
+    wait_for_first_assessment: bool,
+    calls: AtomicUsize,
+    order: Arc<FailedRetryOrder>,
+}
+
+impl LanguageProvider for OrderedFailedRetryLanguageProvider {
+    fn generate(
+        &self,
+        request: &kamimusuhi_runtime::llm_jev::LanguageRequest,
+    ) -> Result<
+        kamimusuhi_runtime::llm_jev::LanguageResult,
+        kamimusuhi_runtime::llm_jev::ConversationError,
+    > {
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 && self.wait_for_first_assessment {
+            let (observed, _) = self
+                .order
+                .first_assessed
+                .wait_timeout_while(
+                    self.order.assessed.lock().unwrap(),
+                    std::time::Duration::from_secs(2),
+                    |assessed| assessed.is_empty(),
+                )
+                .unwrap();
+            if observed.is_empty() {
+                return Err(kamimusuhi_runtime::llm_jev::ConversationError::Timeout);
+            }
+        }
+        // The adapter and all initial/retry HTTP failure modes stay real.
+        self.inner.generate(request)
+    }
+
+    fn descriptor(&self) -> kamimusuhi_core::persona::PersonaBackendDescriptor {
+        self.inner.descriptor()
+    }
+}
+
+struct FailedRetryDecisionProvider {
+    order: Arc<FailedRetryOrder>,
+}
+
+impl DecisionProvider for FailedRetryDecisionProvider {
+    fn decide(
+        &self,
+        request: &DecisionRequest,
+    ) -> Result<DecisionResult, kamimusuhi_runtime::llm_jev::ConversationError> {
+        let mut result = RuleBasedDecisionProvider.decide(request)?;
+        if request.kind == DecisionKind::ResponseGate {
+            result.decision = if request.candidate_response.as_deref() == Some("old response") {
+                Decision::Retry
+            } else {
+                Decision::Reject
+            };
+            result.probabilities = request
+                .kind
+                .choices()
+                .iter()
+                .map(|choice| {
+                    (
+                        (*choice).to_owned(),
+                        f32::from(*choice == result.decision.as_str()),
+                    )
+                })
+                .collect();
+        }
+        Ok(result)
+    }
+
+    fn select_language_response(
+        &self,
+        request: &LanguageResponseSelectionRequest,
+    ) -> Result<
+        kamimusuhi_runtime::llm_jev::ProviderSelectionResult,
+        kamimusuhi_runtime::llm_jev::ConversationError,
+    > {
+        let mut result = RuleBasedDecisionProvider.select_language_response(request)?;
+        let candidate = request
+            .candidates
+            .iter()
+            .find(|candidate| candidate.response == "old response")
+            .unwrap_or(&request.candidates[0]);
+        result.provider_id = candidate.id.clone();
+        result.probabilities = request
+            .candidates
+            .iter()
+            .map(|choice| (choice.id.clone(), f32::from(choice.id == candidate.id)))
+            .collect();
+        self.order.assessed.lock().unwrap().push(
+            request
+                .candidates
+                .iter()
+                .map(|candidate| candidate.response.clone())
+                .collect(),
         );
+        self.order.first_assessed.notify_all();
+        Ok(result)
     }
 }
 

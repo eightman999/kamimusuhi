@@ -168,3 +168,9 @@ Piのresident/Slack/AgentHub workerはactive、`NoNewPrivileges=yes`を保持し
 
 修正source commit `a270a00`は、[K-CORE CI](https://github.com/eightman999/kamimusuhi/actions/runs/42490555343)・
 [Rust CI](https://github.com/eightman999/kamimusuhi/actions/runs/42490555388)とも全段階PASS。
+
+## 2026-11-09の追補
+
+上記で保持していた未完了marker各1件は、その後のユーザー承認に基づき監査付きで解消した。
+markerと元入力を保持したまま、両ノードとも`unresolved=0 / aborted=1`。
+[失敗書戻しの解消・本番再起動検証](writeback-recovery-2026-11-09.md)に経過と証跡を記録した。
