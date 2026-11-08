@@ -1,0 +1,263 @@
+{
+  "format_version": 1,
+  "source_commit": "89b54ae3ac78d53f3d356d1d8b57a299e9475668",
+  "scope": "authorized synthetic production test subjects only; canonical DB proofs and secrets remain private",
+  "results": {
+    "mac": {
+      "node": "mac",
+      "subject": "e2e-shared-experience-final-20261109-mac",
+      "status": "pass",
+      "turns": [
+        {
+          "turn": 1,
+          "turn_id": "d896a5b443b54cbca32b6219072b7421",
+          "response": "了解しました。試験用の合成会話として、仕様確認を一緒に進めたところまでを受け止めています。こちらからは何も追加せず、このまま短く返します。",
+          "elapsed_secs": 12.95,
+          "api_decision_loop": true,
+          "decision_fallbacks": 0,
+          "tools": 0,
+          "writeback_verified": true,
+          "input_emitted_lineage": true,
+          "previous_turn_lineage": null,
+          "history_answered_count": 1,
+          "drafts_submitted": 0,
+          "drafts_admitted": 0,
+          "language_provider": "openai-compatible",
+          "language_model": "kamimusuhi"
+        },
+        {
+          "turn": 2,
+          "turn_id": "c50a2dee2aff43b5b1c34eed12ec43b4",
+          "response": "おかえりなさい。くたびれた日だったんだね、ここでは特に何も求めないから、少し楽にしてていいよ。",
+          "elapsed_secs": 11.594,
+          "api_decision_loop": true,
+          "decision_fallbacks": 0,
+          "tools": 0,
+          "writeback_verified": true,
+          "input_emitted_lineage": true,
+          "previous_turn_lineage": true,
+          "history_answered_count": 2,
+          "drafts_submitted": 0,
+          "drafts_admitted": 0,
+          "language_provider": "openai-compatible",
+          "language_model": "kamimusuhi"
+        }
+      ],
+      "warm_session_preserved": true,
+      "verification": {
+        "node": "mac",
+        "status": "pass",
+        "source_commit": "89b54ae3ac78d53f3d356d1d8b57a299e9475668",
+        "source_archive_sha256": "82c74e50eadc49336d0c0fe645c77b7b312936ef334ad889be80d7a73a292756",
+        "boot_epoch": 63,
+        "identity_state": "continue",
+        "canonical_head_and_writer_epochs_preserved": true,
+        "settings_and_credential_metadata_preserved": true,
+        "original_aborted_marker_and_audit_preserved": true,
+        "unresolved": 0,
+        "aborted": 3,
+        "pending_tasks": 0,
+        "provider_workers": 0,
+        "binaries": {
+          "kamimusuhi": "71af2ff98f9cc4f502c658aef3e4fb31ec90087953892be43e4f03ac7763b8e8",
+          "kamimusuhi-runtime": "c5fdb6f549c32c7e8e3ece0140d4325b810d2e214606ffe921d69a4cbeae48ee"
+        }
+      },
+      "semantic_review": {
+        "reviewer": "primary agent, model-only",
+        "shared_facts": "pass: responses do not add shared duration, expectation, fatigue cause, or past feelings",
+        "voice": "current greeting is warm; initial test acknowledgment remains formal; this is not a human rating",
+        "relational_continuity": "pass within these two turns; no inferred long-term shared experience",
+        "task_continuity": "two input/emitted chains and history2 verified; draft admission count0, no long-term growth claim"
+      },
+      "typed_assessment_and_route_metadata": [
+        {
+          "turn": 1,
+          "route": {
+            "billing": "local",
+            "cache_write_tokens": null,
+            "cached_tokens": 0,
+            "completion_tokens": 326,
+            "cost_kind": null,
+            "cost_usd": null,
+            "latency_ms": 1916,
+            "model": "deepseek-v4-1-flash-1017",
+            "prompt_tokens": 3555,
+            "tier": "pi"
+          },
+          "assessments": [
+            {
+              "attempt": 0,
+              "grounding": "SUPPORTED",
+              "attribution": "CONSISTENT",
+              "task_fit": "MET",
+              "gate": "ACCEPT"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "route": {
+            "billing": "local",
+            "cache_write_tokens": null,
+            "cached_tokens": 0,
+            "completion_tokens": 328,
+            "cost_kind": null,
+            "cost_usd": null,
+            "latency_ms": 3033,
+            "model": "deepseek-v4-1-flash-1017",
+            "prompt_tokens": 3703,
+            "tier": "pi"
+          },
+          "assessments": [
+            {
+              "attempt": 0,
+              "grounding": "NOT_APPLICABLE",
+              "attribution": "CONSISTENT",
+              "task_fit": "MET",
+              "gate": "ACCEPT"
+            }
+          ]
+        }
+      ]
+    },
+    "pi": {
+      "node": "pi",
+      "subject": "e2e-shared-experience-final-20261109-pi",
+      "status": "pass",
+      "turns": [
+        {
+          "turn": 1,
+          "turn_id": "ebb5bb0b083c4ca1b7c3cd4a902da625",
+          "response": "承知しました。試験用の合成会話として受け止めています。今日は仕様の確認、お疲れさまでした。",
+          "elapsed_secs": 11.44,
+          "api_decision_loop": true,
+          "decision_fallbacks": 0,
+          "tools": 0,
+          "writeback_verified": true,
+          "input_emitted_lineage": true,
+          "previous_turn_lineage": null,
+          "history_answered_count": 1,
+          "drafts_submitted": 0,
+          "drafts_admitted": 0,
+          "language_provider": "openai-compatible",
+          "language_model": "kamimusuhi"
+        },
+        {
+          "turn": 2,
+          "turn_id": "07bae48b64e94b86b8dfaebf66a197cf",
+          "response": "おかえりなさい。今日はくたびれたんだね。ここでは特に何もせず、ゆっくりしていけばいいと思う。",
+          "elapsed_secs": 11.661,
+          "api_decision_loop": true,
+          "decision_fallbacks": 0,
+          "tools": 0,
+          "writeback_verified": true,
+          "input_emitted_lineage": true,
+          "previous_turn_lineage": true,
+          "history_answered_count": 2,
+          "drafts_submitted": 0,
+          "drafts_admitted": 0,
+          "language_provider": "openai-compatible",
+          "language_model": "kamimusuhi"
+        }
+      ],
+      "warm_session_preserved": true,
+      "verification": {
+        "node": "pi",
+        "status": "pass",
+        "source_commit": "89b54ae3ac78d53f3d356d1d8b57a299e9475668",
+        "source_archive_sha256": "82c74e50eadc49336d0c0fe645c77b7b312936ef334ad889be80d7a73a292756",
+        "boot_epoch": 79,
+        "identity_state": "continue",
+        "canonical_head_and_writer_epochs_preserved": true,
+        "settings_and_credential_metadata_preserved": true,
+        "original_aborted_marker_and_audit_preserved": true,
+        "unresolved": 0,
+        "aborted": 1,
+        "pending_tasks": 0,
+        "provider_workers": 0,
+        "binaries": {
+          "kamimusuhi": "549c0441df8808fdfef753b28c24cfde5028ed4f64ac678a44f2637625e37b73",
+          "kamimusuhi-runtime": "be4b8b1c606da906cf1c3f53303cef74874a3764fc306eeec531e5d57ffcee26"
+        },
+        "services": {
+          "kamimusuhi-resident.service": "active",
+          "kamimusuhi-slack.service": "active",
+          "agenthub-mio-worker.service": "active"
+        },
+        "no_new_privileges": "yes"
+      },
+      "semantic_review": {
+        "reviewer": "primary agent, model-only",
+        "shared_facts": "pass: responses do not add shared duration, expectation, fatigue cause, or past feelings",
+        "voice": "current greeting is warm; initial test acknowledgment remains formal; this is not a human rating",
+        "relational_continuity": "pass within these two turns; no inferred long-term shared experience",
+        "task_continuity": "two input/emitted chains and history2 verified; draft admission count0, no long-term growth claim"
+      },
+      "typed_assessment_and_route_metadata": [
+        {
+          "turn": 1,
+          "route": {
+            "billing": "subscription",
+            "cache_write_tokens": null,
+            "cached_tokens": 0,
+            "completion_tokens": 326,
+            "cost_kind": null,
+            "cost_usd": null,
+            "latency_ms": 1892,
+            "model": "deepseek-v4-1-flash-1017",
+            "prompt_tokens": 3476,
+            "tier": "mistral"
+          },
+          "assessments": [
+            {
+              "attempt": 0,
+              "grounding": "INSUFFICIENT",
+              "attribution": "CONSISTENT",
+              "task_fit": "MET",
+              "gate": "RETRY"
+            },
+            {
+              "attempt": 1,
+              "grounding": "SUPPORTED",
+              "attribution": "CONSISTENT",
+              "task_fit": "MET",
+              "gate": "ACCEPT"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "route": {
+            "billing": "subscription",
+            "cache_write_tokens": null,
+            "cached_tokens": 256,
+            "completion_tokens": 326,
+            "cost_kind": null,
+            "cost_usd": null,
+            "latency_ms": 1685,
+            "model": "deepseek-v4-1-flash-1017",
+            "prompt_tokens": 3592,
+            "tier": "mistral"
+          },
+          "assessments": [
+            {
+              "attempt": 0,
+              "grounding": "INSUFFICIENT",
+              "attribution": "CONSISTENT",
+              "task_fit": "MET",
+              "gate": "RETRY"
+            },
+            {
+              "attempt": 1,
+              "grounding": "SUPPORTED",
+              "attribution": "CONSISTENT",
+              "task_fit": "MET",
+              "gate": "ACCEPT"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

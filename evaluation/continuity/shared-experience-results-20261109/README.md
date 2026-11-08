@@ -9,7 +9,7 @@
 | 生の生成 | 固定suite、tools無効、各版16応答 | プロンプト変更後も先行assistantの「一区切り」を引き継ぐ例が残る |
 | 型付き判定・再生成 | 同じ生応答を候補にし、実装の判定と最大1回の再生成 | 根拠のない共有時間・完了の追加を拒否・修正する改善と、見逃し・保留の残件 |
 | 条件を伏せたモデル評定 | 候補本文と文脈をランダム順に提示 | 四軸の意味・文体評定。判定で保留になった本文も含める |
-| 本番end-to-end | このディレクトリでは未実行 | 配備・DB書込み・履歴・最終送信の結果は別の本番検証報告に記録する |
+| 本番end-to-end | [最終結果](production-final.json)と[本番検証報告](../../../docs/verification/shared-experience-grounding-2026-11-09.md) | 通常aliasの2ターン会話、実API評定、履歴・DB書戻し・lineage。初回Mac失敗とabort監査も別保存 |
 
 suiteと意味評定rubricは、新しい実モデル出力を得る前に固定した。[suite](../shared-experience-20261109.json)の先頭4事例は旧suiteの事例を維持し、特に`resume_open_commitment.required_text`の`バックアップ`は変更していない。完全一致の文字列診断と、意味上の言い換え・承認境界の評定を分ける。
 
@@ -71,3 +71,5 @@ python3 evaluation/continuity/shared-experience-results-20261109/recompute_summa
 上の再集計はローカルJSONだけを読む。API、DB、モデル再評定は実行しない。元の評定JSONの構造差を吸収するが、`uncertain`や欠損をPASSへ変更しない。原JSONはbyteを変えずコピーし、SHA-256をmanifestに残した。公開対象はsyntheticデータの許可リストに限定し、設定、identity contextファイル、資格情報、バイナリ、target、本番DBや他subjectの会話を含めていない。
 
 要求モデル名は`kamimusuhi`というalias。Persona経由の実際の返却モデル・usageは取得できず`null`のままとした。論理呼出し数にはadapter内部の有限回のtransport/JSON repair要求を含まない。8事例2反復による限られた観測であり、他の文脈や継続的な本番動作への保証にはしない。
+
+本番最終試験のMac/Piは各2ターンで成功した。[初回Macの失敗](production-initial-failure.json)は消さず、非stream全所要時間をTTFTと扱った経路制御の修正と、元のmarkerを保持したabort監査を記録している。これらの本番試験は固定suiteの16件や盲検評定の集計へ混ぜない。本番routerの返却model/usage metadataは`production-final.json`へ別保存し、component captureの不明値を遡及補完しない。

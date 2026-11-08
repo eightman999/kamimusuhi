@@ -1,0 +1,75 @@
+{
+  "format_version": 1,
+  "node": "mac",
+  "phase": "initial rollout before nonstream TTFT fix",
+  "source_commit": "2d23d4bab084a3074f8fe4c25adba92a6322a63c",
+  "test_subject": "e2e-shared-experience-20261109-mac",
+  "first_turn": {
+    "background": null,
+    "error": null,
+    "kind": "answered",
+    "latency_ms": 29030,
+    "message": "運用者が承認した本番end-to-end試験です。この試験専用subjectでの合成会話であり、eightmanの個人属性や恒久的な好みではありません。今日は仕様の確認を一緒に進めました。ツール利用・外部送信・追加作業は不要です。短く受け止めてください。",
+    "response": "了解しました。試験用の合成会話として受け止めています。仕様の確認、お疲れさまでした。",
+    "route": {
+      "billing": "local",
+      "cache_write_tokens": null,
+      "cached_tokens": 256,
+      "completion_tokens": 326,
+      "cost_kind": null,
+      "cost_usd": null,
+      "latency_ms": 2057,
+      "model": "deepseek-v4-1-flash-1017",
+      "prompt_tokens": 3501,
+      "tier": "pi"
+    },
+    "task_id": "t1a1bc1b4481",
+    "tool_calls": [],
+    "ts": "2026-11-08T17:01:35Z"
+  },
+  "second_turn": {
+    "background": null,
+    "error": "generation_failed",
+    "kind": "failed",
+    "latency_ms": 42695,
+    "message": "ただいま。今日はちょっとくたびれた。",
+    "response": null,
+    "route": null,
+    "task_id": "t1a1bc1bb618",
+    "tool_calls": null,
+    "ts": "2026-11-08T17:02:17Z"
+  },
+  "external_http_status": 502,
+  "internal_error": {
+    "code": "HTTP_STATUS",
+    "status": 400,
+    "plan": "no eligible tier",
+    "lane": "FAST_CHAT"
+  },
+  "cause": "nonstream total response latency was recorded as measured TTFT; the latency gate could exclude the only eligible tier during grounding repair",
+  "original_post_attempts": 1,
+  "resident_internal_runtime_attempts": 2,
+  "failed_turn_ids": [
+    "224cfa6ab64b461eb446dcd08de187c6",
+    "7f00139e3ae249f0bf4799eb944a0ac3"
+  ],
+  "failure_resolution": {
+    "node": "mac",
+    "unresolved": 0,
+    "aborted": 3,
+    "failed_test_turns": [
+      "224cfa6ab64b461eb446dcd08de187c6",
+      "7f00139e3ae249f0bf4799eb944a0ac3"
+    ],
+    "original_inputs_and_markers_preserved": true,
+    "abort_audits_added": 2,
+    "verified_events_fabricated": 0,
+    "canonical_head_and_writer_epochs_preserved": true
+  },
+  "invariants": [
+    "original input/marker/history preserved",
+    "abort is not successful delivery or verified memory writeback",
+    "normal route configuration and thresholds unchanged"
+  ],
+  "quality_limit": "The first runtime attempt rejected a benign advice response; the internal retry generated an unsupported fatigue cause, which was rejected. Neither response was emitted."
+}
