@@ -80,7 +80,7 @@ backupはMacのnode rootおよびPi `/srv/kamimusuhi` の `backups/self-memory-2
 
 本番residentへ試験会話を保存する操作は、自動承認レビューが「本番DB更新への明示承認が確認できないため」と拒否した。
 その操作は再試行せず、隔離個体での上記検証と本番の読み取り確認へ切り替えた。
-したがって、**更新後の本番個体への会話書込みを含むend-to-end確認は未実施**。
+この時点では本番会話書込みのend-to-end確認は未実施だった。続いてユーザーが明示承認し、以下の追加検証へ進んだ。
 
 ## 復旧
 
@@ -95,3 +95,76 @@ K-CORE focused CIの`cargo test --lib`は、クリーンrunnerでprovider worker
 `cargo build -p kamimusuhi-runtime --bin kamimusuhi-runtime`を明示した。
 空の専用targetでこの順序を再現し、selection評価 **5 PASS / 0 FAIL**。`bash -n`・差分検査もPASS。
 アプリケーションのRust sourceや本番binaryは変更せず、上記配備コミットの同一性・指紋も維持する。
+
+## 追加承認後の本番end-to-end検証
+
+ユーザーの「本番個体への試験会話書込みも承認する」に基づき、Mac/Piそれぞれの本番
+`POST /v1/kamimusuhi/talk`へ、個人属性・好みと区別した試験用subjectの会話を送った。
+外部投稿やツール実行を依頼せず、試験識別語を返す会話だけを使用した。
+
+### 初回に検出した実不具合と修正
+
+両ノードでHTTP 200と応答を受け取ったが、DB監査で内部再試行前のturnに入力だけが残り、
+`memory_writeback`の未完了markerが各1件増えたことを検出した。したがって初回はE2E成功としない。
+既存residentはhostのDead/Ioを1回再試行するため、HTTP成功だけでは全attemptの永続化を保証しない。
+
+原因は`serde_json`の既定parserによる浮動小数点往復だった。合成した`0.03f32`は
+`0.029999999329447746`へserializeされた後、既定parserで`0.029999999329447743`に変わり、
+`SqliteStore::append_in`の厳密readbackが`appended evidence readback mismatch`としてrollbackした。
+本番の失敗turnにも同じ確率値があり、`persona.completed`後、`response_generated`保存前で停止していた。
+
+修正commitは`a270a00d8cc03c926530d680c5005215118fa157`。
+storeの`serde_json`に`float_roundtrip`を有効化し、比較を緩めず正確な数値往復を保証する。
+
+- 新規回帰テストは修正前FAIL、修正後PASS。合成確率・telemetryのatomic保存、同一再append、再openを確認。
+- 確率値を変更するSQLite triggerは引き続き拒否され、行とlineageがrollbackされることを確認。
+- store全回帰 **82 PASS / 0 FAIL**、Clippy全target `-D warnings`・fmt・差分検査PASS。
+- 限定sourceのAPI判断・継続性・CLI回帰 **24 PASS / 0 FAIL**。loopback fixtureのみを使用。
+- ビルドsourceはCargo/crates/knowledge/deployの追跡済み286ファイルが修正commitとbyte一致。
+  無関係な作業ツリー差分は含めていない。
+- 完全source archive SHA256: `6c94d70fe7ad3b9be391140f397a2c87009cb216fbee7677f120df4198743a2d`。
+
+### 修正後の確認方法と残る失敗証跡
+
+新しい試験subjectで2往復する。1回目に識別語を提示し、2回目は識別語を再掲せず回答させる。
+HTTP応答だけでなく、対応するDBの入力・生成・発話、`memory_writeback_verified`のreadback、
+入力から発話へのlineage、2回目の発話から前turnの入力・発話へのlineage、resident履歴を照合する。
+同一sessionであること、API発話前判断・応答評定、fallback/tool数、FI3、設定・資格情報metadata、
+個体とcontinuity head、pending taskとprovider worker残留も確認する。
+
+**初回の未完了markerは各1件を保全する。削除や成功イベントの補完は行わない。**
+既存実装には失敗turnを監査付きでabortするAPIがないため、global statusは
+`incomplete_or_in_flight` / unresolved=1を保持する。修正後の判定は新規turnごとの証跡と
+「既知の未完了1件から増えないこと」に限定し、全履歴の未完了解消とは扱わない。
+また、この識別語試験は人間による文体・関係性評定や長期の自己モデル成長の実証ではない。
+
+### 修正後の実測結果
+
+[本番E2Eの集計証跡](../../evaluation/continuity/production-e2e-20261108.json)に、初回失敗と修正後4turnの結果を分けて記録した。
+
+| 確認 | Mac | Pi |
+|---|---|---|
+| 修正後の2応答 | PASS | PASS |
+| 1回目 / 2回目の時間 | 27.760 / 20.482秒 | 16.999 / 8.322秒 |
+| 識別語を再掲しない2回目の回答 | PASS | PASS |
+| DB readback completion / 発話lineage | 各turn PASS | 各turn PASS |
+| 前turnの入力・発話へのlineage / 同一session | PASS | PASS |
+| resident履歴のanswered数 | 2件 | 2件 |
+| decision fallback / tool / draft提出・採用 | すべて0 | すべて0 |
+| 既知の未完了 / 新規未完了 | 1 / 0件 | 1 / 0件 |
+| FI3 / 個体・head・設定・資格情報metadata | continue / 保持 | continue / 保持 |
+| boot epoch / pending task / provider worker残留 | 56 / 0 / 0 | 72 / 0 / 0 |
+
+修正版のnative releaseはMac 26.10秒、Pi 9分01秒。
+配備backupは各node rootの`backups/self-memory-float-20261108/`。
+2binだけを更新し、設定・DBを置き換えず、FI3のchanged componentsは両ノードとも空で追加acceptは不要だった。
+Piのresident/Slack/AgentHub workerはactive、`NoNewPrivileges=yes`を保持した。
+各nodeの`current_state/deployments/self-memory-continuity-2026-11-08.json`も修正版sourceと本番E2E証跡へ更新した。
+
+| node | 修正版resident SHA256 | 修正版runtime SHA256 |
+|---|---|---|
+| Mac | `02a5f6628657bd50cbe40ab6742dcbe9814e3dc25595a181b1bac59fe1c00e94` | `c16d436e0f914b761b5693a3f814dffc7b4be44a37b64838d6e89d180308c70c` |
+| Pi | `906e17871effdaeff7c57fca0b6c1c1dc1c55f036d9d2ade4d28888fee006bd2` | `cd75c7ba5f728003549f8a293b9c762979c2cbbd1db76e47976b45afb94ef3c3` |
+
+修正source commit `a270a00`は、[K-CORE CI](https://github.com/eightman999/kamimusuhi/actions/runs/42490555343)・
+[Rust CI](https://github.com/eightman999/kamimusuhi/actions/runs/42490555388)とも全段階PASS。

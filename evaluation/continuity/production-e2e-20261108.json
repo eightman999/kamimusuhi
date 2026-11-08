@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "date_jst": "2026-11-08",
+  "source_commit": "a270a00d8cc03c926530d680c5005215118fa157",
+  "source_archive_sha256": "6c94d70fe7ad3b9be391140f397a2c87009cb216fbee7677f120df4198743a2d",
+  "initial_attempt_result": {
+    "status": "failed_persistence_despite_http_200",
+    "nodes": [
+      "mac",
+      "pi"
+    ],
+    "cause": "serde_json default float parser changed a serialized f32 probability; exact evidence readback rejected response_generated",
+    "failed_attempt_markers_retained_per_node": 1,
+    "resident_internal_host_retry": true
+  },
+  "fix": "store serde_json float_roundtrip feature; exact integrity checks retained",
+  "regression": {
+    "store_passed": 82,
+    "runtime_passed": 24,
+    "failed": 0,
+    "new_tests_failed_before_fix": true,
+    "float_tamper_rollback_retained": true
+  },
+  "source_commit_ci": {
+    "kcore": "success",
+    "kcore_run": 42490555343,
+    "rust": "success",
+    "rust_run": 42490555388
+  },
+  "nodes": [
+    {
+      "node": "mac",
+      "status": "pass",
+      "authorization": "explicit user approval for production test conversation writes",
+      "subject": "e2e-self-memory-20261108-mac-fixed",
+      "turns": [
+        {
+          "turn": 1,
+          "turn_id": "abdbddf7d10d40389d93af1aaeee85ea",
+          "response": "SME2E-20261108-MAC-FIXED",
+          "elapsed_secs": 27.76,
+          "api_decision_loop": true,
+          "decision_fallbacks": 0,
+          "tools": 0,
+          "writeback_verified": true,
+          "input_emitted_lineage": true,
+          "previous_turn_lineage": null,
+          "history_answered_count": 1,
+          "drafts_submitted": 0,
+          "drafts_admitted": 0,
+          "language_provider": "openai-compatible",
+          "language_model": "kamimusuhi"
+        },
+        {
+          "turn": 2,
+          "turn_id": "cd40e72dbd154a8b812fea55be8caad3",
+          "response": "SME2E-20261108-MAC-FIXED",
+          "elapsed_secs": 20.482,
+          "api_decision_loop": true,
+          "decision_fallbacks": 0,
+          "tools": 0,
+          "writeback_verified": true,
+          "input_emitted_lineage": true,
+          "previous_turn_lineage": true,
+          "history_answered_count": 2,
+          "drafts_submitted": 0,
+          "drafts_admitted": 0,
+          "language_provider": "openai-compatible",
+          "language_model": "kamimusuhi"
+        }
+      ],
+      "warm_session_preserved": true,
+      "canonical_identity_and_head_preserved": true,
+      "identity_state": "continue",
+      "prior_unresolved_writebacks": 1,
+      "new_unresolved_writebacks": 0,
+      "self_projection": {
+        "stored_entries": 0,
+        "surfaced_entries": 0,
+        "excluded_count": 0
+      },
+      "pending_tasks": 0,
+      "boot_epoch": 56,
+      "test_records_retained": true,
+      "quality_scope": "production transport/persistence/two-turn context continuity; not human style or long-term self-model growth"
+    },
+    {
+      "node": "pi",
+      "status": "pass",
+      "authorization": "explicit user approval for production test conversation writes",
+      "subject": "e2e-self-memory-20261108-pi-fixed",
+      "turns": [
+        {
+          "turn": 1,
+          "turn_id": "c86844ff129845479b3cf9c875324cfa",
+          "response": "SME2E-20261108-PI-FIXED",
+          "elapsed_secs": 16.999,
+          "api_decision_loop": true,
+          "decision_fallbacks": 0,
+          "tools": 0,
+          "writeback_verified": true,
+          "input_emitted_lineage": true,
+          "previous_turn_lineage": null,
+          "history_answered_count": 1,
+          "drafts_submitted": 0,
+          "drafts_admitted": 0,
+          "language_provider": "openai-compatible",
+          "language_model": "kamimusuhi"
+        },
+        {
+          "turn": 2,
+          "turn_id": "8ab05be926b34c81a5f6d675e62caf15",
+          "response": "SME2E-20261108-PI-FIXED",
+          "elapsed_secs": 8.322,
+          "api_decision_loop": true,
+          "decision_fallbacks": 0,
+          "tools": 0,
+          "writeback_verified": true,
+          "input_emitted_lineage": true,
+          "previous_turn_lineage": true,
+          "history_answered_count": 2,
+          "drafts_submitted": 0,
+          "drafts_admitted": 0,
+          "language_provider": "openai-compatible",
+          "language_model": "kamimusuhi"
+        }
+      ],
+      "warm_session_preserved": true,
+      "canonical_identity_and_head_preserved": true,
+      "identity_state": "continue",
+      "prior_unresolved_writebacks": 1,
+      "new_unresolved_writebacks": 0,
+      "self_projection": {
+        "stored_entries": 0,
+        "surfaced_entries": 0,
+        "excluded_count": 0
+      },
+      "pending_tasks": 0,
+      "boot_epoch": 72,
+      "test_records_retained": true,
+      "quality_scope": "production transport/persistence/two-turn context continuity; not human style or long-term self-model growth"
+    }
+  ],
+  "limitations": [
+    "Historical initial failed-attempt marker remains unresolved on each node; no abort API exists, no deletion or fabricated completion was performed.",
+    "Success applies to the four new fixed-version turns, not reconciliation of historical failed attempts.",
+    "No human style/relationship rating or long-term self-model growth was measured.",
+    "language_model is the configured alias, not proof of upstream model weights."
+  ]
+}
