@@ -87,3 +87,11 @@ backupはMacのnode rootおよびPi `/srv/kamimusuhi` の `backups/self-memory-2
 障害時は進行中作業を確認し、consumerを一時停止してbackupの2binだけをatomic復元する。
 本番DBを古いsnapshotへ戻さない。manifestを消して自動acceptする運用も行わず、復元版の宣言をexact tokenで明示reviewする。
 今回の配備・review・accept・復帰の詳細証跡は各nodeの上記backup内に保持する。
+
+## push後のCI補修
+
+K-CORE focused CIの`cargo test --lib`は、クリーンrunnerでprovider worker用の通常runtime実行ファイルを生成せず、selectionの3評価が`provider worker executable is missing`で失敗した。
+ローカルの既存targetではこの前提が隠れていた。focused workflowと`ci-local.sh`へ、unit test前の
+`cargo build -p kamimusuhi-runtime --bin kamimusuhi-runtime`を明示した。
+空の専用targetでこの順序を再現し、selection評価 **5 PASS / 0 FAIL**。`bash -n`・差分検査もPASS。
+アプリケーションのRust sourceや本番binaryは変更せず、上記配備コミットの同一性・指紋も維持する。

@@ -35,6 +35,9 @@ jobs:
       - name: Clippy
         if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Build the provider worker executable
+        if: ${{ !cancelled() }}
+        run: cargo build -p kamimusuhi-runtime --bin kamimusuhi-runtime
       - name: K-CORE and existing runtime unit tests
         if: ${{ !cancelled() }}
         run: cargo test -p kamimusuhi-runtime --lib

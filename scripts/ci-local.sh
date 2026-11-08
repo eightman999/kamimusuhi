@@ -27,6 +27,10 @@ bound 120 cargo fmt --all -- --check
 echo "==> cargo clippy"
 bound 600 cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+echo "==> build provider worker executable"
+# Unit tests also launch the real subprocess boundary. `cargo test --lib`
+# does not build this executable, and a developer's old target/ can hide it.
+bound 600 cargo build -p kamimusuhi-runtime --bin kamimusuhi-runtime
 echo "==> cargo test"
 bound 900 cargo test --workspace
 
