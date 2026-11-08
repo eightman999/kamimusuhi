@@ -34,6 +34,68 @@
 | `git log --oneline -20` / `git status` | PASS | 起点と履歴、既存の未追跡物 |
 | `cargo --version` / `rustc --version` | PASS | Rust 1.92.0実行 |
 | imozuru SKILL.md存在と読取 | PASS | 導入と手順確認 |
-| `bash scripts/ci-local.sh` | 実行待ち | 変更前ベースライン |
+| `bash scripts/ci-local.sh` | FAIL (exit 101) | fmt PASS後、clippy段階で終了。保持ログに直接の診断が無いため原因未確定。build/testはSKIP |
 
 コミット: この節を導入する `chore(harness): 長時間改良の再開記録を初期化`。
+
+### 保存経路と中断の記録
+
+- 初回CIは16:11:17〜16:15:53 UTCに実行。変更前の失敗として保持し、変更による退行と混同しない。
+- 通常の `git push` はcredential未設定で失敗。新しい鍵は作らず、既存GitHub connectorのGit Data APIでtree/commitを作成し、`force:false`と期待HEAD付きで専用branchを更新した。
+- 初回の公開commitは `aba0a9d431afd54aee975253df328815c77acfd4`。ローカルcommit `35e6c6b` とtreeが一致することを検証してlocal refを同期し、元local commitも別refへ保持した。ファイルは破棄していない。
+- connector準備後にcatalog変更で待機が中断された。最後の実作業ログは16:44:36 UTC、親の再開は22:30:27 UTC。間の空白は累計時間に入れない。
+- 原因未確定のbaseline失敗を切り分けるため、起点 `f31aae8` の別worktreeで同じCIを再実行する。
+
+## Cycle 1 — HTTP statusによるtool結果の誤成功を修正
+
+時刻: 再現・修正は2026-11-09 01:43〜01:44 JST、記録の統合は07:30 JST以降。
+
+本当の目的: upstream/プロキシが失敗した呼出しを成功の証拠として主推論へ渡さない。
+前提と確かめ方: `ToolServerConfig::call` がHTTP statusを見ずJSONのokを信用する点を、7種の非2xx fixtureで再現する。
+一番安い確認方法: 実loopback HTTPで失敗status＋成功形JSONを返し、ToolCallRecord.okと実呼出し回数を見る。
+
+開始前の確認方針は担当への委譲メッセージに記録した。親の接続待機により、このJOURNALへの転記は実施後になった。
+
+変更: JSON parse前に `response.is_success()` のguardを追加。失敗本文をtool結果へ取り込まない。HTTP200の構造化失敗は従来通り維持。
+
+| 指標（同じfixture） | 前 | 後 |
+|---|---:|---:|
+| 非2xxの誤成功 (302/400/401/403/429/500/503) | 7/7 | 0/7 |
+| HTTP200成功/構造化失敗の対照 | 2/2 PASS | 2/2 PASS |
+| 非2xxごとの実HTTP呼出し | 1 | 1 |
+| 非2xx本文の不反映 | 未保証 | 7/7 PASS |
+
+| 検証 | 結果 |
+|---|---|
+| 新テストのみの `cargo test --offline -p kamimusuhi-persona-http tools::tests::http_error_statuses_are_not_successful_tool_results -- --exact --nocapture` | 期待したFAIL (exit 101) |
+| 修正後 `cargo test --offline -p kamimusuhi-persona-http` | PASS、64件 |
+| `cargo clippy --offline -p kamimusuhi-persona-http --all-targets --all-features -- -D warnings` | PASS |
+| 対象file rustfmt / `git diff --check` | PASS |
+
+数字は9件のHTTP境界fixtureについての実測。実モデルの総合成功率ではない。
+コミット: この節と変更を含む `fix(tools): HTTP失敗をツール成功として記録しない`。
+
+## Cycle 2 — RustXNG sidecar（着手前）
+
+本当の目的: residentから検索でき、検索プロセスの障害が主loopの停止や権限の拡張にならないようにする。
+前提と確かめ方: 最新release v0.31.0の契約はform POST。checksum・help・実health/検索を確認し、製品コードはmockで独立検証する。
+一番安い確認方法: literal loopback fixtureでmethod/content-type/timeout/不正応答を観測する。
+
+所有: `web_search.rs` は検索担当、config/state/tools/承認は親。上流RustXNGのコードは取り込まずCLI/HTTPのみ。
+
+## Cycle 3 — imozuru手順をresidentに導入（着手前）
+
+本当の目的: 調査を文章の指示だけにせず、原文・追跡・停止根拠を再開可能な状態として残す。
+前提と確かめ方: (a)SKILL互換ローダは汎用性があるが、手順の信頼と追加権限という新しい契約が増える。(b)専用toolなら固定actionと既存のgateで狭く実装できる。
+一番安い確認方法: 一時root＋fake fetch scriptで保存/再読込/停止条件と私設宛先・path拒否を検証する。
+
+選択: (b)。operatorが導入したimozuru scriptsを固定argvで呼び、手順自体はtyped stateとして実装する。任意skillの命令文やallowed-toolsを権限として取り込まない。
+所有: `research.rs` は調査担当、公開設定/権限/帰属は親。
+
+## Cycle 4 — 未完了タスクを履歴間引きから保護（着手前）
+
+本当の目的: 長時間走っているtask/commitmentが通常toolの履歴増加で消えないようにする。
+前提と確かめ方: persistの先頭drainが状態を見ないため、古いactive項目も削除される可能性を再読込fixtureで確かめる。
+一番安い確認方法: active1件→上限を超える完了履歴→reloadという同じ条件で前後の保持数を比較する。
+
+所有: `tasks.rs` / `commitments.rs` は保持機能担当。他ファイルは変更しない。

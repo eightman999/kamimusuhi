@@ -12,3 +12,8 @@
 - cwdにcloneが無い: 公開repoを認可済みの経路で取得し、実験ブランチを作成した。
 - Rust未導入: repo指定の1.92.0を導入した。
 - imozuru未導入: 指定URLから導入しSKILL.mdを読んだ。
+- `git push`のcredential無し: 既存GitHub connectorのGit Data APIで保存。新規credentialは不要。tree一致を確認し、force更新を使わずrefを同期する。
+
+## 切り分け中
+
+- 初回baseline CIはclippy段階でexit101だが、保持ログに診断本文が無い。元HEADの別worktreeで再実行し、ソースの既存失敗か環境要因かを確認する。現時点でユーザー操作は不要。

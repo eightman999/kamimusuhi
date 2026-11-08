@@ -450,6 +450,9 @@ impl ToolServerConfig {
                     anchors,
                 )
                 .map_err(|e| format!("{e:?}"))?;
+                if !response.is_success() {
+                    return Err(format!("tool server HTTP {}", response.status));
+                }
                 serde_json::from_str::<Value>(&response.body)
                     .map_err(|_| format!("tool server HTTP {} (non-JSON)", response.status))
             })()
@@ -704,6 +707,85 @@ mod tests {
                 .unwrap_or("")
                 .contains("not allowed")
         );
+    }
+
+    fn tool_reply(status: u16, body: Value) -> kamimusuhi_testkit::FixtureResponse {
+        let body = body.to_string();
+        kamimusuhi_testkit::FixtureResponse::RawHttp {
+            response: format!(
+                "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            ),
+        }
+    }
+
+    #[test]
+    fn http_error_statuses_are_not_successful_tool_results() {
+        use kamimusuhi_testkit::FixtureServer;
+
+        let statuses = [302, 400, 401, 403, 429, 500, 503];
+        let marker = "UNTRUSTED_HTTP_ERROR_BODY";
+        let mut incorrectly_accepted = Vec::new();
+        let mut reflected_bodies = Vec::new();
+        for status in statuses {
+            // A proxy or a faulty tool server can return a successful-looking
+            // envelope with a failing HTTP status. The transport status wins.
+            let server = FixtureServer::always(tool_reply(
+                status,
+                json!({"ok": true, "result": {"marker": marker}}),
+            ))
+            .expect("fixture");
+            let config = ToolServerConfig::new(server.base_url().trim_end_matches("/v1"));
+            let record = config.call(&TrustAnchors::Webpki, None, "library_list", &json!({}));
+            if record.ok {
+                incorrectly_accepted.push(status);
+            }
+            if record.result.to_string().contains(marker) {
+                reflected_bodies.push(status);
+            }
+            assert_eq!(
+                server.request_count(),
+                1,
+                "no automatic replay on HTTP {status}"
+            );
+        }
+        assert!(
+            incorrectly_accepted.is_empty(),
+            "HTTP errors reported as successful tool calls: {incorrectly_accepted:?}"
+        );
+        assert!(
+            reflected_bodies.is_empty(),
+            "HTTP error bodies reflected into tool results: {reflected_bodies:?}"
+        );
+    }
+
+    #[test]
+    fn successful_http_keeps_tool_success_and_structured_failure_distinct() {
+        use kamimusuhi_testkit::FixtureServer;
+
+        let server = FixtureServer::start(vec![
+            tool_reply(
+                200,
+                json!({"ok": true, "result": {"libraries": ["fixture"]}}),
+            ),
+            tool_reply(
+                200,
+                json!({"ok": false, "error": {"kind": "permission_denied"}}),
+            ),
+        ])
+        .expect("fixture");
+        let config = ToolServerConfig::new(server.base_url().trim_end_matches("/v1"));
+        let success = config.call(&TrustAnchors::Webpki, None, "library_list", &json!({}));
+        assert!(success.ok);
+        assert_eq!(success.result, json!({"libraries": ["fixture"]}));
+        let failure = config.call(&TrustAnchors::Webpki, None, "library_list", &json!({}));
+        assert!(!failure.ok);
+        assert_eq!(
+            failure.result,
+            json!({"error": {"kind": "permission_denied"}})
+        );
+        assert_eq!(server.request_count(), 2);
     }
 
     #[test]

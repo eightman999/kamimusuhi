@@ -2,7 +2,7 @@
 
 ## 次にやること
 
-ベースラインCIを実行して結果をJOURNALへ記録する。次にRustXNGのchecksum検証・起動・検索契約確認を済ませ、sidecarをモック試験付きで実装する。
+元HEADの別worktreeでbaseline失敗を切り分ける。HTTP status修正は検証済みなので保存する。並行中のRustXNG・imozuru・未完了task保持を、担当fileを分けて統合する。
 
 ## 優先順位
 
@@ -24,3 +24,10 @@
 | P2 | traceと測定レポート | failure code/回数/再開状態を決定的な集計として記録 |
 | P2 | specと実装の整合 | 仕様に結びつく未検証のinvariantを列挙し小さい試験へ落とす |
 | P2 | flaky試験の切り分け | 既存CIで実際に揺れた試験だけを反復して原因を記録 |
+| P0 | 未完了task/commitmentの履歴間引き防止（着手中） | 上限超過後のreloadでactive・承認待ちIDが残ること |
+| P0 | 承認のdisk保存失敗時に実行しない | claim永続化失敗を注入し、副作用回数0を確認 |
+| P1 | 承認IDの同一ms衝突防止 | 時計固定で2件queueし、別対象を独立に決定 |
+| P1 | tool_enable後の委譲repair | enable→未着手約束→delegateを実呼出し数で比較 |
+| P1 | tool schemaのadditionalProperties保持 | 辞書型/閉じたobjectの制約が提示後にも残るか |
+| P0 | language race候補による副作用の重複 | barrier同期した2providerの実副作用回数と採用traceを比較 |
+| P1 | process runnerの出力洪水時deadline | 改行無し/連続stdout/stderrのfixtureで期限とメモリ上限を確認 |
