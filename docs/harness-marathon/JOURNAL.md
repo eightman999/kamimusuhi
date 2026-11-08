@@ -99,3 +99,30 @@
 一番安い確認方法: active1件→上限を超える完了履歴→reloadという同じ条件で前後の保持数を比較する。
 
 所有: `tasks.rs` / `commitments.rs` は保持機能担当。他ファイルは変更しない。
+
+### Cycle 4 の結果
+
+担当の2件の回帰testで、旧実装が未完了task/commitmentを消すことをFAIL (exit101)で確認した。担当が中断された時点ではtestのみ保存されていたため、親が既存の `finished()` / `terminal()` 判定で終端履歴だけを間引く最小修正を完成させ、同じtestを再実行した。
+
+| 指標（履歴上限超過→保存→再読込） | 前 | 後 |
+|---|---:|---:|
+| 未完了task 4状態の保持 | 0/4 | 4/4 |
+| 未完了commitment 3状態の保持 | 0/3 | 3/3 |
+| 完了task履歴の上限 | 400件（未完了も削除） | 400件（未完了は別に保持） |
+| 終端commitment履歴の上限 | 200件（未完了も削除） | 200件（未完了は別に保持） |
+
+- `cargo test --offline -p kamimusuhi-resident --lib retention_preserves_unfinished`: PASS、2/2、exit0。
+- 対象2fileのrustfmt: PASS。
+- 未完了件数そのもののadmission上限は、この変更の対象外。既存ID・checkpoint・状態遷移を保持する。
+- コミット: `fix(resident): 未完了作業を履歴の間引きから保護`。
+
+## 中断時の確定状態 — 2026-11-09 07:36 JST以降
+
+- tool実行がユーザーにより中断され、3担当ともinterruptedになった。新しい改良cycleは開始せず、既に保存された変更と引継ぎを固定した。
+- RustXNG v0.31.0: `.sha256` とGitHub asset digestの両方に一致。SHA256 `1f1dad6cf79415b3a52a23ae950af90f77d3650afef8d0d2015773af8f7ec8de`。実 `--version` / `--help`: PASS。
+- `--profile full -b 127.0.0.1 -p <一時port> -c deploy/resident/rustxng-full.toml`: health HTTP200/OK。GETとform POSTの `/search` は両方HTTP200のJSON。queryは `agent harness long running checkpoint resume`、両方0件・不応答9engine。約2.00秒/2.01秒。起動したchildは終了・wait済み。
+- `full`単独は上流のbackoff無効を意味しない。設定overlayで既知のban/suspended/empty-result条件を0にし、limiter=falseにした。未知の上流suspension経路や実エンジンの全挙動を検証済みとはしない。
+- residentのweb_search/researchモジュールは未保存・未接続。設計APIと統合先はRESUME.mdに残した。
+- 元HEADのCI再試験はfmt/clippy/provider-worker buildまでPASS。workspace testで `agent_exec::executor::tests::an_attached_server_is_started_reused_and_reaped` の既存FAILを観測。その後の中断でセッションとプロセスが消え、最終終了コードが無いため全体はSKIP（中断・既存FAIL観測）とする。
+- imozuruの直接取得はDNSでFAIL。Web抽出本文の保存は成功したが、全文保存・1周完了・飽和は未達。
+- 24時間未達。REPORT.mdは作らず、STATEをpaused_interruptedとして保存する。

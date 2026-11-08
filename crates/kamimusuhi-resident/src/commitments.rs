@@ -58,6 +58,7 @@ use crate::state::Shared;
 use crate::tasks::{NewTask, TaskStatus};
 use crate::util::{atomic_write, iso8601, run_with_timeout, unix_now, unix_now_ms};
 
+// Bound terminal history without dropping goals that can still be resumed.
 const KEEP_COMMITMENTS: usize = 200;
 const KEEP_ATTEMPTS: usize = 60;
 const KEEP_NOTES: usize = 40;
@@ -638,10 +639,19 @@ impl Commitments {
     }
 
     fn persist(&self, items: &mut Vec<Commitment>) {
-        let len = items.len();
-        if len > KEEP_COMMITMENTS {
-            items.drain(..len - KEEP_COMMITMENTS);
-        }
+        let mut discard = items
+            .iter()
+            .filter(|commitment| commitment.state.terminal())
+            .count()
+            .saturating_sub(KEEP_COMMITMENTS);
+        items.retain(|commitment| {
+            if commitment.state.terminal() && discard > 0 {
+                discard -= 1;
+                false
+            } else {
+                true
+            }
+        });
         if let Ok(bytes) = serde_json::to_vec_pretty(items) {
             let _ = atomic_write(&self.path, &bytes);
         }
@@ -3022,6 +3032,116 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use std::path::Path;
+
+    #[test]
+    fn retention_preserves_unfinished_commitments_across_restart() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let spool = Spool::new(dir.path().join("spool"), "test").expect("spool");
+        let path = dir.path().join("commitments.json");
+        let commitments = Commitments::load(path.clone(), CommitmentsConfig::default());
+        let states = [
+            CommitmentState::Active,
+            CommitmentState::Sleeping,
+            CommitmentState::Escalated,
+        ];
+        let commitment = |id: String, state: CommitmentState| -> Commitment {
+            serde_json::from_value(json!({
+                "board_task": format!("board-{id}"),
+                "id": id,
+                "goal": "長時間の目標",
+                "state": state,
+                "owner": "operator",
+                "checkpoint": {"current_state": "continue from here", "next": {"type": "verify"}},
+                "resume_after_restart": true,
+                "created_at": 1,
+                "updated_at": 1,
+                "closed_at": state.terminal().then_some(2),
+            }))
+            .expect("commitment fixture")
+        };
+        let unfinished: Vec<_> = states
+            .into_iter()
+            .enumerate()
+            .map(|(i, state)| commitment(format!("unfinished-{i}"), state))
+            .collect();
+        {
+            // Model completion churn without dispatching executors or ticking.
+            let mut items = commitments.items.lock().expect("items");
+            items.extend(unfinished.clone());
+            let terminal = [CommitmentState::Done, CommitmentState::Abandoned];
+            items.extend(
+                (0..KEEP_COMMITMENTS + 3)
+                    .map(|i| commitment(format!("history-{i}"), terminal[i % terminal.len()])),
+            );
+        }
+        commitments
+            .mutate(&spool, &unfinished[0].id, "checkpoint", |c| {
+                c.checkpoint.doing = "next step".to_owned();
+            })
+            .expect("checkpoint mutation");
+        let persisted: Vec<Commitment> =
+            serde_json::from_slice(&std::fs::read(&path).expect("stored commitments"))
+                .expect("commitment JSON");
+        let retained_ids: Vec<_> = persisted
+            .iter()
+            .filter(|c| !c.state.terminal())
+            .map(|c| c.id.clone())
+            .collect();
+        assert_eq!(
+            retained_ids,
+            unfinished.iter().map(|c| c.id.clone()).collect::<Vec<_>>(),
+            "unfinished commitments must survive completed-history churn"
+        );
+        for c in &unfinished {
+            let stored = persisted
+                .iter()
+                .find(|item| item.id == c.id)
+                .expect("stored");
+            assert_eq!(stored.state, c.state);
+        }
+        drop(commitments);
+
+        let reloaded = Commitments::load(path, CommitmentsConfig::default());
+        for c in unfinished {
+            let stored = reloaded.get(&c.id).expect("unfinished commitment");
+            assert_eq!(stored.board_task, c.board_task);
+            assert_eq!(stored.created_at, c.created_at);
+            assert_eq!(stored.checkpoint.next, c.checkpoint.next);
+            assert_eq!(stored.checkpoint.current_state, c.checkpoint.current_state);
+            let resumes = matches!(c.state, CommitmentState::Active | CommitmentState::Sleeping);
+            assert_eq!(
+                stored.state,
+                if resumes {
+                    CommitmentState::Active
+                } else {
+                    c.state
+                }
+            );
+            assert_eq!(stored.interruptions, u64::from(resumes));
+        }
+        assert_eq!(
+            reloaded
+                .get("unfinished-0")
+                .expect("checkpoint")
+                .checkpoint
+                .doing,
+            "next step"
+        );
+        let items = reloaded.list(true);
+        assert_eq!(items.len(), KEEP_COMMITMENTS + states.len());
+        let history_ids: Vec<_> = items
+            .iter()
+            .filter(|c| c.state.terminal())
+            .map(|c| c.id.clone())
+            .collect();
+        let expected_history: Vec<_> = (3..KEEP_COMMITMENTS + 3)
+            .map(|i| format!("history-{i}"))
+            .collect();
+        assert_eq!(
+            history_ids, expected_history,
+            "terminal history stays bounded"
+        );
+    }
 
     fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
         let path = dir.join(name);

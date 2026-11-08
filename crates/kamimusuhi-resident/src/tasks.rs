@@ -21,6 +21,7 @@ use serde_json::{Value, json};
 use crate::spool::Spool;
 use crate::util::{atomic_write, iso8601, unix_now, unix_now_ms};
 
+// Bound completed history, not unfinished work that still owns dependencies.
 const KEEP_TASKS: usize = 400;
 const DONE_VISIBLE_SECS: u64 = 3 * 24 * 3600;
 
@@ -161,10 +162,19 @@ impl TaskBoard {
     }
 
     fn persist(&self, tasks: &mut Vec<Task>) {
-        let len = tasks.len();
-        if len > KEEP_TASKS {
-            tasks.drain(..len - KEEP_TASKS);
-        }
+        let mut discard = tasks
+            .iter()
+            .filter(|task| task.status.finished())
+            .count()
+            .saturating_sub(KEEP_TASKS);
+        tasks.retain(|task| {
+            if task.status.finished() && discard > 0 {
+                discard -= 1;
+                false
+            } else {
+                true
+            }
+        });
         if let Ok(bytes) = serde_json::to_vec(tasks) {
             let _ = atomic_write(&self.path, &bytes);
         }
@@ -387,6 +397,99 @@ pub fn handle(shared: &crate::state::Shared, request: &Value, by: &str) -> (u16,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retention_preserves_unfinished_tasks_across_restart() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let spool = Spool::new(dir.path().join("spool"), "test").expect("spool");
+        let path = dir.path().join("tasks.json");
+        let board = TaskBoard::load(path.clone());
+        let statuses = [
+            TaskStatus::InProgress,
+            TaskStatus::AwaitingOperator,
+            TaskStatus::Waiting,
+            TaskStatus::OnHold,
+        ];
+        let task = |id: String, status: TaskStatus| Task {
+            id,
+            title: "長時間タスク".to_owned(),
+            status,
+            kind: "manual".to_owned(),
+            node: "test".to_owned(),
+            owner: "operator".to_owned(),
+            depends_on: Vec::new(),
+            notes: Vec::new(),
+            detail: json!({"checkpoint": "continue from here"}),
+            created_at: 1,
+            updated_at: 1,
+            finished_at: status.finished().then_some(2),
+        };
+        let unfinished: Vec<_> = statuses
+            .into_iter()
+            .enumerate()
+            .map(|(i, status)| task(format!("unfinished-{i}"), status))
+            .collect();
+        {
+            // Seed a busy board without hundreds of unrelated spool writes.
+            let mut tasks = board.tasks.lock().expect("tasks");
+            tasks.extend(unfinished.clone());
+            let terminal = [TaskStatus::Done, TaskStatus::Failed, TaskStatus::Cancelled];
+            tasks.extend(
+                (0..KEEP_TASKS + 3)
+                    .map(|i| task(format!("history-{i}"), terminal[i % terminal.len()])),
+            );
+        }
+        let newest = board.create(
+            &spool,
+            NewTask {
+                title: "latest completion",
+                kind: "tool",
+                node: "test",
+                owner: "system",
+                status: TaskStatus::Done,
+                depends_on: Vec::new(),
+                detail: json!({}),
+            },
+        );
+        drop(board);
+
+        let reloaded = TaskBoard::load(path);
+        let retained_ids: Vec<_> = unfinished
+            .iter()
+            .filter_map(|task| reloaded.get(&task.id).map(|stored| stored.id))
+            .collect();
+        assert_eq!(
+            retained_ids,
+            unfinished
+                .iter()
+                .map(|task| task.id.clone())
+                .collect::<Vec<_>>(),
+            "unfinished tasks must survive completed-history churn and restart"
+        );
+        for task in unfinished {
+            let stored = reloaded.get(&task.id).expect("unfinished task");
+            assert_eq!(stored.status, task.status);
+            assert_eq!(stored.created_at, task.created_at);
+            assert_eq!(stored.detail, task.detail);
+        }
+        let tasks = reloaded.tasks.lock().expect("tasks");
+        assert_eq!(
+            tasks.iter().filter(|task| task.status.finished()).count(),
+            KEEP_TASKS,
+            "only terminal history is bounded"
+        );
+        assert_eq!(tasks.len(), KEEP_TASKS + statuses.len());
+        let history_ids: Vec<_> = tasks
+            .iter()
+            .filter(|task| task.status.finished())
+            .map(|task| task.id.clone())
+            .collect();
+        let mut expected_history: Vec<_> = (4..KEEP_TASKS + 3)
+            .map(|i| format!("history-{i}"))
+            .collect();
+        expected_history.push(newest);
+        assert_eq!(history_ids, expected_history);
+    }
 
     #[test]
     fn create_update_and_restart_interrupts_running_system_tasks() {
