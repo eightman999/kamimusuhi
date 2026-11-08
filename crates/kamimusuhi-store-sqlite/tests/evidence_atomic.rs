@@ -33,6 +33,97 @@ fn links() -> Vec<NewEvidenceLink> {
         .collect()
 }
 
+fn generated_response() -> NewEvidence {
+    let mut record = utterance();
+    record.kind = EvidenceKind::SystemEvent;
+    // Synthetic decision probabilities exercise the same f32 -> JSON f64
+    // boundary as real conversation traces, without storing real dialogue.
+    record.payload = serde_json::json!({
+        "event": "response_generated",
+        "text": "synthetic response",
+        "conversation_trace": {
+            "invocation_gate": {
+                "confidence": 0.95f32,
+                "probabilities": {
+                    "SPEAK": 0.95f32,
+                    "OBSERVE_MORE": 0.03f32,
+                    "WAIT": 0.02f32
+                }
+            },
+            "provider_telemetry": {
+                "primary": {"success_rate": 1.0f64, "ewma_latency_ms": 5179.25f64}
+            }
+        }
+    });
+    record
+}
+
+#[test]
+fn decision_trace_floats_survive_atomic_readback_retry_and_restart_exactly() {
+    let db = TempDb::new();
+    let store = open(&db.path, 1);
+    bootstrap(&store, BOOT_A);
+    let link = NewEvidenceLink {
+        from_evidence_id: EMITTED,
+        to_evidence_id: EVIDENCE,
+        relation: EvidenceRelation::DerivedFrom,
+    };
+    let expected_payload = generated_response().payload;
+    let before = row_counts(&db.path);
+    let stored = store
+        .append_with_links(generated_response(), std::slice::from_ref(&link))
+        .unwrap();
+    assert_eq!(stored.payload, expected_payload);
+    assert_eq!(
+        store
+            .append_with_links(generated_response(), std::slice::from_ref(&link))
+            .unwrap(),
+        stored
+    );
+    assert_eq!(row_counts(&db.path).evidence, before.evidence + 1);
+    assert_eq!(store.links_from(EMITTED).unwrap().len(), 1);
+    drop(store);
+    let reopened = open(&db.path, 2);
+    assert_eq!(reopened.get(EMITTED).unwrap(), Some(stored));
+    assert_eq!(reopened.links_from(EMITTED).unwrap().len(), 1);
+}
+
+#[test]
+fn altered_decision_trace_float_is_still_rejected_and_rolled_back() {
+    let db = TempDb::new();
+    let store = open(&db.path, 1);
+    bootstrap(&store, BOOT_A);
+    let raw = Connection::open(&db.path).unwrap();
+    raw.execute_batch(&format!(
+        "CREATE TRIGGER alter_probability AFTER INSERT ON evidence_records
+         WHEN NEW.evidence_id = '{}'
+         BEGIN UPDATE evidence_records SET payload_json = json_set(payload_json,
+           '$.conversation_trace.invocation_gate.probabilities.OBSERVE_MORE', 0.04)
+           WHERE evidence_id = NEW.evidence_id; END;",
+        EMITTED
+    ))
+    .unwrap();
+    let before = row_counts(&db.path);
+    let error = store
+        .append_with_links(
+            generated_response(),
+            &[NewEvidenceLink {
+                from_evidence_id: EMITTED,
+                to_evidence_id: EVIDENCE,
+                relation: EvidenceRelation::DerivedFrom,
+            }],
+        )
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("appended evidence readback mismatch")
+    );
+    assert_eq!(row_counts(&db.path), before);
+    assert!(store.get(EMITTED).unwrap().is_none());
+    assert!(store.links_from(EMITTED).unwrap().is_empty());
+}
+
 #[test]
 fn atomic_append_survives_restart_and_identical_retry_without_duplicates() {
     let db = TempDb::new();

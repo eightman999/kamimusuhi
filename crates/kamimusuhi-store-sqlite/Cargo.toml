@@ -11,7 +11,9 @@ publish.workspace = true
 [dependencies]
 kamimusuhi-core = { workspace = true }
 rusqlite = { workspace = true }
-serde_json = { workspace = true }
+# Readback integrity compares exact JSON values, including f32 probabilities
+# promoted to f64 in conversation traces. Preserve them across serialization.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 
 [dev-dependencies]
 kamimusuhi-testkit = { workspace = true }
