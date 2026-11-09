@@ -2,20 +2,21 @@
 
 ## 次にやること
 
-cycle8を含む凍結HEADの別worktreeでserial全CIを実行し、mainではnative agentの大file read_range/replaceを実装する。31unit/workspace/lease＋実daemon2件がPASS済み。中断したactionのsequence再使用を解消し、malformed model応答からの修復を実fixtureで測る。skills/RustXNG/imozuru拡張は保留。
+cycle9の大file修復とcycle10のmodel/provider回復の検証結果を保存し、中断したactionのsequence再使用を解消する。凍結cycle8の全CIはfmt/clippy/buildとresident testsを通過したが、runtimeの既存FAILを含む途中でwrapperがexit137になった。全CI成功とは扱わない。skills/RustXNG/imozuru拡張は保留。
 
 ## 現在の最優先（2026-11-09更新）
 
 | 優先 | 項目 | 完了条件 |
 |---|---|---|
 | P0 | 中断後のaction識別子 | 未確認のactionと次actionで同じsequenceを再使用しない |
-| P1 | model protocol失敗の自律修復 | 不正JSON/HTTP障害からgoal/candidateを保って回復 |
-| P0 | 大きなsourceの差分編集 | 読取range/一意substring replacementで全文CASの限界を解消 |
-| P0 | process期限/cancel/出力回収 | flood fixtureで期限と出力量を確認 |
 | P1 | 短い作業記憶と復元 | objective/制約/次step/検証失敗を保持して長期継続 |
-| P1 | HTTP/CLI/主推論からの起動 | resident実入口からcreate/status/pause/resumeを実行 |
 | P1 | 自律loopのtraceと評価 | 決定的成功率/repair/再開重複/action数を記録 |
-| P1 | process再起動試験 | 状態再読込だけでなく実resident子processを再起動 |
+| P1 | claim済みactionの実process中断 | コマンド途中のkill後に副作用と未確認receiptを保持し、自動再実行しない |
+| P1 | provider障害の最初の原因の保持 | 60秒bench中の繰り返しにより元の503が観測窓から消えない |
+| P1 | 作業記憶の更新と長期修復 | 12件より長い失敗修復シナリオでも目的・重要な根拠・次stepを保持 |
+| P1 | 不完全なprocess出力の伝播 | stdout_truncatedを外部executorが完全な成功protocolとして扱わない |
+| P1 | 検証receiptと候補の変化 | Ready後の外部変更・resume後の再編集で古い成功証拠を再利用しない |
+| P2 | 全CIの終了不能の切り分け | 既存PID制約とwrapper exit137を区別し、次回はtest threadsも1で観測 |
 
 ## 後続候補（検索・skill統合は保留）
 

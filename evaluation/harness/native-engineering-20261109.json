@@ -29,7 +29,7 @@
     "repairs_before": 0,
     "repairs_after": 1
   },
-  "full_ci": "FAIL: exit101 during workspace clippy, no direct diagnostic retained; downstream gates skipped",
+  "full_ci": "INTERRUPTED: frozen cycle8 tree passed fmt, workspace clippy, worker build and resident tests; existing runtime attached-server FAIL observed; wrapper exit137 before final summary; downstream boundary gate unconfirmed",
   "limitations": [
     "Model decisions are fixtures; no real provider credentials used.",
     "OS lease tested on Linux overlayfs; NFS/SMB and multi-host fencing unverified.",
@@ -82,5 +82,36 @@
       "candidate_preserved": true
     },
     "scope": "cooperative local OS file lock; not a whole-resident root lease or distributed fencing"
+  },
+  "cycle9": {
+    "engineering_tests": {
+      "passed": 37,
+      "failed": 0
+    },
+    "workspace_contracts": {
+      "passed": 13,
+      "failed": 0
+    },
+    "large_rust_native_loop": {
+      "source_bytes": 364849,
+      "old_read_truncated": true,
+      "old_read_contains_target": false,
+      "range_context_json_bytes": 6109,
+      "range_context_json_parse": true,
+      "range_next_line": 6110,
+      "compiler_exit_before": 1,
+      "compiler_exit_after": 0,
+      "initial_diagnostic": "E0425",
+      "main_model_decisions": 4,
+      "comparison_read_decisions": 1,
+      "verification_runs": 2,
+      "verification_failures": 1,
+      "repairs": 1,
+      "candidate_identity_preserved": true,
+      "original_checkout_changes": 0
+    },
+    "fmt": "PASS",
+    "resident_all_targets_all_features_clippy": "PASS",
+    "scope": "Fixture model; real git worktree, rustc and durable native loop; no real-provider coding quality claim"
   }
 }

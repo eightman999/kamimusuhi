@@ -1263,3 +1263,188 @@ fn long_finish_and_resume_notes_fit_the_persisted_working_memory_limits() {
         "reload does not rerun verification"
     );
 }
+
+#[test]
+fn native_loop_repairs_a_large_rust_file_from_a_complete_range_observation() {
+    assert!(
+        kamimusuhi_runtime::agent_exec::process::resolve_binary("rustc").is_some(),
+        "the real compiler must be available on the test PATH"
+    );
+    let mut fixture = fixture();
+    let mut original: String = (0..6000)
+        .map(|line| format!("// 文脈 {line:04}: source material that must remain unchanged\n"))
+        .collect();
+    let target_line = original.lines().count() + 1;
+    let target = "pub fn answer() -> u32 { unknown_repair_symbol }\n";
+    original.push_str(target);
+    for line in 0..200 {
+        original.push_str(&format!(
+            "// 後続 {line:04}: retain this complete line when paging\n"
+        ));
+    }
+    assert!(original.len() > 128 * 1024);
+    assert_eq!(original.matches("unknown_repair_symbol").count(), 1);
+    std::fs::write(fixture.workspace.join("large.rs"), &original).unwrap();
+    git(&fixture.workspace, &["add", "large.rs"]);
+    git(
+        &fixture.workspace,
+        &[
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@local",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "add large Rust fixture",
+        ],
+    );
+    let base_head = git(&fixture.workspace, &["rev-parse", "HEAD"]);
+    let metadata = fixture.dir.path().join("large.rmeta");
+    let policy = fixture.shared.config.engineering.as_mut().unwrap();
+    policy.validation_timeout_secs = 30;
+    policy.workspaces[0].checks = vec![vec![
+        "rustc".to_owned(),
+        "--crate-type=lib".to_owned(),
+        "--emit=metadata".to_owned(),
+        "-o".to_owned(),
+        metadata.to_string_lossy().into_owned(),
+        "large.rs".to_owned(),
+    ]];
+    fixture.shared.config.validate().unwrap();
+    let (_, created) = handle(
+        &fixture.shared,
+        &json!({
+            "action":"create", "workspace":"fixture",
+            "objective":"Fix the undefined unknown_repair_symbol in large.rs so the Rust library type-checks, preserving all other source text."
+        }),
+    );
+    assert_eq!(created["ok"], true, "{created}");
+    let id = created["job"]["id"].as_str().unwrap().to_owned();
+    prepare(&fixture.shared, &id);
+    let identity = job(&fixture.shared, &id)["candidate"].clone();
+    let candidate_path = candidate(&fixture.shared, &id);
+
+    // Compare both read paths against the same file, operation budget and
+    // candidate. The old whole-file Read cannot expose the repair location.
+    let baseline = ScriptedModel::new([Action::Read {
+        path: "large.rs".to_owned(),
+    }]);
+    action(&fixture.shared, &baseline);
+    let baseline_job = job(&fixture.shared, &id);
+    let whole = &baseline_job["observations"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()["detail"];
+    assert_eq!(whole["truncated"], true);
+    assert_eq!(whole["bytes"], original.len());
+    assert!(
+        !whole["content"]
+            .as_str()
+            .unwrap()
+            .contains("unknown_repair_symbol")
+    );
+    baseline.assert_consumed();
+
+    let model = ScriptedModel::new([
+        finish(),
+        Action::ReadRange {
+            path: "large.rs".to_owned(),
+            start_line: target_line,
+            max_lines: 200,
+        },
+        Action::Replace {
+            path: "large.rs".to_owned(),
+            old: "unknown_repair_symbol".to_owned(),
+            new: "42".to_owned(),
+        },
+        finish(),
+    ]);
+    action(&fixture.shared, &model);
+    let failed = job(&fixture.shared, &id);
+    assert_eq!(failed["phase"], "active");
+    assert_eq!(failed["validation"]["passed"], false);
+    assert_eq!(failed["validation"]["checks"][0]["program"], "rustc");
+    assert_eq!(failed["validation"]["checks"][0]["exit_code"], 1);
+    assert!(
+        failed["validation"]["checks"][0]["stderr"]
+            .as_str()
+            .unwrap()
+            .contains("E0425")
+    );
+    action(&fixture.shared, &model);
+    action(&fixture.shared, &model);
+
+    // This is the exact context supplied to the Replace decision, not merely
+    // a workspace-unit return value. Its latest observation remains valid
+    // JSON, including complete source lines and the continuation cursor.
+    let replace_context = model.contexts.lock().unwrap()[2].clone();
+    let latest = replace_context["observations"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
+    assert_eq!(latest["action"], "read_range");
+    assert_eq!(latest["context_truncated"], false);
+    let range: Value = serde_json::from_str(latest["external_data"].as_str().unwrap())
+        .expect("read_range data must survive the native context boundary as complete JSON");
+    assert_eq!(range["path"], "large.rs");
+    assert_eq!(range["start_line"], target_line);
+    assert_eq!(range["total_lines"], original.lines().count());
+    assert!(range["content"].as_str().unwrap().starts_with(target));
+    assert!(range["content"].as_str().unwrap().ends_with('\n'));
+    let next_line = range
+        .get("next_line")
+        .and_then(Value::as_u64)
+        .expect("continuation cursor");
+    assert_eq!(range["end_line"].as_u64().unwrap() + 1, next_line);
+    assert!(next_line > target_line as u64);
+    assert!(next_line <= original.lines().count() as u64);
+    assert_eq!(range["truncated"], true);
+    assert_eq!(job(&fixture.shared, &id)["metrics"]["repairs"], 1);
+
+    action(&fixture.shared, &model);
+    let completed = job(&fixture.shared, &id);
+    assert_eq!(completed["phase"], "ready");
+    assert_eq!(completed["validation"]["passed"], true);
+    assert_eq!(completed["validation"]["checks"][0]["exit_code"], 0);
+    assert_eq!(completed["metrics"]["verification_runs"], 2);
+    assert_eq!(completed["metrics"]["verification_failures"], 1);
+    assert_eq!(completed["metrics"]["repairs"], 1);
+    assert_eq!(completed["candidate"], identity);
+    assert_eq!(
+        completed["validation"]["head"],
+        git(&candidate_path, &["rev-parse", "HEAD"])
+    );
+    assert_eq!(git(&fixture.workspace, &["rev-parse", "HEAD"]), base_head);
+    assert_eq!(
+        std::fs::read_to_string(fixture.workspace.join("large.rs")).unwrap(),
+        original
+    );
+    assert_eq!(
+        std::fs::read_to_string(candidate_path.join("large.rs")).unwrap(),
+        original.replacen("unknown_repair_symbol", "42", 1)
+    );
+    assert_eq!(
+        git(
+            &candidate_path,
+            &["diff", "--name-only", &base_head, "HEAD"]
+        ),
+        "large.rs"
+    );
+    assert!(
+        metadata.is_file(),
+        "the compiler writes metadata outside the candidate"
+    );
+    assert!(git(&candidate_path, &["status", "--porcelain"]).is_empty());
+    model.assert_consumed();
+    assert_eq!(model.calls(), 4);
+    eprintln!(
+        "native large Rust fixture: {} bytes, whole read truncated, range JSON {} bytes, next_line {}, rustc 1 -> 0, repairs 1, validations 2",
+        original.len(),
+        serde_json::to_vec(&range).unwrap().len(),
+        next_line,
+    );
+}

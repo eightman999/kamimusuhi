@@ -258,3 +258,44 @@ rootのGitHub tree作成待機と環境更新を挟み、最後の担当clippy�
 - 最後にrootがfmt・resident全target/allfeature clippy・実HTTP試験を順に確認し、最終終了コードを記録する。
 
 Cycle8最終確認: `cargo fmt --all -- --check` PASS、`cargo clippy --offline -p kamimusuhi-resident --all-targets --all-features -- -D warnings` PASS、`cargo test --offline -p kamimusuhi-resident --test engineering_http` PASS 2/2。いずれもexit0、CARGO_BUILD_JOBS=1/CARGO_INCREMENTAL=0。コミット: `fix(engineering): 永続状態の所有と再開の整合性を守る`。
+
+## Cycle 9 — 大きな実コードを部分的に読む・直す（着手前）
+
+本当の目的: モデルへ全文を往復させず、大きなRust sourceの必要箇所を調査・修正できるようにする。
+前提と確かめ方: I/Oの1MiB上限より先に観測32KiB/context8KiBでRead本文が切れ、全文CASのWriteでは元内容を表現できない。line rangeと一意substring置換で解消できるか確かめる。
+一番安い確認方法: UTF8/CRLF/JSON byte枠の改ページ、重なりを含む複数一致拒否をfixtureで先に確かめ、128KiB超のRustfileを実compilerでFAIL→PASSへ修復する。
+
+担当: workspace.rsはharness_audit、rootがAction名/prompt/validation失効/回復へ接続。旧Read/Writeは保持。
+
+## Cycle 10 — モデル応答とprovider障害からの継続（着手前）
+
+本当の目的: 不正なモデル出力や一時的なHTTP障害を、目標の喪失や作業済みの副作用に変えず、次の判断へ戻す。
+前提と確かめ方: 不正actionはrouterのHTTP成功後にnative parseで拒否される。単一auto tierのHTTP503は既存routerの60秒benchを経て再候補になる。これらを混同せず実loopback modelで確かめる。
+一番安い確認方法: channelで応答を制御し、不正JSON2回→正常actionの実呼出し数と、503→auto再試行の実POST数・durable cursor・候補を検査する。
+
+担当: engineering_http.rsはrustxng_contract。60秒の実retry待ちをテスト用本体変更で短縮せず、実workerを起動したまま期限付きの次request待ちで確認する。
+
+### cycle8凍結版の全CI結果
+
+公開commit `980c564579faa703cf55651c92de3e4e0495f62c` と同一treeの別worktreeを使用。fmt、全workspace clippy、provider worker buildはPASS。resident unit269/269とHTTP2/2もPASS。runtimeの既存attached-server FAILを観測後、wrapperがexit137で終了し最終JSON報告なし。終了理由は未確定。全CIはINTERRUPTED、後段のcore dependency gateは未確認。ログ `logs/cycle8-frozen-ci-20261109.log` はignore対象。
+
+### Cycle 9 の結果
+
+`read_range` と `replace` をnative agentの判断・実行・repair記録・再開処理へ追加。行範囲は完全なJSONで返し、UTF8/CRLFを保つ。置換は重なった一致も拒否し、既存の原子CAS保存を利用する。途中の部分置換は非冪等になり得るので、結果不明ならPausedにする。
+
+| 同じ大source fixture | 既存Read | ReadRange + Replace |
+|---|---|---|
+| source | 364,849 bytes | 同じsource |
+| 修正対象 | truncatedで未取得 | 完全な6,109-byte JSONで取得 |
+| 継続位置 | 対象への行cursorなし | next_line=6110 |
+| 実rustc結果 | 未修正はexit1/E0425 | 一意置換後exit0 |
+
+主シナリオはFinish FAIL→ReadRange→Replace→Finish PASSの4判断、実検証2回、失敗1回、repair1。比較用Readは別に1判断。候補base/path/branchと元checkout bytesは不変、差分はlarge.rsのみ。compiler成果は候補外のTempDirへ出す。モデルはfixtureなので実モデルのコーディング能力評価ではない。
+
+- `cargo test --offline -p kamimusuhi-resident --lib engineering:: --no-fail-fast`: PASS 37/37、exit0（unit実行1.35s、compile込19.50s）。
+- `cargo fmt --all -- --check`: PASS exit0（1.42s）。
+- `cargo clippy --offline -p kamimusuhi-resident --all-targets --all-features -- -D warnings`: PASS exit0（14.39s）。
+- workspace fixtureの初回1件はcompiler出力先 `/dev/null` のrenameがEBUSYでFAIL。候補外TempDirへ変更し13/13 PASS。製品コードの失敗と混同しない。
+- 設定/使い方は `docs/engineering-agent.md`、実測は `evaluation/harness/native-engineering-20261109.json`。
+
+コミット: `feat(engineering): 大きなソースの部分読取と修復を実装`。

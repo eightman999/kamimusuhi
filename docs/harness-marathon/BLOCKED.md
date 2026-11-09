@@ -29,3 +29,7 @@
 ### B005の原因確認（2026-11-09）
 
 隔離実行で既存attached-server試験の孤児置換だけがFAIL（exit101）。このコンテナはgetpidと/procのPIDの視点が異なり、`ps -p child.id()` が空になる。起動・再利用はPASS。PID namespaceに対応する/procをmountしたコンテナ、または通常のLinux/Mac環境で同じ試験を実行する。今回executor.rsを変更してこの環境を迂回することはしない。
+
+### cycle8凍結版の全CI（2026-11-09）
+
+公開commit `980c564579faa703cf55651c92de3e4e0495f62c` と同じtreeの別worktreeで、build jobs1・incremental無効・offlineで再実行した。fmt、全workspace clippy、provider worker buildはPASS。resident unit269件と実HTTP2件もPASSした。runtimeの既存attached-server FAILの後も試験は進んだが、wrapperがexit137で終了し、最終JSON報告は作成されなかった。終了理由は未確定で、OOMと断定しない。後段gateは未確認。次回はtest threadsも1として終了不能を切り分ける。新しいnative agentの対象検証は継続可能。

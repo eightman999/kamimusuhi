@@ -6,7 +6,7 @@
 
 ユーザーはskills/検索toolの拡張より、resident本体へのエンジニアハーネス実装を優先すると指定した。native agent初版を実装し、unit12件・workspace8件・実daemon HTTP1件を検証済み。`docs/engineering-agent.md` と `evaluation/harness/native-engineering-20261109.json` を参照。RustXNG/imozuru案は保留。
 
-cycle8でOS lease、checkpoint意味検査、実行途中の実daemon再起動を追加。engineering 31件＋実HTTP2件、resident全target/allfeature clippyはPASS。次は凍結HEADのserial全CIと、大きなファイルの差分編集、中断action識別子の非再使用を進める。`STATE.json` の累計を引継ぐ。実作業のない停止時間は加算しない。
+cycle8でOS lease、checkpoint意味検査、実行途中の実daemon再起動を追加。engineering 31件＋実HTTP2件、resident全target/allfeature clippyはPASS。cycle9で大sourceの範囲読取/一意置換を追加し、engineering 37件とclippyがPASS。凍結全CIはruntime既存FAILを含む途中でwrapper exit137となり未完了。次はmodel/provider回復fixtureの保存と、中断action識別子の非再使用を進める。`STATE.json` の累計を引継ぐ。実作業のない停止時間は加算しない。
 
 ## 再開
 

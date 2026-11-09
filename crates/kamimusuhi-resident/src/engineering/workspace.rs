@@ -16,6 +16,9 @@ use serde_json::{Value, json};
 
 const MAX_PATH_BYTES: usize = 1024;
 const MAX_CONTENT_BYTES: usize = 1024 * 1024;
+const MAX_RANGE_LINES: usize = 200;
+const MAX_RANGE_OUTPUT_BYTES: usize = 6 * 1024;
+const MAX_REPLACE_BYTES: usize = 16 * 1024;
 const MAX_ARG_BYTES: usize = 16 * 1024;
 const MAX_ARGS: usize = 64;
 const MAX_CHECKS: usize = 16;
@@ -77,11 +80,21 @@ pub enum Action {
     Read {
         path: String,
     },
+    ReadRange {
+        path: String,
+        start_line: usize,
+        max_lines: usize,
+    },
     Write {
         path: String,
         content: String,
         #[serde(default)]
         expected: Option<String>,
+    },
+    Replace {
+        path: String,
+        old: String,
+        new: String,
     },
     Run {
         argv: Vec<String>,
@@ -496,6 +509,88 @@ fn read_file(path: &Path) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "file is not UTF-8 text".to_owned())
 }
 
+fn read_range(
+    path: &str,
+    content: &str,
+    start_line: usize,
+    max_lines: usize,
+    output_bytes: usize,
+) -> Result<Value, String> {
+    if start_line == 0 || !(1..=MAX_RANGE_LINES).contains(&max_lines) {
+        return Err("read_range requires start_line >= 1 and max_lines = 1..200".to_owned());
+    }
+    // Keep line endings, including CRLF, so a returned snippet can be used
+    // as an exact Replace precondition. A final LF creates no phantom line.
+    let total_lines = content.split_inclusive('\n').count();
+    let view = |text: &str, end_line: Option<usize>, next_line: Option<usize>| {
+        json!({
+            "path":path, "start_line":start_line, "end_line":end_line,
+            "next_line":next_line, "total_lines":total_lines,
+            "truncated":next_line.is_some(), "content":text,
+        })
+    };
+    let fits =
+        |detail: &Value| serde_json::to_vec(detail).is_ok_and(|bytes| bytes.len() <= output_bytes);
+    let mut detail = view("", None, (start_line <= total_lines).then_some(start_line));
+    if !fits(&detail) {
+        return Err("read_range metadata exceeds the output budget".to_owned());
+    }
+    let mut selected = String::new();
+    for (index, line) in content
+        .split_inclusive('\n')
+        .enumerate()
+        .skip(start_line - 1)
+        .take(max_lines)
+    {
+        selected.push_str(line);
+        let line_number = index + 1;
+        let next_line = (line_number < total_lines).then_some(line_number + 1);
+        let proposed = view(&selected, Some(line_number), next_line);
+        if !fits(&proposed) {
+            if detail["end_line"].is_null() {
+                return Err(format!(
+                    "line {line_number} exceeds the read_range output budget; no partial line was returned"
+                ));
+            }
+            // Keep the previous view: its next_line points at this entire
+            // unreturned line. Generic string truncation would skip data.
+            break;
+        }
+        detail = proposed;
+    }
+    Ok(detail)
+}
+
+fn replacement(original: &str, old: &str, new: &str) -> Result<(String, usize), String> {
+    let first_character = old.chars().next().ok_or("replace old must not be empty")?;
+    if old == new {
+        return Err("replace must change the matched text".to_owned());
+    }
+    if old.len() > MAX_REPLACE_BYTES || new.len() > MAX_REPLACE_BYTES {
+        return Err("replace old and new must each be at most 16 KiB".to_owned());
+    }
+    let first = original
+        .find(old)
+        .ok_or("replace conflict: old text was not found")?;
+    // match_indices()/matches() count non-overlapping hits only: aa in aaa
+    // is still ambiguous. Advance one UTF-8 character to detect overlaps.
+    if original[first + first_character.len_utf8()..].contains(old) {
+        return Err("replace conflict: old text occurs more than once".to_owned());
+    }
+    let bytes = original
+        .len()
+        .checked_sub(old.len())
+        .and_then(|n| n.checked_add(new.len()))
+        .filter(|n| *n <= MAX_CONTENT_BYTES)
+        .ok_or("replacement exceeds the 1 MiB file limit")?;
+    let mut updated = String::with_capacity(bytes);
+    updated.push_str(&original[..first]);
+    updated.push_str(new);
+    updated.push_str(&original[first + old.len()..]);
+    let start_line = original[..first].bytes().filter(|b| *b == b'\n').count() + 1;
+    Ok((updated, start_line))
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WriteIntent {
@@ -770,6 +865,21 @@ pub fn execute(
                 json!({"path":path,"bytes":content.len(),"content":content}),
             )
         }
+        Action::ReadRange {
+            path,
+            start_line,
+            max_lines,
+        } => {
+            let content = read_file(&safe_path(candidate, path)?)?;
+            let output_bytes = limits
+                .output_bytes
+                .saturating_sub(32)
+                .min(MAX_RANGE_OUTPUT_BYTES);
+            let detail = read_range(path, &content, *start_line, *max_lines, output_bytes)?;
+            // The complete view already fits both operation and context
+            // budgets. Never cut content independently of its cursor.
+            return Ok(Observation { ok: true, detail });
+        }
         Action::Write {
             path,
             content,
@@ -784,6 +894,17 @@ pub fn execute(
             }
             atomic_write(candidate, path, content, expected.as_deref(), cancel)?;
             (true, json!({"path":path,"written_bytes":content.len()}))
+        }
+        Action::Replace { path, old, new } => {
+            let original = read_file(&safe_path(candidate, path)?)?;
+            let (updated, start_line) = replacement(&original, old, new)?;
+            atomic_write(candidate, path, &updated, Some(&original), cancel)?;
+            (
+                true,
+                json!({"path":path,"replacements":1,"start_line":start_line,
+                "before_bytes":original.len(),"after_bytes":updated.len(),
+                "removed_bytes":old.len(),"inserted_bytes":new.len()}),
+            )
         }
         Action::Run { argv } => {
             validate_argv(argv)?;
@@ -1028,6 +1149,411 @@ mod tests {
         action: Action,
     ) -> Result<Observation, String> {
         execute(policy, candidate, &action, limits, &AtomicBool::new(false))
+    }
+
+    #[test]
+    fn ranges_preserve_utf8_line_endings_and_eof_without_phantom_lines() {
+        let (_dir, policy, candidate, limits) = fixture();
+        prepare(&policy, &candidate).unwrap();
+        for (content, total_lines) in [
+            ("", 0),
+            ("一行\n", 1),
+            ("first\r\n\n最後🙂", 3),
+            ("a\n\n", 2),
+        ] {
+            fs::write(candidate.path.join("range.txt"), content).unwrap();
+            let mut cursor = 1;
+            let mut collected = String::new();
+            loop {
+                let view = perform(
+                    &policy,
+                    &candidate,
+                    &limits,
+                    Action::ReadRange {
+                        path: "range.txt".to_owned(),
+                        start_line: cursor,
+                        max_lines: 2,
+                    },
+                )
+                .unwrap()
+                .detail;
+                assert_eq!(view["start_line"], cursor);
+                assert_eq!(view["total_lines"], total_lines);
+                collected.push_str(view["content"].as_str().unwrap());
+                let Some(next) = view["next_line"].as_u64() else {
+                    assert_eq!(view["truncated"], false);
+                    break;
+                };
+                assert_eq!(view["truncated"], true);
+                assert!(next as usize > cursor);
+                assert_eq!(view["end_line"].as_u64(), Some(next - 1));
+                cursor = next as usize;
+                assert!(cursor <= total_lines);
+            }
+            assert_eq!(collected, content);
+            let eof = perform(
+                &policy,
+                &candidate,
+                &limits,
+                Action::ReadRange {
+                    path: "range.txt".to_owned(),
+                    start_line: total_lines + 1,
+                    max_lines: 1,
+                },
+            )
+            .unwrap()
+            .detail;
+            assert_eq!(eof["content"], "");
+            assert_eq!(eof["end_line"], Value::Null);
+            assert_eq!(eof["next_line"], Value::Null);
+            assert_eq!(eof["truncated"], false);
+        }
+        for (start_line, max_lines) in [(0, 1), (1, 0), (1, MAX_RANGE_LINES + 1)] {
+            assert!(
+                perform(
+                    &policy,
+                    &candidate,
+                    &limits,
+                    Action::ReadRange {
+                        path: "range.txt".to_owned(),
+                        start_line,
+                        max_lines
+                    }
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn ranges_fit_encoded_budgets_without_skipping_a_whole_or_oversized_line() {
+        let (_dir, policy, candidate, mut limits) = fixture();
+        prepare(&policy, &candidate).unwrap();
+        let content: String = (0..150)
+            .map(|i| format!("行{i:03}: \"\\{}\"\r\n", "é🙂".repeat(18)))
+            .collect();
+        fs::write(candidate.path.join("range.txt"), &content).unwrap();
+        limits.output_bytes = 32_768;
+        let first = perform(
+            &policy,
+            &candidate,
+            &limits,
+            Action::ReadRange {
+                path: "range.txt".to_owned(),
+                start_line: 1,
+                max_lines: 200,
+            },
+        )
+        .unwrap();
+        assert!(serde_json::to_vec(&first.detail).unwrap().len() <= MAX_RANGE_OUTPUT_BYTES);
+        assert_eq!(first.detail["truncated"], true);
+        limits.output_bytes = 512;
+        let mut cursor = 1;
+        let mut collected = String::new();
+        let mut pages = 0;
+        loop {
+            let page = perform(
+                &policy,
+                &candidate,
+                &limits,
+                Action::ReadRange {
+                    path: "range.txt".to_owned(),
+                    start_line: cursor,
+                    max_lines: 200,
+                },
+            )
+            .unwrap();
+            pages += 1;
+            assert!(pages <= 150, "every successful page must advance");
+            assert!(serde_json::to_vec(&page).unwrap().len() <= limits.output_bytes);
+            assert!(serde_json::to_vec(&page.detail).unwrap().len() <= limits.output_bytes - 32);
+            collected.push_str(page.detail["content"].as_str().unwrap());
+            let Some(next) = page.detail["next_line"].as_u64() else {
+                break;
+            };
+            assert!(next as usize > cursor);
+            cursor = next as usize;
+        }
+        assert!(pages > 1);
+        assert_eq!(collected, content);
+
+        let content = format!("short\n{}", "界".repeat(3000));
+        fs::write(candidate.path.join("range.txt"), content).unwrap();
+        limits.output_bytes = 32_768;
+        let first = perform(
+            &policy,
+            &candidate,
+            &limits,
+            Action::ReadRange {
+                path: "range.txt".to_owned(),
+                start_line: 1,
+                max_lines: 200,
+            },
+        )
+        .unwrap();
+        assert_eq!(first.detail["content"], "short\n");
+        assert_eq!(first.detail["next_line"], 2);
+        let error = perform(
+            &policy,
+            &candidate,
+            &limits,
+            Action::ReadRange {
+                path: "range.txt".to_owned(),
+                start_line: 2,
+                max_lines: 200,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("line 2 exceeds"));
+    }
+
+    #[test]
+    fn replace_requires_a_unique_change_including_overlapping_matches() {
+        let (_dir, policy, candidate, limits) = fixture();
+        prepare(&policy, &candidate).unwrap();
+        for (content, old, new) in [
+            ("aaa", "aa", "b"),
+            ("あああ", "ああ", "い"),
+            ("foo + foo", "foo", "bar"),
+            ("original", "", "new"),
+            ("original", "missing", "new"),
+            ("original", "original", "original"),
+        ] {
+            fs::write(candidate.path.join("replace.txt"), content).unwrap();
+            assert!(
+                perform(
+                    &policy,
+                    &candidate,
+                    &limits,
+                    Action::Replace {
+                        path: "replace.txt".to_owned(),
+                        old: old.to_owned(),
+                        new: new.to_owned()
+                    }
+                )
+                .is_err()
+            );
+            assert_eq!(
+                fs::read_to_string(candidate.path.join("replace.txt")).unwrap(),
+                content
+            );
+        }
+        let original = "先頭\r\n対象🙂\r\n終端";
+        fs::write(candidate.path.join("replace.txt"), original).unwrap();
+        let changed = perform(
+            &policy,
+            &candidate,
+            &limits,
+            Action::Replace {
+                path: "replace.txt".to_owned(),
+                old: "対象🙂".to_owned(),
+                new: "変更é".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(changed.detail["replacements"], 1);
+        assert_eq!(changed.detail["start_line"], 2);
+        assert_eq!(
+            fs::read_to_string(candidate.path.join("replace.txt")).unwrap(),
+            "先頭\r\n変更é\r\n終端"
+        );
+        perform(
+            &policy,
+            &candidate,
+            &limits,
+            Action::Replace {
+                path: "replace.txt".to_owned(),
+                old: "\r\n終端".to_owned(),
+                new: String::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(candidate.path.join("replace.txt")).unwrap(),
+            "先頭\r\n変更é"
+        );
+    }
+
+    #[test]
+    fn range_and_replace_enforce_secret_paths_and_size_limits_without_writing() {
+        let (_dir, policy, candidate, limits) = fixture();
+        prepare(&policy, &candidate).unwrap();
+        fs::write(candidate.path.join(".env"), "fixture-only").unwrap();
+        for action in [
+            Action::ReadRange {
+                path: ".env".to_owned(),
+                start_line: 1,
+                max_lines: 1,
+            },
+            Action::Replace {
+                path: ".env".to_owned(),
+                old: "fixture-only".to_owned(),
+                new: "changed".to_owned(),
+            },
+        ] {
+            assert!(perform(&policy, &candidate, &limits, action).is_err());
+        }
+        assert_eq!(
+            fs::read_to_string(candidate.path.join(".env")).unwrap(),
+            "fixture-only"
+        );
+        let path = candidate.path.join("bounded.txt");
+        let oversized = "x".repeat(MAX_REPLACE_BYTES + 1);
+        fs::write(&path, &oversized).unwrap();
+        assert!(
+            perform(
+                &policy,
+                &candidate,
+                &limits,
+                Action::Replace {
+                    path: "bounded.txt".to_owned(),
+                    old: oversized.clone(),
+                    new: "short".to_owned()
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), oversized);
+        fs::write(&path, "short").unwrap();
+        assert!(
+            perform(
+                &policy,
+                &candidate,
+                &limits,
+                Action::Replace {
+                    path: "bounded.txt".to_owned(),
+                    old: "short".to_owned(),
+                    new: oversized
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "short");
+        let at_limit = format!("ABC{}", "x".repeat(MAX_CONTENT_BYTES - 3));
+        fs::write(&path, &at_limit).unwrap();
+        assert!(
+            perform(
+                &policy,
+                &candidate,
+                &limits,
+                Action::Replace {
+                    path: "bounded.txt".to_owned(),
+                    old: "ABC".to_owned(),
+                    new: "ABCD".to_owned()
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), at_limit);
+        fs::write(&path, "x".repeat(MAX_CONTENT_BYTES + 1)).unwrap();
+        assert!(
+            perform(
+                &policy,
+                &candidate,
+                &limits,
+                Action::ReadRange {
+                    path: "bounded.txt".to_owned(),
+                    start_line: 1,
+                    max_lines: 1
+                }
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn ranged_edit_repairs_large_rust_source_with_the_real_compiler() {
+        let (dir, mut policy, _unused_plan, mut limits) = fixture();
+        assert!(
+            process::resolve_binary("rustc").is_some(),
+            "real rustc must be on the test PATH"
+        );
+        let mut original: String = (0..6000)
+            .map(|i| format!("// 文脈 {i:04}: unchanged source material\n"))
+            .collect();
+        original.push_str("pub fn answer() -> u32 { unknown_value }");
+        assert!(original.len() > 128 * 1024);
+        fs::write(policy.path.join("large.rs"), &original).unwrap();
+        git(&policy.path, &["add", "large.rs"]).unwrap();
+        commit(&policy.path);
+        policy.checks = vec![vec![
+            "rustc".to_owned(),
+            "--crate-type=lib".to_owned(),
+            "--emit=metadata".to_owned(),
+            "-o".to_owned(),
+            dir.path().join("large.rmeta").to_str().unwrap().to_owned(),
+            "large.rs".to_owned(),
+        ]];
+        let candidate = plan(&policy, &dir.path().join("worktrees"), "large-job").unwrap();
+        prepare(&policy, &candidate).unwrap();
+        limits.validation_timeout = Duration::from_secs(30);
+        let failed = verify(&policy, &candidate, &limits, &AtomicBool::new(false)).unwrap();
+        assert!(!failed.passed);
+        assert_eq!(
+            failed.checks[0]["exit_code"], 1,
+            "the real compiler rejects the unresolved identifier"
+        );
+        assert!(
+            failed.checks[0]["stderr"]
+                .as_str()
+                .unwrap()
+                .contains("E0425")
+        );
+        let range = perform(
+            &policy,
+            &candidate,
+            &limits,
+            Action::ReadRange {
+                path: "large.rs".to_owned(),
+                start_line: 5999,
+                max_lines: 10,
+            },
+        )
+        .unwrap();
+        assert!(
+            range.detail["content"]
+                .as_str()
+                .unwrap()
+                .ends_with("pub fn answer() -> u32 { unknown_value }")
+        );
+        assert_eq!(range.detail["end_line"], 6001);
+        assert_eq!(range.detail["next_line"], Value::Null);
+        let changed = perform(
+            &policy,
+            &candidate,
+            &limits,
+            Action::Replace {
+                path: "large.rs".to_owned(),
+                old: "unknown_value".to_owned(),
+                new: "42".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(changed.detail["replacements"], 1);
+        let passed = verify(&policy, &candidate, &limits, &AtomicBool::new(false)).unwrap();
+        assert!(passed.passed, "{:?}", passed.checks);
+        assert_eq!(passed.checks[0]["exit_code"], 0);
+        assert_ne!(failed.head, passed.head);
+        assert_eq!(
+            fs::read_to_string(candidate.path.join("large.rs")).unwrap(),
+            original.replacen("unknown_value", "42", 1)
+        );
+        assert_eq!(
+            fs::read_to_string(policy.path.join("large.rs")).unwrap(),
+            original
+        );
+        assert_eq!(
+            fs::read_to_string(policy.path.join("operator-draft.txt")).unwrap(),
+            "keep this draft"
+        );
+        eprintln!(
+            "large Rust fixture: {} bytes, rustc exit {} -> {}, range JSON {} bytes, replacements {}",
+            original.len(),
+            failed.checks[0]["exit_code"],
+            passed.checks[0]["exit_code"],
+            serde_json::to_vec(&range.detail).unwrap().len(),
+            changed.detail["replacements"]
+        );
     }
 
     #[test]

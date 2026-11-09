@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 1.468777,
+  "elapsed_hours": 1.743376,
   "target_hours": 24.0,
-  "cycle": 8,
-  "current_task": "cycle8: OS lease・checkpoint意味検査・実daemon途中再起動を検証して保存",
+  "cycle": 9,
+  "current_task": "cycle9: 大きいRust sourceの部分読取・一意置換で実検証FAIL→PASSを確認して保存",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": null,
-  "last_checkpoint_at": "2026-11-09T04:52:31Z",
+  "last_checkpoint_at": "2026-11-09T05:09:00Z",
   "active_session_started_at": "2026-11-09T04:32:26Z",
   "session_elapsed_base_hours": 1.133847,
   "status": "active",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
-  "next_task": "凍結したHEADでserial全CIを走らせ、大fileのread_range/replaceと中断action IDを改善",
+  "next_task": "cycle10の実HTTP回復fixtureを保存し、cycle11で独立action sequenceとschema migrationを実装",
   "completed_sessions": [
     {
       "started_at": "2026-11-08T16:06:48Z",
@@ -46,13 +46,14 @@
     5,
     6,
     7,
-    8
+    8,
+    9
   ],
   "incomplete_cycles": [
     2,
     3
   ],
-  "last_verified_change_commit": "001370fd2220e0f8e4107ce685b784a7588c5842",
+  "last_verified_change_commit": "980c564579faa703cf55651c92de3e4e0495f62c",
   "resume_guide": "docs/harness-marathon/RESUME.md",
   "evaluation": "evaluation/harness/marathon-20261109.json",
   "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。",
