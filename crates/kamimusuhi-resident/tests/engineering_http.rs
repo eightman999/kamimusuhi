@@ -279,6 +279,7 @@ fn show(url: &str, id: &str) -> Value {
 struct ModelFixture {
     url: String,
     calls: Arc<Mutex<Vec<Value>>>,
+    probes: Arc<AtomicUsize>,
     errors: Arc<Mutex<Vec<String>>>,
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
@@ -289,19 +290,44 @@ struct ModelFixture {
 /// without returning an action or manufacturing a provider failure first.
 struct ModelDecision {
     request: Value,
-    response: mpsc::SyncSender<Option<Value>>,
-    completed: mpsc::Receiver<()>,
+    received_at: Instant,
+    response: mpsc::SyncSender<ModelReply>,
+    completed: mpsc::Receiver<Instant>,
+}
+
+enum ModelReply {
+    Action(Value),
+    Text(String),
+    HttpStatus(u16),
+    Abandon,
 }
 
 impl ModelDecision {
     fn respond(self, action: Value) {
         self.response
-            .send(Some(action))
+            .send(ModelReply::Action(action))
             .expect("release model reply");
     }
 
+    fn respond_text(self, text: String) {
+        self.response
+            .send(ModelReply::Text(text))
+            .expect("release raw assistant text");
+    }
+
+    fn respond_status(self, status: u16) -> Instant {
+        self.response
+            .send(ModelReply::HttpStatus(status))
+            .expect("release provider failure");
+        self.completed
+            .recv_timeout(Duration::from_secs(2))
+            .expect("provider failure reply is written")
+    }
+
     fn abandon(self) {
-        self.response.send(None).expect("abandon old model request");
+        self.response
+            .send(ModelReply::Abandon)
+            .expect("abandon old model request");
         self.completed
             .recv_timeout(Duration::from_secs(2))
             .expect("old model connection closes");
@@ -332,7 +358,7 @@ impl ModelResponses {
                 let action = actions
                     .get(index)
                     .ok_or("unexpected extra model decision")?;
-                completion(stream, index, action)
+                completion(stream, index, &action.to_string())
             }
             Self::Controlled(incoming) => {
                 let (send, receive) = mpsc::sync_channel(1);
@@ -340,41 +366,52 @@ impl ModelResponses {
                 incoming
                     .try_send(ModelDecision {
                         request: body,
+                        received_at: Instant::now(),
                         response: send,
                         completed,
                     })
                     .map_err(|_| "model request controller unavailable")?;
-                let action = loop {
+                let response = loop {
                     if stopping.load(Ordering::Relaxed) {
-                        break None;
+                        break ModelReply::Abandon;
                     }
                     match receive.recv_timeout(Duration::from_millis(50)) {
-                        Ok(action) => break action,
-                        Err(mpsc::RecvTimeoutError::Disconnected) => break None,
+                        Ok(response) => break response,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break ModelReply::Abandon,
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
                     }
                 };
-                let result = if let Some(action) = action {
-                    completion(stream, index, &action)
-                } else {
-                    let _ = stream.shutdown(std::net::Shutdown::Both);
-                    Ok(())
+                // Timestamp before writing: the router cannot observe a
+                // failure before this point, even if the worker is preempted.
+                let sent_at = Instant::now();
+                let result = match response {
+                    ModelReply::Action(action) => completion(stream, index, &action.to_string()),
+                    ModelReply::Text(text) => completion(stream, index, &text),
+                    ModelReply::HttpStatus(status) => reply(
+                        stream,
+                        status,
+                        &json!({"error":"scripted provider failure"}),
+                    ),
+                    ModelReply::Abandon => {
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
+                        Ok(())
+                    }
                 };
-                let _ = finished.send(());
+                let _ = finished.send(sent_at);
                 result
             }
         }
     }
 }
 
-fn completion(stream: &mut TcpStream, index: usize, action: &Value) -> Result<(), String> {
+fn completion(stream: &mut TcpStream, index: usize, text: &str) -> Result<(), String> {
     reply(
         stream,
         200,
         &json!({
             "id":format!("fixture-{index}"),"object":"chat.completion",
             "model":MODEL,"choices":[{"index":0,"finish_reason":"stop",
-                "message":{"role":"assistant","content":action.to_string()}}],
+                "message":{"role":"assistant","content":text}}],
             "usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}
         }),
     )
@@ -395,17 +432,23 @@ impl ModelFixture {
         let url = format!("http://{}/v1", listener.local_addr().unwrap());
         listener.set_nonblocking(true).unwrap();
         let calls = Arc::new(Mutex::new(Vec::new()));
+        let probes = Arc::new(AtomicUsize::new(0));
         let errors = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
-        let (recorded, failures, stopping) =
-            (Arc::clone(&calls), Arc::clone(&errors), Arc::clone(&stop));
+        let (recorded, probed, failures, stopping) = (
+            Arc::clone(&calls),
+            Arc::clone(&probes),
+            Arc::clone(&errors),
+            Arc::clone(&stop),
+        );
         let thread = thread::spawn(move || {
             let mut workers = Vec::new();
             while !stopping.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        let (recorded, failures, stopping, responses) = (
+                        let (recorded, probed, failures, stopping, responses) = (
                             Arc::clone(&recorded),
+                            Arc::clone(&probed),
                             Arc::clone(&failures),
                             Arc::clone(&stopping),
                             responses.clone(),
@@ -415,6 +458,7 @@ impl ModelFixture {
                         workers.push(thread::spawn(move || {
                             let result = model_request(&mut stream).and_then(|(path, body)| {
                                 if path == "GET /v1/models" {
+                                    probed.fetch_add(1, Ordering::Relaxed);
                                     return reply(
                                         &mut stream,
                                         200,
@@ -463,6 +507,7 @@ impl ModelFixture {
         Self {
             url,
             calls,
+            probes,
             errors,
             stop,
             thread: Some(thread),
@@ -696,8 +741,17 @@ fn next_decision(
     model: &str,
     completed_actions: u64,
 ) -> ModelDecision {
+    next_decision_within(requests, model, completed_actions, Duration::from_secs(10))
+}
+
+fn next_decision_within(
+    requests: &mpsc::Receiver<ModelDecision>,
+    model: &str,
+    completed_actions: u64,
+    timeout: Duration,
+) -> ModelDecision {
     let decision = requests
-        .recv_timeout(Duration::from_secs(10))
+        .recv_timeout(timeout)
         .expect("resident reaches the next model barrier");
     assert_eq!(
         decision.request["model"], model,
@@ -705,6 +759,287 @@ fn next_decision(
     );
     assert_eq!(decision.context()["metrics"]["actions"], completed_actions);
     decision
+}
+
+/// Call while the next model response is held, so both the HTTP view and
+/// the on-disk checkpoint describe the completed failure, without a race.
+fn retry_checkpoint(fixture: &Fixture, url: &str, id: &str, planned: &Value) -> Value {
+    let job = show(url, id);
+    assert_eq!(job["id"], id);
+    assert_eq!(job["objective"], OBJECTIVE);
+    assert_eq!(job["candidate"], *planned);
+    assert_eq!(job["phase"], "active");
+    assert!(job["pending"].is_null());
+    assert_eq!(job["metrics"]["decisions"], 0);
+    assert_eq!(job["metrics"]["actions"], 0);
+    assert_eq!(job["metrics"]["verification_runs"], 0);
+    let candidate = Path::new(planned["path"].as_str().unwrap());
+    assert_eq!(
+        fs::read_to_string(candidate.join("code.txt")).unwrap(),
+        "initial\n",
+        "a rejected model response must not edit the candidate"
+    );
+    assert!(
+        !fixture.counter.exists(),
+        "a rejected Finish must not run checks"
+    );
+    let checkpoint = fixture
+        .dir
+        .path()
+        .join("resident/current_state/engineering.json");
+    let durable: Value = serde_json::from_slice(&fs::read(checkpoint).unwrap()).unwrap();
+    assert_eq!(durable["jobs"].as_array().unwrap().len(), 1);
+    assert_eq!(durable["jobs"][0], job, "model failures are durable");
+    job
+}
+
+fn wait_ready(url: &str, id: &str) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let job = show(url, id);
+        if job["phase"] == "ready" {
+            return job;
+        }
+        assert_ne!(job["phase"], "paused", "{job}");
+        assert!(
+            Instant::now() < deadline,
+            "recovery never reached Ready: {job}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn assert_repaired_candidate(
+    fixture: &Fixture,
+    ready: &Value,
+    planned: &Value,
+    original_head: &str,
+) {
+    assert_eq!(ready["objective"], OBJECTIVE);
+    assert_eq!(ready["candidate"], *planned);
+    assert_eq!(ready["metrics"]["decisions"], 3);
+    assert_eq!(ready["metrics"]["actions"], 3);
+    assert_eq!(ready["metrics"]["verification_runs"], 1);
+    assert_eq!(ready["metrics"]["verification_failures"], 0);
+    assert_eq!(ready["metrics"]["interruptions"], 0);
+    assert!(ready["pending"].is_null());
+    assert!(ready["last_error"].is_null());
+    assert_eq!(ready["validation"]["passed"], true);
+    let candidate = Path::new(planned["path"].as_str().unwrap());
+    assert_eq!(
+        fs::read_to_string(candidate.join("code.txt")).unwrap(),
+        "fixed\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&fixture.counter).unwrap(),
+        format!("{}\tfixed\n", candidate.display()),
+        "exactly one real validation ran in the preserved candidate"
+    );
+    assert_eq!(
+        ready["validation"]["head"],
+        fixture.git(candidate, &["rev-parse", "HEAD"])
+    );
+    assert!(
+        fixture
+            .git(candidate, &["status", "--porcelain"])
+            .is_empty()
+    );
+    assert_eq!(
+        fixture.git(&fixture.workspace, &["rev-parse", "HEAD"]),
+        original_head
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.workspace.join("code.txt")).unwrap(),
+        "initial\n"
+    );
+}
+
+fn recorded_contexts(model: &ModelFixture, planned: &Value) -> Vec<Value> {
+    model
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|call| {
+            assert_eq!(call["model"], MODEL);
+            let context: Value =
+                serde_json::from_str(call["messages"][1]["content"].as_str().unwrap()).unwrap();
+            assert_eq!(context["objective"], OBJECTIVE);
+            assert_eq!(context["candidate"], *planned);
+            context
+        })
+        .collect()
+}
+
+#[test]
+fn malformed_actions_preserve_the_goal_and_recover_through_the_real_router() {
+    const ACTION_ERROR: &str = "model response is not a valid engineering action";
+    let (model, requests) = ModelFixture::controlled();
+    let fixture = Fixture::new(&model.url);
+    let original_head = fixture.git(&fixture.workspace, &["rev-parse", "HEAD"]);
+    let resident = fixture.start_as(MODEL, 30);
+    let created = fixture.cli(&resident.url, &["start", "fixture", OBJECTIVE]);
+    assert_eq!(created["ok"], true, "{created}");
+    let id = created["job"]["id"].as_str().unwrap();
+    let planned = created["job"]["candidate"].clone();
+
+    // The outer completion is valid. Only the native action parser must
+    // reject the Markdown fence, without executing the enclosed Write.
+    let rejected_write = json!({
+        "action":"write","path":"code.txt","expected":"initial\n","content":"wrong\n"
+    });
+    next_decision(&requests, MODEL, 0).respond_text(format!("```json\n{rejected_write}\n```"));
+    let malformed = next_decision(&requests, MODEL, 0);
+    let first_failure = retry_checkpoint(&fixture, &resident.url, id, &planned);
+    assert_eq!(first_failure["metrics"]["model_failures"], 1);
+    assert_eq!(first_failure["last_error"], ACTION_ERROR);
+    // A recognized action carrying an unknown field also must be rejected;
+    // accepting it would run an observable failing check prematurely.
+    malformed.respond_text(
+        json!({"action":"finish","summary":"Must not execute","unexpected":true}).to_string(),
+    );
+    let recovered = next_decision(&requests, MODEL, 0);
+    let second_failure = retry_checkpoint(&fixture, &resident.url, id, &planned);
+    assert_eq!(second_failure["metrics"]["model_failures"], 2);
+    assert_eq!(second_failure["last_error"], ACTION_ERROR);
+    recovered.respond(json!({"action":"read","path":"code.txt"}));
+    next_decision(&requests, MODEL, 1).respond(json!({
+        "action":"write","path":"code.txt","expected":"initial\n","content":"fixed\n"
+    }));
+    next_decision(&requests, MODEL, 2)
+        .respond(json!({"action":"finish","summary":"Recovered from rejected actions"}));
+    let ready = wait_ready(&resident.url, id);
+    assert_repaired_candidate(&fixture, &ready, &planned, &original_head);
+    assert_eq!(ready["metrics"]["model_failures"], 2);
+
+    let contexts = recorded_contexts(&model, &planned);
+    assert_eq!(contexts.len(), 5, "actual completion POST count");
+    let actions: Vec<_> = contexts
+        .iter()
+        .map(|context| context["metrics"]["actions"].as_u64().unwrap())
+        .collect();
+    assert_eq!(actions, [0, 0, 0, 1, 2]);
+    for (index, context) in contexts[1..=2].iter().enumerate() {
+        assert_eq!(context["metrics"]["model_failures"], index as u64 + 1);
+        assert_eq!(context["last_error"], ACTION_ERROR);
+        let latest = context["observations"].as_array().unwrap().last().unwrap();
+        assert_eq!(latest["action"], "model");
+        assert_eq!(latest["ok"], false);
+        let detail: Value =
+            serde_json::from_str(latest["external_data"].as_str().unwrap()).unwrap();
+        assert_eq!(detail["error"], ACTION_ERROR);
+    }
+    assert!(requests.try_recv().is_err(), "no unaccounted model request");
+    let errors = model.errors.lock().unwrap().clone();
+    assert!(errors.is_empty(), "{errors:?}");
+    eprintln!(
+        "malformed-action recovery: completion_posts=5 durable_actions=3 model_failures=2 checks=1"
+    );
+}
+
+#[test]
+fn auto_provider_503_recovers_after_the_real_bench_without_losing_the_goal() {
+    let (model, requests) = ModelFixture::controlled();
+    let fixture = Fixture::new(&model.url);
+    // Healthy model-list probes must not erase a failed completion's bench.
+    let mut config: Value = serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
+    config["tiers"][0]["probe_interval_secs"] = json!(1);
+    fs::write(&fixture.config, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+    let original_head = fixture.git(&fixture.workspace, &["rev-parse", "HEAD"]);
+    let resident = fixture.start_as(MODEL, 30);
+    let created = fixture.cli(&resident.url, &["start", "fixture", OBJECTIVE]);
+    assert_eq!(created["ok"], true, "{created}");
+    let id = created["job"]["id"].as_str().unwrap();
+    let planned = created["job"]["candidate"].clone();
+    let first = next_decision(&requests, MODEL, 0);
+    let probes_before = model.probes.load(Ordering::Relaxed);
+    let failed_at = first.respond_status(503);
+
+    // Local no-eligible-tier failures are durable retries, but are not
+    // additional provider HTTP calls. Observe that state before recovery.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let waiting = show(&resident.url, id);
+        assert_eq!(waiting["candidate"], planned);
+        assert_eq!(waiting["phase"], "active");
+        assert!(waiting["pending"].is_null());
+        assert_eq!(waiting["metrics"]["actions"], 0);
+        if waiting["metrics"]["model_failures"].as_u64().unwrap() >= 2 {
+            assert_eq!(
+                waiting["last_error"],
+                "engineering model unavailable (HTTP 400)"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "provider failure was not recorded: {waiting}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert_eq!(model.calls.lock().unwrap().len(), 1);
+    // This is a real wall-clock integration test of the default 60 s bench.
+    // A request channel, not an arbitrary sleep, signals that auto routing
+    // has admitted the provider again. No forced tier, restart or clock hack.
+    let recovered = next_decision_within(
+        &requests,
+        MODEL,
+        0,
+        Duration::from_secs(95).saturating_sub(failed_at.elapsed()),
+    );
+    let bench_duration = recovered.received_at.duration_since(failed_at);
+    assert!(
+        bench_duration >= Duration::from_secs(60),
+        "early retry: {bench_duration:?}"
+    );
+    assert!(
+        bench_duration < Duration::from_secs(95),
+        "late retry: {bench_duration:?}"
+    );
+    assert!(model.probes.load(Ordering::Relaxed) >= probes_before + 2);
+    assert_eq!(model.calls.lock().unwrap().len(), 2);
+    let retried = retry_checkpoint(&fixture, &resident.url, id, &planned);
+    let failures = retried["metrics"]["model_failures"].as_u64().unwrap();
+    assert!(
+        failures >= 2,
+        "count local routing retries separately from HTTP calls"
+    );
+    assert_eq!(
+        retried["last_error"],
+        "engineering model unavailable (HTTP 400)"
+    );
+    assert_eq!(recovered.context()["metrics"], retried["metrics"]);
+    recovered.respond(json!({"action":"read","path":"code.txt"}));
+    next_decision(&requests, MODEL, 1).respond(json!({
+        "action":"write","path":"code.txt","expected":"initial\n","content":"fixed\n"
+    }));
+    next_decision(&requests, MODEL, 2)
+        .respond(json!({"action":"finish","summary":"Recovered after one provider outage"}));
+    let ready = wait_ready(&resident.url, id);
+    assert_repaired_candidate(&fixture, &ready, &planned, &original_head);
+    assert_eq!(ready["metrics"]["model_failures"], failures);
+    let contexts = recorded_contexts(&model, &planned);
+    assert_eq!(
+        contexts.len(),
+        4,
+        "one failed POST plus three successful decisions"
+    );
+    let actions: Vec<_> = contexts
+        .iter()
+        .map(|context| context["metrics"]["actions"].as_u64().unwrap())
+        .collect();
+    assert_eq!(actions, [0, 0, 1, 2]);
+    assert_eq!(contexts[0]["metrics"]["model_failures"], 0);
+    assert_eq!(contexts[1]["metrics"]["model_failures"], failures);
+    assert!(requests.try_recv().is_err(), "no unaccounted model request");
+    let errors = model.errors.lock().unwrap().clone();
+    assert!(errors.is_empty(), "{errors:?}");
+    eprintln!(
+        "provider-503 recovery: bench_ms={} completion_posts=4 durable_actions=3 model_failures={} probes={} checks=1",
+        bench_duration.as_millis(),
+        failures,
+        model.probes.load(Ordering::Relaxed)
+    );
 }
 
 #[test]

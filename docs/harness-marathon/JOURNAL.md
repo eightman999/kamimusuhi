@@ -299,3 +299,31 @@ Cycle8最終確認: `cargo fmt --all -- --check` PASS、`cargo clippy --offline 
 - 設定/使い方は `docs/engineering-agent.md`、実測は `evaluation/harness/native-engineering-20261109.json`。
 
 コミット: `feat(engineering): 大きなソースの部分読取と修復を実装`。
+
+### Cycle 10 の結果
+
+実resident/HTTP fixtureを2件拡張。製品routerのbench時間は変更せず、loopback providerだけで測定した。
+
+| 実daemon scenario | 不正action回復 | auto provider 503回復 |
+|---|---:|---:|
+| 実model POST | 5 | 4 |
+| durable decisions/actions | 3/3 | 3/3 |
+| model_failures | 2 | 60 |
+| 実検証 | 1 | 1 |
+| Ready | PASS | PASS |
+
+- fenced JSONのWriteと未知field付きFinishを拒否し、その時点のaction/pending/候補に副作用0。次のRead/Write/Finishで継続した。
+- 503後のbenchは実測60,170ms。probe64回でcompletion障害は解除されず、期限後の成功で回復した。model_failures=60には最初のprovider障害1回と、送信先なしのローカル失敗59回が含まれる。POST60回という意味ではない。
+- `cargo test --offline -p kamimusuhi-resident --test engineering_http -- --nocapture`: PASS 4/4、exit0（64.38s）。対象clippy PASS、fmt/diff check PASS。
+- 課題: 長いbench中に最初の503観測が12件の窓から落ちる。最初の原因を保持する改善をBACKLOGへ追加した。
+
+cycle9公開commit: `82c38b2153941a38dd98fab64f6b4b7eb887b43d`（local/remote tree一致確認）。
+コミット: `test(engineering): モデル応答とprovider障害からの継続を検証`。
+
+## Cycle 11 — 中断前後で行動番号を再使用しない（着手前）
+
+本当の目的: 結果不明の行動と次の判断を同じ番号で記録せず、再開後の成果とtraceを区別できるようにする。
+前提と確かめ方: 現在の採番は完了数actions+1なので、claim後に中断してactionsが増えなければ次も同じ番号になる。decision数と結果保存数を混同せず独立cursorを持たせる。
+一番安い確認方法: 保存済みpending Writeと既に書かれたbytesから再読込し、次のReadが旧sequenceを再使用することを先に再現。旧schema全件検査→cursor導出→回復→v2全件検査→一度の原子保存をfixtureで検査する。
+
+担当: checkpoint.rsの版別意味検査はharness_audit、tests.rsの移行/番号再使用fixtureはresearch_harness、rootはengineering.rsのclaim/回復/traceを統合する。
