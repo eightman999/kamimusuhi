@@ -2,14 +2,14 @@
 
 ## 次にやること
 
-全CIログ `native-agent-ci-20261109.log` の終了確認。native agent初版のunit12/workspace8/実daemon1がPASS済み。次に同paths.rootの複数residentをOS leaseで排他し、意味の壊れたcheckpointを拒否する。途中再起動と大きなファイルの読み取り/差分編集も実装する。skills/RustXNG/imozuru拡張は保留。
+cycle8を含む凍結HEADの別worktreeでserial全CIを実行し、mainではnative agentの大file read_range/replaceを実装する。31unit/workspace/lease＋実daemon2件がPASS済み。中断したactionのsequence再使用を解消し、malformed model応答からの修復を実fixtureで測る。skills/RustXNG/imozuru拡張は保留。
 
 ## 現在の最優先（2026-11-09更新）
 
 | 優先 | 項目 | 完了条件 |
 |---|---|---|
-| P0 | 複数residentからの排他 | OS leaseで同一checkpointの二重dispatch/書込を防ぐ |
-| P0 | checkpointの意味検査 | Ready/receipt/sequence/idの不整合を拒否して原本保持 |
+| P0 | 中断後のaction識別子 | 未確認のactionと次actionで同じsequenceを再使用しない |
+| P1 | model protocol失敗の自律修復 | 不正JSON/HTTP障害からgoal/candidateを保って回復 |
 | P0 | 大きなsourceの差分編集 | 読取range/一意substring replacementで全文CASの限界を解消 |
 | P0 | process期限/cancel/出力回収 | flood fixtureで期限と出力量を確認 |
 | P1 | 短い作業記憶と復元 | objective/制約/次step/検証失敗を保持して長期継続 |

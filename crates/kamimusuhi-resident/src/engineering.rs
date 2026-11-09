@@ -5,6 +5,8 @@
 //! candidate can establish verification. There is no lifetime turn budget.
 //! Cancellation, process deadlines and explicit workspace policy still apply.
 
+mod checkpoint;
+mod lease;
 pub mod workspace;
 
 use std::path::PathBuf;
@@ -65,7 +67,7 @@ impl EngineeringConfig {
         let mut names = std::collections::HashSet::new();
         for policy in &self.workspaces {
             policy.validate()?;
-            if self.max_output_bytes.saturating_sub(256) / policy.checks.len() < 192 {
+            if self.max_output_bytes.saturating_sub(256) / policy.checks.len() < 512 {
                 return Err("engineering output bound cannot hold all validation receipts".into());
             }
             if !names.insert(&policy.name) {
@@ -165,6 +167,10 @@ struct StoreState {
 /// never permits execution; a failed outcome write quarantines this instance.
 pub struct Engineering {
     path: PathBuf,
+    candidate_root: PathBuf,
+    // A separate stable inode protects load, recovery and every mutation.
+    // Never lock the checkpoint itself: save atomically replaces that inode.
+    _lease: Option<lease::Lease>,
     inner: Mutex<StoreState>,
     tick_gate: Mutex<()>,
     running: Mutex<Option<String>>,
@@ -175,11 +181,12 @@ fn clipped(text: &str, bytes: usize) -> String {
     if text.len() <= bytes {
         return text.to_owned();
     }
-    let mut end = bytes;
+    let suffix = if bytes >= "…".len() { "…" } else { "" };
+    let mut end = bytes - suffix.len();
     while !text.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}…", &text[..end])
+    format!("{}{suffix}", &text[..end])
 }
 
 fn observation(job: &mut Job, action: &str, ok: bool, detail: Value) {
@@ -207,14 +214,54 @@ fn action_name(action: &Action) -> &'static str {
 }
 
 impl Engineering {
-    pub fn load(path: PathBuf) -> Self {
+    pub fn load(path: PathBuf, candidate_root: PathBuf) -> Self {
         let empty = || Snapshot {
             schema_version: 1,
             jobs: Vec::new(),
         };
+        let owned = match lease::acquire(&path.with_extension("lock")) {
+            Ok(owned) => owned,
+            Err(error) => {
+                // In particular, do not read/take/recover a pending action
+                // while another resident owns its outcome.
+                return Self::from_state(path, candidate_root, empty(), Some(error), None);
+            }
+        };
+        let candidate_root = match workspace::future_path(&candidate_root) {
+            Ok(root) => root,
+            Err(error) => {
+                return Self::from_state(path, candidate_root, empty(), Some(error), Some(owned));
+            }
+        };
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if !meta.is_file() || meta.file_type().is_symlink() => {
+                return Self::from_state(
+                    path,
+                    candidate_root,
+                    empty(),
+                    Some(
+                        "engineering checkpoint must be a regular file; original preserved".into(),
+                    ),
+                    Some(owned),
+                );
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Self::from_state(
+                    path,
+                    candidate_root,
+                    empty(),
+                    Some("engineering checkpoint cannot be inspected".into()),
+                    Some(owned),
+                );
+            }
+            _ => {}
+        }
         let (mut snapshot, mut error) = match std::fs::read(&path) {
             Ok(bytes) => match serde_json::from_slice::<Snapshot>(&bytes) {
-                Ok(s) if s.schema_version == 1 => (s, None),
+                Ok(s) => match checkpoint::validate(&s, &candidate_root) {
+                    Ok(()) => (s, None),
+                    Err(error) => (empty(), Some(format!("{error}; original preserved"))),
+                },
                 _ => (
                     empty(),
                     Some("engineering checkpoint is invalid; original preserved".into()),
@@ -253,10 +300,38 @@ impl Engineering {
             }
         }
         if recovered && error.is_none() {
-            error = Self::save(&path, &snapshot).err();
+            error = checkpoint::validate(&snapshot, &candidate_root)
+                .and_then(|()| Self::save(&path, &snapshot))
+                .err();
         }
+        Self::from_state(path, candidate_root, snapshot, error, Some(owned))
+    }
+
+    /// An unconfigured node neither owns nor recovers an engineering store.
+    pub fn disabled() -> Self {
+        Self::from_state(
+            PathBuf::new(),
+            PathBuf::new(),
+            Snapshot {
+                schema_version: 1,
+                jobs: Vec::new(),
+            },
+            None,
+            None,
+        )
+    }
+
+    fn from_state(
+        path: PathBuf,
+        candidate_root: PathBuf,
+        snapshot: Snapshot,
+        error: Option<String>,
+        owned: Option<lease::Lease>,
+    ) -> Self {
         Self {
             path,
+            candidate_root,
+            _lease: owned,
             inner: Mutex::new(StoreState { snapshot, error }),
             tick_gate: Mutex::new(()),
             running: Mutex::new(None),
@@ -286,6 +361,10 @@ impl Engineering {
         }
         let mut next = state.snapshot.clone();
         let result = edit(&mut next)?;
+        if let Err(error) = checkpoint::validate(&next, &self.candidate_root) {
+            state.error = Some(error.clone());
+            return Err(error);
+        }
         if let Err(error) = Self::save(&self.path, &next) {
             state.error = Some(error.clone());
             return Err(error);
@@ -336,6 +415,7 @@ impl Engineering {
         json!({
             "jobs":state.snapshot.jobs.iter().map(|job| json!({"id":job.id,"workspace":job.workspace,"phase":job.phase,"metrics":job.metrics})).collect::<Vec<_>>(),
             "error":state.error,
+            "owns_state":self._lease.is_some(),
         })
     }
 
@@ -383,6 +463,7 @@ fn handle_inner(shared: &Shared, request: &Value) -> Result<(u16, Value), String
             json!({"ok":true,"jobs":store.list(),"status":store.summary()}),
         )),
         "show" => {
+            store.available()?;
             let id = required_text(request, "id", 128)?;
             let job = store.get(id).ok_or("unknown engineering job")?;
             Ok((200, json!({"ok":true,"job":job})))
@@ -596,7 +677,19 @@ pub fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Jo
     }) else {
         return Ok(None);
     };
-    let policy = policy(config, &job.workspace)?;
+    let policy = match policy(config, &job.workspace) {
+        Ok(policy) => policy,
+        Err(error) => {
+            return store
+                .update(&job.id, |current| {
+                    current.phase = Phase::Paused;
+                    current.last_error = Some(error.clone());
+                    observation(current, "configuration", false, json!({"error":error}));
+                    Ok(())
+                })
+                .map(Some);
+        }
+    };
     store.cancel.store(false, Ordering::Relaxed);
     *store.running.lock().unwrap_or_else(|p| p.into_inner()) = Some(job.id.clone());
     let _running = RunningGuard(store);
@@ -760,6 +853,13 @@ pub fn spawn(shared: &Arc<Shared>) {
     let Some(config) = &shared.config.engineering else {
         return;
     };
+    if let Err(error) = shared.engineering.available() {
+        let _ = shared.spool.append_sync(
+            "logs/engineering",
+            json!({"event":"scheduler_unavailable","error":error}),
+        );
+        return;
+    }
     let interval = Duration::from_secs(config.tick_secs);
     let shared = Arc::clone(shared);
     let _ = std::thread::Builder::new()
@@ -772,6 +872,11 @@ pub fn spawn(shared: &Arc<Shared>) {
                         "logs/engineering",
                         json!({"event":"scheduler_error","error":error}),
                     );
+                    if shared.engineering.available().is_err() {
+                        // Persistence/ownership quarantine is sticky. Keep HTTP
+                        // observable without spinning or flooding the journal.
+                        break;
+                    }
                 }
                 std::thread::sleep(interval);
             }

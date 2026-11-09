@@ -220,3 +220,41 @@ VmHWMと経過時間はこのコンテナの単回比較で、一般的な性能
 ### 時間計測の継続
 
 rootのGitHub tree作成待機と環境更新を挟み、最後の担当clippyログは23:10:55 UTC、root再開は04:32:26 UTCだった。実作業のない空白は加算しない。実測累計1.133847時間から次セッションを続ける。process変更の公開commitは `233f026f91ec388ad024687b08433bd5918d1d7a`、local/remote tree一致を確認。
+
+### 初版の全CIと保存
+
+公開commit `001370fd2220e0f8e4107ce685b784a7588c5842`。local/remoteのtree一致を確認。
+
+- `bash scripts/ci-local.sh`（CARGO_INCREMENTAL=0、build jobs4、offline）: FAIL exit101。fmt PASS、clippy途中で終了。保持ログに直接の診断がなく、変更由来の失敗か環境要因かはこの結果だけでは未確定。後段build/testはSKIP。
+- 方法を変え、build jobs1で `cargo clippy -p kamimusuhi-resident --all-targets --all-features -- -D warnings` を実行: PASS exit0（14.44s）。対象crateは通過、全workspaceの成功とは扱わない。
+
+## Cycle 8 — 一つの保存領域の所有とcheckpoint意味検査（着手前）
+
+本当の目的: 同じ目標を二つのresidentが実行したり、破損した完了証拠から継続したりしないようにする。
+前提と確かめ方: 現在は同SharedのMutexだけで別process排他がない。loadはpendingを即回復するため、tick前のlockでは遅い。Ready/receiptの意味検査もまだない。
+一番安い確認方法: 専用File::try_lockをload前から保持し、2daemonの明示拒否・所有者kill後の再取得と、整形式だが意味の壊れたJSON原本の無変更をfixtureで確認する。
+
+既存runtimeのidentity/idle-cognitionにも同じlock方式があり、Rust1.92のAPIを型検査。overlayfs上の実子processでbusyとSIGKILL後の取得を確認した。atomic置換するcheckpoint自体をlockせず、削除しない専用engineering.lockを保持する。現在の別process unknown-outcome方針は維持。
+
+担当: lease.rsはharness_audit、semantic/回復unit fixtureはresearch_harness、実daemon Active再起動/lease fixtureはrustxng_contract。rootがloadと意味検査を統合する。
+
+### Cycle 8 の結果
+
+専用engineering.lockのFileをload前からstoreの生涯保持。checkpoint自体をlockせず、取得失敗時はpendingの回復にも触れない。OSleaseで保護する範囲はengineeringで、resident全体のboot_epoch/他store起動排他ではない。ロード前の全job意味検査、保存前の意味検査、quarantine時のscheduler停止を追加。正当な日本語メモの切り詰めもellipsis込みbyte枠へ修正。
+
+| 同じfixture | 修正前 | 修正後 |
+|---|---|---|
+| checkpoint正常系2群 | 2 PASS | 2 PASS |
+| checkpoint不整合拒否5群 | 5 FAIL | 5 PASS |
+| 長い日本語Finish要約→結果保存 | FAIL（実check成功後に保存拒否） | PASS（Ready/receipt/4096bytes以下を保持） |
+| 長い日本語resume note | 前段FAILにより未到達 | PASS（2048bytes以下、再読込で保持） |
+
+意味検査の修正前は各負例群の先頭で停止したため、28変種全てを実行したとは扱わない。修正後は28変種を拒否し、原本bytes/候補/元checkoutを保持、追加model/command0。
+
+- `cargo test --offline -p kamimusuhi-resident --lib engineering:: --no-fail-fast`: PASS 31/31（unit20、workspace8、lease3）。
+- 実daemon E2E: PASS 2/2。新caseはAの3回目の推論をchannel barrierで保留し、同rootのBが明示busyでcreate/pause/resume各400、checkpoint不変、推論0。Aをkill/wait後、Bを生かしたままCがleaseを取得し、同じ未コミット成果からReadyへ進んだ。
+- 新caseの実測: 推論POST5（A3/B0/C2）、durable decisions/actions4/4、実Write1、実検証1、context actions `[0,1,2,2,3]`。中断RPCはaction claim前なのでdurable decisionに数えない。
+- leaseのprimitive試験はLinux overlayfs。NFS/SMBや複数ホストのfencingは未保証。
+- 最後にrootがfmt・resident全target/allfeature clippy・実HTTP試験を順に確認し、最終終了コードを記録する。
+
+Cycle8最終確認: `cargo fmt --all -- --check` PASS、`cargo clippy --offline -p kamimusuhi-resident --all-targets --all-features -- -D warnings` PASS、`cargo test --offline -p kamimusuhi-resident --test engineering_http` PASS 2/2。いずれもexit0、CARGO_BUILD_JOBS=1/CARGO_INCREMENTAL=0。コミット: `fix(engineering): 永続状態の所有と再開の整合性を守る`。

@@ -231,9 +231,14 @@ impl Shared {
                 config.paths.current_state().join("commitments.json"),
                 config.commitments.clone(),
             ),
-            engineering: crate::engineering::Engineering::load(
-                config.paths.current_state().join("engineering.json"),
-            ),
+            engineering: if config.engineering.is_some() {
+                crate::engineering::Engineering::load(
+                    config.paths.current_state().join("engineering.json"),
+                    config.paths.root.join("engineering-worktrees"),
+                )
+            } else {
+                crate::engineering::Engineering::disabled()
+            },
             intercom: crate::intercom::Intercom::load(
                 config.paths.current_state().join("intercom.json"),
                 config.intercom.clone(),

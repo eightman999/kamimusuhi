@@ -29,11 +29,58 @@
     "repairs_before": 0,
     "repairs_after": 1
   },
-  "full_ci": "RUNNING",
+  "full_ci": "FAIL: exit101 during workspace clippy, no direct diagnostic retained; downstream gates skipped",
   "limitations": [
     "Model decisions are fixtures; no real provider credentials used.",
-    "First restart proof is after Ready; in-flight daemon restart is a next cycle.",
-    "Concurrency proof currently covers one Shared in one process; cross-process lease is next.",
-    "Checkpoint validation currently checks serialization; semantic invariants will be strengthened."
-  ]
+    "OS lease tested on Linux overlayfs; NFS/SMB and multi-host fencing unverified.",
+    "Pending command results remain uncertain after crash and pause without automatic replay.",
+    "Workspace command allowlist is not an OS sandbox."
+  ],
+  "resident_clippy_all_targets_all_features": "PASS with CARGO_BUILD_JOBS=1, CARGO_INCREMENTAL=0",
+  "cycle8": {
+    "engineering_tests": {
+      "passed": 31,
+      "failed": 0
+    },
+    "semantic_control_groups": {
+      "before_pass": 2,
+      "after_pass": 2
+    },
+    "semantic_negative_groups": {
+      "before_fail": 5,
+      "after_pass": 5,
+      "after_variants_rejected": 28,
+      "before_remaining_variants": "not reached after each first failure"
+    },
+    "oversized_japanese_note": {
+      "before": "FAIL after validator passed",
+      "after": "PASS; summary<=4096 bytes and next_step<=2048 bytes, reload preserved"
+    },
+    "daemon_tests": {
+      "passed": 2,
+      "failed": 0
+    },
+    "active_restart_and_lease": {
+      "model_posts": 5,
+      "posts_by_process": {
+        "A": 3,
+        "B": 0,
+        "C": 2
+      },
+      "durable_decisions": 4,
+      "durable_actions": 4,
+      "writes": 1,
+      "checks": 1,
+      "context_actions": [
+        0,
+        1,
+        2,
+        2,
+        3
+      ],
+      "contender_write_requests": "400; checkpoint bytes unchanged",
+      "candidate_preserved": true
+    },
+    "scope": "cooperative local OS file lock; not a whole-resident root lease or distributed fencing"
+  }
 }

@@ -107,6 +107,20 @@ HTTP は `GET /v1/engineering` と `POST /v1/engineering` です。
 再起動した場合は `paused` にして、結果不明の副作用を自動で再実行しません。
 実行先を確認した後に `resume` できます。
 
+読み込みより前に、専用の `current_state/engineering.lock` を OS の排他ロックで
+取得し、store の生存中は保持します。このファイルは削除・置換しません。同じ root
+の後続 resident は engineering の load / create / pause / resume / 実行を拒否し、
+HTTP の status.error から理由を確認できます。resident全体の起動排他ではなく、
+engineering の状態と実行の所有権です。所有プロセスの終了後は次の resident が
+取得できます。現在の実装は Unix 対象で、ネットワーク filesystem の分散ロックは
+検証していません。
+
+JSON を読めることに加え、全 job の ID、候補のパスとブランチ、pending cursor、
+計測値、Ready の検証証拠を回復前に検査します。一部だけ回復してから不整合に
+気づく順序にはしません。不整合や保存失敗はその store を隔離し、scheduler を
+停止します。HTTP は状態を表示できます。候補や破損した原本は自動削除しません。
+
+
 作業メモはモデル自身の未検証なメモとして扱います。ファイル内容やコマンド出力も
 データとして渡し、そこから workspace・検証設定・実行権限を変更しません。
 長期タスクでは直近の観測を間引きますが、目標、次の作業、候補の識別子、検証の
@@ -118,7 +132,9 @@ HTTP は `GET /v1/engineering` と `POST /v1/engineering` です。
 実 worktree、実コマンド、ディスクへの保存・再読込を使います。成功を申告した
 モデルでも検証が失敗すれば `ready` にならず、修正後の再検証で初めて到達することを
 確認します。同時 tick の重複実行、再開、保存失敗、元の未コミット成果の保持も
-対象です。外部モデルのコーディング能力や、本番環境の動作を測る試験ではありません。
+対象です。実daemonの試験では、完了後の再起動に加え、Active の推論中断、
+同rootの別residentによる操作拒否、所有者終了後の再取得と未コミット成果の継続を
+確認します。外部モデルのコーディング能力や、本番環境の動作を測る試験ではありません。
 
 実装は `crates/kamimusuhi-resident/src/engineering.rs` と
 `engineering/workspace.rs`、制御の fixture は `engineering/tests.rs` にあります。

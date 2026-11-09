@@ -188,9 +188,30 @@ fn count(path: &Path) -> usize {
     }
 }
 
-fn restart(fixture: &Fixture) -> Shared {
-    let spool = Spool::new(fixture.dir.path().join("spool"), "test").unwrap();
-    Shared::new(fixture.shared.config.clone(), spool, 2, None)
+fn restart(fixture: Fixture) -> Fixture {
+    let Fixture {
+        dir,
+        shared,
+        workspace,
+        validation_count,
+        command_count,
+        command_script,
+    } = fixture;
+    let config = shared.config.clone();
+    let boot_epoch = shared.boot_epoch + 1;
+    // A restarted resident must acquire its own lease only after the old
+    // instance has dropped every store and file handle for this root.
+    drop(shared);
+    let spool = Spool::new(dir.path().join("spool"), "test").unwrap();
+    let shared = Shared::new(config, spool, boot_epoch, None);
+    Fixture {
+        dir,
+        shared,
+        workspace,
+        validation_count,
+        command_count,
+        command_script,
+    }
 }
 
 fn set_pending(fixture: &Fixture, id: &str, pending: Action) {
@@ -208,8 +229,118 @@ fn set_pending(fixture: &Fixture, id: &str, pending: Action) {
         .find(|entry| entry["id"] == id)
         .unwrap();
     saved["phase"] = json!("active");
-    saved["pending"] = json!({"sequence": 99, "action": pending, "started_at": 1});
+    let sequence = saved["metrics"]["actions"].as_u64().unwrap() + 1;
+    saved["metrics"]["decisions"] = json!(
+        saved["metrics"]["decisions"]
+            .as_u64()
+            .unwrap()
+            .max(sequence)
+    );
+    saved["pending"] = json!({"sequence": sequence, "action": pending, "started_at": 1});
     std::fs::write(path, serde_json::to_vec_pretty(&persisted).unwrap()).unwrap();
+}
+
+fn checkpoint_path(fixture: &Fixture) -> PathBuf {
+    fixture
+        .shared
+        .config
+        .paths
+        .current_state()
+        .join("engineering.json")
+}
+
+fn checkpoint(fixture: &Fixture) -> Value {
+    serde_json::from_slice(&std::fs::read(checkpoint_path(fixture)).unwrap()).unwrap()
+}
+
+fn write_checkpoint(fixture: &Fixture, snapshot: &Value) -> Vec<u8> {
+    let mut bytes = serde_json::to_vec_pretty(snapshot).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(checkpoint_path(fixture), &bytes).unwrap();
+    bytes
+}
+
+fn ready_fixture() -> (Fixture, String) {
+    let fixture = fixture();
+    let id = create(&fixture.shared);
+    prepare(&fixture.shared, &id);
+    let model = ScriptedModel::new([fix(), finish()]);
+    action(&fixture.shared, &model);
+    action(&fixture.shared, &model);
+    model.assert_consumed();
+    assert_eq!(job(&fixture.shared, &id)["phase"], "ready");
+    (fixture, id)
+}
+
+fn assert_snapshot_quarantined(fixture: Fixture, snapshot: Value, case: &str) {
+    let jobs = fixture.shared.engineering.list();
+    let original_id = jobs[0].id.clone();
+    let original_head = git(&fixture.workspace, &["rev-parse", "HEAD"]);
+    let candidates: Vec<_> = jobs
+        .iter()
+        .filter(|job| job.candidate.path.exists())
+        .map(|job| {
+            let path = job.candidate.path.clone();
+            let head = git(&path, &["rev-parse", "HEAD"]);
+            let content = std::fs::read(path.join("code.txt")).unwrap();
+            std::fs::write(path.join("preserved-untracked.txt"), "keep this draft\n").unwrap();
+            (path, head, content)
+        })
+        .collect();
+    let validations = count(&fixture.validation_count);
+    let commands = count(&fixture.command_count);
+    let path = checkpoint_path(&fixture);
+    let original_bytes = write_checkpoint(&fixture, &snapshot);
+    let fixture = restart(fixture);
+
+    // This assertion precedes every API call. Recovery must not normalize or
+    // partly repair a snapshot before all of its jobs have been validated.
+    assert!(
+        std::fs::read(&path).unwrap() == original_bytes,
+        "{case}: load rewrote the rejected snapshot"
+    );
+    assert!(
+        !fixture.shared.engineering.summary()["error"].is_null(),
+        "{case}: inconsistent snapshot was accepted"
+    );
+    let model = ScriptedModel::new([]);
+    assert!(
+        tick_with(&fixture.shared, &model).is_err(),
+        "{case}: tick was accepted"
+    );
+    assert_eq!(model.calls(), 0, "{case}: quarantine called the model");
+    for request in [
+        json!({"action":"create","workspace":"fixture","objective":"must be rejected"}),
+        json!({"action":"pause","id":original_id}),
+        json!({"action":"resume","id":original_id}),
+    ] {
+        let (_, response) = handle(&fixture.shared, &request);
+        assert_eq!(response["ok"], false, "{case}: {response}");
+    }
+    assert!(
+        std::fs::read(&path).unwrap() == original_bytes,
+        "{case}: API rewrote the snapshot"
+    );
+    assert_eq!(count(&fixture.validation_count), validations, "{case}");
+    assert_eq!(count(&fixture.command_count), commands, "{case}");
+    assert_eq!(
+        git(&fixture.workspace, &["rev-parse", "HEAD"]),
+        original_head,
+        "{case}"
+    );
+    for (path, head, content) in candidates {
+        assert_eq!(git(&path, &["rev-parse", "HEAD"]), head, "{case}");
+        assert_eq!(
+            std::fs::read(path.join("code.txt")).unwrap(),
+            content,
+            "{case}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(path.join("preserved-untracked.txt")).unwrap(),
+            "keep this draft\n",
+            "{case}"
+        );
+    }
 }
 
 fn fix() -> Action {
@@ -387,8 +518,8 @@ fn pause_reload_and_resume_keep_the_same_candidate_and_uncommitted_artifacts() {
 
     // This is a durable-state reload test, not a claim of killing a resident
     // process. No model or command is running while Shared is recreated.
-    let restarted = restart(&fixture);
-    let restored = job(&restarted, &id);
+    let fixture = restart(fixture);
+    let restored = job(&fixture.shared, &id);
     assert_eq!(restored["phase"], "paused");
     assert_eq!(restored["candidate"], original["candidate"]);
     assert_eq!(git(&path, &["rev-parse", "HEAD"]), original_head);
@@ -404,11 +535,11 @@ fn pause_reload_and_resume_keep_the_same_candidate_and_uncommitted_artifacts() {
         restored["checkpoint"]["next_step"],
         "Verify the candidate without discarding the draft"
     );
-    let (_, resumed) = handle(&restarted, &json!({"action": "resume", "id": id}));
+    let (_, resumed) = handle(&fixture.shared, &json!({"action": "resume", "id": id}));
     assert_eq!(resumed["ok"], true, "{resumed}");
     let resumed_model = ScriptedModel::new([finish()]);
-    action(&restarted, &resumed_model);
-    assert_eq!(job(&restarted, &id)["phase"], "ready");
+    action(&fixture.shared, &resumed_model);
+    assert_eq!(job(&fixture.shared, &id)["phase"], "ready");
     assert_eq!(count(&fixture.validation_count), 1);
     assert_eq!(
         std::fs::read_to_string(fixture.workspace.join("notes.txt")).unwrap(),
@@ -448,8 +579,8 @@ fn loading_uncertain_effects_pauses_without_replaying_run_verify_or_finish() {
         // Model a persisted intent whose completion receipt was lost. This
         // deliberately tests load/recovery, not operating-system crash timing.
         set_pending(&fixture, &id, pending);
-        let restarted = restart(&fixture);
-        let restored = job(&restarted, &id);
+        let fixture = restart(fixture);
+        let restored = job(&fixture.shared, &id);
         assert_eq!(restored["phase"], "paused", "{pending_kind}: {restored}");
         assert_eq!(restored["candidate"], original_candidate);
         assert!(restored["pending"].is_null());
@@ -462,14 +593,14 @@ fn loading_uncertain_effects_pauses_without_replaying_run_verify_or_finish() {
             summary: "An interrupted effect requires a fresh decision".to_owned(),
             next_step: "Inspect the candidate before choosing another operation".to_owned(),
         }]);
-        assert!(tick_with(&restarted, &model).unwrap().is_none());
+        assert!(tick_with(&fixture.shared, &model).unwrap().is_none());
         assert_eq!(model.calls(), 0);
         assert_eq!(count(&fixture.command_count), 0);
         assert_eq!(count(&fixture.validation_count), 0);
 
-        let (_, reply) = handle(&restarted, &json!({"action": "resume", "id": id}));
+        let (_, reply) = handle(&fixture.shared, &json!({"action": "resume", "id": id}));
         assert_eq!(reply["ok"], true, "{reply}");
-        action(&restarted, &model);
+        action(&fixture.shared, &model);
         assert_eq!(model.calls(), 1);
         assert_eq!(count(&fixture.command_count), 0);
         assert_eq!(count(&fixture.validation_count), 0);
@@ -497,8 +628,8 @@ fn loading_an_interrupted_write_preserves_bytes_and_asks_for_a_fresh_decision() 
             expected: None,
         },
     );
-    let restarted = restart(&fixture);
-    let restored = job(&restarted, &id);
+    let fixture = restart(fixture);
+    let restored = job(&fixture.shared, &id);
     assert_eq!(restored["phase"], "active");
     assert!(restored["pending"].is_null());
     assert!(
@@ -509,7 +640,7 @@ fn loading_an_interrupted_write_preserves_bytes_and_asks_for_a_fresh_decision() 
     let model = ScriptedModel::new([Action::Read {
         path: "recovered.txt".to_owned(),
     }]);
-    action(&restarted, &model);
+    action(&fixture.shared, &model);
     assert_eq!(model.calls(), 1);
     assert_eq!(
         std::fs::read_to_string(path.join("recovered.txt")).unwrap(),
@@ -659,12 +790,12 @@ fn repeated_create_request_has_one_durable_job_and_one_candidate() {
     let id = first["job"]["id"].as_str().unwrap();
     prepare(&fixture.shared, id);
     let first_candidate = job(&fixture.shared, id)["candidate"].clone();
-    let restarted = restart(&fixture);
-    let (status, duplicate) = handle(&restarted, &request);
+    let fixture = restart(fixture);
+    let (status, duplicate) = handle(&fixture.shared, &request);
     assert!((200..300).contains(&status), "{duplicate}");
     assert_eq!(duplicate["job"]["id"], id);
     assert_eq!(duplicate["job"]["candidate"], first_candidate);
-    let (_, listed) = handle(&restarted, &json!({"action": "list"}));
+    let (_, listed) = handle(&fixture.shared, &json!({"action": "list"}));
     assert_eq!(listed["jobs"].as_array().unwrap().len(), 1);
 }
 
@@ -753,8 +884,8 @@ fn a_lost_command_receipt_is_quarantined_and_not_replayed_after_reload() {
     // really ran; only its outcome receipt could not be saved.
     std::fs::remove_dir(&checkpoint).unwrap();
     std::fs::rename(&last_durable, &checkpoint).unwrap();
-    let restarted = restart(&fixture);
-    let restored = job(&restarted, &id);
+    let fixture = restart(fixture);
+    let restored = job(&fixture.shared, &id);
     assert_eq!(restored["phase"], "paused");
     assert_eq!(restored["metrics"]["interruptions"], 1);
     assert!(restored["pending"].is_null());
@@ -764,11 +895,11 @@ fn a_lost_command_receipt_is_quarantined_and_not_replayed_after_reload() {
             .contains("outcome_unknown")
     );
     let no_replay = ScriptedModel::new([]);
-    assert!(tick_with(&restarted, &no_replay).unwrap().is_none());
+    assert!(tick_with(&fixture.shared, &no_replay).unwrap().is_none());
     assert_eq!(no_replay.calls(), 0);
     assert_eq!(count(&fixture.command_count), 1);
     assert_eq!(
-        std::fs::read_to_string(candidate(&restarted, &id).join("result.txt")).unwrap(),
+        std::fs::read_to_string(candidate(&fixture.shared, &id).join("result.txt")).unwrap(),
         "command result\n"
     );
 }
@@ -788,20 +919,347 @@ fn a_corrupt_checkpoint_is_quarantined_and_never_replaced_with_an_empty_store() 
         .join("engineering.json");
     let corrupt = b"{\"schema_version\":1,\"jobs\":[";
     std::fs::write(&path, corrupt).unwrap();
-    let restarted = restart(&fixture);
+    let fixture = restart(fixture);
     let (_, reply) = handle(
-        &restarted,
+        &fixture.shared,
         &json!({"action": "create", "workspace": "fixture", "objective": "new work"}),
     );
     assert_eq!(reply["ok"], false, "{reply}");
     let model = ScriptedModel::new([]);
-    assert!(tick_with(&restarted, &model).is_err());
+    assert!(tick_with(&fixture.shared, &model).is_err());
     assert_eq!(model.calls(), 0);
     assert_eq!(std::fs::read(&path).unwrap(), corrupt);
     assert_eq!(
         std::fs::read_to_string(candidate_path.join("preserved.txt")).unwrap(),
         "unsaved result\n"
     );
-    let (_, status) = handle(&restarted, &json!({"action": "list"}));
+    let (_, status) = handle(&fixture.shared, &json!({"action": "list"}));
     assert!(!status["status"]["error"].is_null());
+}
+
+#[test]
+fn semantic_checkpoint_rejects_ready_without_consistent_verification_evidence() {
+    for case in [
+        "missing_validation",
+        "failed_validation",
+        "empty_checks",
+        "failed_check",
+        "nonzero_exit",
+        "invalid_head",
+        "no_verification",
+        "pending_repair",
+    ] {
+        let (fixture, _) = ready_fixture();
+        let mut snapshot = checkpoint(&fixture);
+        let saved = &mut snapshot["jobs"][0];
+        match case {
+            "missing_validation" => saved["validation"] = Value::Null,
+            "failed_validation" => saved["validation"]["passed"] = json!(false),
+            "empty_checks" => saved["validation"]["checks"] = json!([]),
+            "failed_check" => saved["validation"]["checks"][0]["passed"] = json!(false),
+            "nonzero_exit" => saved["validation"]["checks"][0]["exit_code"] = json!(1),
+            "invalid_head" => saved["validation"]["head"] = json!("claimed-success"),
+            "no_verification" => saved["metrics"]["verification_runs"] = json!(0),
+            "pending_repair" => saved["repair_pending"] = json!(true),
+            _ => unreachable!(),
+        }
+        assert_snapshot_quarantined(fixture, snapshot, case);
+    }
+}
+
+#[test]
+fn semantic_checkpoint_rejects_duplicate_job_ids_and_request_ids() {
+    for case in ["duplicate_job_id", "duplicate_request_id"] {
+        let fixture = fixture();
+        let first = create(&fixture.shared);
+        prepare(&fixture.shared, &first);
+        let second = create(&fixture.shared);
+        assert_ne!(first, second);
+        let mut snapshot = checkpoint(&fixture);
+        if case == "duplicate_job_id" {
+            snapshot["jobs"][1] = snapshot["jobs"][0].clone();
+        } else {
+            for saved in snapshot["jobs"].as_array_mut().unwrap() {
+                saved["request_id"] = json!("duplicated-request");
+            }
+        }
+        assert_snapshot_quarantined(fixture, snapshot, case);
+    }
+}
+
+#[test]
+fn semantic_checkpoint_rejects_inconsistent_pending_sequences_and_metrics() {
+    for case in [
+        "past_sequence",
+        "future_sequence",
+        "overflowing_sequence",
+        "missing_decision",
+        "pending_preparing",
+        "pending_ready",
+        "actions_without_decisions",
+        "checks_without_actions",
+        "failures_without_checks",
+    ] {
+        let (fixture, id) = if case == "pending_ready" {
+            ready_fixture()
+        } else {
+            let fixture = fixture();
+            let id = create(&fixture.shared);
+            prepare(&fixture.shared, &id);
+            (fixture, id)
+        };
+        set_pending(
+            &fixture,
+            &id,
+            Action::Read {
+                path: "code.txt".to_owned(),
+            },
+        );
+        let mut snapshot = checkpoint(&fixture);
+        let saved = &mut snapshot["jobs"][0];
+        match case {
+            "past_sequence" => saved["pending"]["sequence"] = json!(0),
+            "future_sequence" => {
+                saved["pending"]["sequence"] = json!(2);
+                saved["metrics"]["decisions"] = json!(2);
+            }
+            "overflowing_sequence" => {
+                saved["metrics"]["actions"] = json!(u64::MAX);
+                saved["metrics"]["decisions"] = json!(u64::MAX);
+                saved["pending"]["sequence"] = json!(0);
+            }
+            "missing_decision" => saved["metrics"]["decisions"] = json!(0),
+            "pending_preparing" => saved["phase"] = json!("preparing"),
+            "pending_ready" => saved["phase"] = json!("ready"),
+            "actions_without_decisions" => {
+                saved["pending"] = Value::Null;
+                saved["metrics"]["actions"] = json!(2);
+            }
+            "checks_without_actions" => {
+                saved["pending"] = Value::Null;
+                saved["metrics"]["verification_runs"] = json!(1);
+            }
+            "failures_without_checks" => {
+                saved["pending"] = Value::Null;
+                saved["metrics"]["verification_failures"] = json!(1);
+            }
+            _ => unreachable!(),
+        }
+        assert_snapshot_quarantined(fixture, snapshot, case);
+    }
+}
+
+#[test]
+fn semantic_checkpoint_rejects_mismatched_candidate_identity_and_root() {
+    for case in [
+        "job_id",
+        "branch",
+        "leaf",
+        "workspace",
+        "root",
+        "relative",
+        "parent_reference",
+        "base_commit",
+    ] {
+        let fixture = fixture();
+        let id = create(&fixture.shared);
+        prepare(&fixture.shared, &id);
+        let mut snapshot = checkpoint(&fixture);
+        let saved = &mut snapshot["jobs"][0];
+        let candidate_path = PathBuf::from(saved["candidate"]["path"].as_str().unwrap());
+        match case {
+            "job_id" => saved["id"] = json!("eng-different-id"),
+            "branch" => {
+                saved["candidate"]["branch"] = json!("kamimusuhi/engineering/eng-different-id")
+            }
+            "leaf" => {
+                saved["candidate"]["path"] =
+                    json!(candidate_path.with_file_name("eng-different-id"))
+            }
+            "workspace" => saved["workspace"] = json!("different-workspace"),
+            "root" => {
+                saved["candidate"]["path"] = json!(
+                    fixture
+                        .dir
+                        .path()
+                        .join("other-root")
+                        .join("fixture")
+                        .join(&id)
+                )
+            }
+            "relative" => saved["candidate"]["path"] = json!(Path::new("fixture").join(&id)),
+            "parent_reference" => {
+                saved["candidate"]["path"] = json!(
+                    candidate_path
+                        .parent()
+                        .unwrap()
+                        .join("..")
+                        .join("fixture")
+                        .join(&id)
+                )
+            }
+            "base_commit" => saved["candidate"]["base_commit"] = json!("not-a-commit"),
+            _ => unreachable!(),
+        }
+        assert_snapshot_quarantined(fixture, snapshot, case);
+    }
+}
+
+#[test]
+fn semantic_checkpoint_validates_every_job_before_recovering_any_pending_action() {
+    let fixture = fixture();
+    let first = create(&fixture.shared);
+    prepare(&fixture.shared, &first);
+    let second = create(&fixture.shared);
+    assert_ne!(first, second);
+    set_pending(
+        &fixture,
+        &first,
+        Action::Run {
+            argv: vec![
+                "sh".to_owned(),
+                fixture.command_script.to_string_lossy().into_owned(),
+                fixture.command_count.to_string_lossy().into_owned(),
+            ],
+        },
+    );
+    let mut snapshot = checkpoint(&fixture);
+    snapshot["jobs"][1]["phase"] = json!("ready");
+    assert_snapshot_quarantined(fixture, snapshot, "valid pending followed by invalid Ready");
+}
+
+#[test]
+fn semantic_checkpoint_accepts_ready_and_multiple_absent_request_ids() {
+    let (fixture, ready) = ready_fixture();
+    let preparing = create(&fixture.shared);
+    assert_ne!(ready, preparing);
+    let mut snapshot = checkpoint(&fixture);
+    for saved in snapshot["jobs"].as_array_mut().unwrap() {
+        // Both fields have defaults for checkpoints written before their
+        // introduction; missing optional metadata is not a duplicate key.
+        let saved = saved.as_object_mut().unwrap();
+        saved.remove("request_id");
+        saved.remove("repair_pending");
+    }
+    let bytes = write_checkpoint(&fixture, &snapshot);
+    let fixture = restart(fixture);
+    assert!(fixture.shared.engineering.summary()["error"].is_null());
+    assert_eq!(fixture.shared.engineering.list().len(), 2);
+    let restored = job(&fixture.shared, &ready);
+    assert_eq!(restored["phase"], "ready");
+    assert_eq!(restored["validation"]["passed"], true);
+    assert_eq!(restored["repair_pending"], false);
+    assert!(restored["request_id"].is_null());
+    assert_eq!(job(&fixture.shared, &preparing)["phase"], "preparing");
+    assert_eq!(std::fs::read(checkpoint_path(&fixture)).unwrap(), bytes);
+    assert_eq!(count(&fixture.validation_count), 1);
+    assert_eq!(count(&fixture.command_count), 0);
+}
+
+#[test]
+fn semantic_checkpoint_accepts_valid_active_and_paused_pending_actions() {
+    for phase in ["active", "paused"] {
+        let fixture = fixture();
+        let id = create(&fixture.shared);
+        prepare(&fixture.shared, &id);
+        let original_candidate = job(&fixture.shared, &id)["candidate"].clone();
+        set_pending(
+            &fixture,
+            &id,
+            Action::Read {
+                path: "code.txt".to_owned(),
+            },
+        );
+        let mut snapshot = checkpoint(&fixture);
+        snapshot["jobs"][0]["phase"] = json!(phase);
+        write_checkpoint(&fixture, &snapshot);
+        let fixture = restart(fixture);
+        assert!(
+            fixture.shared.engineering.summary()["error"].is_null(),
+            "{phase}"
+        );
+        let restored = job(&fixture.shared, &id);
+        assert_eq!(restored["phase"], phase);
+        assert_eq!(restored["candidate"], original_candidate);
+        assert_eq!(restored["metrics"]["interruptions"], 1);
+        assert!(restored["pending"].is_null());
+        assert!(
+            restored["observations"]
+                .to_string()
+                .contains("outcome_unknown")
+        );
+        let model = ScriptedModel::new(if phase == "active" {
+            vec![Action::Read {
+                path: "code.txt".to_owned(),
+            }]
+        } else {
+            vec![]
+        });
+        let result = tick_with(&fixture.shared, &model).unwrap();
+        assert_eq!(result.is_some(), phase == "active");
+        assert_eq!(model.calls(), usize::from(phase == "active"));
+        model.assert_consumed();
+        assert_eq!(count(&fixture.validation_count), 0);
+        assert_eq!(count(&fixture.command_count), 0);
+    }
+}
+
+#[test]
+fn long_finish_and_resume_notes_fit_the_persisted_working_memory_limits() {
+    let fixture = fixture();
+    let id = create(&fixture.shared);
+    prepare(&fixture.shared, &id);
+    let summary = "修正した内容と実検証の結果。".repeat(200);
+    assert!(summary.len() > 4096);
+    let model = ScriptedModel::new([fix(), Action::Finish { summary }]);
+    action(&fixture.shared, &model);
+    let finished = tick_with(&fixture.shared, &model);
+    // The independent command must actually run before the receipt is
+    // committed; a long UTF-8 note must not strand its successful outcome.
+    assert_eq!(count(&fixture.validation_count), 1);
+    assert!(
+        finished.is_ok(),
+        "successful verification receipt was not saved: {finished:?}"
+    );
+    let completed = job(&fixture.shared, &id);
+    assert_eq!(completed["phase"], "ready");
+    assert_eq!(completed["validation"]["checks"][0]["exit_code"], 0);
+    assert_eq!(completed["validation"]["passed"], true);
+    assert_eq!(completed["metrics"]["actions"], 2);
+    let saved_summary = completed["checkpoint"]["summary"].as_str().unwrap();
+    assert!(saved_summary.starts_with("修正した内容"));
+    assert!(
+        saved_summary.len() <= 4096,
+        "summary exceeded its encoded byte budget"
+    );
+    assert_eq!(checkpoint(&fixture)["jobs"][0]["phase"], "ready");
+    model.assert_consumed();
+
+    let fixture = restart(fixture);
+    assert_eq!(job(&fixture.shared, &id)["phase"], "ready");
+    let note = "次に確認する観測と再開手順。".repeat(100);
+    assert!(note.len() > 2048);
+    let (_, resumed) = handle(
+        &fixture.shared,
+        &json!({"action":"resume","id":id,"note":note}),
+    );
+    assert_eq!(resumed["ok"], true, "{resumed}");
+    let saved_note = resumed["job"]["checkpoint"]["next_step"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(saved_note.starts_with("次に確認する"));
+    assert!(
+        saved_note.len() <= 2048,
+        "resume note exceeded its encoded byte budget"
+    );
+    let fixture = restart(fixture);
+    let restored = job(&fixture.shared, &id);
+    assert_eq!(restored["phase"], "active");
+    assert_eq!(restored["checkpoint"]["next_step"], saved_note);
+    assert_eq!(
+        count(&fixture.validation_count),
+        1,
+        "reload does not rerun verification"
+    );
 }

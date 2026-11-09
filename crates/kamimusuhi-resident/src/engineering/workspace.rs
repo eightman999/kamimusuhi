@@ -225,7 +225,7 @@ fn git(directory: &Path, args: &[&str]) -> Result<String, String> {
     git_with(directory, args, GIT_TIMEOUT, &AtomicBool::new(false))
 }
 
-fn future_path(path: &Path) -> Result<PathBuf, String> {
+pub(super) fn future_path(path: &Path) -> Result<PathBuf, String> {
     let mut missing = Vec::new();
     let mut existing = path.to_path_buf();
     while !existing.exists() {
@@ -860,7 +860,7 @@ pub fn verify(
     candidate_valid(policy, candidate)?;
     recover_write(candidate)?;
     let check_bytes = limits.output_bytes.saturating_sub(256) / policy.checks.len();
-    if check_bytes < 192 {
+    if check_bytes < 512 {
         return Err("output budget is too small for validation records".to_owned());
     }
     let deadline = Instant::now() + limits.validation_timeout;
