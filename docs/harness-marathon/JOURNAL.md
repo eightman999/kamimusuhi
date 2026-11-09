@@ -190,3 +190,33 @@ VmHWMと経過時間はこのコンテナの単回比較で、一般的な性能
 一番安い確認方法: 明示的な一時config・loopback fake model・一時gitだけでresident子processを起動し、失敗→修復→Readyとrequest数を測る。
 
 担当: tests/engineering_http.rsをrustxng_contractが所有。他の本番residentやrelayは使用しない。
+
+### Cycle 5 / 7 の結果 — native agent初版
+
+- native loop、durable cursor、working memory、準備/Active/Ready/Paused、CAS編集、実検証repair、既存router接続、HTTP/CLI/主推論からの起動入口を実装。外部coding CLIのtask planeは不要。
+- unit contract 12/12、workspace fixture 8/8、実resident+CLI+loopback model integration 1/1: PASS。スキーマと状態だけの試験に加え、git/worktree/check commandは実物で検証した。
+- 新設機能のため、未実装だった状態を成功率0として比較しない。次表は今回新しく通した制御契約の実測。
+
+| 実daemonでの指標 | 値 |
+|---|---:|
+| model HTTP POST | 5回 |
+| durable decisions/actions | 5/5 |
+| 実検証 | 2回（FAIL→PASS） |
+| 修正操作 | 1回 |
+| Ready後の実daemon再起動による追加model/検証 | 0/0 |
+| 元checkout HEAD/branch/fileの変更 | 0 |
+
+| 新実装内で発見した回帰 | 前 | 後 |
+|---|---:|---:|
+| failed verify→CAS拒否→正常修正のrepair計上 | 0 (FAIL) | 1 (PASS) |
+
+- 原子Writeは完成済み旧/new内容を保持し、候補外の小さいintent journalで所有tempを回収。temp作成後/new link確定後/rename後の3状態をfixtureで回収した（実process SIGKILL試験ではない）。
+- persist前の失敗はcommand0回。command後のpersist失敗はpendingを保持してquarantineし、reload後も重複実行0、成果を保持。
+- 実daemonはReady後に停止・再起動して同一候補とreceiptを確認。実行途中のprocess crashと複数resident排他は次cycle。
+- `CARGO_INCREMENTAL=0 cargo test -p kamimusuhi-resident --test engineering_http -- --nocapture`: PASS (7.59s)。対象clippyもPASS。増分archiveの環境エラーはincremental無効で解消し、cargo cleanは使わなかった。
+- `bash scripts/ci-local.sh` を全workspaceで実行中。fmtはPASS、最終結果は次の記録で確定する。全CI成功とはまだ記載しない。
+- 実装と設定方法は `docs/engineering-agent.md`。全体turn数の固定上限は無く、操作ごとの期限・出力枠・取消を残す。
+
+### 時間計測の継続
+
+rootのGitHub tree作成待機と環境更新を挟み、最後の担当clippyログは23:10:55 UTC、root再開は04:32:26 UTCだった。実作業のない空白は加算しない。実測累計1.133847時間から次セッションを続ける。process変更の公開commitは `233f026f91ec388ad024687b08433bd5918d1d7a`、local/remote tree一致を確認。

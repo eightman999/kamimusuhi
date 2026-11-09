@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "scope": "new native agent deterministic contract evaluation; not real model coding benchmark",
+  "unit_contracts": {
+    "passed": 12,
+    "failed": 0
+  },
+  "workspace_contracts": {
+    "passed": 8,
+    "failed": 0,
+    "atomic_write_recovery_states": 3
+  },
+  "daemon_http_contracts": {
+    "passed": 1,
+    "failed": 0,
+    "model_posts": 5,
+    "decisions": 5,
+    "actions": 5,
+    "validation_runs": 2,
+    "validation_failures": 1,
+    "repairs": 1,
+    "model_failures": 0,
+    "additional_model_posts_after_ready_restart": 0,
+    "additional_validations_after_ready_restart": 0,
+    "original_checkout_changes": 0
+  },
+  "internal_regression": {
+    "scenario": "failed validation then rejected CAS then successful edit",
+    "repairs_before": 0,
+    "repairs_after": 1
+  },
+  "full_ci": "RUNNING",
+  "limitations": [
+    "Model decisions are fixtures; no real provider credentials used.",
+    "First restart proof is after Ready; in-flight daemon restart is a next cycle.",
+    "Concurrency proof currently covers one Shared in one process; cross-process lease is next.",
+    "Checkpoint validation currently checks serialization; semantic invariants will be strengthened."
+  ]
+}

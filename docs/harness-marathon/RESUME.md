@@ -1,6 +1,12 @@
 # 再開手順と中断時の引継ぎ
 
-この記録は24時間完了のREPORTではない。ユーザーによるtool実行の中断を受けたcheckpoint。
+この記録は24時間完了のREPORTではない。実験ブランチの再開checkpoint。
+
+## 最新の目的と進捗（2026-11-09）
+
+ユーザーはskills/検索toolの拡張より、resident本体へのエンジニアハーネス実装を優先すると指定した。native agent初版を実装し、unit12件・workspace8件・実daemon HTTP1件を検証済み。`docs/engineering-agent.md` と `evaluation/harness/native-engineering-20261109.json` を参照。RustXNG/imozuru案は保留。
+
+次は全CIの終了を確認し、複数residentのOS lease、checkpointの意味検査、実行途中の再起動、大きなファイルの差分編集を進める。`STATE.json` の累計を引継ぐ。実作業のない停止時間は加算しない。
 
 ## 再開
 
@@ -21,7 +27,7 @@
 - fetch後もtree一致を確認する。local commitは `refs/harness-marathon/` に保持し、作業ファイル/indexを変更せずbranch refだけを同じtreeのremote commitへ同期する。
 - GitHub APIが作者/時刻を決めるため、localとremoteのcommit SHAは異なる。公開SHAを正本に記録する。鍵やtokenを抽出・新規保存しない。
 
-## 未統合の設計契約
+## 保留した検索・調査機能の設計契約
 
 ### web_search
 

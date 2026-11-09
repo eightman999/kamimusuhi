@@ -25,6 +25,8 @@ kamimusuhi agents [health | models [query] | refresh | status <task> | cancel <t
                    | stats | eval <workspace> <executor[:model]>… | eval-report <run>]
 kamimusuhi commit [list [--all] | show <id> | new <goal…> | note <id> <text…>
                    | resume <id> [answer…] | close <id> | abandon <id> [reason…] | metrics]
+kamimusuhi engineer [list | show <id> | start <workspace> <objective…>
+                     | pause <id> | resume <id> [note…]]
 kamimusuhi intercom [status | list [--all] | show <conv> | send <peer> <text…>
                    | open <peer> [turns] [text…] | close <conv> [text…] | retry [id]]
 kamimusuhi say <peer> <text…>   send a message to the sister individual on <peer>
@@ -138,6 +140,7 @@ fn serve(args: &Args) -> Result<(), String> {
     kamimusuhi_resident::jobs::spawn_all(&shared);
     kamimusuhi_resident::task_orchestrator::spawn(&shared);
     kamimusuhi_resident::commitments::spawn(&shared);
+    kamimusuhi_resident::engineering::spawn(&shared);
     kamimusuhi_resident::intercom::spawn(&shared);
     kamimusuhi_resident::delegation::spawn(&shared);
     kamimusuhi_resident::task_review::spawn(&shared);
@@ -297,6 +300,30 @@ fn run() -> Result<ExitCode, String> {
                 _ => return Err(USAGE.to_owned()),
             };
             let reply = client::agents(&url, token.as_deref(), &body)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&reply).unwrap_or_default()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        "engineer" => {
+            use kamimusuhi_resident::client;
+            let url = match &args.url {
+                Some(u) => u.clone(),
+                None if args.config.is_file() => local_url(&args.config)?,
+                None => client::discover(&client::candidates(None))?,
+            };
+            let t = |i: usize| args.text.get(i).cloned().unwrap_or_default();
+            let body = match args.text.first().map_or("list", String::as_str) {
+                "list" => json!({"action":"list"}),
+                "show" | "pause" => json!({"action":t(0),"id":t(1)}),
+                "start" => json!({"action":"create","workspace":t(1),
+                    "objective":args.text.get(2..).unwrap_or_default().join(" ")}),
+                "resume" => json!({"action":"resume","id":t(1),
+                    "note":args.text.get(2..).unwrap_or_default().join(" ")}),
+                _ => return Err(USAGE.to_owned()),
+            };
+            let reply = client::engineering(&url, token.as_deref(), &body)?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&reply).unwrap_or_default()

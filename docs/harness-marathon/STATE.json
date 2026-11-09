@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 1.010306,
+  "elapsed_hours": 1.213073,
   "target_hours": 24.0,
   "cycle": 7,
-  "current_task": "resident native engineering agent: 永続目標・モデル判断・隔離編集・実検証・repair・再開",
+  "current_task": "native engineering agent初版はunit/workspace/実daemon検証済み、全CI進行中",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": null,
-  "last_checkpoint_at": "2026-11-08T23:03:31Z",
-  "active_session_started_at": "2026-11-08T22:51:22Z",
-  "session_elapsed_base_hours": 0.807778,
+  "last_checkpoint_at": "2026-11-09T04:37:11Z",
+  "active_session_started_at": "2026-11-09T04:32:26Z",
+  "session_elapsed_base_hours": 1.133847,
   "status": "active",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
-  "next_task": "native engineering agentを実装しmock判断+実git/実processで評価",
+  "next_task": "全CI結果→複数resident排他とcheckpoint意味検査→途中再起動→大きなファイル編集",
   "completed_sessions": [
     {
       "started_at": "2026-11-08T16:06:48Z",
@@ -26,6 +26,12 @@
       "ended_at": "2026-11-08T22:41:06Z",
       "elapsed_hours": 0.177628,
       "end_evidence": "中断後のcheckpoint保存までの実作業"
+    },
+    {
+      "started_at": "2026-11-08T22:51:22Z",
+      "ended_at": "2026-11-08T23:10:55Z",
+      "elapsed_hours": 0.326069,
+      "end_evidence": "native engineering HTTP test clippy log mtime"
     }
   ],
   "excluded_idle_interval": {
@@ -37,16 +43,24 @@
     0,
     1,
     4,
-    6
+    5,
+    6,
+    7
   ],
   "incomplete_cycles": [
     2,
-    3,
-    5,
-    7
+    3
   ],
-  "last_verified_change_commit": "9049783f0cd05d53cedcd8f297c67d73c14dfb2a",
+  "last_verified_change_commit": "233f026f91ec388ad024687b08433bd5918d1d7a",
   "resume_guide": "docs/harness-marathon/RESUME.md",
   "evaluation": "evaluation/harness/marathon-20261109.json",
-  "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。"
+  "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。",
+  "excluded_idle_intervals": [
+    {
+      "from": "2026-11-08T23:10:55Z",
+      "to": "2026-11-09T04:32:26Z",
+      "reason": "tool待機/環境更新の後、実作業ログがない空白。24時間へ加算しない"
+    }
+  ],
+  "engineering_evaluation": "evaluation/harness/native-engineering-20261109.json"
 }

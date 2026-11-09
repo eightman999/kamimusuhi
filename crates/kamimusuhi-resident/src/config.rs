@@ -87,6 +87,10 @@ pub struct Config {
     /// Code self-improvement policy; absent disables autonomous application.
     #[serde(default)]
     pub self_improvement: Option<SelfImprovementConfig>,
+    /// Native resident engineering agent. No external coding CLI is required.
+    /// Absence leaves the scheduler and its workspace actions disabled.
+    #[serde(default)]
+    pub engineering: Option<crate::engineering::EngineeringConfig>,
     /// Typed node-task delegation (`POST /task`): queueing, retries and
     /// deadlines for work this node hands to a peer — and for work peers
     /// hand to this node (see delegation.rs).
@@ -1126,6 +1130,9 @@ impl Config {
         }
         if !self.paths.root.is_absolute() {
             return Err("paths.root must be absolute".to_owned());
+        }
+        if let Some(engineering) = &self.engineering {
+            engineering.validate()?;
         }
         if let Some(cognition) = &self.cognition {
             cognition.validate()?;

@@ -154,6 +154,8 @@ pub struct Shared {
     pub task_plane: Option<std::sync::Arc<crate::task_orchestrator::TaskPlane>>,
     /// The commitment engine: durable goals pursued across restarts.
     pub commitments: crate::commitments::Commitments,
+    /// Native development goals, action cursors and verified candidates.
+    pub engineering: crate::engineering::Engineering,
     /// Sister-to-sister messaging between this node's individual and the
     /// individuals hosted on peer nodes.
     pub intercom: crate::intercom::Intercom,
@@ -228,6 +230,9 @@ impl Shared {
             commitments: crate::commitments::Commitments::load(
                 config.paths.current_state().join("commitments.json"),
                 config.commitments.clone(),
+            ),
+            engineering: crate::engineering::Engineering::load(
+                config.paths.current_state().join("engineering.json"),
             ),
             intercom: crate::intercom::Intercom::load(
                 config.paths.current_state().join("intercom.json"),
@@ -505,6 +510,7 @@ impl Shared {
             "jobs": read(&*self.jobs),
             "task_plane": self.task_plane.as_ref().map(|p| p.status()),
             "commitments": self.commitments.summary(),
+            "engineering": self.engineering.summary(),
             "intercom": self.intercom.summary(),
             "approvals_pending": self.approvals.list(true).iter().map(|a| a.view()).collect::<Vec<_>>(),
             "generated_at": iso8601(unix_now()),

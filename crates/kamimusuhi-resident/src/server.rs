@@ -378,6 +378,15 @@ fn handle(shared: &Shared, stream: TcpStream) {
                 crate::commitments::handle(shared, &json!({"action": "list"}), "operator");
             json_response(stream, status, &reply, &[]);
         }
+        ("GET", "/v1/engineering") => {
+            let (status, reply) = crate::engineering::handle(shared, &json!({"action": "list"}));
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/engineering") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            let (status, reply) = crate::engineering::handle(shared, &body);
+            json_response(stream, status, &reply, &[]);
+        }
         ("POST", "/v1/commitments") => {
             let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
             let (status, reply) = crate::commitments::handle(shared, &body, "operator");

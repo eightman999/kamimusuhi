@@ -2,22 +2,22 @@
 
 ## 次にやること
 
-resident本体へnative engineering agentを実装する。目標・隔離worktree・action checkpoint・既存routerの判断・実検証・repair・再開を統合し、外部CLI無しの決定的fixtureで評価する。最新ユーザー指示によりskills/RustXNG/imozuru拡張は保留。
+全CIログ `native-agent-ci-20261109.log` の終了確認。native agent初版のunit12/workspace8/実daemon1がPASS済み。次に同paths.rootの複数residentをOS leaseで排他し、意味の壊れたcheckpointを拒否する。途中再起動と大きなファイルの読み取り/差分編集も実装する。skills/RustXNG/imozuru拡張は保留。
 
 ## 現在の最優先（2026-11-09更新）
 
 | 優先 | 項目 | 完了条件 |
 |---|---|---|
-| P0 | native engineering agent loop | 主推論→編集→検証→repairが実worktreeで閉じる |
-| P0 | durable checkpointと再開 | 完了actionをreplayせず未知outcomeを明示して成果保持 |
-| P0 | 実検証によるReady gate | modelの成功申告だけでReadyにならず同一HEADを検証 |
+| P0 | 複数residentからの排他 | OS leaseで同一checkpointの二重dispatch/書込を防ぐ |
+| P0 | checkpointの意味検査 | Ready/receipt/sequence/idの不整合を拒否して原本保持 |
+| P0 | 大きなsourceの差分編集 | 読取range/一意substring replacementで全文CASの限界を解消 |
 | P0 | process期限/cancel/出力回収 | flood fixtureで期限と出力量を確認 |
 | P1 | 短い作業記憶と復元 | objective/制約/次step/検証失敗を保持して長期継続 |
 | P1 | HTTP/CLI/主推論からの起動 | resident実入口からcreate/status/pause/resumeを実行 |
 | P1 | 自律loopのtraceと評価 | 決定的成功率/repair/再開重複/action数を記録 |
 | P1 | process再起動試験 | 状態再読込だけでなく実resident子processを再起動 |
 
-## 優先順位
+## 後続候補（検索・skill統合は保留）
 
 効果×確度÷コストで選ぶ。未着手を常に5件以上残し、完了項目はJOURNALへ移す。
 

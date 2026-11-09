@@ -245,6 +245,9 @@ pub fn list_with(shared: &Shared, local_only: bool) -> Value {
     if shared.config.commitments.enabled {
         tools.extend(crate::commitments::definitions());
     }
+    if shared.config.engineering.is_some() {
+        tools.extend(crate::engineering::definitions());
+    }
     if shared.config.intercom.enabled {
         tools.extend(crate::intercom::definitions());
     }
@@ -445,6 +448,14 @@ fn task_plane_tool(
 /// them, not twice.
 pub fn call(shared: &Shared, request: &Value, turn: Option<&str>) -> (u16, Value) {
     let name = request["name"].as_str().unwrap_or("");
+    if name == "engineering" {
+        let (status, reply) = crate::engineering::handle(shared, &request["arguments"]);
+        return if (200..300).contains(&status) {
+            (200, json!({"ok":true,"result":reply}))
+        } else {
+            (200, json!({"ok":false,"error":reply["error"]}))
+        };
+    }
     if name == "self_improve" || crate::task_orchestrator::TOOL_NAMES.contains(&name) {
         return task_plane_tool(shared, name, request, turn);
     }

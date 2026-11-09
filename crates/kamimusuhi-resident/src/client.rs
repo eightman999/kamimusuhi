@@ -296,6 +296,26 @@ pub fn library(url: &str, token: Option<&str>, body: &Value) -> Result<Value, St
     }
 }
 
+/// `POST /v1/engineering` (native resident engineering agent).
+pub fn engineering(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/v1/engineering")?;
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        Duration::from_secs(60),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value =
+        serde_json::from_str(&response.body).map_err(|_| "invalid engineering response")?;
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
+}
+
 /// `POST /v1/commitments` (commitment engine).
 pub fn commitments(url: &str, token: Option<&str>, body: &Value) -> Result<Value, String> {
     let endpoint = Endpoint::parse(url, "/v1/commitments")?;

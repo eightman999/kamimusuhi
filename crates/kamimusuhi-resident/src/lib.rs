@@ -22,6 +22,7 @@ pub mod curl_tool;
 pub mod delegation;
 pub mod dialogue;
 pub mod dialogue_host;
+pub mod engineering;
 pub mod git_tool;
 pub mod identity;
 pub mod intercom;
