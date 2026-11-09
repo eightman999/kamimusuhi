@@ -135,3 +135,58 @@
 - 最終 `cargo fmt --all -- --check` と `git diff --check`: PASS。
 - 計測値と実行済み/未実行の区別を `evaluation/harness/marathon-20261109.json` に保存した。
 - 最後のcheckpoint commitにはBLOCKED/RESUME/map/logとRustXNG設定overlayを含める。取得原文・raw応答・長い引用は含めない。
+
+## 再開と目的の更新 — 2026-11-09 07:51 JST
+
+- 最新 `741f2d0` とSTATE/JOURNAL/BACKLOG/BLOCKED/log20を確認。未追跡の既存成果物は保持。累計0.807778時間から再開し、中断時間は加算しない。
+- ユーザーがskills/検索tool改良ではなく、resident自身のエンジニアハーネスを要求。RustXNG/imozuru統合は保留し、主推論→編集→実検証→修復→再開を優先する。個々の処理の期限・取消・明示workspaceは維持し、仕事全体の固定試行回数で終了しない方式を検討する。
+
+## Cycle 5 — residentのnative engineering agent（着手前）
+
+本当の目的: 外部coding CLIを必須にせず、residentが開発目標を保持して自ら判断・実装・検証・修復を続ける。
+前提と確かめ方: self_improveは単発start/status/applyで検証失敗のrepair loopが無い。commitmentsのcommand checkは元workspaceを対象にする。現在コードを読み、同じ候補を実検証する経路を新しい状態機械で確認する。
+一番安い確認方法: モデルの判断をscripted fixtureにし、一時git/worktreeと実検証コマンドで『誤った成功申告→失敗→修正→合格』を実行する。
+
+設計: 専用のnative agent stateをresidentが所有。既存routerで1判断ずつ取得し、actionを実行前に永続化。隔離worktree、CAS書込、実終了コードによる検証、検証対象HEAD、短い作業記憶、再開cursorを保持する。Readyは検証済み候補で、自動merge/push/deployしない。全体の固定turn数は設けず、停止/再開をoperator入口に残す。既存task plane/commitmentsを廃止しない。
+
+担当: engineering.rsと設定/HTTP/CLI統合はroot、engineering/workspace.rsはharness_audit、engineering/tests.rsはresearch_harness。
+
+## Cycle 6 — native agentの子process期限と出力回収（着手前）
+
+本当の目的: 検証・実行processが出力を続けてもagentがcancel/期限を観測し、residentを止めない。
+前提と確かめ方: runtime agent_exec/process.rsのstdout受信continueがdeadline判定を飛ばし、line/stderrが無制限に蓄積される経路をfixtureで再現する。
+一番安い確認方法: 連続stdout/改行無し/stderr洪水の短いローカル子processを起動し、経過時間・回収量・終了理由を前後で比較する。
+
+担当: process.rsだけをrustxng_contractが編集。他のexecutor/skill/searchは変更しない。
+
+### Cycle 6 の結果
+
+連続stdoutでもchunk/lineごとにdeadline/cancelを確認。stdoutは1行1MiB・合計4MiB、stderrは読取中から末尾16KiBに制限。reader間のqueueは合計約1MiB。正常なJSON行は切断せず、上限を超えた行を除外して次の行から回復する。process groupの停止後、pipeの回収待ちは100msまで。既存TERM grace300msは維持。
+
+| 同じfixtureの指標 | 前 | 後 |
+|---|---:|---:|
+| 100ms deadline + 1ms/event callbackの連続出力 | 1436ms | 402ms |
+| 2MiB異常行のcallback最大サイズ | 2097152 bytes | 異常行を除外、後続tail 4 bytesを保持 |
+| 約6MiB出力のcallback総量 | 6290688 bytes | 4193792 bytes |
+| stderr 16MiB洪水時の親VmHWM | 17808kB | 2044kB |
+| stdoutを子が保持、100ms deadline | 402ms | 403ms |
+
+VmHWMと経過時間はこのコンテナの単回比較で、一般的な性能ベンチではない。
+
+| 検証 | 結果 |
+|---|---|
+| `cargo test -p kamimusuhi-runtime --lib agent_exec::process::tests -- --nocapture` | PASS 15/15 (0.61s) |
+| `cargo clippy -p kamimusuhi-runtime --all-targets --all-features -- -D warnings` | PASS |
+| 対象rustfmt/check・git diff --check | PASS |
+
+既存attached-server試験は、PID namespaceと/procの視点が異なり `ps -p child.id()` が孤児を認識できないことを隔離再現。executor.rsは変更していない。process groupを明示的に抜けた子のblocking readerを完全終了させることは今回未保証。callerの待ちは有限。
+
+コミット: `fix(harness): 連続出力でも実行期限と回収量を守る`。
+
+## Cycle 7 — 実resident入口からnative agentを通す（着手前）
+
+本当の目的: 状態機械のfixtureだけでなく、HTTP/CLI・router・JSON行動・常設schedulerが実際につながることを確認する。
+前提と確かめ方: native loopのtrait fixtureでは9contractがPASSしたが、model HTTPのプロトコルやdaemon起動はまだ未確認。
+一番安い確認方法: 明示的な一時config・loopback fake model・一時gitだけでresident子processを起動し、失敗→修復→Readyとrequest数を測る。
+
+担当: tests/engineering_http.rsをrustxng_contractが所有。他の本番residentやrelayは使用しない。

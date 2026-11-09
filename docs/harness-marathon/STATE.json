@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 0.807778,
+  "elapsed_hours": 1.010306,
   "target_hours": 24.0,
-  "cycle": 4,
-  "current_task": "中断checkpoint: HTTP status/未完了保持修正済み、web_search/research統合は未着手",
+  "cycle": 7,
+  "current_task": "resident native engineering agent: 永続目標・モデル判断・隔離編集・実検証・repair・再開",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": null,
-  "last_checkpoint_at": "2026-11-08T22:41:06Z",
-  "active_session_started_at": null,
+  "last_checkpoint_at": "2026-11-08T23:03:31Z",
+  "active_session_started_at": "2026-11-08T22:51:22Z",
   "session_elapsed_base_hours": 0.807778,
-  "status": "paused_interrupted",
+  "status": "active",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
-  "next_task": "RESUME.mdを読み、既存CI失敗の隔離再現→web_search.rs実装→承認judge統合へ進む",
+  "next_task": "native engineering agentを実装しmock判断+実git/実processで評価",
   "completed_sessions": [
     {
       "started_at": "2026-11-08T16:06:48Z",
@@ -36,13 +36,17 @@
   "completed_cycles": [
     0,
     1,
-    4
+    4,
+    6
   ],
   "incomplete_cycles": [
     2,
-    3
+    3,
+    5,
+    7
   ],
   "last_verified_change_commit": "9049783f0cd05d53cedcd8f297c67d73c14dfb2a",
   "resume_guide": "docs/harness-marathon/RESUME.md",
-  "evaluation": "evaluation/harness/marathon-20261109.json"
+  "evaluation": "evaluation/harness/marathon-20261109.json",
+  "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。"
 }

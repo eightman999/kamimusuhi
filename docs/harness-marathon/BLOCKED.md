@@ -25,3 +25,7 @@
 | B003 | imozuru原文の直接保存 | `fetch.py` が7URLでDNS解決失敗。安全設定は解除していない | 直接DNSと公開HTTPSが利用できる作業環境で同じURLを取得する。`IMOZURU_ALLOW_PRIVATE` は不要 | fixture試験、認可済みWeb取得の本文抽出、URL/節名の整理 |
 | B004 | RustXNGの検索結果取得 | healthとJSONは200だが不応答engine9、結果0 | 公開検索エンジンへ到達できる環境で同じqueryを実行する | HTTP契約・sidecar lifecycle・schemaをモックで実装 |
 | B005 | 元HEADのfull CI | 再試験はfmt/clippy/buildまで通過。workspace testで `agent_exec::executor::tests::an_attached_server_is_started_reused_and_reaped` のFAILを観測後、中断。最終終了コード無し | 実験ブランチ再開時に元HEADのこの試験を隔離実行し、環境依存か既存欠陥か調べる | 新機能の対象crate/fixture検証 |
+
+### B005の原因確認（2026-11-09）
+
+隔離実行で既存attached-server試験の孤児置換だけがFAIL（exit101）。このコンテナはgetpidと/procのPIDの視点が異なり、`ps -p child.id()` が空になる。起動・再利用はPASS。PID namespaceに対応する/procをmountしたコンテナ、または通常のLinux/Mac環境で同じ試験を実行する。今回executor.rsを変更してこの環境を迂回することはしない。

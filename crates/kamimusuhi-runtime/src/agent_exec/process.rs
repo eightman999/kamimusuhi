@@ -6,7 +6,7 @@
 //! holds (node token, provider keys) never reach an external agent. The
 //! harness authenticates with its own stored login.
 
-use std::io::Read;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,10 +32,17 @@ pub const BASE_ENV: &[&str] = &[
     "XDG_STATE_HOME",
 ];
 
-/// Most stdout kept in memory per run.
-const STDOUT_CAP: usize = 4 * 1024 * 1024;
+/// Most stdout delivered to callbacks and kept in memory per run, including
+/// newlines. A complete protocol line is either delivered or omitted.
+pub const STDOUT_CAP: usize = 4 * 1024 * 1024;
+/// A single JSON event may be large, but a missing newline must not grow the
+/// resident indefinitely. Oversized lines are discarded, never split.
+pub const STDOUT_LINE_CAP: usize = 1024 * 1024;
 /// Most stderr kept (the tail).
-const STDERR_CAP: usize = 16 * 1024;
+pub const STDERR_CAP: usize = 16 * 1024;
+const PIPE_CHUNK: usize = 64 * 1024;
+const PIPE_QUEUE: usize = 16;
+const PIPE_DRAIN_GRACE: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessEnd {
@@ -50,6 +57,11 @@ pub struct ProcessResult {
     pub exit_code: Option<i32>,
     pub stdout: String,
     pub stderr_tail: String,
+    /// A line or the aggregate stdout exceeded its cap, a read failed, or
+    /// termination left output unread. Callbacks have the same stdout cap.
+    pub stdout_truncated: bool,
+    /// The stderr tail omitted earlier bytes or could not be fully drained.
+    pub stderr_truncated: bool,
     pub duration_ms: u64,
 }
 
@@ -164,112 +176,288 @@ pub fn kill_tree(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
+enum PipeEvent {
+    Data { stdout: bool, bytes: Vec<u8> },
+    Closed { stdout: bool, failed: bool },
+}
+
+fn read_pipe(mut pipe: impl Read, stdout: bool, tx: mpsc::SyncSender<PipeEvent>) {
+    let mut buffer = vec![0u8; PIPE_CHUNK];
+    loop {
+        match pipe.read(&mut buffer) {
+            Ok(0) => {
+                let _ = tx.send(PipeEvent::Closed {
+                    stdout,
+                    failed: false,
+                });
+                return;
+            }
+            Ok(n) => {
+                if tx
+                    .send(PipeEvent::Data {
+                        stdout,
+                        bytes: buffer[..n].to_vec(),
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => {
+                let _ = tx.send(PipeEvent::Closed {
+                    stdout,
+                    failed: true,
+                });
+                return;
+            }
+        }
+    }
+}
+
+fn stop_reason(cancel: &AtomicBool, deadline: Instant) -> Option<ProcessEnd> {
+    if cancel.load(Ordering::Relaxed) {
+        Some(ProcessEnd::Cancelled)
+    } else if Instant::now() >= deadline {
+        Some(ProcessEnd::TimedOut)
+    } else {
+        None
+    }
+}
+
+#[derive(Default)]
+struct StdoutCapture {
+    text: String,
+    pending: Vec<u8>,
+    discarding_line: bool,
+    saturated: bool,
+    truncated: bool,
+}
+
+impl StdoutCapture {
+    fn line(&mut self, on_line: &mut impl FnMut(&str)) {
+        if self.discarding_line || self.saturated {
+            self.pending.clear();
+            self.discarding_line = false;
+            return;
+        }
+        let line = String::from_utf8_lossy(&self.pending);
+        let line = line.strip_suffix('\r').unwrap_or(&line);
+        // Lossy UTF-8 conversion can expand bytes, so apply the limits to
+        // the delivered text as well as the raw pending buffer.
+        if line.len() > STDOUT_LINE_CAP {
+            self.truncated = true;
+        } else if line.len() + 1 > STDOUT_CAP - self.text.len() {
+            self.truncated = true;
+            self.saturated = true;
+        } else {
+            on_line(line);
+            self.text.push_str(line);
+            self.text.push('\n');
+        }
+        self.pending.clear();
+    }
+
+    fn push(
+        &mut self,
+        bytes: &[u8],
+        cancel: &AtomicBool,
+        deadline: Instant,
+        on_line: &mut impl FnMut(&str),
+    ) -> Option<ProcessEnd> {
+        for part in bytes.split_inclusive(|b| *b == b'\n') {
+            // A chunk may hold thousands of events; checking only between
+            // reads lets busy stdout bypass cancellation and deadlines.
+            if let Some(end) = stop_reason(cancel, deadline) {
+                self.truncated = true;
+                return Some(end);
+            }
+            let newline = part.last() == Some(&b'\n');
+            let content = if newline {
+                &part[..part.len() - 1]
+            } else {
+                part
+            };
+            if self.saturated {
+                self.truncated = true;
+                continue;
+            }
+            if !self.discarding_line {
+                if content.len() > STDOUT_LINE_CAP - self.pending.len() {
+                    self.pending.clear();
+                    self.discarding_line = true;
+                    self.truncated = true;
+                } else {
+                    self.pending.extend_from_slice(content);
+                }
+            }
+            if newline {
+                self.line(on_line);
+            }
+        }
+        None
+    }
+}
+
+#[derive(Default)]
+struct StderrTail {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+impl StderrTail {
+    fn push(&mut self, bytes: &[u8]) {
+        if bytes.len() >= STDERR_CAP {
+            self.truncated |= !self.bytes.is_empty() || bytes.len() > STDERR_CAP;
+            self.bytes.clear();
+            self.bytes
+                .extend_from_slice(&bytes[bytes.len() - STDERR_CAP..]);
+        } else {
+            let discard = (self.bytes.len() + bytes.len()).saturating_sub(STDERR_CAP);
+            self.truncated |= discard > 0;
+            self.bytes.drain(..discard);
+            self.bytes.extend_from_slice(bytes);
+        }
+    }
+
+    fn text(&mut self) -> String {
+        let mut text = String::from_utf8_lossy(&self.bytes).into_owned();
+        if text.len() > STDERR_CAP {
+            let mut start = text.len() - STDERR_CAP;
+            while !text.is_char_boundary(start) {
+                start += 1;
+            }
+            text.drain(..start);
+            self.truncated = true;
+        }
+        text
+    }
+}
+
 /// Run to completion, deadline or cancellation. `on_line` sees each stdout
-/// line as it arrives, on the calling thread.
+/// line as it arrives, on the calling thread, within the documented caps.
+/// The callback must return promptly: an in-progress callback cannot be
+/// interrupted. Shutdown allows the process group's 300 ms TERM grace and
+/// at most 100 ms of pipe draining; readers are never joined indefinitely.
 pub fn run(
     spec: &ProcessSpec<'_>,
     cancel: &AtomicBool,
     mut on_line: impl FnMut(&str),
 ) -> Result<ProcessResult, String> {
     let started = Instant::now();
+    let deadline = started
+        .checked_add(spec.timeout)
+        .ok_or("process timeout is out of range")?;
     let mut child = command(spec)
         .spawn()
         .map_err(|e| format!("could not start {}: {e}", spec.program))?;
     let stdout = child.stdout.take().ok_or("no stdout pipe")?;
-    let mut stderr = child.stderr.take().ok_or("no stderr pipe")?;
-    // The reader only moves raw chunks: some harnesses (Bun-based
-    // `opencode`) drop output they could not write before exiting when the
-    // pipe fills, so the pipe is drained as fast as possible and lines are
-    // split on this side.
-    let (tx, rx) = mpsc::channel::<Vec<u8>>();
-    thread::spawn(move || {
-        let mut stdout = stdout;
-        let mut buf = vec![0u8; 256 * 1024];
-        loop {
-            match stdout.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if tx.send(buf[..n].to_vec()).is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-    });
-    let (err_tx, err_rx) = mpsc::channel::<String>();
-    thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stderr.read_to_end(&mut bytes);
-        let start = bytes.len().saturating_sub(STDERR_CAP);
-        let _ = err_tx.send(String::from_utf8_lossy(&bytes[start..]).into_owned());
-    });
-    let deadline = started + spec.timeout;
-    let mut captured = String::new();
-    let mut pending: Vec<u8> = Vec::new();
-    let mut take_line = |bytes: &[u8], captured: &mut String| {
-        let line = String::from_utf8_lossy(bytes);
-        let line = line.strip_suffix('\r').unwrap_or(&line);
-        on_line(line);
-        if captured.len() + line.len() < STDOUT_CAP {
-            captured.push_str(line);
-            captured.push('\n');
-        }
-    };
-    let mut take = |chunk: Vec<u8>, pending: &mut Vec<u8>, captured: &mut String| {
-        pending.extend_from_slice(&chunk);
-        let mut start = 0;
-        while let Some(at) = pending[start..].iter().position(|b| *b == b'\n') {
-            take_line(&pending[start..start + at], captured);
-            start += at + 1;
-        }
-        pending.drain(..start);
-    };
+    let stderr = child.stderr.take().ok_or("no stderr pipe")?;
+    // Read ahead enough for ordinary CLI bursts without an unbounded queue
+    // when callbacks are slow. Both pipes together queue at most 1 MiB.
+    let (tx, rx) = mpsc::sync_channel(PIPE_QUEUE);
+    let err_tx = tx.clone();
+    thread::spawn(move || read_pipe(stdout, true, tx));
+    thread::spawn(move || read_pipe(stderr, false, err_tx));
+    let mut captured = StdoutCapture::default();
+    let mut stderr_tail = StderrTail::default();
     let mut stdout_open = true;
+    let mut stderr_open = true;
     let (end, status) = loop {
-        if stdout_open {
-            match rx.recv_timeout(Duration::from_millis(50)) {
-                Ok(chunk) => {
-                    take(chunk, &mut pending, &mut captured);
-                    continue;
-                }
-                // Closed stdout usually means exit, but a harness may keep
-                // running; the deadline still applies.
-                Err(mpsc::RecvTimeoutError::Disconnected) => stdout_open = false,
-                // Exit is only checked once stdout is closed: a harness may
-                // exit while a helper process is still writing its output
-                // (observed with `opencode models`, which lost half of it).
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-            }
-        } else {
-            thread::sleep(Duration::from_millis(50));
-        }
-        if cancel.load(Ordering::Relaxed) {
+        if let Some(end) = stop_reason(cancel, deadline) {
             kill_tree(&mut child);
-            break (ProcessEnd::Cancelled, None);
+            break (end, None);
         }
-        if Instant::now() >= deadline {
-            kill_tree(&mut child);
-            break (ProcessEnd::TimedOut, None);
-        }
+        // Let stdout-writing helpers finish (some CLIs use them for their
+        // final events), but a child holding only stderr must not delay a
+        // completed command until its full task deadline.
         if !stdout_open && let Ok(Some(status)) = child.try_wait() {
             break (ProcessEnd::Exited, Some(status));
         }
+        let wait = deadline
+            .saturating_duration_since(Instant::now())
+            .min(Duration::from_millis(50));
+        if !stdout_open && !stderr_open {
+            thread::sleep(wait);
+            continue;
+        }
+        match rx.recv_timeout(wait) {
+            Ok(PipeEvent::Data {
+                stdout: true,
+                bytes,
+            }) => {
+                if let Some(end) = captured.push(&bytes, cancel, deadline, &mut on_line) {
+                    kill_tree(&mut child);
+                    break (end, None);
+                }
+            }
+            Ok(PipeEvent::Data {
+                stdout: false,
+                bytes,
+            }) => stderr_tail.push(&bytes),
+            Ok(PipeEvent::Closed { stdout, failed }) => {
+                if stdout {
+                    stdout_open = false;
+                    captured.truncated |= failed;
+                    if !failed && stop_reason(cancel, deadline).is_none() {
+                        if !captured.pending.is_empty() {
+                            captured.line(&mut on_line);
+                        }
+                    } else if !captured.pending.is_empty() {
+                        captured.truncated = true;
+                    }
+                } else {
+                    stderr_open = false;
+                    stderr_tail.truncated |= failed;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                captured.truncated |= stdout_open;
+                stderr_tail.truncated |= stderr_open;
+                stdout_open = false;
+                stderr_open = false;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
     };
-    if !pending.is_empty() {
-        take(b"\n".to_vec(), &mut pending, &mut captured);
-    }
     if end == ProcessEnd::Exited {
         // Whatever the harness left running in its group goes with it.
         kill_group(&child, "-KILL");
+    } else {
+        captured.truncated |= stdout_open;
     }
-    let stderr_tail = err_rx
-        .recv_timeout(Duration::from_secs(2))
-        .unwrap_or_default();
+    // Preserve already-written diagnostics without calling back after
+    // cancellation/deadline. A descendant retaining a pipe cannot hold
+    // the caller here forever, even if it escaped the process group.
+    let drain_deadline = Instant::now() + PIPE_DRAIN_GRACE;
+    while (stdout_open || stderr_open) && Instant::now() < drain_deadline {
+        match rx.recv_timeout(drain_deadline.saturating_duration_since(Instant::now())) {
+            Ok(PipeEvent::Data {
+                stdout: false,
+                bytes,
+            }) => stderr_tail.push(&bytes),
+            Ok(PipeEvent::Closed { stdout, failed }) => {
+                if stdout {
+                    stdout_open = false;
+                    captured.truncated |= failed;
+                } else {
+                    stderr_open = false;
+                    stderr_tail.truncated |= failed;
+                }
+            }
+            Ok(PipeEvent::Data { .. }) => captured.truncated = true,
+            Err(_) => break,
+        }
+    }
+    stderr_tail.truncated |= stderr_open;
+    let stderr_text = stderr_tail.text();
     Ok(ProcessResult {
         end,
         exit_code: status.and_then(|s| s.code()),
-        stdout: captured,
-        stderr_tail,
+        stdout: captured.text,
+        stderr_tail: stderr_text,
+        stdout_truncated: captured.truncated,
+        stderr_truncated: stderr_tail.truncated,
         duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     })
 }
@@ -279,9 +467,19 @@ mod tests {
     use super::*;
 
     fn sh(script: &str, timeout_ms: u64, cancel: &AtomicBool) -> (ProcessResult, Vec<String>) {
-        let args = vec!["-c".to_owned(), script.to_owned()];
         let mut lines = Vec::new();
-        let result = run(
+        let result = sh_with(script, timeout_ms, cancel, |l| lines.push(l.to_owned()));
+        (result, lines)
+    }
+
+    fn sh_with(
+        script: &str,
+        timeout_ms: u64,
+        cancel: &AtomicBool,
+        on_line: impl FnMut(&str),
+    ) -> ProcessResult {
+        let args = vec!["-c".to_owned(), script.to_owned()];
+        run(
             &ProcessSpec {
                 program: "/bin/sh",
                 args: &args,
@@ -291,10 +489,9 @@ mod tests {
                 timeout: Duration::from_millis(timeout_ms),
             },
             cancel,
-            |l| lines.push(l.to_owned()),
+            on_line,
         )
-        .expect("runs");
-        (result, lines)
+        .expect("runs")
     }
 
     #[test]
@@ -308,6 +505,8 @@ mod tests {
         assert_eq!(result.exit_code, Some(3));
         assert_eq!(result.end, ProcessEnd::Exited);
         assert!(result.stderr_tail.contains("err"));
+        assert!(!result.stdout_truncated);
+        assert!(!result.stderr_truncated);
     }
 
     #[test]
@@ -336,6 +535,145 @@ mod tests {
         let cancel = AtomicBool::new(true);
         let (result, _) = sh("sleep 30", 60_000, &cancel);
         assert_eq!(result.end, ProcessEnd::Cancelled);
+    }
+
+    #[test]
+    fn busy_stdout_checks_deadlines_between_callback_lines() {
+        let started = Instant::now();
+        let mut lines = 0;
+        let result = sh_with(
+            "i=0; while [ $i -lt 1000 ]; do echo event; i=$((i+1)); done; sleep 30",
+            100,
+            &AtomicBool::new(false),
+            |_| {
+                lines += 1;
+                thread::sleep(Duration::from_millis(2));
+            },
+        );
+        assert_eq!(result.end, ProcessEnd::TimedOut);
+        assert!(lines < 1000, "queued output must not postpone the deadline");
+        assert!(started.elapsed() < Duration::from_millis(1500));
+    }
+
+    #[test]
+    fn busy_stdout_observes_cancellation_before_the_next_event() {
+        let cancel = AtomicBool::new(false);
+        let mut lines = 0;
+        let result = sh_with(
+            "i=0; while [ $i -lt 5000 ]; do echo event; i=$((i+1)); done; sleep 30",
+            30_000,
+            &cancel,
+            |_| {
+                lines += 1;
+                if lines == 10 {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        assert_eq!(result.end, ProcessEnd::Cancelled);
+        assert_eq!(lines, 10);
+    }
+
+    #[test]
+    fn an_oversized_line_is_discarded_and_the_next_event_survives() {
+        let block = "x".repeat(4096);
+        let script = format!(
+            "i=0; while [ $i -lt 512 ]; do printf '%s' '{block}'; i=$((i+1)); done; \
+             printf '\\n{{\"type\":\"result\",\"text\":\"done\"}}\\n'"
+        );
+        let (result, lines) = sh(&script, 5000, &AtomicBool::new(false));
+        assert!(result.success());
+        assert!(result.stdout_truncated);
+        assert_eq!(lines, [r#"{"type":"result","text":"done"}"#]);
+        assert_eq!(result.stdout, format!("{}\n", lines[0]));
+    }
+
+    #[test]
+    fn large_complete_json_events_are_delivered_without_splitting() {
+        let block = "x".repeat(4096);
+        let script = format!(
+            "printf '{{\"type\":\"result\",\"text\":\"'; \
+             i=0; while [ $i -lt 192 ]; do printf '%s' '{block}'; i=$((i+1)); done; \
+             printf '\"}}\\n'"
+        );
+        let (result, lines) = sh(&script, 5000, &AtomicBool::new(false));
+        assert!(result.success());
+        assert!(!result.stdout_truncated);
+        assert_eq!(lines.len(), 1);
+        let event: serde_json::Value = serde_json::from_str(&lines[0]).expect("complete JSON");
+        assert_eq!(event["type"], "result");
+        assert_eq!(event["text"].as_str().unwrap().len(), 192 * 4096);
+    }
+
+    #[test]
+    fn stdout_capture_and_callbacks_share_the_total_budget() {
+        let block = "x".repeat(4095);
+        let script =
+            format!("i=0; while [ $i -lt 1536 ]; do printf '%s\\n' '{block}'; i=$((i+1)); done");
+        let mut delivered = 0;
+        let result = sh_with(&script, 5000, &AtomicBool::new(false), |line| {
+            assert_eq!(line.len(), 4095, "a protocol line is never split");
+            delivered += line.len() + 1;
+        });
+        assert!(result.success());
+        assert!(result.stdout_truncated);
+        assert_eq!(delivered, STDOUT_CAP);
+        assert_eq!(result.stdout.len(), delivered);
+    }
+
+    #[test]
+    fn stderr_flood_keeps_a_bounded_tail_and_reports_truncation() {
+        let block = "e".repeat(4096);
+        let script = format!(
+            "i=0; while [ $i -lt 1024 ]; do printf '%s' '{block}' >&2; i=$((i+1)); done; \
+             printf 'tail-marker\\n' >&2; echo done"
+        );
+        let (result, lines) = sh(&script, 5000, &AtomicBool::new(false));
+        assert!(result.success());
+        assert_eq!(lines, ["done"]);
+        assert!(!result.stdout_truncated);
+        assert!(result.stderr_truncated);
+        assert_eq!(result.stderr_tail.len(), STDERR_CAP);
+        assert!(result.stderr_tail.ends_with("tail-marker\n"));
+    }
+
+    #[test]
+    fn lossy_utf8_cannot_expand_output_past_the_caps() {
+        let mut capture = StdoutCapture::default();
+        let mut lines = Vec::new();
+        let mut input = vec![0xff; STDOUT_LINE_CAP / 2];
+        input.extend_from_slice(b"\nvalid\n");
+        assert_eq!(
+            capture.push(
+                &input,
+                &AtomicBool::new(false),
+                Instant::now() + Duration::from_secs(5),
+                &mut |line| lines.push(line.to_owned()),
+            ),
+            None
+        );
+        assert!(capture.truncated);
+        assert_eq!(lines, ["valid"]);
+        let mut tail = StderrTail::default();
+        tail.push(&vec![0xff; STDERR_CAP]);
+        assert!(tail.text().len() <= STDERR_CAP);
+        assert!(tail.truncated);
+    }
+
+    #[test]
+    fn a_descendant_holding_stdout_does_not_bypass_the_deadline() {
+        let started = Instant::now();
+        let (result, _) = sh("sleep 30 & exit 0", 100, &AtomicBool::new(false));
+        assert_eq!(result.end, ProcessEnd::TimedOut);
+        assert!(started.elapsed() < Duration::from_millis(1500));
+    }
+
+    #[test]
+    fn a_stderr_only_descendant_is_stopped_after_the_parent_exits() {
+        let started = Instant::now();
+        let (result, _) = sh("sleep 30 >&2 & exit 0", 30_000, &AtomicBool::new(false));
+        assert!(result.success());
+        assert!(started.elapsed() < Duration::from_millis(1500));
     }
 
     #[test]

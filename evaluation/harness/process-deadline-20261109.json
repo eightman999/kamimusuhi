@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "scope": "deterministic local subprocess fixtures, not model benchmark",
+  "source": "crates/kamimusuhi-runtime/src/agent_exec/process.rs",
+  "tests": {
+    "passed": 15,
+    "failed": 0,
+    "clippy": "PASS"
+  },
+  "measurements": [
+    {
+      "name": "flood_deadline_ms",
+      "configured_ms": 100,
+      "before": 1436,
+      "after": 402,
+      "termination_grace_ms": 300
+    },
+    {
+      "name": "oversized_line_callback_bytes",
+      "before": 2097152,
+      "after": 0,
+      "next_valid_line_bytes": 4
+    },
+    {
+      "name": "total_callback_bytes",
+      "before": 6290688,
+      "after": 4193792,
+      "cap": 4194304
+    },
+    {
+      "name": "stderr_flood_parent_vmhwm_kb",
+      "before": 17808,
+      "after": 2044,
+      "method": "single-run container /proc observation"
+    },
+    {
+      "name": "child_stdout_hold_ms",
+      "before": 402,
+      "after": 403
+    }
+  ],
+  "limitations": [
+    "Callback must return promptly; it cannot be interrupted in flight.",
+    "An escaped descendant retaining a pipe may leave a blocked reader thread; caller drain has a 100ms limit.",
+    "Existing attached-server fixture still fails because PID namespace and /proc views differ."
+  ]
+}
