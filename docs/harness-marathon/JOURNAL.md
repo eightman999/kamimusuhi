@@ -611,3 +611,15 @@ Macはsource/API/cfg確認のみ。独立SIGCHLD handler/global reaperがない�
 コミット: `fix(agent-exec): 子プロセスの所有と回収順序を統一`。cycle18公開commitはbf0b58f9bf8bd0ca9244d6c7035543c2cf1004c5。
 
 Cycle20の同一fixtureによる修正前評価は8件すべてFAIL（0.47s、compile込26.251s）。欠落したcontract/表示、不正contract受入、途中recoveryによる保存変更を再現した。verification.rsはこの測定時はmod未接続。runtimeはcycle19の同じ最終差分を使用し、以後変更していない。fixture SHA256: cbabb92cbdb46b5071134ef6e8ad999de315d4e3d64c5280dfc02e5b931a7b75。
+
+## 累計4時間の中間まとめと再復旧（2026-11-10 18:48 JST）
+
+05:58:59 UTCで実作業4.001368h。切断後のGitHub退避準備が確認できた06:18:07 UTCまでを4.320132hとして引継ぐ。06:18:07〜09:48:27 UTCのtool待機/停止時間は加算しない。別Codex task/Work job/Codex CLIは起動していない。この会話のcontainerと内部subagentで作業している。
+
+前2時間の進展: 14 read+reload後の診断保持で修復停止→3判断でReady、親終了後5秒以内EOFなし→47ms・再実行0、CLI出力欠落fixtureは4 PASS/5 FAIL→9 PASS、子process所有は69件と実worker4件PASS。公開HEADは3ee6638。
+
+11ef050の全CIは空のoverlay targetでPASS（exit0、1089.798s、06:00:19 UTC終了）。実HTTP6 PASS/1 helper ignored・94.40s、実worker4 PASS/1 helper ignored・1.96s。/tmp tmpfs99%時のlinker Bus errorは同じソースをoverlayへ移した再試験では発生しなかった。この全CIには後続cycle18/19/20は含まれない。
+
+cycle20は元containerで対象8件が0/8→8/8、live contract codecが1/5→5/5。最終engineering76/76（5.10s）、resident全target/allfeature clippy（20.514s）、fmt（1.598s）、実worker4件（1.34s）はすべてPASSした。最後の記録/commitはexec-server transport disconnectedでprocess生成前に失敗。GitHub APIによる復旧docsのtree作成も長時間応答せず中断し、09:48:27 UTCの新containerにはrepo/toolchainが無かった。再cloneしたbranchのHEADが3ee6638であることを確認した。
+
+現在は会話に残る投入patchからcycle20を復元する。元bytesとのhash照合と新containerでの再試験を行い、旧PASSと復元版を混同しない。Rust1.92.0を再導入する。大きいCargo targetを4.9GiB tmpfsの/tmpへ置かない。原ログ全体は再取得不可なので、確認済みの数値だけを復旧記録として保存する。

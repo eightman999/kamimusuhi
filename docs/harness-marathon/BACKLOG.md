@@ -2,7 +2,7 @@
 
 ## 次にやること
 
-cycle19の子process所有を保存。runner/server/ACPの単一所有とgroup停止→reap、69件と実worker4件・clippyを確認。cycle20は実check設定の識別情報とReadyの過去証拠を全表示へ接続中。修正前8件FAILを再現済み。同じfixtureのafter、全engineering/worker/clippyを完了して保存し、job別worker実行lockと永続sequence記録で再開競合を閉じる。11ef050凍結全CIはoverlay専用targetで再実行中。
+cycle20を復元・再検証して保存する。新containerに3ee6638から再clone済み。元containerの76 tests/clippy/fmt PASSを復元版の結果に流用せず、source hashと新実行で確認する。最新全CI成功は旧containerの11ef050（1089.798s）。その後、job lock＋optional checkpoint marker＋永続high-waterによるworker重複抑止へ進む。
 
 ## 現在の最優先（2026-11-09更新）
 

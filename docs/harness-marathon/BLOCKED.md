@@ -42,3 +42,11 @@ cycle10までのremote commitは保存済み。cycle11のlocal commitとcycle12�
 ### 2026-11-10の検証更新
 
 B005: cycle13凍結版（公開83dd2d3、tree8d830c1）の全CIがPASS、989.095s。既存attached-server試験もPASS。元masterそのものの全CI成功や旧exit137原因の特定とは区別する。B006: cycle11機能とcycle12/13を復元・再検証し公開保存済み。cycle14は新fixtureを実測中。現在ユーザー操作は不要。
+
+### B007（解消）: CI targetの/tmp容量不足
+
+11ef050は/tmp tmpfs99%時にlinker Bus errorでFAIL。空のoverlay targetで同treeの全CIがPASS（1089.798s）。数GiBのbuild targetは/workspace側に置く。ユーザー操作不要。
+
+### B008: 二度目のcontainer再作成（2026-11-10）
+
+元containerのcycle20実装・検証後、commit起動前にexec-server接続断。未転送source/log/toolchainが消失した。09:48 UTCから新containerへ再cloneし、rootが実patchから復元・再検証する。現時点でユーザー操作不要。再び停止した場合は実験branchのSTATE/BACKLOGから再開する。新しい鍵、本番resident接続、新規有料サービスは不要。

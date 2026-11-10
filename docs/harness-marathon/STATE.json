@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 4.001368,
+  "elapsed_hours": 4.320132,
   "target_hours": 24.0,
   "cycle": 19,
-  "current_task": "cycle19の子process所有を検証・保存。cycle20の検証設定identityを8件の同一fixtureで比較中",
+  "current_task": "cycle20を公開3ee6638と会話内の実patchから復元・再検証。新containerへ再clone済み",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
-  "last_ci_passed_commit": "83dd2d3162f3f8094ee295b1ee6be17045981f66",
-  "last_checkpoint_at": "2026-11-10T05:58:59Z",
-  "active_session_started_at": "2026-11-10T03:59:54Z",
-  "session_elapsed_base_hours": 2.016521,
-  "status": "active",
+  "last_ci_passed_commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
+  "last_checkpoint_at": "2026-11-10T09:48:27Z",
+  "active_session_started_at": "2026-11-10T09:48:27Z",
+  "session_elapsed_base_hours": 4.320132,
+  "status": "active_recovery",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
-  "next_task": "cycle20のafter評価と全engineering/worker/clippy、11ef050の凍結全CI結果を保存",
+  "next_task": "cycle20のproduction/test復元、Rust1.92.0再導入、fmt/test/clippy/全CIを確認して保存",
   "completed_sessions": [
     {
       "started_at": "2026-11-08T16:06:48Z",
@@ -38,6 +38,12 @@
       "ended_at": "2026-11-09T05:25:23Z",
       "elapsed_hours": 0.8825,
       "end_evidence": "前セッションのSTATE更新がチャットtool出力に残る。最後の確認済み実作業時刻。"
+    },
+    {
+      "started_at": "2026-11-10T03:59:54Z",
+      "ended_at": "2026-11-10T06:18:07Z",
+      "elapsed_hours": 2.303611,
+      "end_evidence": "切断後もGitHub API復旧作業を継続し、最後のclock/STATE計算tool出力が06:18:07 UTC。次のtree作成は長時間応答せず中断"
     }
   ],
   "excluded_idle_interval": {
@@ -69,7 +75,7 @@
     2,
     3
   ],
-  "last_verified_change_commit": "bf0b58f9bf8bd0ca9244d6c7035543c2cf1004c5",
+  "last_verified_change_commit": "3ee6638447844d7ebb60d9223ffc50548971d887",
   "resume_guide": "docs/harness-marathon/RESUME.md",
   "evaluation": "evaluation/harness/marathon-20261109.json",
   "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。",
@@ -83,6 +89,11 @@
       "from": "2026-11-09T05:25:23Z",
       "to": "2026-11-10T03:59:54Z",
       "reason": "長時間tool待機とコンテナ作業領域消失。実作業を示す結果がなく加算しない。"
+    },
+    {
+      "from": "2026-11-10T06:18:07Z",
+      "to": "2026-11-10T09:48:27Z",
+      "reason": "GitHub tool待機・container再作成。実作業の証拠がない停止期間を累計に加算しない"
     }
   ],
   "engineering_evaluation": "evaluation/harness/native-engineering-20261109.json",
@@ -102,34 +113,27 @@
     }
   },
   "last_full_ci": {
-    "commit": "83dd2d3162f3f8094ee295b1ee6be17045981f66",
-    "tree": "8d830c1c17f71ee142f8132003677a87e8e5c1b3",
+    "commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
+    "tree": "73aae76c8c6556ae839e633f850629a89ae80f46",
     "status": "PASS",
     "exit_code": 0,
-    "seconds": 989.095,
-    "ended_at": "2026-11-10T04:47:59Z",
-    "scope": "cycle11/13を含む凍結tree。後続cycle12/14/15は含まない"
+    "seconds": 1089.798,
+    "ended_at": "2026-11-10T06:00:19.707907Z",
+    "scope": "旧containerの凍結tree、cycle12/14/15/17/16を含む。cycle18/19/20は含まない",
+    "evidence": "チャットのtool最終JSONとlocal CI passedを確認。元logはcontainer切断で再取得不可"
   },
   "reactive_evaluation": "evaluation/harness/native-reactive-20261110.json",
   "cli_output_evaluation": "evaluation/harness/cli-output-integrity-20261110.json",
   "worker_evaluation": "evaluation/harness/native-worker-20261110.json",
   "current_full_ci": {
-    "command": "bash scripts/ci-local.sh",
-    "cwd": "/tmp/kamimusuhi-harness-gate-11ef050",
     "commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
     "tree": "73aae76c8c6556ae839e633f850629a89ae80f46",
-    "target": "/workspace/scratch/5aa3a7808c02/kamimusuhi/target/harness-ci-11ef050",
-    "target_was_empty": true,
-    "status": "RUNNING",
-    "started_at": "2026-11-10T05:42:09.908292+00:00",
-    "env": {
-      "CARGO_BUILD_JOBS": "1",
-      "CARGO_INCREMENTAL": "0",
-      "CARGO_NET_OFFLINE": "true",
-      "RUST_TEST_THREADS": "1"
-    },
-    "log": "docs/harness-marathon/logs/cycle16-frozen-ci-overlay-20261110.log",
-    "retry_of": "cycle16-frozen-ci-20261110.json"
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 1089.798,
+    "ended_at": "2026-11-10T06:00:19.707907Z",
+    "scope": "旧containerの凍結tree、cycle12/14/15/17/16を含む。cycle18/19/20は含まない",
+    "evidence": "チャットのtool最終JSONとlocal CI passedを確認。元logはcontainer切断で再取得不可"
   },
   "validation_memory_evaluation": "evaluation/harness/validation-memory-20261110.json",
   "previous_full_ci_attempt": {
@@ -153,5 +157,18 @@
     "retry_target": "/workspace/scratch/5aa3a7808c02/kamimusuhi/target/harness-ci-11ef050",
     "failed_artifacts": "/workspace/scratch/5aa3a7808c02/kamimusuhi/target/harness-ci-11ef050-tmpfs-failure"
   },
-  "process_ownership_evaluation": "evaluation/harness/process-ownership-20261110.json"
+  "process_ownership_evaluation": "evaluation/harness/process-ownership-20261110.json",
+  "cycle20_recovery": {
+    "original_final_gates_ended_at": "2026-11-10T06:09:18.963237Z",
+    "original_engineering_tests": "76/76 PASS",
+    "original_resident_clippy": "PASS",
+    "original_fmt": "PASS",
+    "original_worker_tests": "4 PASS / 1 ignored helper",
+    "original_identity_tests": "0/8 -> 8/8",
+    "original_worker_codec_tests": "1/5 -> 5/5",
+    "original_worker_sha256": "233ffd40d1e0f771b947e39c222229d972e99ef0931f2aae694b7732063493b3",
+    "original_identity_fixture_sha256": "cbabb92cbdb46b5071134ef6e8ad999de315d4e3d64c5280dfc02e5b931a7b75",
+    "publication": "cycle20 commit command did not start; remote confirmed at3ee6638",
+    "status": "reconstructing; original PASS is not automatically applied to restored files"
+  }
 }
