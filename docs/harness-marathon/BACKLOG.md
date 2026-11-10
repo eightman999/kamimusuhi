@@ -2,7 +2,7 @@
 
 ## 次にやること
 
-cycle12の47件・全target clippy・fmtがPASSし、観測配列63,785→24,351bytes、残すReadRangeのJSON完全性を改善した。cycle13までを凍結した全CI実行中。次はcycle14のcontext反応型mock評価を登録して測定し、cycle15で長いprovider障害の最初の原因を永続化する。native agent本体を優先し、検索/skill統合は保留。
+cycle13までの凍結版全CIがPASS（公開83dd2d3、989.095s）。cycle12の観測予算修正は対象47件と全target clippyがPASS。cycle14の反応型mock評価は4/4成功、model calls13・checks5・重複作用0を保存。次はcycle15で長いprovider障害の最初の原因を永続化する。cycle16は親死亡時のRun/Verifyの寿命管理を小さいworkerへ分離する案を検討中。native agent本体を優先し、検索/skill統合は保留。
 
 ## 現在の最優先（2026-11-09更新）
 
@@ -15,7 +15,7 @@ cycle12の47件・全target clippy・fmtがPASSし、観測配列63,785→24,351
 | P1 | 作業記憶の更新と長期修復 | 12件より長い失敗修復シナリオでも目的・重要な根拠・次stepを保持 |
 | P1 | 不完全なprocess出力の伝播 | stdout_truncatedを外部executorが完全な成功protocolとして扱わない |
 | P1 | 検証receiptと候補の変化 | Ready後の外部変更・resume後の再編集で古い成功証拠を再利用しない |
-| P2 | 全CIの終了不能の切り分け | 既存PID制約とwrapper exit137を区別し、次回はtest threadsも1で観測 |
+| P1 | resident crash後の実行子の期限管理 | 親pipe閉鎖とworker側の取消で停止し、古いclaimの遅延実行を防ぐ |
 
 ## 後続候補（検索・skill統合は保留）
 

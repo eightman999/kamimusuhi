@@ -179,3 +179,18 @@ loopbackのfixtureで検証します。外部モデルのコーディング能�
 
 実装は `crates/kamimusuhi-resident/src/engineering.rs` と
 `engineering/workspace.rs`、制御の fixture は `engineering/tests.rs` にあります。
+
+### 観測に基づく継続性の評価
+
+`engineering::tests::evaluation` の模擬モデルは、受け取った目標・作業メモ・実検証・
+読取結果だけから次の行動を選びます。実検証失敗からの修復、作業メモを保存した後の
+新しいモデルでの継続、結果未確認の置換が適用済み／未適用の4ケースを検査します。
+置換の中断2ケースでは操作者の明示resumeを含み、現在のソースを読んでから判断します。
+成功率、model calls、decisions/actions、実check、重複作用、resume数を一つのJSONで
+出力します。実LLMのコーディング能力を測るベンチマークではありません。
+
+```sh
+cargo test -p kamimusuhi-resident --lib engineering::tests::evaluation:: -- --nocapture
+```
+
+保存済みの測定は `evaluation/harness/native-reactive-20261110.json` を参照してください。

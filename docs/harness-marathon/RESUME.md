@@ -10,7 +10,7 @@ cycle8でOS lease、checkpoint意味検査、実行途中の実daemon再起動�
 
 ## 2026-11-10の復旧
 
-旧コンテナの未転送作業とログが失われ、cycle10の公開commitから再cloneした。cycle11の独立cursor/schema v2/lease明示unlockを会話記録から機能復元し、新環境でengineering45/45、fmt、resident全target/allfeatures clippyがPASS。旧local treeとの同一性は主張しない。実作業2.016521時間を引継ぎ、約22時間の停止時間は除外した。最新の累計はSTATE参照。次はcontext予算、実daemon claim中断試験、凍結全CI。toolchainは `$HOME/.cargo/bin`（新環境HOME=/home/agent）を使用する。
+旧コンテナの未転送作業とログが失われ、cycle10の公開commitから再cloneした。cycle11の独立cursor/schema v2/lease明示unlockを会話記録から機能復元し、新環境でengineering45/45、fmt、resident全target/allfeatures clippyがPASS。旧local treeとの同一性は主張しない。実作業2.016521時間を引継ぎ、約22時間の停止時間は除外した。最新の累計はSTATE参照。cycle12のencoded観測予算とcycle13のclaim済みRun中断試験を復元・保存済み。cycle13までの凍結版全CIはPASS（公開83dd2d3、989.095s）、既存attached-server試験も成功。次はcycle14の反応型mock評価とcycle15の障害episode保持。toolchainは `$HOME/.cargo/bin`（新環境HOME=/home/agent）を使用する。
 
 ## 再開
 
@@ -65,7 +65,7 @@ cycle8でOS lease、checkpoint意味検査、実行途中の実daemon再起動�
 
 ## 次の検証
 
-- full CIの既存失敗を隔離再現する。
+- 最後の全CIは83dd2d3でPASS。後続cycle12以降は対象検証を積み、3〜4cycleごとに次の凍結版を通す。
 - 追加モジュールは外部検索に依存せず、loopback fixtureとfake scriptで検証する。
 - 実検索の結果0件を「検索性能が低い」と一般化しない。直接取得失敗とHTTP契約成功を分ける。
 - 本番resident、Mac/Pi、Slack/Discord、メール、Cloudflare relayには接続しない。

@@ -14,6 +14,7 @@ use std::time::Duration;
 
 mod context_budget;
 mod cursor;
+mod evaluation;
 
 struct ScriptedModel {
     actions: Mutex<VecDeque<Action>>,

@@ -424,3 +424,42 @@ Runは結果未保存なのでactionsへ加算しない。元checkout/候補の�
 - cycle13実HTTPの公開commit `83dd2d3162f3f8094ee295b1ee6be17045981f66` と同じtreeの別worktreeで全CI実行中（build jobs1/test threads1）。最終結果はまだ未確定。
 
 コミット: `fix(engineering): 観測のJSON予算と範囲データの完全性を守る`。
+
+## Cycle 15 — 推論障害の最初の原因を保持（着手前）
+
+本当の目的: 長いprovider停止中に反復した二次エラーで、元の原因と回復の経緯を失わないようにする。
+前提と確かめ方: 現在はlast_errorと12観測が上書きされ、最初のHTTP503が送信先なしHTTP400へ置き換わる。短いepisodeを別fieldへ保存すれば、観測の間引きと独立に残せる。
+一番安い確認方法: 13回以上の決定的失敗→reload→有効action claimをfixtureで回し、first/latest/attempts/回復時刻を検査。既存60秒HTTP試験にも同じ境界のassertを加える。
+
+回復は有効なaction claimの永続化を表す。候補の修復成功・検証成功とは区別する。既存v2にepisodeが無くても読み、古いlast_errorから原因を推測しない。保存するのは既存の固定的なrouterエラーで、providerの生本文を増やさない。
+
+## Cycle 16 — 所有者死亡時の実行子の寿命を調査（着手前）
+
+本当の目的: residentのcrashで実行中コマンドの期限管理まで失われ、孤児が走り続ける問題を小さく改善する。
+前提と確かめ方: cycle13では親kill後もRun子が存続し、fixtureからreleaseした。現在の期限は親のthreadが管理するので、親死亡後の保証はない。既存provider workerの寿命管理を再利用できるか調べる。
+一番安い確認方法: provider_worker/provider_processとnative workspace runの経路を読み、親pipe閉鎖・独立worker期限・pending回復の接続を比較する。まず具体的な設計境界と最小fixtureを決め、全子孫回収と断定しない。
+
+### 凍結版全CIの完了（2026-11-10 04:47:59 UTC）
+
+`83dd2d3162f3f8094ee295b1ee6be17045981f66` と同じtree `8d830c1c17f71ee142f8132003677a87e8e5c1b3` の別worktreeで `bash scripts/ci-local.sh` がPASS、exit0、989.095s。fmt、全workspace/all-target/all-features clippy、provider worker build、workspace tests、core依存境界をすべて完了した。build jobs1、incremental無効、offline、test threads1。ログと終了JSONは `logs/restore-frozen-ci-20261110.*`。
+
+既存の `an_attached_server_is_started_reused_and_reaped` もPASS。新環境のPID対応で再現せず、executorの実装は変更していない。旧コンテナのexit137の原因まで特定したとはしない。このgateはcycle11/13までの凍結版であり、後続cycle12/14/15を検証した結果ではない。
+
+### Cycle 14 の実測（2026-11-10）
+
+contextだけから決定するstateless policyを一時git・実check・native loopへ接続した。testkitのresource fakeはCognitiveResource境界であり、EngineerModel境界には既存resident fixtureを再利用した。決定policyは呼出し順序・filesystemを読まず、外側のobserverだけが回数を記録する。
+
+| scenario | Ready | model calls | decisions/actions | 実check | duplicate effects | explicit resume |
+|---|---|---:|---|---:|---:|---:|
+| 実失敗から修復 | PASS | 4 | 4/4 | 2 | 0 | 0 |
+| 作業メモ後に新modelで再開 | PASS | 4 | 4/4 | 1 | 0 | 0 |
+| 未確認Replaceが既適用 | PASS | 2 | 3/2 | 1 | 0 | 1 |
+| 未確認Replaceが未適用 | PASS | 3 | 4/3 | 1 | 0 | 1 |
+
+4/4成功、合計13 model calls・15 decisions・13 actions・5実check・repair1。元checkoutとcandidate identityを保持し、Ready後の追加model/checkはいずれも0。既適用かどうかはread_rangeの実結果から判断する。中断2件はdriverによる明示resumeを含み、自動回復4/4とは記さない。
+
+`cargo test --locked --offline -p kamimusuhi-resident --lib engineering::tests::evaluation:: -- --nocapture` は1 test/4 scenarios PASS、exit0、実0.64s・compile込53.186s。出力JSONを `evaluation/harness/native-reactive-20261110.json` へ保存。新しい評価基準の追加であり、実LLMのcoding成功率の向上を測った数値ではない。再開はShared/model再作成であり、実daemon killはcycle13で別に試験する。
+
+Cycle15の変更前fixtureも実行し、0 PASS / 6 FAIL、exit101、実0.08s。episode未実装のNull、不正なzero_attempts受入等を確認。後続の製品修正前の結果として保持する。
+
+Cycle14の静的検証: resident全target/all-feature clippy PASS（10.969s、exit0）、fmt実行PASS、対象fmt checkとdiff check PASS。commitは `test(engineering): 観測から修復と再開を選ぶ評価を追加`。新fixtureを含む全CIは次の定期gateで行う。

@@ -24,7 +24,7 @@
 |---|---|---|---|---|
 | B003 | imozuru原文の直接保存 | `fetch.py` が7URLでDNS解決失敗。安全設定は解除していない | 直接DNSと公開HTTPSが利用できる作業環境で同じURLを取得する。`IMOZURU_ALLOW_PRIVATE` は不要 | fixture試験、認可済みWeb取得の本文抽出、URL/節名の整理 |
 | B004 | RustXNGの検索結果取得 | healthとJSONは200だが不応答engine9、結果0 | 公開検索エンジンへ到達できる環境で同じqueryを実行する | HTTP契約・sidecar lifecycle・schemaをモックで実装 |
-| B005 | 元HEADのfull CI | 再試験はfmt/clippy/buildまで通過。workspace testで `agent_exec::executor::tests::an_attached_server_is_started_reused_and_reaped` のFAILを観測後、中断。最終終了コード無し | 実験ブランチ再開時に元HEADのこの試験を隔離実行し、環境依存か既存欠陥か調べる | 新機能の対象crate/fixture検証 |
+| B005（新環境では解消） | 旧環境のfull CI | 新環境のcycle13凍結版で既存attached-server試験を含む全CIがexit0。旧exit137の原因は未確定 | 現在の操作不要。旧環境を再利用する場合のみPID namespace対応を確認する | 全workspace検証済みの基点から継続 |
 
 ### B005の原因確認（2026-11-09）
 
@@ -38,3 +38,7 @@
 ### B006: コンテナ再作成に伴う未転送分の消失（2026-11-10）
 
 cycle10までのremote commitは保存済み。cycle11のlocal commitとcycle12〜14の未保存作業、一時ログ、toolchainは現在の環境から失われた。rootが再clone・機能復元・再検証を実施するため、現時点でユーザー操作は不要。再び中断した場合は実験ブランチのSTATEから再開する。旧CIの最終結果は復元できないため、新環境で実行し直す。
+
+### 2026-11-10の検証更新
+
+B005: cycle13凍結版（公開83dd2d3、tree8d830c1）の全CIがPASS、989.095s。既存attached-server試験もPASS。元masterそのものの全CI成功や旧exit137原因の特定とは区別する。B006: cycle11機能とcycle12/13を復元・再検証し公開保存済み。cycle14は新fixtureを実測中。現在ユーザー操作は不要。

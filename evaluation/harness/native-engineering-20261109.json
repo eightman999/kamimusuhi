@@ -29,7 +29,24 @@
     "repairs_before": 0,
     "repairs_after": 1
   },
-  "full_ci": "INTERRUPTED: frozen cycle8 tree passed fmt, workspace clippy, worker build and resident tests; existing runtime attached-server FAIL observed; wrapper exit137 before final summary; downstream boundary gate unconfirmed",
+  "full_ci": {
+    "commit": "83dd2d3162f3f8094ee295b1ee6be17045981f66",
+    "tree": "8d830c1c17f71ee142f8132003677a87e8e5c1b3",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 989.095,
+    "date": "2026-11-10",
+    "includes_cycles": [
+      11,
+      13
+    ],
+    "excludes_cycles": [
+      12,
+      14,
+      15
+    ],
+    "previous_runtime_attached_server_test": "PASS in new PID-consistent container; executor unchanged"
+  },
   "limitations": [
     "Model decisions are fixtures; no real provider credentials used.",
     "OS lease tested on Linux overlayfs; NFS/SMB and multi-host fencing unverified.",
