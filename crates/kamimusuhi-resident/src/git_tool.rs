@@ -1,5 +1,7 @@
 //! Typed Git actions over operator-registered repositories, never a shell.
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
+use std::process::Stdio;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
@@ -39,12 +41,16 @@ impl RepositoryConfig {
 pub fn definitions() -> Vec<Value> {
     vec![json!({"type":"function","function":{
         "name":"git",
-        "description":"Git in an operator-registered repository. list shows names and permissions; status/diff/log/branches inspect it. Explicit file paths are required for add and commit; commit changes only those files and preserves other staged files. create_branch does not checkout; checkout and pull require a clean tree; pull is ff-only. fetch/push use the existing origin only; push needs allow_push and never forces. Shell, arbitrary git arguments, hooks, external diff/textconv/filters, reset, clean and force operations are unavailable. Sensitive credential paths are excluded from content views and refused for writes.",
+        "description":"Inspect registered repositories directly: files lists tracked/untracked source files; read_file reads numbered text lines. Use these for source/document inspection without delegating. list shows repository names and permissions; status/diff/log/branches inspect Git state. Explicit file paths are required for add and commit; commit changes only those files and preserves other staged files. create_branch does not checkout; checkout and pull require a clean tree; pull is ff-only. fetch/push use the existing origin only; push needs allow_push and never forces. Shell, arbitrary git arguments, hooks, external diff/textconv/filters, reset, clean and force operations are unavailable. Sensitive credential paths are excluded from content views and refused for writes.",
         "parameters":{"type":"object","additionalProperties":false,"properties":{
-            "action":{"type":"string","enum":["list","status","diff","log","branches","create_branch","checkout","add","commit","fetch","pull","push"]},
-            "repository":{"type":"string"},"paths":{"type":"array","maxItems":32,"items":{"type":"string"}},
+            "action":{"type":"string","enum":["list","status","diff","log","branches","files","read_file","create_branch","checkout","add","commit","fetch","pull","push"]},
+            "repository":{"type":"string"},
+            "directory":{"type":"string","description":"Relative directory for files; omit for repository root"},
+            "path":{"type":"string","description":"Explicit relative source file for read_file"},
+            "start_line":{"type":"integer","minimum":1},"max_lines":{"type":"integer","minimum":1,"maximum":200},
+            "paths":{"type":"array","maxItems":32,"items":{"type":"string"}},
             "branch":{"type":"string"},"message":{"type":"string","description":"Conventional Commit message; required for commit"},
-            "staged":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":50}},"required":["action"]}
+            "staged":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":256,"description":"files: up to 256 (default 100); log: up to 50 (default 10)"}},"required":["action"]}
     }})]
 }
 
@@ -124,6 +130,10 @@ fn sensitive(path: &Path) -> bool {
 }
 
 fn safe_path(root: &Path, input: &str) -> Result<String, &'static str> {
+    safe_source_path(root, input, false)
+}
+
+fn safe_source_path(root: &Path, input: &str, directory: bool) -> Result<String, &'static str> {
     if input.is_empty() || input.len() > 1024 || input.chars().any(char::is_control) {
         return Err("invalid file path");
     }
@@ -145,7 +155,11 @@ fn safe_path(root: &Path, input: &str) -> Result<String, &'static str> {
             Err(_) => return Err("cannot inspect file path"),
         }
     }
-    if at.is_dir() {
+    if directory {
+        if !at.is_dir() {
+            return Err("directory is unavailable");
+        }
+    } else if at.is_dir() {
         return Err("select individual files, not directories");
     }
     Ok(input.to_owned())
@@ -225,6 +239,204 @@ fn clipped(text: &str) -> (String, bool) {
         end -= 1;
     }
     (text[..end].to_owned(), end < text.len())
+}
+
+/// Content redaction is shared by diff/log and bounded source reads.
+fn redact_lines(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            let lower = line.to_ascii_lowercase();
+            if [
+                "authorization",
+                "password",
+                "secret",
+                "api_key",
+                "api-key",
+                "access_token",
+                "bearer ",
+            ]
+            .iter()
+            .any(|key| lower.contains(key))
+            {
+                "[REDACTED credential-shaped line]"
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+const FILE_LIST_BYTES: usize = 256 * 1024;
+const SOURCE_FILE_BYTES: usize = 1024 * 1024;
+const CONTENT_BYTES: usize = 24 * 1024;
+
+/// Unlike general Git output, a NUL-delimited file list must not be silently
+/// clipped in the middle of a name. Bound the pipe and mark incomplete output.
+fn bounded_file_list(root: &Path, args: &[String]) -> Result<(Vec<u8>, bool), &'static str> {
+    let mut child = process::harness_command("git", args, &[], &[])
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "could not start git")?;
+    let stdout = child.stdout.take().ok_or("cannot read git file list")?;
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = stdout
+            .take((FILE_LIST_BYTES + 1) as u64)
+            .read_to_end(&mut bytes);
+        let _ = send.send(result.map(|_| bytes));
+    });
+    let bytes = match receive.recv_timeout(Duration::from_secs(60)) {
+        Ok(Ok(bytes)) => bytes,
+        _ => {
+            process::kill_tree(&mut child);
+            return Err("git file list could not be read within its limit");
+        }
+    };
+    let truncated = bytes.len() > FILE_LIST_BYTES;
+    if truncated {
+        process::kill_tree(&mut child);
+    } else if !child
+        .wait()
+        .map_err(|_| "could not wait for git")?
+        .success()
+    {
+        return Err("git file list failed");
+    }
+    Ok((bytes, truncated))
+}
+
+fn source_files(
+    repo: &RepositoryConfig,
+    root: &Path,
+    options: &[String],
+    args: &Value,
+) -> Result<Value, &'static str> {
+    let limit = args.get("limit").map_or(Ok(100), |v| {
+        v.as_u64()
+            .filter(|n| (1..=256).contains(n))
+            .ok_or("files limit must be 1..256")
+    })? as usize;
+    let directory = args
+        .get("directory")
+        .map(|v| {
+            let value = v.as_str().ok_or("directory must be a string")?;
+            if value == "." {
+                Ok(value.to_owned())
+            } else {
+                safe_source_path(root, value, true)
+            }
+        })
+        .transpose()?;
+    let mut command = options.to_vec();
+    command.extend(
+        [
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+        ]
+        .map(str::to_owned),
+    );
+    if let Some(path) = directory.as_deref().filter(|p| *p != ".") {
+        command.push(format!(":(literal){}/", path.trim_end_matches('/')));
+    }
+    let (raw, mut truncated) = bounded_file_list(root, &command)?;
+    let complete = raw
+        .iter()
+        .rposition(|b| *b == 0)
+        .map_or(&[][..], |at| &raw[..=at]);
+    let mut paths = std::collections::BTreeSet::new();
+    for bytes in complete.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+        let Ok(path) = std::str::from_utf8(bytes) else {
+            continue;
+        };
+        // No sensitive names, symlinks, directories/submodule roots, or
+        // credential-shaped path tokens are disclosed by this content view.
+        if safe_path(root, path).is_err() || sanitized(path) != path || !root.join(path).is_file() {
+            continue;
+        }
+        paths.insert(path.to_owned());
+    }
+    let mut bytes = 0;
+    let mut selected = Vec::new();
+    for path in paths {
+        // JSON escaping can expand each input byte by up to six bytes.
+        if selected.len() == limit || bytes + path.len() * 6 > CONTENT_BYTES {
+            truncated = true;
+            break;
+        }
+        bytes += path.len() * 6;
+        selected.push(path);
+    }
+    Ok(json!({"action":"files","repository":repo.name,"paths":selected,"truncated":truncated}))
+}
+
+fn read_source_file(
+    repo: &RepositoryConfig,
+    root: &Path,
+    args: &Value,
+) -> Result<Value, &'static str> {
+    let path = safe_path(root, args["path"].as_str().ok_or("path is required")?)?;
+    let start = args.get("start_line").map_or(Ok(1), |v| {
+        v.as_u64()
+            .filter(|n| (1..=1_000_000).contains(n))
+            .ok_or("start_line must be 1..1000000")
+    })? as usize;
+    let limit = args.get("max_lines").map_or(Ok(100), |v| {
+        v.as_u64()
+            .filter(|n| (1..=200).contains(n))
+            .ok_or("max_lines must be 1..200")
+    })? as usize;
+    let file_path = root.join(&path);
+    let metadata = std::fs::metadata(&file_path).map_err(|_| "source file is unavailable")?;
+    if !metadata.is_file() || metadata.len() > SOURCE_FILE_BYTES as u64 {
+        return Err("source file is not a regular text file or exceeds 1 MiB");
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(&file_path)
+        .map_err(|_| "source file is unavailable")?
+        .take((SOURCE_FILE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "cannot read source file")?;
+    if bytes.len() > SOURCE_FILE_BYTES || bytes.contains(&0) {
+        return Err("source file is binary or exceeds 1 MiB");
+    }
+    let text = std::str::from_utf8(&bytes).map_err(|_| "source file must be UTF-8 text")?;
+    let total_lines = text.lines().count();
+    let mut lines = Vec::new();
+    let mut used = 0;
+    let mut truncated = false;
+    for (index, line) in text.lines().enumerate().skip(start - 1).take(limit) {
+        let content = sanitized(&redact_lines(line));
+        if used + content.len() * 6 > CONTENT_BYTES {
+            let mut end = (CONTENT_BYTES - used) / 6;
+            while !content.is_char_boundary(end) {
+                end -= 1;
+            }
+            if end > 0 {
+                lines.push(json!({"line":index + 1,"text":&content[..end],"line_truncated":true}));
+            }
+            truncated = true;
+            break;
+        }
+        used += content.len() * 6;
+        lines.push(json!({"line":index + 1,"text":content}));
+    }
+    let next = start + lines.len();
+    let has_more = next <= total_lines;
+    Ok(
+        json!({"action":"read_file","repository":repo.name,"path":path,
+        "start_line":start,"lines":lines,"total_lines":total_lines,
+        "next_line":if has_more && !lines.is_empty() {Some(next)} else {None},
+        "truncated":truncated || has_more}),
+    )
 }
 
 /// Fixed options disable implicit programs for source operations. Existing
@@ -328,6 +540,10 @@ fn execute(repo: &RepositoryConfig, args: &Value) -> Result<Value, &'static str>
             "message",
             "staged",
             "limit",
+            "directory",
+            "path",
+            "start_line",
+            "max_lines",
         ]
         .contains(&k.as_str())
     }) {
@@ -339,6 +555,8 @@ fn execute(repo: &RepositoryConfig, args: &Value) -> Result<Value, &'static str>
         "diff",
         "log",
         "branches",
+        "files",
+        "read_file",
         "create_branch",
         "checkout",
         "add",
@@ -390,6 +608,12 @@ fn execute(repo: &RepositoryConfig, args: &Value) -> Result<Value, &'static str>
                 options.push(format!("{name}.{suffix}={value}"));
             }
         }
+    }
+    if action == "files" {
+        return source_files(repo, &root, &options, args);
+    }
+    if action == "read_file" {
+        return read_source_file(repo, &root, args);
     }
     let paths = if let Some(raw) = args.get("paths") {
         let paths = raw.as_array().ok_or("paths must be an array")?;
@@ -558,29 +782,7 @@ fn execute(repo: &RepositoryConfig, args: &Value) -> Result<Value, &'static str>
         Duration::from_secs(if network { 120 } else { 60 }),
     )?;
     let content = if matches!(action, "diff" | "log") {
-        output
-            .lines()
-            .map(|line| {
-                let lower = line.to_ascii_lowercase();
-                if [
-                    "authorization",
-                    "password",
-                    "secret",
-                    "api_key",
-                    "api-key",
-                    "access_token",
-                    "bearer ",
-                ]
-                .iter()
-                .any(|key| lower.contains(key))
-                {
-                    "[REDACTED credential-shaped line]"
-                } else {
-                    line
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        redact_lines(&output)
     } else {
         output
     };
@@ -643,6 +845,149 @@ mod tests {
             allow_push: false,
         };
         (dir, repo)
+    }
+
+    #[test]
+    fn git_files_inspects_untracked_documents_without_exposing_credentials() {
+        let (_dir, mut repo) = fixture();
+        repo.allow_write = false;
+        std::fs::create_dir_all(repo.path.join("docs/verification")).unwrap();
+        std::fs::write(
+            repo.path.join("docs/verification/report.md"),
+            "# Actual report\n",
+        )
+        .unwrap();
+        std::fs::write(repo.path.join("docs/verification/ignored.md"), "ignored").unwrap();
+        std::fs::write(
+            repo.path.join("docs/verification/private.token"),
+            "not source",
+        )
+        .unwrap();
+        std::fs::write(repo.path.join(".gitignore"), "ignored.md\n").unwrap();
+        let output = execute(
+            &repo,
+            &json!({"action":"files","directory":"docs/verification"}),
+        )
+        .unwrap();
+        assert_eq!(output["paths"], json!(["docs/verification/report.md"]));
+        assert_eq!(output["truncated"], false);
+        let all = execute(&repo, &json!({"action":"files"})).unwrap();
+        assert!(all["paths"].as_array().unwrap().contains(&json!("a.txt")));
+        assert!(!all.to_string().contains(".env"));
+        assert!(!all.to_string().contains("private.token"));
+        let limited = execute(&repo, &json!({"action":"files","limit":1})).unwrap();
+        assert_eq!(limited["paths"].as_array().unwrap().len(), 1);
+        assert_eq!(limited["truncated"], true);
+        assert!(execute(&repo, &json!({"action":"files","directory":"../"})).is_err());
+        assert!(execute(&repo, &json!({"action":"files","directory":".git"})).is_err());
+    }
+
+    #[test]
+    fn git_read_file_preserves_line_numbers_and_bounds_and_redacts() {
+        let (_dir, mut repo) = fixture();
+        repo.allow_write = false;
+        std::fs::create_dir_all(repo.path.join("docs/verification")).unwrap();
+        std::fs::write(
+            repo.path.join("docs/verification/report.md"),
+            "first\nsecond\nthird\nAPI_KEY=fixture-only\nfifth\n",
+        )
+        .unwrap();
+        let page = execute(&repo, &json!({"action":"read_file","path":"docs/verification/report.md","start_line":2,"max_lines":2})).unwrap();
+        assert_eq!(
+            page["lines"],
+            json!([{"line":2,"text":"second"},{"line":3,"text":"third"}])
+        );
+        assert_eq!(page["total_lines"], 5);
+        assert_eq!(page["next_line"], 4);
+        assert_eq!(page["truncated"], true);
+        let tail = execute(
+            &repo,
+            &json!({"action":"read_file","path":"docs/verification/report.md","start_line":4}),
+        )
+        .unwrap();
+        assert_eq!(
+            tail["lines"][0]["text"],
+            "[REDACTED credential-shaped line]"
+        );
+        assert!(!tail.to_string().contains("fixture-only"));
+        assert_eq!(tail["next_line"], Value::Null);
+        assert_eq!(tail["truncated"], false);
+        std::fs::write(repo.path.join("long.txt"), "界".repeat(20_000)).unwrap();
+        let long = execute(&repo, &json!({"action":"read_file","path":"long.txt"})).unwrap();
+        assert_eq!(long["lines"][0]["line_truncated"], true);
+        assert_eq!(long["truncated"], true);
+        assert!(long.to_string().len() < 32 * 1024);
+        for args in [
+            json!({"action":"read_file","path":"a.txt","start_line":0}),
+            json!({"action":"read_file","path":"a.txt","max_lines":201}),
+            json!({"action":"read_file","path":".env"}),
+            json!({"action":"read_file","path":"docs/verification"}),
+            json!({"action":"read_file","path":"../outside"}),
+        ] {
+            assert!(execute(&repo, &args).is_err(), "{args}");
+        }
+    }
+
+    #[test]
+    fn git_read_file_rejects_binary_oversize_and_symlink_escapes() {
+        let (dir, repo) = fixture();
+        std::fs::write(repo.path.join("binary.bin"), [0, 1, 2]).unwrap();
+        std::fs::write(repo.path.join("invalid.txt"), [0xff]).unwrap();
+        std::fs::write(
+            repo.path.join("huge.txt"),
+            vec![b'a'; SOURCE_FILE_BYTES + 1],
+        )
+        .unwrap();
+        for path in ["binary.bin", "invalid.txt", "huge.txt"] {
+            assert!(execute(&repo, &json!({"action":"read_file","path":path})).is_err());
+        }
+        #[cfg(unix)]
+        {
+            std::fs::write(dir.path().join("outside.txt"), "private fixture").unwrap();
+            std::os::unix::fs::symlink(dir.path(), repo.path.join("link")).unwrap();
+            std::os::unix::fs::symlink(
+                dir.path().join("outside.txt"),
+                repo.path.join("linked.txt"),
+            )
+            .unwrap();
+            for path in ["link/outside.txt", "linked.txt"] {
+                assert!(execute(&repo, &json!({"action":"read_file","path":path})).is_err());
+            }
+            assert!(execute(&repo, &json!({"action":"files","directory":"link"})).is_err());
+            let files = execute(&repo, &json!({"action":"files"})).unwrap();
+            assert!(!files.to_string().contains("linked.txt"));
+            assert!(!files.to_string().contains("outside.txt"));
+        }
+    }
+
+    #[test]
+    fn git_file_listing_marks_bounded_capture_incomplete() {
+        let (_dir, repo) = fixture();
+        // Many index entries create a >256KiB NUL stream without depending
+        // on filesystem traversal speed or reading any file contents.
+        let object = raw(&repo.path, &["rev-parse", "HEAD:a.txt"]);
+        let names: String = (0..5_000)
+            .map(|n| format!("100644 {}\t{:0>70}.txt\n", object.trim(), n))
+            .collect();
+        use std::io::Write;
+        let mut child = Command::new("git")
+            .arg("-C")
+            .arg(&repo.path)
+            .args(["update-index", "--index-info"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(names.as_bytes())
+            .unwrap();
+        assert!(child.wait().unwrap().success());
+        let files = execute(&repo, &json!({"action":"files"})).unwrap();
+        assert_eq!(files["truncated"], true);
+        assert!(files["paths"].as_array().unwrap().len() <= 100);
+        assert!(files.to_string().len() < 32 * 1024);
     }
 
     #[test]

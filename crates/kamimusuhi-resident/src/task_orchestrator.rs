@@ -95,6 +95,9 @@ pub struct TaskPlane {
     registry: RwLock<RegistryState>,
     catalog: Mutex<ModelCatalog>,
     catalog_path: PathBuf,
+    /// Safe executor-name/timestamp metadata; never store the auth error text.
+    auth_failures: Mutex<HashMap<String, u64>>,
+    auth_failures_path: PathBuf,
     results_dir: PathBuf,
     /// Cancel flags of queued and running tasks.
     running: Mutex<HashMap<String, Arc<AtomicBool>>>,
@@ -105,6 +108,32 @@ pub struct TaskPlane {
     history: HistoryStore,
     /// `<root>/worktrees`: one git worktree per write task.
     worktrees_dir: PathBuf,
+}
+
+/// Run errors may contain test names such as login_flow; those do not
+/// establish an expired executor credential. Discovery has broader rules.
+fn task_authentication_failed(error: &str) -> bool {
+    let error = error.to_lowercase();
+    [
+        "not logged in",
+        "please log in",
+        "sign in required",
+        "unauthorized",
+        "authentication failed",
+        "authentication_error",
+        "invalid api key",
+        "invalid_api_key",
+        "api key expired",
+        "api key has expired",
+        "api key is expired",
+        "api_key_expired",
+        "token expired",
+        "token has expired",
+        "認証期限切れ",
+        "apiキーの期限切れ",
+    ]
+    .iter()
+    .any(|part| error.contains(part))
 }
 
 fn file_stamp(path: &Path) -> Option<(SystemTime, u64)> {
@@ -217,7 +246,14 @@ impl TaskPlane {
         let catalog_path = paths.cache().join("agent-model-catalog.json");
         let mut catalog = ModelCatalog::load(&catalog_path);
         catalog.retain(&registry.names());
+        let auth_failures_path = paths.current_state().join("executor-auth-failures.json");
+        let auth_failures = std::fs::read(&auth_failures_path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
         Self {
+            auth_failures: Mutex::new(auth_failures),
+            auth_failures_path,
             registry: RwLock::new(RegistryState {
                 registry,
                 file_stamp,
@@ -235,6 +271,37 @@ impl TaskPlane {
             history: HistoryStore::new(paths.current_state()),
             worktrees_dir: paths.root.join("worktrees"),
             config,
+        }
+    }
+
+    /// Discovery can succeed while task authentication is expired. Keep a
+    /// separate, persistent fifteen-minute cooldown, unaffected by discovery.
+    fn auth_retry_after(&self, executor: &str) -> Option<u64> {
+        self.auth_failures
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(executor)
+            .copied()
+            .filter(|until| *until > unix_now())
+    }
+
+    fn record_auth_outcome(&self, executor: &str, outcome: &TaskOutcome) {
+        let failed_auth = outcome.end == RunEnd::Failed
+            && outcome
+                .error
+                .as_deref()
+                .is_some_and(task_authentication_failed);
+        if !failed_auth && outcome.end != RunEnd::Succeeded {
+            return;
+        }
+        let mut failures = self.auth_failures.lock().unwrap_or_else(|p| p.into_inner());
+        if failed_auth {
+            failures.insert(executor.to_owned(), unix_now() + 900);
+        } else {
+            failures.remove(executor);
+        }
+        if let Ok(bytes) = serde_json::to_vec(&*failures) {
+            let _ = atomic_write(&self.auth_failures_path, &bytes);
         }
     }
 
@@ -452,7 +519,8 @@ impl TaskPlane {
                     "name": health.executor,
                     "adapter": health.adapter,
                     "enabled": health.enabled,
-                    "ok": health.ok,
+                    "ok": health.ok && self.auth_retry_after(&e.spec().name).is_none(),
+                    "auth_retry_after": self.auth_retry_after(&e.spec().name),
                     "detail": health.detail,
                     "binary": health.binary,
                     "running": slots.per_executor.get(&e.spec().name).copied().unwrap_or(0),
@@ -462,7 +530,7 @@ impl TaskPlane {
                     "models": entry.map_or(0, |c| c.models.len()),
                     "catalog_checked": entry.filter(|c| c.checked_at > 0).map(|c| iso8601(c.checked_at)),
                     "catalog_error": entry.and_then(|c| c.error.clone()),
-                    "needs_login": entry.is_some_and(ax::catalog::CatalogEntry::needs_login),
+                    "needs_login": self.auth_retry_after(&e.spec().name).is_some() || entry.is_some_and(ax::catalog::CatalogEntry::needs_login),
                     "harness_version": entry.and_then(|c| c.harness_version.clone()),
                     "protocol": e.spec().protocol.as_str(),
                     "can_resume": e.can_resume(),
@@ -560,6 +628,7 @@ fn parse_kind(value: &Value) -> Result<TaskKind, (u16, Value)> {
 /// Executors with whether each can take work now: installed, and not
 /// waiting for the operator to log in.
 fn candidates(
+    plane: &TaskPlane,
     registry: &ExecutorRegistry,
     catalog: &ModelCatalog,
 ) -> Vec<(Arc<dyn TaskExecutor>, bool)> {
@@ -571,7 +640,10 @@ fn candidates(
                 .executors
                 .get(&e.spec().name)
                 .is_some_and(ax::catalog::CatalogEntry::needs_login);
-            (Arc::clone(e), e.health().ok && !signed_out)
+            (
+                Arc::clone(e),
+                e.health().ok && !signed_out && plane.auth_retry_after(&e.spec().name).is_none(),
+            )
         })
         .collect()
 }
@@ -590,6 +662,12 @@ fn start_task(
         ));
     };
     let spec = executor.spec();
+    if let Some(until) = plane.auth_retry_after(&spec.name) {
+        return Err((
+            409,
+            json!({"error":"executor task authentication failed; use direct tools or wait for authentication repair", "retry_after":until}),
+        ));
+    }
     let total_quota = plane.config.quota.clone().unwrap_or_default();
     if start.selection.billing == AgentBilling::Metered
         && !(spec.quota.has_usd_budget() || total_quota.has_usd_budget())
@@ -753,7 +831,7 @@ fn delegate_in_turn(shared: &Shared, args: &Value, by: &str, turn: Option<&str>)
     }
     let registry = plane.registry();
     let catalog = plane.catalog_snapshot();
-    let pool = candidates(&registry, &catalog);
+    let pool = candidates(&plane, &registry, &catalog);
     let cands: Vec<ax::Candidate<'_>> = pool
         .iter()
         .map(|(e, ok)| ax::Candidate {
@@ -1022,6 +1100,18 @@ fn run_job(job: Job) {
         finish(TaskStatus::Cancelled, "開始前に取り消された", json!({}));
         return;
     }
+    // A preceding queued task may have discovered expired credentials
+    // while this one waited for its slot. Do not run the same broken executor.
+    if plane.auth_retry_after(&spec.name).is_some() {
+        plane.release(&spec.name);
+        plane.ledger.settle(&reservation, None, None, true);
+        finish(
+            TaskStatus::Failed,
+            "executor authentication failed while queued; use direct tools or repair authentication",
+            json!({"authentication_blocked":true}),
+        );
+        return;
+    }
     let started_at = unix_now();
     board.update(
         &spool,
@@ -1106,6 +1196,7 @@ fn run_job(job: Job) {
         }
     };
     let outcome: TaskOutcome = executor.run(&request, &cancel, &mut on_event);
+    plane.record_auth_outcome(&spec.name, &outcome);
     plane.release(&spec.name);
     let after = tree_state(&main_workspace);
     let (main_changes, tree_changed) = match (&before, &after) {
@@ -1433,7 +1524,8 @@ pub fn models(shared: &Shared, args: &Value) -> (u16, Value) {
         executors.push(json!({
             "executor": spec.name,
             "adapter": spec.adapter.as_str(),
-            "ok": health.ok,
+            "ok": health.ok && plane.auth_retry_after(&spec.name).is_none(),
+            "auth_retry_after": plane.auth_retry_after(&spec.name),
             "detail": health.detail,
             "default_model": spec.default_model,
             "default_billing": spec.default_billing.as_str(),
@@ -1789,7 +1881,7 @@ pub fn eval(shared: &Shared, args: &Value, by: &str) -> (u16, Value) {
     let run_id = format!("e{:x}", crate::util::unix_now_ms());
     let registry = plane.registry();
     let catalog = plane.catalog_snapshot();
-    let pool = candidates(&registry, &catalog);
+    let pool = candidates(&plane, &registry, &catalog);
     let cands: Vec<ax::Candidate<'_>> = pool
         .iter()
         .map(|(e, ok)| ax::Candidate {
@@ -2071,7 +2163,7 @@ pub fn definitions() -> Vec<Value> {
     vec![
         f(
             "task_delegate",
-            "Hand a longer piece of work (research, code reading, review, debugging, planning, code changes) to an external agent (Devin / OpenCode / Command Code …). Returns a task id immediately; do not wait — check later with task_status. Read-only unless permissions=workspace_write (isolated branch, merged only by the operator).",
+            "Use direct tools for routine inspection. Delegate only explicitly requested or longer work unavailable through direct tools to an external agent (Devin / OpenCode / Command Code …). Returns a task id immediately; do not wait — check later with task_status. Read-only unless permissions=workspace_write (isolated branch, merged only by the operator).",
             json!({"type": "object", "properties": {
                 "objective": {"type": "string", "description": "what to find out or do, self-contained"},
                 "kind": {"type": "string", "enum": ["research", "coding", "review", "debug", "planning", "background", "general"]},
@@ -2142,6 +2234,119 @@ mod tests {
             .status
             .success();
         assert!(ok, "git {args:?}");
+    }
+
+    #[test]
+    fn normal_login_related_test_failures_do_not_block_executor_authentication() {
+        for error in [
+            "tests::login_flow failed",
+            "test authenticate failed",
+            "task deadline expired",
+            "login.md missing",
+        ] {
+            assert!(!task_authentication_failed(error), "{error}");
+        }
+        for error in ["API key has expired", "invalid_api_key", "not logged in"] {
+            assert!(task_authentication_failed(error), "{error}");
+        }
+    }
+
+    #[test]
+    fn task_auth_failure_survives_discovery_and_restart_without_storing_errors() {
+        let (shared, _dir) = fixture(false);
+        let plane = shared.task_plane.as_ref().unwrap();
+        plane.refresh_catalog();
+        let mut outcome: TaskOutcome = serde_json::from_value(json!({
+            "end":"failed","summary":"","error":"API key has expired PRIVATE_DIAGNOSTIC",
+            "exit_code":1,"duration_ms":1
+        }))
+        .unwrap();
+        plane.record_auth_outcome("fake", &outcome);
+        assert!(plane.auth_retry_after("fake").is_some());
+        plane.request_refresh();
+        plane.refresh_catalog();
+        assert!(!candidates(plane, &plane.registry(), &plane.catalog_snapshot())[0].1);
+        let restored = TaskPlane::new(
+            shared.config.task_plane.clone().unwrap(),
+            &shared.config.paths,
+        );
+        assert!(restored.auth_retry_after("fake").is_some());
+        let stored = std::fs::read_to_string(&plane.auth_failures_path).unwrap();
+        assert!(!stored.contains("PRIVATE_DIAGNOSTIC") && !stored.contains("API key"));
+        let (_, reply) = tool(
+            &shared,
+            "task_delegate",
+            &json!({"objective":"inspect"}),
+            None,
+        );
+        assert_eq!(reply["ok"], false);
+        plane
+            .auth_failures
+            .lock()
+            .unwrap()
+            .insert("fake".to_owned(), unix_now() - 1);
+        assert!(candidates(plane, &plane.registry(), &plane.catalog_snapshot())[0].1);
+        outcome.end = RunEnd::Succeeded;
+        outcome.error = None;
+        plane.record_auth_outcome("fake", &outcome);
+        assert!(plane.auth_failures.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn queued_task_skips_executor_after_preceding_auth_failure_and_refunds_reservation() {
+        let (shared, dir) = fixture_with(
+            false,
+            &json!({"max_concurrent":1}),
+            &json!({"max_concurrent":1,"timeout_secs":20,"quota":{"max_tasks_per_day":2}}),
+        );
+        let plane = shared.task_plane.as_ref().unwrap();
+        // Keep the first invocation alive until the second has reserved
+        // its quota and entered the same executor's waiting queue.
+        script(
+            dir.path(),
+            "fake-agent",
+            "if [ \"$1\" = \"--list\" ]; then printf 'fake-1\\n'; exit 0; fi\n\
+             printf 'invoked\\n' >> \"$0.started\"\n\
+             n=0\n\
+             while [ ! -f \"$0.release\" ] && [ \"$n\" -lt 200 ]; do sleep 0.05; n=$((n+1)); done\n\
+             printf 'API key has expired\\n' >&2\n\
+             exit 1",
+        );
+        let first = delegate_ok(&shared, json!({"objective":"first inspection"}));
+        let started = dir.path().join("fake-agent.started");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !started.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(started.exists(), "first executor did not start");
+        let second = delegate_ok(&shared, json!({"objective":"queued inspection"}));
+        assert_eq!(
+            shared.tasks.get(&second).unwrap().status,
+            TaskStatus::Waiting
+        );
+        let (_, before) = panel(&shared);
+        assert_eq!(before["ledger"]["today"]["fake"]["tasks"], 2);
+        std::fs::write(dir.path().join("fake-agent.release"), "continue").unwrap();
+
+        let first = wait_finished(&shared, &first);
+        let second = wait_finished(&shared, &second);
+        assert_eq!(first.status, TaskStatus::Failed);
+        assert_eq!(second.status, TaskStatus::Failed);
+        assert_eq!(second.detail["authentication_blocked"], true);
+        assert!(second.detail.get("started").is_none());
+        assert_eq!(std::fs::read_to_string(started).unwrap(), "invoked\n");
+        assert!(plane.auth_retry_after("fake").is_some());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !plane.running.lock().unwrap().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(plane.running.lock().unwrap().is_empty());
+        let slots = plane.slots.lock().unwrap();
+        assert_eq!(slots.total, 0);
+        assert_eq!(slots.per_executor.get("fake").copied().unwrap_or(0), 0);
+        drop(slots);
+        let (_, after) = panel(&shared);
+        assert_eq!(after["ledger"]["today"]["fake"]["tasks"], 1);
     }
 
     /// A resident with one fake harness. The harness lists `fake-1`,

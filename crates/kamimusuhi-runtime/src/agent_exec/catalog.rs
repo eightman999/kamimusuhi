@@ -179,6 +179,16 @@ pub fn needs_login(error: &str) -> bool {
         "login",
         "authenticate",
         "unauthorized",
+        "authentication failed",
+        "authentication_error",
+        "invalid api key",
+        "invalid_api_key",
+        "api key expired",
+        "api key has expired",
+        "token expired",
+        "token has expired",
+        "認証期限切れ",
+        "apiキーの期限切れ",
     ]
     .iter()
     .any(|m| error.contains(m))
@@ -260,6 +270,21 @@ mod tests {
             .expect("config")
             .resolve()
             .expect("resolves")
+    }
+
+    #[test]
+    fn task_auth_expiration_is_distinct_from_an_ordinary_failure() {
+        for text in [
+            "API key has expired",
+            "invalid_api_key",
+            "token expired",
+            "APIキーの期限切れ",
+        ] {
+            assert!(needs_login(text), "{text}");
+        }
+        for text in ["file not found", "task deadline expired", "test failed"] {
+            assert!(!needs_login(text), "{text}");
+        }
     }
 
     #[test]
