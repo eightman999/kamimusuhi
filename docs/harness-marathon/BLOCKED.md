@@ -50,3 +50,7 @@ B005: cycle13凍結版（公開83dd2d3、tree8d830c1）の全CIがPASS、989.095
 ### B008: 二度目のcontainer再作成（2026-11-10）
 
 元containerのcycle20実装・検証後、commit起動前にexec-server接続断。未転送source/log/toolchainが消失した。09:48 UTCから新containerへ再cloneし、rootが実patchから復元・再検証する。現時点でユーザー操作不要。再び停止した場合は実験branchのSTATE/BACKLOGから再開する。新しい鍵、本番resident接続、新規有料サービスは不要。
+
+### B009（復帰）: 復元後の一時的な環境unavailable
+
+09:56の再検証開始後に実行環境がunavailableとなり、結果を一度UNKNOWNとした。14:31:52の復帰でworkspaceのsource/target/最終log/JSONは残っており、全対象gateのPASSと元fixture hashを確認した。HOME側のRust/cacheだけが消失したため、workspace側の専用CARGO_HOME/RUSTUP_HOMEへ再導入する。現時点でユーザー操作不要。再発時は利用可能containerから実験branchのSTATEを読み、ログが保持されたかを先に確かめる。元file消失や実行結果を推測せず、回収できない場合だけUNKNOWNとする。

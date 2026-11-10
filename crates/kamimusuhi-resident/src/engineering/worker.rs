@@ -271,8 +271,26 @@ fn decode_reply(bytes: &[u8], request: &Request) -> Result<Dispatch, String> {
         ReplyResult::Completed { outcome } => {
             match &outcome {
                 Ok(Outcome::Run { .. }) if request.operation.kind() == OperationKind::Run => {}
-                Ok(Outcome::Verified { .. })
-                    if request.operation.kind() == OperationKind::Verify => {}
+                Ok(Outcome::Verified { validation })
+                    if request.operation.kind() == OperationKind::Verify =>
+                {
+                    // Old checkpoints may lack this identity, but a live
+                    // reply must bind its evidence to this exact request.
+                    let matches = validation.contract.as_ref().is_some_and(|contract| {
+                        super::verification::valid(contract)
+                            && contract.policy_digest
+                                == super::verification::policy_digest(
+                                    &request.policy,
+                                    &request.limits.limits(),
+                                )
+                    });
+                    if !matches {
+                        return Err(
+                            "engineering worker verification contract does not match the request"
+                                .into(),
+                        );
+                    }
+                }
                 Err(error) if error.len() <= MAX_ERROR_BYTES => {}
                 _ => return Err("engineering worker reply has an invalid outcome".into()),
             }
@@ -714,12 +732,117 @@ mod tests {
                     passed: true,
                     head: "a".repeat(40),
                     checks: vec![],
+                    contract: None,
                 },
             }),
         };
         assert!(decode(&reply).is_err());
         assert!(decode_reply(&[], &request).is_err());
         assert!(decode_reply(b"{}\n{}\n", &request).is_err());
+    }
+
+    fn assert_live_contract(
+        edit: impl Fn(&mut Option<workspace::ValidationContract>),
+        accepted: bool,
+    ) {
+        for action in [
+            Action::Verify,
+            Action::Finish {
+                summary: "candidate verification receipt".into(),
+            },
+        ] {
+            for passed in [false, true] {
+                let mut request = request();
+                request.claimed_action = action.clone();
+                request.operation = Operation::Verify;
+                request.validate().unwrap();
+                let mut contract = Some(workspace::ValidationContract {
+                    schema_version: 1,
+                    policy_digest: super::super::verification::policy_digest(
+                        &request.policy,
+                        &request.limits.limits(),
+                    ),
+                    completed_at: 1,
+                });
+                edit(&mut contract);
+                let reply = Reply::new(
+                    &request,
+                    ReplyResult::Completed {
+                        outcome: Ok(Outcome::Verified {
+                            validation: Validation {
+                                passed,
+                                head: "a".repeat(40),
+                                checks: vec![json!({
+                                    "index":0, "program":"true", "passed":passed,
+                                    "exit_code":if passed { 0 } else { 1 },
+                                })],
+                                contract,
+                            },
+                        }),
+                    },
+                );
+                let decoded =
+                    decode_reply(&encode_frame(&reply, MAX_REPLY_BYTES).unwrap(), &request);
+                if accepted {
+                    assert!(matches!(
+                        decoded,
+                        Ok(Dispatch::Completed(Ok(Outcome::Verified { validation })))
+                            if validation.passed == passed
+                    ));
+                } else {
+                    assert!(
+                        decoded.is_err(),
+                        "{action:?} passed={passed} accepted a mismatched contract: {decoded:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn live_verification_contract_matches_the_request() {
+        assert_live_contract(|_| {}, true);
+    }
+
+    #[test]
+    fn live_verification_contract_cannot_be_missing() {
+        assert_live_contract(|contract| *contract = None, false);
+    }
+
+    #[test]
+    fn live_verification_contract_cannot_use_another_policy_digest() {
+        let mut other = request();
+        other.policy.checks[0] = vec!["false".into()];
+        let other_digest =
+            super::super::verification::policy_digest(&other.policy, &other.limits.limits());
+        assert_live_contract(
+            |contract| {
+                contract
+                    .as_mut()
+                    .unwrap()
+                    .policy_digest
+                    .clone_from(&other_digest)
+            },
+            false,
+        );
+    }
+
+    #[test]
+    fn live_verification_contract_rejects_a_malformed_digest() {
+        assert_live_contract(
+            |contract| {
+                contract.as_mut().unwrap().policy_digest = format!("sha256:{}", "g".repeat(64));
+            },
+            false,
+        );
+    }
+
+    #[test]
+    fn live_verification_contract_rejects_an_unsupported_version() {
+        assert_live_contract(
+            |contract| contract.as_mut().unwrap().schema_version = 2,
+            false,
+        );
     }
 
     #[test]

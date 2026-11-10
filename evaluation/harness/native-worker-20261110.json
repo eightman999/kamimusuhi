@@ -60,7 +60,15 @@
     "fixture_correction": "next_decision expected completed actions, not model call count",
     "corrected_case_passed": 1,
     "corrected_case_test_seconds": 5.26,
-    "post_correction_whole_suite": "pending full CI"
+    "post_correction_whole_suite": {
+      "status": "PASS",
+      "commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
+      "passed": 6,
+      "failed": 0,
+      "ignored_helper": 1,
+      "test_seconds": 94.4,
+      "evidence": "旧containerの全CI終了tool出力。原logは消失。"
+    }
   },
   "clippy_all_targets_all_features": "PASS",
   "fmt": "PASS",
@@ -70,5 +78,15 @@
     "claim check does not provide durable execution fencing",
     "Unix transport; 1MiB frames and 64MiB checkpoint limit",
     "latencies are one local fixture observation, not a general service bound"
-  ]
+  ],
+  "full_ci": {
+    "commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
+    "tree": "73aae76c8c6556ae839e633f850629a89ae80f46",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 1089.798,
+    "ended_at": "2026-11-10T06:00:19.707907Z",
+    "scope": "旧containerの凍結tree、cycle12/14/15/17/16を含む。cycle18/19/20は含まない",
+    "evidence": "チャットのtool最終JSONとlocal CI passedを確認。元logはcontainer切断で再取得不可"
+  }
 }

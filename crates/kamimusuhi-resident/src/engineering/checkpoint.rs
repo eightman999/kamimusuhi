@@ -156,6 +156,14 @@ pub(super) fn validate(snapshot: &Snapshot, candidate_root: &Path) -> Result<(),
         if job.validation.as_ref().is_some_and(|v| !commit_id(&v.head)) {
             return Err("engineering checkpoint validation revision is invalid".into());
         }
+        if job
+            .validation
+            .as_ref()
+            .and_then(|validation| validation.contract.as_ref())
+            .is_some_and(|contract| !super::verification::valid(contract))
+        {
+            return Err("engineering checkpoint validation contract is invalid".into());
+        }
         if job.phase == Phase::Ready {
             let proven = job.validation.as_ref().is_some_and(|v| {
                 v.passed

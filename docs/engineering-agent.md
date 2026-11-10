@@ -12,11 +12,13 @@ git worktree で編集・実行・検証を進めます。resident を稼働さ�
 3. 目標、作業メモ、直近の観測と検証結果から、モデルが次の行動を一つ選ぶ。
 4. 行動を `pending` として保存できた場合にだけ実行する。
 5. 実際の結果を保存し、次の判断へ進む。検証失敗なら同じ候補で修正する。
-6. `finish` は設定された検証コマンドを実行する。全て成功し、検証中に候補が
-   変わっていなければ `ready` になる。
+6. `finish` は設定された検証コマンドを実行する。全て成功し、検証終了時の
+   HEAD・branch・git status の検査も通れば `ready` になる。
 
 目標全体の固定ターン数・固定試行回数は設けていません。操作ごとの期限、出力量、
-並行実行の排他と取消は別に管理します。`ready` は検証済み候補がある状態です。
+並行実行の排他と取消は別に管理します。`ready` は、保存した commit がその時点の
+検証設定で成功した状態です。現在の候補の状態は、下記の `verification` 表示と
+区別して確認します。
 候補ブランチを残し、マージ・push・デプロイはこのエージェントでは実行しません。
 
 ## 設定
@@ -115,6 +117,49 @@ HTTP は `GET /v1/engineering` と `POST /v1/engineering` です。
 許可します。通常の tool catalog 経路から管理用の入口を発見できます。
 目標の遂行は、resident のエンジニアスケジューラが引き受けます。
 
+## 検証した commit と設定の表示
+
+`validation` は検証結果の保存先で、`head`、各 check の結果、任意の `contract` を
+持ちます。新しい成功・失敗の検証 receipt には、`contract.schema_version: 1`、
+設定の `policy_digest`、検証処理が終了した Unix 秒の `completed_at` を保存します。
+この時刻は検証時の記録であり、現在の候補を観測した時刻としては使いません。
+
+receipt がある job には、表示用の `verification` も付きます。
+`scope: recorded_commit` と `head` が検証した過去の commit を示し、`passed` は
+その検証結果を示します。show、list とその summary、resident 全体の status、
+同じ `request_id` の再送結果、モデル context で同じ意味を使います。
+
+`verification.policy.status` は、保存した検証設定と現在設定の対応です。
+
+| 値 | 意味 |
+|---|---|
+| `matching` | 保存済み digest と現在の検証設定から計算した digest が一致する |
+| `changed` | 両方の digest があり、現在の検証設定が変わっている |
+| `unknown` | 旧 receipt に contract がなく、検証時の設定が記録されていない |
+| `unavailable` | contract はあるが、その job の workspace に対応する現在設定がない |
+
+比較には、workspace の名前・設定された path、順序を含む checks の argv、検証の
+期限、出力枠を使います。モデル、tick 間隔、トークン枠、Run の期限、追加コマンドの
+allowlist はこの digest の対象外です。外部 script や実行ファイルの内容、PATH、
+toolchain、環境変数、外部サービスの状態も比較していません。`matching` が示す
+範囲は、これらの記録対象となった設定値の一致です。
+
+現在の候補については、`verification.candidate.status: not_observed` と
+`observed_at: null` を表示します。これらの表示経路では git、ファイルの有無、実検証、
+モデル呼び出しを追加しません。外部から候補を編集・commit した場合や、ディレクトリを
+移動した場合も、保存された成功と現在状態を分けて `not_observed` を維持します。
+`policy.status: unavailable` は設定の対応を表し、候補ディレクトリの有無は別の確認事項です。
+
+設定変更後も phase と validation は過去の記録として保持します。現在の設定で
+再検証する場合は、Ready から明示的に `resume` して作業を続けます。resume は
+以前の validation を消し、その後の Verify / Finish が新しい検証結果を作ります。
+
+旧 checkpoint の contract 省略は `None` として読み込めます。現在の設定や時刻から
+過去の情報を補わず、`recorded_digest` と `completed_at` は `null`、policy は
+`unknown` になります。contract 自体がある場合は、版・digest の形式・必須 field を
+検査します。不正な contract は job の phase にかかわらず、pending の回復より前に
+検出して store を隔離し、原本を保持します。
+
 ## 継続と再開
 
 `current_state/engineering.json` に目標・候補・作業メモ・直近の観測・検証証拠・
@@ -179,6 +224,12 @@ Run・Verify・Finishは、resident自身と同じbinaryの専用workerで実行
 外部coding CLIは必要ありません。workerはresidentのconfig・token・HTTP serverを
 初期化せず、親が保存したclaimと実行設定を確認してから操作します。
 
+実行中の worker が Verify / Finish の検証結果を返す場合、`validation.contract` が必要です。
+親は request と reply の job・claim 番号・操作種別に加え、contract の版・形式と、
+その request の検証設定 digest を照合します。成功・失敗のどちらにも適用し、
+欠落・不正・別設定の receipt は結果不明として扱います。旧 checkpoint の
+`contract: None` 互換は、この実行中の返信を受け入れる条件には適用しません。
+
 親との制御pipeが閉じるとworkerは取消を通知し、commandのprocess groupを停止して
 direct childを回収します。操作の期限もworker内で監視するため、residentだけが
 終了しても停止処理を続けられます。親側も取消時は先にpipeを閉じ、有限のcleanup
@@ -222,7 +273,14 @@ loopbackのfixtureで検証します。外部モデルのコーディング能�
 測る試験ではありません。
 
 実装は `crates/kamimusuhi-resident/src/engineering.rs` と
-`engineering/workspace.rs`、制御の fixture は `engineering/tests.rs` にあります。
+`engineering/workspace.rs`、検証の表示は `engineering/verification.rs`、制御の
+fixture は `engineering/tests.rs` にあります。
+
+検証設定の同一性は `engineering::tests::verification_identity`、実行中の receipt の
+照合は worker の codec fixture で検査します。測定記録は
+[verification-identity-20261110.json](../evaluation/harness/verification-identity-20261110.json)
+を参照してください。この記録は元コンテナの結果と復元版の実行状況を分けています。
+旧ログから復元した PASS を、新しい環境で再実行した結果としては扱いません。
 
 ### 観測に基づく継続性の評価
 

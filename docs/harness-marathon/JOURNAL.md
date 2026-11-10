@@ -623,3 +623,31 @@ Cycle20の同一fixtureによる修正前評価は8件すべてFAIL（0.47s、co
 cycle20は元containerで対象8件が0/8→8/8、live contract codecが1/5→5/5。最終engineering76/76（5.10s）、resident全target/allfeature clippy（20.514s）、fmt（1.598s）、実worker4件（1.34s）はすべてPASSした。最後の記録/commitはexec-server transport disconnectedでprocess生成前に失敗。GitHub APIによる復旧docsのtree作成も長時間応答せず中断し、09:48:27 UTCの新containerにはrepo/toolchainが無かった。再cloneしたbranchのHEADが3ee6638であることを確認した。
 
 現在は会話に残る投入patchからcycle20を復元する。元bytesとのhash照合と新containerでの再試験を行い、旧PASSと復元版を混同しない。Rust1.92.0を再導入する。大きいCargo targetを4.9GiB tmpfsの/tmpへ置かない。原ログ全体は再取得不可なので、確認済みの数値だけを復旧記録として保存する。
+
+## Cycle 20 — 保存した検証対象と現在の状態の区別（復元版PASS）
+
+着手前欄の仮説を実装した。Validationにoptional contract（schema1、検証設定digest、completed_at）を保存する。実check成功/失敗の双方が対象。digestにはworkspace名/path、順序付きchecks argv、validation期限、output枠を含める。show/list/list-summary/resident status/create再送/model contextはrecorded_commitとpolicy matching/changed/unknown/unavailableを表示し、現在candidateはnot_observedと明示する。表示からGit/check/modelを実行しない。旧contract欠落へ現在値を後付けせず、不正contractは全phaseでpending回復より前に拒否。live workerのVerified返信は有効でrequestと一致するcontractを必須とし、欠落/不一致はUnknownへ接続する。
+
+| 旧containerの同一fixture | 変更前 | 変更後 |
+|---|---:|---:|
+| identity 8件 | 0 PASS / 8 FAIL | 8 PASS / 0 FAIL |
+| live contract codec 5件 | 1 PASS / 4 FAIL | 5 PASS / 0 FAIL |
+
+旧identity SHA cbabb92cbdb46b5071134ef6e8ad999de315d4e3d64c5280dfc02e5b931a7b75、worker SHA 233ffd40d1e0f771b947e39c222229d972e99ef0931f2aae694b7732063493b3 は復元版でも一致。設定6変更、無関係設定群、legacy、不正値、外部edit/commit/move、全表示の追加check/model0を確認するfixtureを保持した。設定digestは外部script/PATH/サービスの同一性を証明しない。
+
+09:48に新containerへ復元後、09:56:45から新しい実行検証を開始した。環境unavailableのため一度UNKNOWNと扱ったが、14:31:52の復帰時にworkspace内の元source/log/最終JSONが保持されていた。原文消失を懸念してAPI用の再作成を準備したが、再作成testは採用せず、元SHA一致のtestをそのまま保存する。
+
+| 復元版の新しい検証 | 結果 | command全体 / test本体 |
+|---|---|---|
+| cargo test -p kamimusuhi-resident --lib engineering:: -- --test-threads=1（locked/offline） | PASS 76/76 | 146.136s / 13.67s |
+| cargo test -p kamimusuhi-resident --test engineering_worker -- --test-threads=1 --nocapture（locked/offline） | PASS 4 / helper 1 ignored | 24.779s / 2.03s |
+| resident全target/allfeature clippy -D warnings（locked/offline） | PASS | 72.510s |
+| cargo fmt --all -- --check | PASS | 2.272s |
+
+最終gate終了10:00:51.649069 UTC。全CIはこの復元版ではまだ未実施で、最新成功は11ef050/tree73aae76（1089.798s）。14:31に取得したsourceを再検証したとは書かず、保持されていた09:56〜10:00の実行結果と、そのsource hashを確認した層を区別する。
+
+09:48:27〜10:00:51.649069を実作業sessionとして加算し、10:00:51.649069〜14:15:59の待機を除外。14:15:59からGitHub退避作業を再開。復旧docsはdd08ef6/treeade16faへ既に保存済み。今回のsourceはこの記録と同じcommitへ保存する。実作業24hは未達で、別Codex task/Work常駐jobは起動していない。
+
+次のcycle21はjob別OS lock＋optional checkpoint marker＋永続high-waterでworkerのcheck→startとresume、同claimの並行/逐次重複を閉じる。CYCLE21-DESIGN.mdへ静的設計を保存済み。まだ実装・実測していない。
+
+コミット: fix(engineering): 検証結果を記録した設定とcommitへ結び付ける。

@@ -2,7 +2,7 @@
 
 ## 次にやること
 
-cycle20を復元・再検証して保存する。新containerに3ee6638から再clone済み。元containerの76 tests/clippy/fmt PASSを復元版の結果に流用せず、source hashと新実行で確認する。最新全CI成功は旧containerの11ef050（1089.798s）。その後、job lock＋optional checkpoint marker＋永続high-waterによるworker重複抑止へ進む。
+cycle20の凍結全CIを独立overlay targetで実行する。復元版は元fixture hash一致、engineering76/76・実worker4件・clippy/fmt PASSを回収済み。並行してCYCLE21-DESIGN.mdのjob lock＋optional checkpoint marker＋永続high-waterを実装し、同じclaimの並行/逐次重複とresume競合をbefore/afterで実測する。
 
 ## 現在の最優先（2026-11-09更新）
 
@@ -12,8 +12,9 @@ cycle20を復元・再検証して保存する。新containerに3ee6638から再
 | P1 | 自律loopのtraceと評価 | 決定的成功率/repair/再開重複/action数を記録 |
 | P1 | claim済みactionの実process中断 | コマンド途中のkill後に副作用と未確認receiptを保持し、自動再実行しない |
 | P1 | 長期修復の多段シナリオ | cycle18の診断保持から、異なる失敗原因/複数file/中断を含む反応型評価へ拡張 |
-| P1 | 検証receiptと候補の変化 | 静的監査で外部commit後も旧Ready表示が残る。show/list/summary/request再送/reloadを一つの実fixtureで再現 |
-| P1 | 検証設定変更とReadyの鮮度 | checks追加後に旧receiptが新設定の成功に見えない。argv証拠を保存して照合 |
+| P1 | 候補の明示inspect | 一件・短い総期限の読取で観測時刻と一致/変更/到達不能を表示。status全件でgitを起動しない |
+| P1 | 検証試行と実check数の区別 | Rejectedもverification_runsへ入る現状をfixtureで測り、実開始とrequest試行を区別 |
+| P1 | checkpoint成長とworker読取上限 | workerの64MiB上限と無制限job蓄積の接点を測定し、個別claim投影を検討 |
 | P2 | ACP出力のメモリと切断 | 独自BufReader::lines/channelの上限と不完全protocolの扱いをfixtureで確認 |
 | P1 | provider transportのprocess所有 | cycle19のOwnedChild以外にあるprovider_processのreap後signalを独立して確認 |
 | P1 | cleanupの確認をreceiptへ伝える | best-effort停止エラーと停止確認を区別し、未知の終了を確定結果にしない |

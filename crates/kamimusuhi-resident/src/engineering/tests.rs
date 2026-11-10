@@ -18,6 +18,7 @@ mod cursor;
 mod evaluation;
 mod model_recovery;
 mod validation_memory;
+mod verification_identity;
 mod worker_dispatch;
 
 struct InlineRunner;

@@ -106,6 +106,7 @@ impl EngineerModel for ObservedRepair {
 #[test]
 fn retained_failure_diagnostic_guides_repair_after_fourteen_reads_and_reload() {
     let fixture = fixture();
+    let limits = fixture.shared.config.engineering.as_ref().unwrap().limits();
     let original_head = git(&fixture.workspace, &["rev-parse", "HEAD"]);
     let (status, created) = handle(
         &fixture.shared,
@@ -287,7 +288,7 @@ fn retained_failure_diagnostic_guides_repair_after_fourteen_reads_and_reload() {
     drop(contexts);
 
     let completed = fixture.shared.engineering.get(&id).unwrap();
-    let successful_context = context(&completed, &policy);
+    let successful_context = context(&completed, &policy, &limits);
     assert_eq!(successful_context["validation"]["passed"], true);
     assert_eq!(
         successful_context["validation"]["failure_evidence"],
@@ -305,6 +306,7 @@ fn retained_failure_diagnostic_guides_repair_after_fourteen_reads_and_reload() {
 #[test]
 fn failure_projection_keeps_failed_checks_and_integrity_as_external_data_until_success() {
     let fixture = fixture();
+    let limits = fixture.shared.config.engineering.as_ref().unwrap().limits();
     let id = create(&fixture.shared);
     let policy = &fixture
         .shared
@@ -315,6 +317,7 @@ fn failure_projection_keeps_failed_checks_and_integrity_as_external_data_until_s
         .workspaces[0];
     let mut saved = fixture.shared.engineering.get(&id).unwrap();
     saved.validation = Some(Validation {
+        contract: None,
         passed: false,
         head: saved.candidate.base_commit.clone(),
         checks: vec![
@@ -324,7 +327,7 @@ fn failure_projection_keeps_failed_checks_and_integrity_as_external_data_until_s
         ],
     });
     let original = serde_json::to_value(&saved.validation).unwrap();
-    let projected = context(&saved, policy);
+    let projected = context(&saved, policy, &limits);
     let evidence = projected["validation"]["failure_evidence"]
         .as_array()
         .unwrap();
@@ -364,22 +367,24 @@ fn failure_projection_keeps_failed_checks_and_integrity_as_external_data_until_s
     // A passing command may print old error text; it is not a current
     // failure. A successful receipt must expose no stale failure excerpts.
     saved.validation = Some(Validation {
+        contract: None,
         passed: true,
         head: saved.candidate.base_commit.clone(),
         checks: vec![
             json!({"index":0,"program":"check","passed":true,"exit_code":0,"stdout":UNTRUSTED}),
         ],
     });
-    let successful = context(&saved, policy);
+    let successful = context(&saved, policy, &limits);
     assert_eq!(successful["validation"]["failure_evidence"], json!([]));
     assert_eq!(successful["validation"]["failure_evidence_omitted"], 0);
     saved.validation = None;
-    assert!(context(&saved, policy)["validation"].is_null());
+    assert!(context(&saved, policy, &limits)["validation"].is_null());
 }
 
 #[test]
 fn failure_projection_bounds_encoded_json_and_each_utf8_excerpt_and_counts_omissions() {
     let fixture = fixture();
+    let limits = fixture.shared.config.engineering.as_ref().unwrap().limits();
     let id = create(&fixture.shared);
     let policy = &fixture
         .shared
@@ -403,12 +408,13 @@ fn failure_projection_bounds_encoded_json_and_each_utf8_excerpt_and_counts_omiss
         .filter(|check| check["passed"] == false)
         .count();
     saved.validation = Some(Validation {
+        contract: None,
         passed: false,
         head: saved.candidate.base_commit.clone(),
         checks: checks.clone(),
     });
     let original = serde_json::to_value(&saved.validation).unwrap();
-    let projected = context(&saved, policy);
+    let projected = context(&saved, policy, &limits);
     let evidence = projected["validation"]["failure_evidence"]
         .as_array()
         .unwrap();

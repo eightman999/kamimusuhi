@@ -121,6 +121,17 @@ pub struct Validation {
     pub passed: bool,
     pub head: String,
     pub checks: Vec<Value>,
+    /// Older receipts have no recorded settings; never infer them on reload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<ValidationContract>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValidationContract {
+    pub schema_version: u32,
+    pub policy_digest: String,
+    pub completed_at: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1089,6 +1100,7 @@ pub fn verify(
         passed,
         head,
         checks,
+        contract: Some(super::verification::contract(policy, limits)),
     })
 }
 

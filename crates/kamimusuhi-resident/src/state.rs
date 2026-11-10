@@ -515,7 +515,7 @@ impl Shared {
             "jobs": read(&*self.jobs),
             "task_plane": self.task_plane.as_ref().map(|p| p.status()),
             "commitments": self.commitments.summary(),
-            "engineering": self.engineering.summary(),
+            "engineering": self.engineering.summary_with_config(self.config.engineering.as_ref()),
             "intercom": self.intercom.summary(),
             "approvals_pending": self.approvals.list(true).iter().map(|a| a.view()).collect::<Vec<_>>(),
             "generated_at": iso8601(unix_now()),

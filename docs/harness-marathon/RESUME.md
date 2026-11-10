@@ -2,7 +2,11 @@
 
 この記録は24時間完了のREPORTではない。実験ブランチの再開checkpoint。
 
-## 最新の目的と進捗（2026-11-09）
+## 最新の目的と進捗
+
+2026-11-10 cycle20: 元fixtureと同じsourceを復元し、engineering76/76・実worker4件・resident全target/allfeature clippy・fmtがPASS。検証設定digestと過去commitのreceipt表示を保存済み。全CIは最新11ef050でPASS、cycle20凍結版をこれから実行する。次はCYCLE21-DESIGN.mdの重複実行抑止。以下の記述は各時点の経過であり、最新値はSTATE/BACKLOGを優先する。
+
+### 初期の進展（2026-11-09）
 
 ユーザーはskills/検索toolの拡張より、resident本体へのエンジニアハーネス実装を優先すると指定した。native agent初版を実装し、unit12件・workspace8件・実daemon HTTP1件を検証済み。`docs/engineering-agent.md` と `evaluation/harness/native-engineering-20261109.json` を参照。RustXNG/imozuru案は保留。
 
@@ -65,7 +69,7 @@ cycle8でOS lease、checkpoint意味検査、実行途中の実daemon再起動�
 
 ## 次の検証
 
-- 最後の全CIは83dd2d3でPASS。後続cycle12以降は対象検証を積み、3〜4cycleごとに次の凍結版を通す。
+- 最新の全CIはSTATE.last_ci_passed_commitを参照。11ef050のPASSはcycle18/19/20を含まないため、cycle20凍結版で実行する。
 - 追加モジュールは外部検索に依存せず、loopback fixtureとfake scriptで検証する。
 - 実検索の結果0件を「検索性能が低い」と一般化しない。直接取得失敗とHTTP契約成功を分ける。
 - 本番resident、Mac/Pi、Slack/Discord、メール、Cloudflare relayには接続しない。
@@ -77,3 +81,7 @@ cycle8でOS lease、checkpoint意味検査、実行途中の実daemon再起動�
 ## 最新の再復旧（2026-11-10 18:48 JST）
 
 二度目のcontainer再作成でcycle20未転送分を失った。3ee6638から再cloneし、会話内patchから復元中。累計4.320132hを引継ぎ、06:18:07〜09:48:27 UTCを除外する。元containerで11ef050の全CIはPASS、cycle20対象76 tests/clippy/fmtもPASS。ただし復元版はhash照合/再試験を先に行う。最新状態はSTATE/BACKLOGが正本。
+
+## 2026-11-10 14:31 UTC の環境復帰
+
+一時的にexecが使えなくてもworkspace filesと最終logは保持された。消失を推定せず、最初にhashとgate JSONを調べる。HOME側toolchain/cacheは失われたためworkspaceの /workspace/scratch/5aa3a7808c02/rust-toolchain/{cargo,rustup} をCARGO_HOME/RUSTUP_HOMEとして再導入する。HOME自体は変更しない。利用環境で存在とversionを確認し、同じRust1.92.0を使う。大きいCargo targetは/workspace側、異なるworktreeで同じtargetを共有しない。
