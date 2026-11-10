@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 1.786186,
+  "elapsed_hours": 2.016521,
   "target_hours": 24.0,
-  "cycle": 10,
-  "current_task": "cycle10: 実residentの不正モデル応答・503回復fixtureを保存",
+  "cycle": 11,
+  "current_task": "コンテナ再作成から復旧: cycle10までremote保存、cycle11の未転送修正を再構築・再検証",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": null,
-  "last_checkpoint_at": "2026-11-09T05:11:34Z",
-  "active_session_started_at": "2026-11-09T04:32:26Z",
-  "session_elapsed_base_hours": 1.133847,
+  "last_checkpoint_at": "2026-11-10T04:03:44Z",
+  "active_session_started_at": "2026-11-10T03:59:54Z",
+  "session_elapsed_base_hours": 2.016521,
   "status": "active",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
-  "next_task": "cycle11: 中断action番号の再利用を実fixtureで再現し、schema v2へ互換移行する",
+  "next_task": "独立cursor/lease修正を復元して保存後、context予算と実daemon中断fixtureを統合",
   "completed_sessions": [
     {
       "started_at": "2026-11-08T16:06:48Z",
@@ -32,6 +32,12 @@
       "ended_at": "2026-11-08T23:10:55Z",
       "elapsed_hours": 0.326069,
       "end_evidence": "native engineering HTTP test clippy log mtime"
+    },
+    {
+      "started_at": "2026-11-09T04:32:26Z",
+      "ended_at": "2026-11-09T05:25:23Z",
+      "elapsed_hours": 0.8825,
+      "end_evidence": "前セッションのSTATE更新がチャットtool出力に残る。最後の確認済み実作業時刻。"
     }
   ],
   "excluded_idle_interval": {
@@ -54,7 +60,7 @@
     2,
     3
   ],
-  "last_verified_change_commit": "82c38b2153941a38dd98fab64f6b4b7eb887b43d",
+  "last_verified_change_commit": "3ab5254a7c66f971f5673b9509d1699bcb1ae139",
   "resume_guide": "docs/harness-marathon/RESUME.md",
   "evaluation": "evaluation/harness/marathon-20261109.json",
   "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。",
@@ -63,7 +69,26 @@
       "from": "2026-11-08T23:10:55Z",
       "to": "2026-11-09T04:32:26Z",
       "reason": "tool待機/環境更新の後、実作業ログがない空白。24時間へ加算しない"
+    },
+    {
+      "from": "2026-11-09T05:25:23Z",
+      "to": "2026-11-10T03:59:54Z",
+      "reason": "長時間tool待機とコンテナ作業領域消失。実作業を示す結果がなく加算しない。"
     }
   ],
-  "engineering_evaluation": "evaluation/harness/native-engineering-20261109.json"
+  "engineering_evaluation": "evaluation/harness/native-engineering-20261109.json",
+  "recovery": {
+    "remote_head": "3ab5254a7c66f971f5673b9509d1699bcb1ae139",
+    "lost_local_commit": "6fc741eb46566fdc2194999c13894c1035e00be1",
+    "lost_tree": "5f579fb271fdd4dba7573b9110f8f8cc0c8a91d7",
+    "remote_tree_probe": "404; not available",
+    "prior_cycle11_validation": "45 engineering tests PASS and resident lib allfeature clippy PASS, previous container only",
+    "pending_restoration": [
+      11,
+      12,
+      13,
+      14
+    ],
+    "full_ci_after_cycle11": "UNKNOWN; running process and final log unavailable after container replacement"
+  }
 }

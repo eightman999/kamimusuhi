@@ -33,3 +33,8 @@
 ### cycle8凍結版の全CI（2026-11-09）
 
 公開commit `980c564579faa703cf55651c92de3e4e0495f62c` と同じtreeの別worktreeで、build jobs1・incremental無効・offlineで再実行した。fmt、全workspace clippy、provider worker buildはPASS。resident unit269件と実HTTP2件もPASSした。runtimeの既存attached-server FAILの後も試験は進んだが、wrapperがexit137で終了し、最終JSON報告は作成されなかった。終了理由は未確定で、OOMと断定しない。後段gateは未確認。次回はtest threadsも1として終了不能を切り分ける。新しいnative agentの対象検証は継続可能。
+
+
+### B006: コンテナ再作成に伴う未転送分の消失（2026-11-10）
+
+cycle10までのremote commitは保存済み。cycle11のlocal commitとcycle12〜14の未保存作業、一時ログ、toolchainは現在の環境から失われた。rootが再clone・機能復元・再検証を実施するため、現時点でユーザー操作は不要。再び中断した場合は実験ブランチのSTATEから再開する。旧CIの最終結果は復元できないため、新環境で実行し直す。

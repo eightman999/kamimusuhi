@@ -327,3 +327,15 @@ cycle9公開commit: `82c38b2153941a38dd98fab64f6b4b7eb887b43d`（local/remote tr
 一番安い確認方法: 保存済みpending Writeと既に書かれたbytesから再読込し、次のReadが旧sequenceを再使用することを先に再現。旧schema全件検査→cursor導出→回復→v2全件検査→一度の原子保存をfixtureで検査する。
 
 担当: checkpoint.rsの版別意味検査はharness_audit、tests.rsの移行/番号再使用fixtureはresearch_harness、rootはengineering.rsのclaim/回復/traceを統合する。
+
+## 2026-11-10 のコンテナ復旧
+
+ユーザーの状況確認を受けて確認したところ、作業コピー、Rust toolchain、一時worktreeと実行ログが消失していた。GitHub branchはcycle10の `3ab5254a7c66f971f5673b9509d1699bcb1ae139` まで保存済み。cycle11 local commit `6fc741eb46566fdc2194999c13894c1035e00be1` のtree `5f579fb271fdd4dba7573b9110f8f8cc0c8a91d7` はGitHub APIで404。転送済みとは扱わない。
+
+前セッションのtool出力には、cycle11の工程45/45 PASS、resident lib/allfeatures clippy PASS、cycle13の実daemon claim中断1/1 PASSが残る。ただし該当コード/ログは現在の作業コピーにはない。会話記録から機能を復元し、新しい版として再検証する。旧treeと同一の復元と主張しない。cycle11凍結全CIとcycle12修正前試験の最終結果はUNKNOWN。
+
+時間は最後に確認した05:25:23 UTC（累計2.016521時間）まで引継ぐ。そこから11月10日03:59:54 UTCまでの空白は加算しない。約2時間の実作業であり、24時間継続達成ではない。
+
+復旧の本当の目的: remoteに保存済みのnative agentを失わず、確認済みだった再開の修正を再びreview可能なコードと試験へ戻す。
+前提と確かめ方: cycle10まではGitHubから取得できる。cycle11の採番/lease変更とfixtureは会話に仕様・差分・測定結果が残るため、再実装後に同じ失敗契約を実行する。
+一番安い確認方法: clean cloneとpinned Rust1.92.0を用意し、cursor/leaseの対象fixtureとresident clippyを先に通して小さく保存する。

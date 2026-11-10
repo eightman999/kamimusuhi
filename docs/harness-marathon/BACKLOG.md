@@ -2,7 +2,7 @@
 
 ## 次にやること
 
-cycle9の大file修復とcycle10のmodel/provider回復の検証結果を保存し、中断したactionのsequence再使用を解消する。凍結cycle8の全CIはfmt/clippy/buildとresident testsを通過したが、runtimeの既存FAILを含む途中でwrapperがexit137になった。全CI成功とは扱わない。skills/RustXNG/imozuru拡張は保留。
+コンテナ再作成からの復旧。remoteはcycle10まで保存済み。cycle11の独立action cursor・v1移行・lease明示unlockを会話記録から復元して再検証し、早期にcommit/pushする。その後cycle12のcontext予算、cycle13のclaim済みRun実daemon中断、cycle14の反応型mock評価を進める。失われた全CIログの結果はUNKNOWN。
 
 ## 現在の最優先（2026-11-09更新）
 
