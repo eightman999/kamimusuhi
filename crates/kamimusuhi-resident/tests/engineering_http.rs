@@ -1231,3 +1231,288 @@ fn active_engineering_restarts_after_model_interruption_and_excludes_second_resi
     let errors = model.errors.lock().unwrap().clone();
     assert!(errors.is_empty(), "{errors:?}");
 }
+
+/// The Run child has a separate process group from the daemon. Release it
+/// explicitly even when an assertion unwinds, instead of assuming that
+/// killing the parent also killed every command it launched.
+struct ClaimedRunBarrier {
+    listener: TcpListener,
+    stream: Option<TcpStream>,
+}
+
+impl ClaimedRunBarrier {
+    fn new() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        Self {
+            listener,
+            stream: None,
+        }
+    }
+
+    fn wait_started(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match self.listener.accept() {
+                Ok((stream, address)) => {
+                    assert!(address.ip().is_loopback());
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(3)))
+                        .unwrap();
+                    stream
+                        .set_write_timeout(Some(Duration::from_secs(3)))
+                        .unwrap();
+                    self.stream = Some(stream);
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "claimed Run never started");
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("Run barrier accept failed: {error}"),
+            }
+        }
+        let mut started = [0; 8];
+        self.stream
+            .as_mut()
+            .unwrap()
+            .read_exact(&mut started)
+            .expect("Run confirms its effect before the daemon is killed");
+        assert_eq!(&started, b"started\n");
+    }
+
+    fn release_and_wait(&mut self) {
+        let stream = self.stream.as_mut().unwrap();
+        stream.write_all(b"release\n").unwrap();
+        let mut finished = [0; 5];
+        stream
+            .read_exact(&mut finished)
+            .expect("the surviving Run child acknowledges release");
+        assert_eq!(&finished, b"done\n");
+        let mut end = [0; 1];
+        assert_eq!(
+            stream.read(&mut end).expect("Run closes its barrier"),
+            0,
+            "the fixture effect is finished before restarting the daemon"
+        );
+        self.stream = None;
+    }
+}
+
+impl Drop for ClaimedRunBarrier {
+    fn drop(&mut self) {
+        if let Some(mut stream) = self.stream.take() {
+            let _ = stream.write_all(b"release\n");
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
+/// Run only by the real resident in the test below. TMPDIR is unique to
+/// that fixture and is part of the runner's existing minimal environment.
+#[test]
+#[ignore = "fixture child, invoked explicitly by the claimed-Run integration test"]
+fn claimed_run_barrier_helper() {
+    let configuration = std::env::temp_dir().join("claimed-run-fixture.json");
+    let configuration: Value =
+        serde_json::from_slice(&fs::read(configuration).expect("isolated Run configuration"))
+            .unwrap();
+    let candidate = Path::new(configuration["candidate"].as_str().unwrap());
+    assert_eq!(std::env::current_dir().unwrap(), candidate);
+    let address: std::net::SocketAddr = configuration["address"].as_str().unwrap().parse().unwrap();
+    assert!(address.ip().is_loopback());
+    let mut counter = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(configuration["counter"].as_str().unwrap())
+        .unwrap();
+    counter.write_all(b"run\n").unwrap();
+    counter.sync_all().unwrap();
+    fs::write(candidate.join("code.txt"), "fixed\n").unwrap();
+    let mut barrier = TcpStream::connect_timeout(&address, Duration::from_secs(3)).unwrap();
+    // The fixture still exits if its controller is lost during an assertion
+    // or the parent daemon dies before the controller can accept this socket.
+    barrier
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
+    barrier
+        .set_write_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    barrier.write_all(b"started\n").unwrap();
+    let mut release = [0; 8];
+    barrier
+        .read_exact(&mut release)
+        .expect("Run controller releases the bounded fixture");
+    assert_eq!(&release, b"release\n");
+    barrier.write_all(b"done\n").unwrap();
+    // No candidate or counter mutation follows the acknowledgement. Socket
+    // EOF confirms this helper has left its effect/barrier section; the test
+    // does not claim to wait/reap a process whose original parent was killed.
+}
+
+#[test]
+fn claimed_run_is_not_replayed_after_daemon_death_and_explicit_resume() {
+    const OWNER: &str = "fixture-claimed-run-owner";
+    const SUCCESSOR: &str = "fixture-claimed-run-successor";
+    let (model, requests) = ModelFixture::controlled();
+    let fixture = Fixture::new(&model.url);
+    let mut barrier = ClaimedRunBarrier::new();
+    let executable = std::env::current_exe().unwrap();
+    let program = executable.to_str().unwrap();
+    let mut config: Value = serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
+    config["engineering"]["workspaces"][0]["commands"] = json!([program]);
+    config["engineering"]["operation_timeout_secs"] = json!(30);
+    fs::write(&fixture.config, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+    let original_head = fixture.git(&fixture.workspace, &["rev-parse", "HEAD"]);
+    let owner = fixture.start_as(OWNER, 30);
+    let created = fixture.cli(&owner.url, &["start", "fixture", OBJECTIVE]);
+    assert_eq!(created["ok"], true, "{created}");
+    let id = created["job"]["id"].as_str().unwrap().to_owned();
+    let planned = created["job"]["candidate"].clone();
+    let candidate = Path::new(planned["path"].as_str().unwrap());
+    let run_counter = fixture.dir.path().join("actual-runs.txt");
+    fs::write(
+        fixture.dir.path().join("tmp/claimed-run-fixture.json"),
+        serde_json::to_vec(&json!({
+            "candidate":candidate,"counter":run_counter,
+            "address":barrier.listener.local_addr().unwrap().to_string(),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    next_decision(&requests, OWNER, 0).respond(json!({
+        "action":"run","argv":[program,"--ignored","--exact",
+            "claimed_run_barrier_helper","--nocapture","--test-threads=1"]
+    }));
+    barrier.wait_started();
+    let before = show(&owner.url, &id);
+    assert_eq!(before["phase"], "active");
+    assert_eq!(before["candidate"], planned);
+    assert_eq!(before["pending"]["action"]["action"], "run");
+    assert_eq!(before["pending"]["sequence"], 1);
+    assert_eq!(before["next_action_sequence"], 2);
+    assert_eq!(before["metrics"]["decisions"], 1);
+    assert_eq!(before["metrics"]["actions"], 0);
+    assert_eq!(fs::read_to_string(&run_counter).unwrap(), "run\n");
+    assert_eq!(
+        fs::read_to_string(candidate.join("code.txt")).unwrap(),
+        "fixed\n"
+    );
+    assert!(!fixture.counter.exists());
+    let checkpoint = fixture
+        .dir
+        .path()
+        .join("resident/current_state/engineering.json");
+    let durable = fs::read(&checkpoint).unwrap();
+    let snapshot: Value = serde_json::from_slice(&durable).unwrap();
+    assert_eq!(snapshot["jobs"][0], before);
+
+    // ChildGuard kills and waits for the resident, but Run has its own
+    // process group. Acknowledgement proves that we explicitly release the
+    // surviving fixture child before allowing the successor to continue.
+    drop(owner);
+    barrier.release_and_wait();
+    assert_eq!(fs::read(&checkpoint).unwrap(), durable);
+    let successor = fixture.start_as(SUCCESSOR, 30);
+    let restored = show(&successor.url, &id);
+    assert_eq!(restored["phase"], "paused");
+    assert_eq!(restored["candidate"], planned);
+    assert_eq!(restored["objective"], OBJECTIVE);
+    assert!(restored["pending"].is_null());
+    assert_eq!(restored["next_action_sequence"], 2);
+    assert_eq!(restored["metrics"]["decisions"], 1);
+    assert_eq!(restored["metrics"]["actions"], 0);
+    assert_eq!(restored["metrics"]["interruptions"], 1);
+    assert_eq!(restored["last_error"], "interrupted_action_outcome_unknown");
+    let unknown = restored["observations"].as_array().unwrap().last().unwrap();
+    assert_eq!(unknown["action"], "run");
+    assert_eq!(unknown["sequence"], 1);
+    assert_eq!(unknown["detail"]["sequence"], 1);
+    assert_eq!(
+        unknown["detail"]["kind"],
+        "interrupted_action_outcome_unknown"
+    );
+    assert!(matches!(
+        requests.recv_timeout(Duration::from_millis(1250)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert_eq!(model.calls.lock().unwrap().len(), 1);
+    assert_eq!(show(&successor.url, &id)["metrics"], restored["metrics"]);
+    assert_eq!(fs::read_to_string(&run_counter).unwrap(), "run\n");
+    assert!(!fixture.counter.exists());
+    let resumed = fixture.cli(
+        &successor.url,
+        &[
+            "resume",
+            &id,
+            "Inspect the preserved Run effect before choosing new work",
+        ],
+    );
+    assert_eq!(resumed["job"]["phase"], "active");
+    let read = next_decision(&requests, SUCCESSOR, 0);
+    assert_eq!(read.context()["candidate"], planned);
+    assert_eq!(read.context()["metrics"]["interruptions"], 1);
+    read.respond(json!({"action":"read","path":"code.txt"}));
+    let finish = next_decision(&requests, SUCCESSOR, 1);
+    let context = finish.context();
+    let observed = context["observations"].as_array().unwrap().last().unwrap();
+    assert_eq!(observed["action"], "read");
+    assert_eq!(observed["sequence"], 2);
+    let detail: Value = serde_json::from_str(observed["external_data"].as_str().unwrap()).unwrap();
+    assert_eq!(detail["content"], "fixed\n");
+    finish.respond(json!({"action":"finish","summary":"Verified the preserved Run effect"}));
+    let ready = wait_ready(&successor.url, &id);
+    assert_eq!(ready["candidate"], planned);
+    assert_eq!(ready["metrics"]["decisions"], 3);
+    assert_eq!(ready["metrics"]["actions"], 2);
+    assert_eq!(ready["metrics"]["interruptions"], 1);
+    assert_eq!(ready["metrics"]["verification_runs"], 1);
+    assert_eq!(ready["metrics"]["verification_failures"], 0);
+    assert_eq!(ready["metrics"]["model_failures"], 0);
+    assert_eq!(ready["next_action_sequence"], 4);
+    assert_eq!(ready["validation"]["passed"], true);
+    let sequences: Vec<_> = ready["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|record| record["sequence"] != 0)
+        .map(|record| record["sequence"].as_u64().unwrap())
+        .collect();
+    assert_eq!(sequences, [1, 2, 3]);
+    assert_eq!(fs::read_to_string(&run_counter).unwrap(), "run\n");
+    assert_eq!(
+        fs::read_to_string(&fixture.counter).unwrap(),
+        format!("{}\tfixed\n", candidate.display())
+    );
+    assert_eq!(
+        ready["validation"]["head"],
+        fixture.git(candidate, &["rev-parse", "HEAD"])
+    );
+    assert!(
+        fixture
+            .git(candidate, &["status", "--porcelain"])
+            .is_empty()
+    );
+    assert_eq!(
+        fixture.git(&fixture.workspace, &["rev-parse", "HEAD"]),
+        original_head
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.workspace.join("code.txt")).unwrap(),
+        "initial\n"
+    );
+    let callers: Vec<String> = model
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|call| call["model"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(callers, [OWNER, SUCCESSOR, SUCCESSOR]);
+    assert!(requests.try_recv().is_err());
+    let errors = model.errors.lock().unwrap().clone();
+    assert!(errors.is_empty(), "{errors:?}");
+    eprintln!(
+        "claimed-run recovery: real_runs=1 replayed_runs=0 paused_model_calls=0 action_sequences=[1,2,3] checks=1"
+    );
+}

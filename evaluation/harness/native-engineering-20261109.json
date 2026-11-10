@@ -177,5 +177,39 @@
     "resident_clippy_all_targets_all_features": "PASS",
     "old_local_commit_retrieved": false,
     "scope": "Functional reconstruction after container replacement, newly compiled/tested; not claimed byte-identical to lost local commit"
+  },
+  "cycle13_restored_20261110": {
+    "daemon_http_tests": {
+      "passed": 5,
+      "failed": 0,
+      "ignored_helper": 1,
+      "test_seconds": 64.62,
+      "compile_and_test_seconds": 83.496
+    },
+    "claimed_run_restart": {
+      "real_runs": 1,
+      "replayed_runs": 0,
+      "additional_model_calls_while_paused": 0,
+      "model_posts": 3,
+      "durable_decisions": 3,
+      "durable_actions": 2,
+      "interruptions": 1,
+      "action_sequences": [
+        1,
+        2,
+        3
+      ],
+      "checks": 1,
+      "candidate_preserved": true
+    },
+    "provider_503": {
+      "bench_milliseconds": 60389,
+      "model_posts": 4,
+      "durable_actions": 3,
+      "model_failures": 60,
+      "probes": 65,
+      "checks": 1
+    },
+    "scope": "Real daemon kill/wait; orphan helper explicitly released by fixture, ack/EOF prove effect/barrier completion, not daemon-wide descendant reaping"
   }
 }

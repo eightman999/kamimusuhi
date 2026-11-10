@@ -360,6 +360,12 @@ cycle9公開commit: `82c38b2153941a38dd98fab64f6b4b7eb887b43d`（local/remote tr
 
 親killだけで全子孫が終了すると仮定しない。fixture子への明示releaseを行う。socket EOFは効果と待機区間の終了を表し、失われた親の子をwait/reapした保証ではない。
 
+## Cycle 14 — 観測へ反応する決定的agent評価（着手前）
+
+本当の目的: 事前のaction列だけでなく、実際の失敗・ソース・作業メモを受けて次の行動を選ぶ形で、harnessの継続性を計測する。
+前提と確かめ方: `evaluation/` と testkit のfixtureを起点に、contextだけを読むstateless modelを既存の一時git/実validatorへ接続すれば、失われた観測やメモを成否へ反映できる。testkitへresident依存は加えない。
+一番安い確認方法: 検証失敗からの修復、checkpoint後の新modelで再開、pending置換の既適用/未適用の4scenarioを同じ成功率・rounds・重複副作用指標で集計する。explicit resumeはdriver操作として分ける。
+
 ### Cycle 11 復元版の結果（2026-11-10）
 
 独立cursor、v1全件検査→移行→回復→v2保存、claim/観測/spoolの番号一致、cursor枯渇時の推論前pause、Lease Dropの明示unlockを復元。旧local treeと同一とは主張せず、新環境で再コンパイル・再試験した。
@@ -373,3 +379,25 @@ cycle9公開commit: `82c38b2153941a38dd98fab64f6b4b7eb887b43d`（local/remote tr
 cursor7群を含む。Write1→Read2、legacyの予約8/14/18、履歴間引き後1000→1001、後半job不正/overflowの原本保持、cursor MAXでmodel0/別job進行を確認。複製descriptorを残してownerをdropしても次ownerが取得でき、旧descriptorのcloseで次ownerを解除しない。pending Replace x→prefixxの再適用0。
 
 復旧記録の公開commitは `ff787610fbb2dce265316b4981ccb6f921ba2d1d`。今回の実装commitは `fix(engineering): 中断後の行動番号とロック解放を復元`。全CIは別に再実行し、45件の成功を全workspace成功と扱わない。
+
+### Cycle 13 復元版の結果（cycle12と独立に並行検証）
+
+実daemonでRunのclaim保存→候補変更→receipt前の親kill/wait→fixture子の明示release→再起動Paused→明示resume→Read/Finishを検査した。実HTTP全体は5 PASS / 0 FAIL / 1 ignored、exit0。ignored helperは新caseから実Runで起動している。実試験64.62s、compile込83.496s（04:23:00〜04:24:23 UTC）。
+
+| 実測 | 値 |
+|---|---:|
+| Run実起動/再実行 | 1/0 |
+| Paused中の追加model | 0 |
+| model POST | 3 |
+| durable decisions/actions | 3/2 |
+| interruptions | 1 |
+| 行動番号 | 1, 2, 3 |
+| 実検証 | 1 PASS |
+
+Runは結果未保存なのでactionsへ加算しない。元checkout/候補の識別子を保持。helperのack/EOFは効果と待機区間の終了確認であり、daemonがcrash時に全子孫を自動回収する保証とはしない。
+
+既存503回復もPASS。新環境でbench60,389ms、POST4、model_failures60、probes65。時間差とprobe数はhost依存の補助値。
+
+コマンド: `cargo test --locked --offline -p kamimusuhi-resident --test engineering_http -- --nocapture`。ログ `logs/restore-cycle13-http-20261110.log` とJSON。cycle11復元版は公開commit `83fee46106bc17aaf3e6163a2b0dd0483b9095a1` へtree一致で保存済み。
+
+コミット: `test(engineering): 実行中断後の成果保持と継続を検証`。
