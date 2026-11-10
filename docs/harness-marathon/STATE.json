@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 3.416521,
+  "elapsed_hours": 3.591243,
   "target_hours": 24.0,
-  "cycle": 16,
-  "current_task": "cycle16の独立workerと中断処理を検証・保存。cycle14/15/17/16を含む次の凍結全CIを開始",
+  "cycle": 18,
+  "current_task": "cycle18の長期修復診断保持を検証・保存。cycle19 process group単一所有を実装中",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": "83dd2d3162f3f8094ee295b1ee6be17045981f66",
-  "last_checkpoint_at": "2026-11-10T05:23:54Z",
+  "last_checkpoint_at": "2026-11-10T05:34:23Z",
   "active_session_started_at": "2026-11-10T03:59:54Z",
   "session_elapsed_base_hours": 2.016521,
   "status": "active",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
-  "next_task": "独立targetの全CIを確認。cycle18検証診断の保持fixtureを登録して前後測定、cycle19 process groupのreap順を修正",
+  "next_task": "11ef050凍結全CIの最終結果を確認し、cycle19の所有wrapperをレビュー・検証・保存",
   "completed_sessions": [
     {
       "started_at": "2026-11-08T16:06:48Z",
@@ -61,13 +61,14 @@
     14,
     15,
     16,
-    17
+    17,
+    18
   ],
   "incomplete_cycles": [
     2,
     3
   ],
-  "last_verified_change_commit": "0f7c377c9c6d98acf8468af9eb5c39fb157b9a55",
+  "last_verified_change_commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
   "resume_guide": "docs/harness-marathon/RESUME.md",
   "evaluation": "evaluation/harness/marathon-20261109.json",
   "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。",
@@ -110,5 +111,21 @@
   },
   "reactive_evaluation": "evaluation/harness/native-reactive-20261110.json",
   "cli_output_evaluation": "evaluation/harness/cli-output-integrity-20261110.json",
-  "worker_evaluation": "evaluation/harness/native-worker-20261110.json"
+  "worker_evaluation": "evaluation/harness/native-worker-20261110.json",
+  "current_full_ci": {
+    "commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
+    "tree": "73aae76c8c6556ae839e633f850629a89ae80f46",
+    "status": "RUNNING",
+    "started_at": "2026-11-10T05:24:57Z",
+    "target": "/tmp/kamimusuhi-ci-target-11ef050",
+    "target_was_empty": true,
+    "log": "docs/harness-marathon/logs/cycle16-frozen-ci-20261110.log",
+    "completed_stages": [
+      "fmt",
+      "workspace_all_targets_all_features_clippy",
+      "provider_worker_build"
+    ],
+    "current_stage": "cargo test compiling"
+  },
+  "validation_memory_evaluation": "evaluation/harness/validation-memory-20261110.json"
 }

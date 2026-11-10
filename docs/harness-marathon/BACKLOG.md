@@ -2,7 +2,7 @@
 
 ## 次にやること
 
-cycle16/17まで保存。native workerの親死亡→helper停止47ms、結果不明はPaused/自動再実行0を検証。engineering60件・実worker4件・HTTP全6caseを成功確認（HTTP修正後の一括gateは次の全CI）。独立targetでcycle14/15/17/16を含む全CIを通す。並行してcycle18の長期修復診断保持fixtureを準備、cycle19で既存process runnerのreap後PGID signalを解消する。
+cycle18まで保存。14回readとreload後の実診断を保持し、反応型modelが3判断で修復/Ready（修正前は根拠欠落で停止）。全engineering63件・clippy/fmt PASS。11ef050凍結版は独立targetでfmt/clippy/worker buildまでPASS、workspace tests進行中。次はcycle19のprocess group単一所有とreap順をレビュー・保存し、Readyの検証設定digestと鮮度の区別へ進む。
 
 ## 現在の最優先（2026-11-09更新）
 
@@ -11,7 +11,7 @@ cycle16/17まで保存。native workerの親死亡→helper停止47ms、結果�
 | P1 | 短い作業記憶と復元 | objective/制約/次step/検証失敗を保持して長期継続 |
 | P1 | 自律loopのtraceと評価 | 決定的成功率/repair/再開重複/action数を記録 |
 | P1 | claim済みactionの実process中断 | コマンド途中のkill後に副作用と未確認receiptを保持し、自動再実行しない |
-| P1 | 作業記憶の更新と長期修復 | 12件より長い失敗修復シナリオでも目的・重要な根拠・次stepを保持 |
+| P1 | 長期修復の多段シナリオ | cycle18の診断保持から、異なる失敗原因/複数file/中断を含む反応型評価へ拡張 |
 | P1 | 検証receiptと候補の変化 | 静的監査で外部commit後も旧Ready表示が残る。show/list/summary/request再送/reloadを一つの実fixtureで再現 |
 | P1 | 検証設定変更とReadyの鮮度 | checks追加後に旧receiptが新設定の成功に見えない。argv証拠を保存して照合 |
 | P2 | ACP出力のメモリと切断 | 独自BufReader::lines/channelの上限と不完全protocolの扱いをfixtureで確認 |

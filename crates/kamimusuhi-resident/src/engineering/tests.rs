@@ -17,6 +17,7 @@ mod context_budget;
 mod cursor;
 mod evaluation;
 mod model_recovery;
+mod validation_memory;
 mod worker_dispatch;
 
 struct InlineRunner;

@@ -25,6 +25,8 @@ pub use workspace::{Action, Candidate, Validation, WorkspaceConfig};
 const KEEP_OBSERVATIONS: usize = 12;
 const CONTEXT_DETAIL_BYTES: usize = 8_192;
 const CONTEXT_OBSERVATION_BYTES: usize = 32_768;
+const CONTEXT_FAILURE_DETAIL_BYTES: usize = 1024;
+const CONTEXT_FAILURE_BYTES: usize = 4096;
 const MODEL_ERROR_BYTES: usize = 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -662,6 +664,50 @@ impl EngineerModel for RoutedModel<'_> {
     }
 }
 
+fn validation_context(validation: &Validation) -> Value {
+    // Keep a bounded diagnostic independently of the rolling observations.
+    // Excerpts stay external data; they cannot change the configured checks.
+    let mut remaining = CONTEXT_FAILURE_BYTES.saturating_sub(2);
+    let mut failures = 0;
+    let mut evidence = Vec::new();
+    for (position, check) in validation.checks.iter().enumerate() {
+        if check["passed"] != false {
+            continue;
+        }
+        failures += 1;
+        let text = check.to_string();
+        let mut end = text.len().min(CONTEXT_FAILURE_DETAIL_BYTES);
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        // Preserve the exact data prefix. The separate flag, rather than
+        // text appended to the diagnostic, identifies an incomplete excerpt.
+        let external_data = &text[..end];
+        let proposed = json!({
+            "index":check["index"].as_u64().unwrap_or(position as u64),
+            "context_truncated":end < text.len(),
+            "external_data":external_data,
+        });
+        let cost = proposed
+            .to_string()
+            .len()
+            .saturating_add(usize::from(!evidence.is_empty()));
+        if cost <= remaining {
+            remaining -= cost;
+            evidence.push(proposed);
+        }
+    }
+    json!({
+        "passed":validation.passed,"head":validation.head,
+        "checks":validation.checks.iter().map(|check| json!({
+            "index":check["index"],"program":check["program"],"passed":check["passed"],
+            "exit_code":check["exit_code"],"end":check["end"],"duration_ms":check["duration_ms"],
+        })).collect::<Vec<_>>(),
+        "failure_evidence_omitted":failures - evidence.len(),
+        "failure_evidence":evidence,
+    })
+}
+
 fn context(job: &Job, policy: &WorkspaceConfig) -> Value {
     // Budget the encoded array, including brackets, commas and the second
     // escaping of external_data. Its raw string length can undercount by 2x.
@@ -691,15 +737,7 @@ fn context(job: &Job, policy: &WorkspaceConfig) -> Value {
     }
     observations.reverse();
     let observations_omitted = job.observations.len().saturating_sub(observations.len());
-    // Diagnostic text belongs to the bounded observation window. Keep the
-    // independent verification receipt without injecting all output again.
-    let validation = job.validation.as_ref().map(|v| json!({
-        "passed":v.passed,"head":v.head,
-        "checks":v.checks.iter().map(|check| json!({
-            "index":check["index"],"program":check["program"],"passed":check["passed"],
-            "exit_code":check["exit_code"],"end":check["end"],"duration_ms":check["duration_ms"],
-        })).collect::<Vec<_>>()
-    }));
+    let validation = job.validation.as_ref().map(validation_context);
     json!({"objective":job.objective,"workspace":job.workspace,"candidate":job.candidate,
         "checkpoint":{"self_authored_unverified":job.checkpoint},"observations":observations,
         "observations_omitted":observations_omitted,

@@ -10,7 +10,7 @@ cycle8でOS lease、checkpoint意味検査、実行途中の実daemon再起動�
 
 ## 2026-11-10の復旧
 
-旧コンテナの未転送作業とログが失われ、cycle10の公開commitから再cloneした。cycle11の独立cursor/schema v2/lease明示unlockを会話記録から機能復元し、新環境でengineering45/45、fmt、resident全target/allfeatures clippyがPASS。旧local treeとの同一性は主張しない。実作業2.016521時間を引継ぎ、約22時間の停止時間は除外した。最新の累計はSTATE参照。cycle12のencoded観測予算とcycle13のclaim済みRun中断試験を復元・保存済み。cycle13までの凍結版全CIはPASS（公開83dd2d3、989.095s）、既存attached-server試験も成功。cycle14の反応型mock評価4/4とcycle15の障害episode保持を保存。現時点のengineering54件・実HTTP5件・clippy/fmtはPASS。cycle16で独立worker、cycle17で不完全CLI出力の誤成功を修正。engineering60件・実worker4件・executor14件を検証済み。次は独立targetの全CI、cycle18の検証診断保持とcycle19のprocess group所有。toolchainは `$HOME/.cargo/bin`（新環境HOME=/home/agent）を使用する。
+旧コンテナの未転送作業とログが失われ、cycle10の公開commitから再cloneした。cycle11の独立cursor/schema v2/lease明示unlockを会話記録から機能復元し、新環境でengineering45/45、fmt、resident全target/allfeatures clippyがPASS。旧local treeとの同一性は主張しない。実作業2.016521時間を引継ぎ、約22時間の停止時間は除外した。最新の累計はSTATE参照。cycle12のencoded観測予算とcycle13のclaim済みRun中断試験を復元・保存済み。cycle13までの凍結版全CIはPASS（公開83dd2d3、989.095s）、既存attached-server試験も成功。cycle14の反応型mock評価4/4とcycle15の障害episode保持を保存。現時点のengineering54件・実HTTP5件・clippy/fmtはPASS。cycle16で独立worker、cycle17で不完全CLI出力の誤成功を修正。engineering60件・実worker4件・executor14件を検証済み。cycle18で長い調査後にも実検証の失敗診断を残し、全engineering63件とclippy/fmtを確認。次は独立target全CIの完了確認とcycle19のprocess group所有。toolchainは `$HOME/.cargo/bin`（新環境HOME=/home/agent）を使用する。
 
 ## 再開
 

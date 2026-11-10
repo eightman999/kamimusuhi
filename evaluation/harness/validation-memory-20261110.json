@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-10",
+  "scope": "deterministic context-driven policy with real validation and Shared reload, not real model quality or process-kill evaluation",
+  "before_commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
+  "before": {
+    "actions": 15,
+    "actual_checks": 1,
+    "failure_evidence_retained": false,
+    "intervening_reads": 14,
+    "model_failures": 1,
+    "ready": false,
+    "repairs": 0,
+    "resumed_model_calls": 1,
+    "retained_observations": 12,
+    "verification_failures": 1
+  },
+  "after": {
+    "actions": 18,
+    "actual_checks": 2,
+    "failure_evidence_retained": true,
+    "intervening_reads": 14,
+    "model_failures": 0,
+    "ready": true,
+    "repairs": 1,
+    "resumed_model_calls": 3,
+    "retained_observations": 12,
+    "verification_failures": 1
+  },
+  "budget_fixture": {
+    "failed_records": 12,
+    "retained_records": 3,
+    "omitted_records": 9,
+    "encoded_bytes": 3994,
+    "excerpt_limit_bytes": 1024
+  },
+  "contracts": {
+    "before_passed": 0,
+    "before_failed": 3,
+    "after_passed": 3,
+    "after_failed": 0
+  },
+  "engineering_tests": {
+    "passed": 63,
+    "failed": 0,
+    "test_seconds": 2.12
+  },
+  "resident_all_targets_all_features_clippy": "PASS",
+  "fmt": "PASS",
+  "original_checkout_preserved": true,
+  "decoy_preserved": true,
+  "extra_calls_after_ready": 0,
+  "extra_checks_after_ready": 0,
+  "limits": {
+    "failure_array_encoded_bytes": 4096,
+    "raw_excerpt_bytes": 1024
+  },
+  "limitations": [
+    "retained excerpts may omit the relevant portion of long diagnostics",
+    "omitted failure records are counted, not delivered",
+    "external-data string isolation does not prove general model prompt-injection resistance"
+  ]
+}

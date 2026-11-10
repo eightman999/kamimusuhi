@@ -543,3 +543,37 @@ Run/Verify/Finishを同じresident binaryの専用workerへ移した。モデル
 request/reply各1MiB、checkpoint64MiB、Unix transport。worker自身のSIGKILL、groupを離脱した子孫、claim検査直後と再開の競合について完全な終了証拠/fencingは未実装。明示resume前に候補と旧実行の停止を確認する境界を維持する。別レビューで既存process.rsのreap後group signalも見つかり、cycle19へ分離した。実運用接続・外部provider・送信は一切無し。
 
 cycle17の公開commitは `0f7c377c9c6d98acf8468af9eb5c39fb157b9a55`。コミット: `fix(engineering): 親の終了後も実行の取消と期限を管理`。次の全CIはartifact取り違えを避けた独立targetで実行する。
+
+## Cycle 19 — process groupの所有をreapまで保つ（着手前）
+
+本当の目的: 終了後に再利用され得るPID/PGIDをsignalせず、所有中の子孫だけを停止する。
+前提と確かめ方: 既存runnerはtry_waitでreap後にgroup killし、server/ACPにもcleanup再呼出し経路がある。locked/cache済みrustix1.1.4のsafe waitid(NOWAIT)と明示した所有状態で、終了観測→group停止→reapを一回にできる。
+一番安い確認方法: local依存ソースと全cleanup呼出しを確認し、短命な自分のchildを非reapで二度観測する試験、cleanup二回目のsignal0、既存stderr保持子孫/timeout/cancelの回帰で検証する。実PID再利用を無理に起こす実験や他PIDへのsignalは行わない。
+
+Linux/macOS APIの対応はsource確認まで。実行はLinuxコンテナのみ。provider_processの別transportは対象を分け、全てのprocess所有を解決したとは扱わない。
+
+Cycle18の修正初回は実修復scenarioと診断選別がPASS、出力枠fixtureの原データprefix一致だけFAIL。既存clipped helperが末尾へ「…」を追加するためだった。診断excerptはUTF-8境界で元文字列をそのまま切り、追加文言ではなくcontext_truncatedで欠落を示す実装へ修正する。fixtureのprefix条件は維持。初回結果はcycle18-memory-prefix-failureとして保存。
+
+### Cycle 18 の変更と結果
+
+保存済みValidationから、失敗checkとintegrity失敗だけを小さい `validation.failure_evidence` としてcontextへ投影する。各recordはindex/外部データ文字列/context_truncated、個別1024byteのUTF-8原文prefix、配列全体は再エスケープ込み4096bytes以下。丸ごと入るrecordを元順序で選び、省いた件数をfailure_evidence_omittedへ記録する。永続schemaは変更せず、元のValidationを再利用する。成功checkの古いエラー文は取り込まない。
+
+| 同一の14 read→reload fixture | 修正前 | 修正後 |
+|---|---:|---:|
+| 診断保持 / Ready | false / false | true / true |
+| 再開後model calls | 1（根拠欠落で停止） | 3（ReadRange/Replace/Finish） |
+| actions | 15 | 18 |
+| 実check / 失敗 / repairs | 1 / 1 / 0 | 2 / 1 / 1 |
+| model failures | 1 | 0 |
+
+対象pathは実validatorのstderrだけにあり、objective/check argv/作業メモ/直近12観測には無い。stateless modelはcontextだけを読み、対象だけを修正してdecoyと元checkoutを保持。Ready後の追加判断/check0。これは決定的policyのdataflow評価であり、実LLMのcoding品質や一般的な注入耐性の評価ではない。命令文の混入はexternal_data内に留まり、goal/allowlist/checksを変えないことを確認した。
+
+出力枠fixture: 失敗12record中3を保持、9省略、配列3994bytes。個別prefixとUTF-8/二重escapeを検査した。全失敗根拠を渡せたという意味ではなく、枠内の抜粋と省略数を渡す。
+
+変更前3件FAIL（実0.11s、compile込55.681s）。最終3/3 PASS（0.14s、compile込21.436s）、全engineering63/63 PASS（2.12s）。resident全target/allfeature clippy PASS（30.445s）、fmt check PASS（1.499s）、diff check PASS。独立targetで同時実行中の全CIは11ef050/tree73aae76を対象にし、今回cycle18は含まない。
+
+コミット: `fix(engineering): 長期修復に必要な検証診断を保持`。
+
+### 後続設計メモ: Readyと検証設定の鮮度
+
+静的監査ではReadyは過去の固定headに対するreceiptで、外部編集やchecks argv変更をshow/list/statusが実測していない。statusへ全jobのgit呼出しを入れず、既存core::digest::json_digestで検証したchecksのoptional digestを保存し、matching/changed/unknownをpure表示で区別する案を採る候補。旧receiptに現在digestを後付けしない。候補自体は未観測/観測時点一致/変更/到達不能を時刻付きで分離し、後で一件・短い総期限の明示inspectを設計する。workspace::cleanはwrite recoveryを伴うため読取用に流用しない。まだ実装していない。
