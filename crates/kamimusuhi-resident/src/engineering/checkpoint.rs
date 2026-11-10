@@ -116,6 +116,17 @@ pub(super) fn validate(snapshot: &Snapshot, candidate_root: &Path) -> Result<(),
         {
             return Err("engineering checkpoint counters are inconsistent".into());
         }
+        if let Some(episode) = &job.model_recovery
+            && (episode.attempts == 0
+                || episode.attempts > metrics.model_failures
+                || episode.first_error.len() > super::MODEL_ERROR_BYTES
+                || episode.latest_error.len() > super::MODEL_ERROR_BYTES)
+        {
+            return Err("engineering checkpoint model recovery episode is inconsistent".into());
+        }
+        // Wall-clock adjustments do not invalidate a durable episode. Error
+        // strings may be empty or contain controls; serde escapes them and
+        // their byte bound, not human prose validation, governs persistence.
         let highest = highest_sequence(job)?;
         if snapshot.schema_version == CURRENT_SCHEMA_VERSION
             && (job.next_action_sequence == 0 || job.next_action_sequence <= highest)

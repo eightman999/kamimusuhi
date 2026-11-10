@@ -463,3 +463,30 @@ contextだけから決定するstateless policyを一時git・実check・native 
 Cycle15の変更前fixtureも実行し、0 PASS / 6 FAIL、exit101、実0.08s。episode未実装のNull、不正なzero_attempts受入等を確認。後続の製品修正前の結果として保持する。
 
 Cycle14の静的検証: resident全target/all-feature clippy PASS（10.969s、exit0）、fmt実行PASS、対象fmt checkとdiff check PASS。commitは `test(engineering): 観測から修復と再開を選ぶ評価を追加`。新fixtureを含む全CIは次の定期gateで行う。
+
+## Cycle 17 — 不完全な外部agent出力を成功にしない（着手前）
+
+本当の目的: 外部agentの完了protocolが切り詰められた場合に、実行を成功・評価済みとして扱わない。
+前提と確かめ方: runnerはstdout_truncatedを返すが、共通CliExecutorの成功判定とdiscoveryが参照していない。短い回答の後に巨大error行を出すfixtureでexit0でも誤成功するか確認する。
+一番安い確認方法: 既存shell fixtureへText/OpenCode/CommandCodeの3形式、正常出力・長いstderrのcontrolを加える。模擬CLIのみを使い、外部Codex等は起動しない。
+
+まず新規test moduleを準備し、cycle15検証後に登録して変更前結果を測る。ProcessResult::success全体は変えず、CLI完了protocolとnative checkの診断出力を区別する。
+
+### Cycle 15 の変更と結果（2026-11-10）
+
+Jobへoptionalな `model_recovery` を追加し、first/latest error、最初/最後の失敗時刻、当episodeのattempts、回復時刻を保存した。推論失敗の保存と同じ原子的更新で記録し、最初の有効action claimを保存するときだけ回復を閉じる。pause中の提案やclaim保存失敗では閉じない。回復は「判断を受理・保存した」であり、action成功や検証成功とは別。次の推論失敗で新episodeを始める。
+
+既存v2にfieldが無くても読み、古いlast_errorから最初の原因を推測しない。エラーは各1024bytes以下、attemptsは正数かつtotal以下。空/NULを含むエラーや時計の逆行を理由にstoreを隔離しない。RoutedModelは既存の固定診断のみを保存し、生のprovider応答を増やさない。
+
+| 同一fixture / 指標 | 修正前 | 修正後 |
+|---|---|---|
+| episode contract 6群 | 0 PASS / 6 FAIL | 6 PASS / 0 FAIL |
+| 14失敗後の12件窓とreload | episode無しで最初のassertがFAIL | 最初の503・最新400・attempts14を別fieldで保持 |
+| pause中 / claim保存失敗時の回復 | episode未実装 | 未回復のまま、追加command0 |
+| 旧v2 / 不正episode / 空・NUL・長いUTF-8 | episode未実装、negative最初のcaseを受入 | 全variantを実行してPASS |
+
+対象6群は実0.19s（compile込22.781s）、全engineering54/54 PASS（1.85s）。実HTTPは5 PASS / 1 helper ignored、実64.60s・compile込82.058s。実routerの60秒benchは60,395ms、POST4、model_failures60（送信先なしのlocal試行を含む）、probes65、check1。最初の503は12件窓から消えたがepisodeには保持され、Read claimで一度だけ回復時刻が確定し、Write/Finish/Readyでも保存された。元goal/candidateも保持。
+
+`cargo clippy --locked --offline -p kamimusuhi-resident --all-targets --all-features -- -D warnings` はPASS（17.303s）、fmt check PASS（1.395s）、diff check PASS。ログは `logs/cycle15-*20261110.*`。外部providerは使わずloopback fixtureだけ。cycle14の公開commitは `b230d9c5a885ab95d6e7f4b47d03de74097f53a5`。
+
+コミット: `fix(engineering): 推論障害の最初の原因と回復を保持`。

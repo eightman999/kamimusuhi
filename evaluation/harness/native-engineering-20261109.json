@@ -266,5 +266,48 @@
     "fmt": "PASS",
     "resident_clippy_all_targets_all_features": "PASS",
     "scope": "Encoded observations array only; older complete records omitted, not all context retained; no full-request/token/real-model performance claim"
+  },
+  "cycle15": {
+    "model_recovery_contract_groups": {
+      "before_passed": 0,
+      "before_failed": 6,
+      "after_passed": 6,
+      "after_failed": 0
+    },
+    "deterministic_rollover": {
+      "failures": 14,
+      "observations": 12,
+      "first_error_retained": true,
+      "reload_retained": true,
+      "recovered_once": true,
+      "new_episode_attempts": 1,
+      "extra_commands_after_pause_or_failed_claim": 0
+    },
+    "engineering_tests": {
+      "passed": 54,
+      "failed": 0,
+      "test_seconds": 1.85
+    },
+    "daemon_http_contracts": {
+      "passed": 5,
+      "failed": 0,
+      "ignored_helper": 1,
+      "test_seconds": 64.6
+    },
+    "real_router_episode": {
+      "bench_milliseconds": 60395,
+      "model_posts": 4,
+      "model_failures": 60,
+      "health_probes": 65,
+      "checks": 1,
+      "first_cause_rolled_out": true,
+      "first_cause_retained": true,
+      "recovered_at_durable_claim": true,
+      "recovered_once": true,
+      "reached_ready": true
+    },
+    "resident_all_targets_all_features_clippy": "PASS",
+    "fmt": "PASS",
+    "scope": "model recovery means durable action claim, not successful execution or verified objective; real loopback router only"
   }
 }

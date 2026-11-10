@@ -24,6 +24,7 @@ pub use workspace::{Action, Candidate, Validation, WorkspaceConfig};
 const KEEP_OBSERVATIONS: usize = 12;
 const CONTEXT_DETAIL_BYTES: usize = 8_192;
 const CONTEXT_OBSERVATION_BYTES: usize = 32_768;
+const MODEL_ERROR_BYTES: usize = 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -112,6 +113,19 @@ pub struct Metrics {
     pub model_failures: u64,
 }
 
+/// The latest inference failure episode, separate from the short observation
+/// window. Recovery means a valid decision was durably claimed, not that its
+/// action succeeded or that the engineering objective passed verification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelRecovery {
+    pub first_error: String,
+    pub latest_error: String,
+    pub first_failure_at: u64,
+    pub last_failure_at: u64,
+    pub attempts: u64,
+    pub recovered_at: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingAction {
     pub sequence: u64,
@@ -151,6 +165,8 @@ pub struct Job {
     pub updated_at: u64,
     pub next_attempt_at: u64,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub model_recovery: Option<ModelRecovery>,
     #[serde(default)]
     pub request_id: Option<String>,
 }
@@ -546,6 +562,7 @@ fn handle_inner(shared: &Shared, request: &Value) -> Result<(u16, Value), String
                     updated_at: unix_now(),
                     next_attempt_at: 0,
                     last_error: None,
+                    model_recovery: None,
                     request_id: request_id.map(str::to_owned),
                 };
                 state.jobs.push(job.clone());
@@ -686,7 +703,8 @@ fn context(job: &Job, policy: &WorkspaceConfig) -> Value {
         "checkpoint":{"self_authored_unverified":job.checkpoint},"observations":observations,
         "observations_omitted":observations_omitted,
         "validation":validation,"metrics":job.metrics,"allowed_programs":policy.commands,
-        "configured_checks":policy.checks,"last_error":job.last_error})
+        "configured_checks":policy.checks,"last_error":job.last_error,
+        "model_recovery":job.model_recovery})
 }
 
 struct RunningGuard<'a>(&'a Engineering);
@@ -791,17 +809,31 @@ pub fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Jo
         Err(error) => {
             return store
                 .update(&job.id, |current| {
+                    let now = unix_now();
+                    let error = clipped(&error, MODEL_ERROR_BYTES);
                     current.metrics.model_failures =
                         current.metrics.model_failures.saturating_add(1);
-                    current.last_error = Some(clipped(&error, 1024));
-                    current.next_attempt_at = unix_now().saturating_add(config.tick_secs);
-                    observation(
-                        current,
-                        0,
-                        "model",
-                        false,
-                        json!({"error":clipped(&error,1024)}),
-                    );
+                    if let Some(episode) = current
+                        .model_recovery
+                        .as_mut()
+                        .filter(|episode| episode.recovered_at.is_none())
+                    {
+                        episode.latest_error = error.clone();
+                        episode.last_failure_at = now;
+                        episode.attempts = episode.attempts.saturating_add(1);
+                    } else {
+                        current.model_recovery = Some(ModelRecovery {
+                            first_error: error.clone(),
+                            latest_error: error.clone(),
+                            first_failure_at: now,
+                            last_failure_at: now,
+                            attempts: 1,
+                            recovered_at: None,
+                        });
+                    }
+                    current.last_error = Some(error.clone());
+                    current.next_attempt_at = now.saturating_add(config.tick_secs);
+                    observation(current, 0, "model", false, json!({"error":error}));
                     Ok(())
                 })
                 .map(Some);
@@ -833,6 +865,13 @@ pub fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Jo
             action: action.clone(),
             started_at: unix_now(),
         });
+        // Persist recovery with the claim: a paused proposal or failed save
+        // must not close the episode, and later actions must not retime it.
+        if let Some(episode) = &mut current.model_recovery
+            && episode.recovered_at.is_none()
+        {
+            episode.recovered_at = Some(unix_now());
+        }
         Ok(())
     })?;
     let sequence = claimed

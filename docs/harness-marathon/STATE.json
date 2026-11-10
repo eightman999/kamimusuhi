@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 2.95291,
+  "elapsed_hours": 3.050132,
   "target_hours": 24.0,
-  "cycle": 14,
-  "current_task": "cycle14の決定的反応型評価4/4を保存。cycle15 baseline6件FAILからfirst-cause保持を実装",
+  "cycle": 15,
+  "current_task": "cycle15のmodel回復episodeを検証・保存。cycle16独立workerとcycle17出力完全性へ進む",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": "83dd2d3162f3f8094ee295b1ee6be17045981f66",
-  "last_checkpoint_at": "2026-11-10T04:56:05Z",
+  "last_checkpoint_at": "2026-11-10T05:01:55Z",
   "active_session_started_at": "2026-11-10T03:59:54Z",
   "session_elapsed_base_hours": 2.016521,
   "status": "active",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
-  "next_task": "cycle14を保存し、cycle15の変更前/後と実HTTP回復を検証。cycle16実行子の寿命を設計",
+  "next_task": "cycle16 workerをnative loopへ接続し、親死亡/worker死亡で実daemonを検証。cycle17 fixtureを登録して変更前測定",
   "completed_sessions": [
     {
       "started_at": "2026-11-08T16:06:48Z",
@@ -58,13 +58,14 @@
     11,
     12,
     13,
-    14
+    14,
+    15
   ],
   "incomplete_cycles": [
     2,
     3
   ],
-  "last_verified_change_commit": "827094e53d3e397f863b6855bd78d195fd16e201",
+  "last_verified_change_commit": "b230d9c5a885ab95d6e7f4b47d03de74097f53a5",
   "resume_guide": "docs/harness-marathon/RESUME.md",
   "evaluation": "evaluation/harness/marathon-20261109.json",
   "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。",

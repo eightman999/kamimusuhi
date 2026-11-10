@@ -939,6 +939,8 @@ fn malformed_actions_preserve_the_goal_and_recover_through_the_real_router() {
 
 #[test]
 fn auto_provider_503_recovers_after_the_real_bench_without_losing_the_goal() {
+    const FIRST_ERROR: &str = "engineering model unavailable (HTTP 503)";
+    const RETRY_ERROR: &str = "engineering model unavailable (HTTP 400)";
     let (model, requests) = ModelFixture::controlled();
     let fixture = Fixture::new(&model.url);
     // Healthy model-list probes must not erase a failed completion's bench.
@@ -958,25 +960,29 @@ fn auto_provider_503_recovers_after_the_real_bench_without_losing_the_goal() {
     // Local no-eligible-tier failures are durable retries, but are not
     // additional provider HTTP calls. Observe that state before recovery.
     let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
+    let first_episode = loop {
         let waiting = show(&resident.url, id);
         assert_eq!(waiting["candidate"], planned);
         assert_eq!(waiting["phase"], "active");
         assert!(waiting["pending"].is_null());
         assert_eq!(waiting["metrics"]["actions"], 0);
         if waiting["metrics"]["model_failures"].as_u64().unwrap() >= 2 {
-            assert_eq!(
-                waiting["last_error"],
-                "engineering model unavailable (HTTP 400)"
-            );
-            break;
+            assert_eq!(waiting["last_error"], RETRY_ERROR);
+            let episode = waiting["model_recovery"].clone();
+            assert_eq!(episode["first_error"], FIRST_ERROR);
+            assert_eq!(episode["latest_error"], RETRY_ERROR);
+            assert_eq!(episode["attempts"], waiting["metrics"]["model_failures"]);
+            assert!(episode["first_failure_at"].as_u64().is_some());
+            assert!(episode["last_failure_at"].as_u64().is_some());
+            assert!(episode["recovered_at"].is_null());
+            break episode;
         }
         assert!(
             Instant::now() < deadline,
             "provider failure was not recorded: {waiting}"
         );
         thread::sleep(Duration::from_millis(25));
-    }
+    };
     assert_eq!(model.calls.lock().unwrap().len(), 1);
     // This is a real wall-clock integration test of the default 60 s bench.
     // A request channel, not an arbitrary sleep, signals that auto routing
@@ -1004,20 +1010,56 @@ fn auto_provider_503_recovers_after_the_real_bench_without_losing_the_goal() {
         failures >= 2,
         "count local routing retries separately from HTTP calls"
     );
+    assert_eq!(retried["last_error"], RETRY_ERROR);
+    let waiting_episode = retried["model_recovery"].clone();
+    assert_eq!(waiting_episode["first_error"], FIRST_ERROR);
+    assert_eq!(waiting_episode["latest_error"], RETRY_ERROR);
+    assert_eq!(waiting_episode["attempts"], failures);
     assert_eq!(
-        retried["last_error"],
-        "engineering model unavailable (HTTP 400)"
+        waiting_episode["first_failure_at"],
+        first_episode["first_failure_at"]
     );
+    assert!(waiting_episode["recovered_at"].is_null());
     assert_eq!(recovered.context()["metrics"], retried["metrics"]);
+    assert_eq!(recovered.context()["model_recovery"], waiting_episode);
+    let first_cause_rolled_out = !retried["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|record| record["action"] == "model" && record["detail"]["error"] == FIRST_ERROR);
+    // This integration test does not require a particular count of local
+    // retries under load. The no-sleep unit fixture forces window rollover.
     recovered.respond(json!({"action":"read","path":"code.txt"}));
-    next_decision(&requests, MODEL, 1).respond(json!({
+    let edit = next_decision(&requests, MODEL, 1);
+    let after_read = show(&resident.url, id);
+    let recovered_episode = after_read["model_recovery"].clone();
+    assert!(recovered_episode["recovered_at"].as_u64().is_some());
+    for field in [
+        "first_error",
+        "latest_error",
+        "first_failure_at",
+        "last_failure_at",
+        "attempts",
+    ] {
+        assert_eq!(recovered_episode[field], waiting_episode[field]);
+    }
+    assert_eq!(edit.context()["model_recovery"], recovered_episode);
+    let checkpoint = fixture
+        .dir
+        .path()
+        .join("resident/current_state/engineering.json");
+    let durable: Value = serde_json::from_slice(&fs::read(checkpoint).unwrap()).unwrap();
+    assert_eq!(durable["jobs"][0]["model_recovery"], recovered_episode);
+    edit.respond(json!({
         "action":"write","path":"code.txt","expected":"initial\n","content":"fixed\n"
     }));
-    next_decision(&requests, MODEL, 2)
-        .respond(json!({"action":"finish","summary":"Recovered after one provider outage"}));
+    let finish = next_decision(&requests, MODEL, 2);
+    assert_eq!(finish.context()["model_recovery"], recovered_episode);
+    finish.respond(json!({"action":"finish","summary":"Recovered after one provider outage"}));
     let ready = wait_ready(&resident.url, id);
     assert_repaired_candidate(&fixture, &ready, &planned, &original_head);
     assert_eq!(ready["metrics"]["model_failures"], failures);
+    assert_eq!(ready["model_recovery"], recovered_episode);
     let contexts = recorded_contexts(&model, &planned);
     assert_eq!(
         contexts.len(),
@@ -1031,14 +1073,19 @@ fn auto_provider_503_recovers_after_the_real_bench_without_losing_the_goal() {
     assert_eq!(actions, [0, 0, 1, 2]);
     assert_eq!(contexts[0]["metrics"]["model_failures"], 0);
     assert_eq!(contexts[1]["metrics"]["model_failures"], failures);
+    assert!(contexts[0]["model_recovery"].is_null());
+    assert_eq!(contexts[1]["model_recovery"], waiting_episode);
+    assert_eq!(contexts[2]["model_recovery"], recovered_episode);
+    assert_eq!(contexts[3]["model_recovery"], recovered_episode);
     assert!(requests.try_recv().is_err(), "no unaccounted model request");
     let errors = model.errors.lock().unwrap().clone();
     assert!(errors.is_empty(), "{errors:?}");
     eprintln!(
-        "provider-503 recovery: bench_ms={} completion_posts=4 durable_actions=3 model_failures={} probes={} checks=1",
+        "provider-503 recovery: bench_ms={} completion_posts=4 durable_actions=3 model_failures={} probes={} checks=1 first_cause_rolled_out={} first_cause_retained=true recovered_once=true",
         bench_duration.as_millis(),
         failures,
-        model.probes.load(Ordering::Relaxed)
+        model.probes.load(Ordering::Relaxed),
+        first_cause_rolled_out,
     );
 }
 
