@@ -3,7 +3,8 @@
 //! Lock a dedicated, stable file before reading or recovering the checkpoint.
 //! Checkpoints are replaced atomically, so locking the checkpoint itself would
 //! lock an obsolete inode after a save. Never unlink or replace the lockfile:
-//! ownership ends when this handle is dropped or the owning process dies.
+//! Dropping the owner explicitly unlocks it. After an abrupt process exit,
+//! the OS releases it when the last inherited descriptor closes.
 //!
 //! This is a cooperative OS file lock, not distributed fencing. Network
 //! filesystem semantics are not established by a successful local test.
@@ -15,6 +16,15 @@ pub struct Lease {
     // Keep ownership for the containing Engineering's complete lifetime.
     // Do not expose cloning or explicit unlocking to callers.
     _file: File,
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        // Concurrent fork/exec can briefly retain the open file description
+        // even with CLOEXEC. Closing only our descriptor would leave a stale
+        // lock until that child execs. Release the owned lock explicitly.
+        let _ = self._file.unlock();
+    }
 }
 
 fn validate_metadata(metadata: &Metadata) -> Result<(), String> {
@@ -115,8 +125,9 @@ pub fn acquire(path: &Path) -> Result<Lease, String> {
     }
     // Catch replacement during acquisition too. Cooperating owners never
     // replace this pathname; active filesystem tampering is not a sandbox.
+    let owned = Lease { _file: file };
     verify_identity(path, &opened)?;
-    Ok(Lease { _file: file })
+    Ok(owned)
 }
 
 #[cfg(all(test, unix))]
@@ -191,6 +202,25 @@ mod tests {
         let _second = acquire(&b).unwrap();
         assert!(a.is_file());
         assert!(b.is_file());
+    }
+
+    #[test]
+    fn a_duplicate_descriptor_does_not_retain_released_ownership() {
+        let directory = Directory::new();
+        let path = directory.0.join("engineering.lock");
+        let first = acquire(&path).unwrap();
+        // A fork before exec can retain the same open file description.
+        // Model that lifetime deterministically without a timing race.
+        let inherited = first._file.try_clone().unwrap();
+        drop(first);
+        let second = acquire(&path).expect("owner drop must explicitly release its lock");
+        drop(inherited);
+        assert!(
+            acquire(&path).is_err(),
+            "old descriptor cannot release the new owner"
+        );
+        drop(second);
+        assert!(acquire(&path).is_ok());
     }
 
     #[test]

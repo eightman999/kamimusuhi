@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 2.016521,
+  "elapsed_hours": 2.400318,
   "target_hours": 24.0,
   "cycle": 11,
-  "current_task": "コンテナ再作成から復旧: cycle10までremote保存、cycle11の未転送修正を再構築・再検証",
+  "current_task": "cycle11復元版を新環境で45件・全targetclippyまで検証し保存",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": null,
-  "last_checkpoint_at": "2026-11-10T04:03:44Z",
+  "last_checkpoint_at": "2026-11-10T04:22:55Z",
   "active_session_started_at": "2026-11-10T03:59:54Z",
   "session_elapsed_base_hours": 2.016521,
   "status": "active",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
-  "next_task": "独立cursor/lease修正を復元して保存後、context予算と実daemon中断fixtureを統合",
+  "next_task": "cycle12 context予算の修正前後比較、cycle13実HTTP5件の保存、凍結版全CI",
   "completed_sessions": [
     {
       "started_at": "2026-11-08T16:06:48Z",
@@ -54,13 +54,14 @@
     7,
     8,
     9,
-    10
+    10,
+    11
   ],
   "incomplete_cycles": [
     2,
     3
   ],
-  "last_verified_change_commit": "3ab5254a7c66f971f5673b9509d1699bcb1ae139",
+  "last_verified_change_commit": "ff787610fbb2dce265316b4981ccb6f921ba2d1d",
   "resume_guide": "docs/harness-marathon/RESUME.md",
   "evaluation": "evaluation/harness/marathon-20261109.json",
   "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。",
@@ -84,11 +85,16 @@
     "remote_tree_probe": "404; not available",
     "prior_cycle11_validation": "45 engineering tests PASS and resident lib allfeature clippy PASS, previous container only",
     "pending_restoration": [
-      11,
       12,
       13,
       14
     ],
-    "full_ci_after_cycle11": "UNKNOWN; running process and final log unavailable after container replacement"
+    "full_ci_after_cycle11": "UNKNOWN; running process and final log unavailable after container replacement",
+    "cycle11_restored_validation": {
+      "engineering_tests": "45/45 PASS",
+      "resident_clippy_all_targets_all_features": "PASS",
+      "fmt": "PASS",
+      "date": "2026-11-10"
+    }
   }
 }

@@ -4,7 +4,9 @@
 use std::collections::HashSet;
 use std::path::{Component, Path};
 
-use super::{Phase, Snapshot};
+use super::{Job, Phase, Snapshot};
+
+pub(super) const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 fn identifier(text: &str) -> bool {
     !text.is_empty()
@@ -22,8 +24,58 @@ fn text(text: &str, max: usize) -> bool {
     !text.trim().is_empty() && text.len() <= max && !text.contains('\0')
 }
 
+fn highest_sequence(job: &Job) -> Result<u64, String> {
+    let mut highest = job.metrics.decisions;
+    if let Some(pending) = &job.pending {
+        highest = highest.max(pending.sequence);
+    }
+    for record in &job.observations {
+        highest = highest.max(record.sequence);
+        // In v1, the outer sequence of a recovery observation was the
+        // completed-action count, not the interrupted claim's sequence.
+        // Inspect only this resident-owned format, never arbitrary output.
+        if record.detail["kind"] == "interrupted_action_outcome_unknown" {
+            let sequence = record.detail["sequence"]
+                .as_u64()
+                .filter(|sequence| *sequence > 0)
+                .ok_or("engineering checkpoint interruption sequence is invalid")?;
+            highest = highest.max(sequence);
+        }
+    }
+    Ok(highest)
+}
+
+/// Upgrade a snapshot whose complete v1 meaning has already been validated.
+/// The caller recovers legacy pending actions before validating the result as
+/// v2: a v1 pending sequence can precede the derived high-water mark.
+pub(super) fn migrate(snapshot: &mut Snapshot) -> Result<bool, String> {
+    match snapshot.schema_version {
+        CURRENT_SCHEMA_VERSION => return Ok(false),
+        1 => {}
+        _ => return Err("unsupported engineering checkpoint schema".into()),
+    }
+    // Compute every cursor before changing anything, including the schema.
+    // A late overflow or invalid recovery record leaves the input intact.
+    let cursors: Vec<u64> = snapshot
+        .jobs
+        .iter()
+        .map(|job| {
+            highest_sequence(job)?
+                .checked_add(1)
+                .ok_or_else(|| "engineering action sequence space exhausted".to_owned())
+        })
+        .collect::<Result<_, _>>()?;
+    for (job, cursor) in snapshot.jobs.iter_mut().zip(cursors) {
+        job.next_action_sequence = cursor;
+    }
+    snapshot.schema_version = CURRENT_SCHEMA_VERSION;
+    Ok(true)
+}
+
 pub(super) fn validate(snapshot: &Snapshot, candidate_root: &Path) -> Result<(), String> {
-    if snapshot.schema_version != 1 || !candidate_root.is_absolute() {
+    if !matches!(snapshot.schema_version, 1 | CURRENT_SCHEMA_VERSION)
+        || !candidate_root.is_absolute()
+    {
         return Err("unsupported engineering checkpoint schema or root".into());
     }
     let mut ids = HashSet::new();
@@ -64,12 +116,31 @@ pub(super) fn validate(snapshot: &Snapshot, candidate_root: &Path) -> Result<(),
         {
             return Err("engineering checkpoint counters are inconsistent".into());
         }
-        if let Some(pending) = &job.pending
-            && (!matches!(job.phase, Phase::Active | Phase::Paused)
-                || metrics.actions.checked_add(1) != Some(pending.sequence)
-                || metrics.decisions < pending.sequence)
+        let highest = highest_sequence(job)?;
+        if snapshot.schema_version == CURRENT_SCHEMA_VERSION
+            && (job.next_action_sequence == 0 || job.next_action_sequence <= highest)
         {
-            return Err("engineering checkpoint pending cursor is inconsistent".into());
+            return Err("engineering checkpoint action cursor is inconsistent".into());
+        }
+        if let Some(pending) = &job.pending {
+            let valid_cursor = match snapshot.schema_version {
+                1 => {
+                    metrics.actions.checked_add(1) == Some(pending.sequence)
+                        && metrics.decisions >= pending.sequence
+                }
+                CURRENT_SCHEMA_VERSION => {
+                    pending.sequence > 0
+                        && pending.sequence.checked_add(1) == Some(job.next_action_sequence)
+                        && metrics
+                            .actions
+                            .checked_add(1)
+                            .is_some_and(|claimed| metrics.decisions >= claimed)
+                }
+                _ => unreachable!("schema checked above"),
+            };
+            if !matches!(job.phase, Phase::Active | Phase::Paused) || !valid_cursor {
+                return Err("engineering checkpoint pending cursor is inconsistent".into());
+            }
         }
         if job.validation.as_ref().is_some_and(|v| !commit_id(&v.head)) {
             return Err("engineering checkpoint validation revision is invalid".into());

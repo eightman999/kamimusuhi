@@ -339,3 +339,37 @@ cycle9公開commit: `82c38b2153941a38dd98fab64f6b4b7eb887b43d`（local/remote tr
 復旧の本当の目的: remoteに保存済みのnative agentを失わず、確認済みだった再開の修正を再びreview可能なコードと試験へ戻す。
 前提と確かめ方: cycle10まではGitHubから取得できる。cycle11の採番/lease変更とfixtureは会話に仕様・差分・測定結果が残るため、再実装後に同じ失敗契約を実行する。
 一番安い確認方法: clean cloneとpinned Rust1.92.0を用意し、cursor/leaseの対象fixtureとresident clippyを先に通して小さく保存する。
+
+### 復旧環境の確認
+
+新環境のHOMEは `/home/agent`。Rust1.92.0/rustfmt/clippyをその標準cargoディレクトリへ導入し、`cargo fetch --locked` はPASS（23.53s）。旧環境の `/root/.cargo/bin` の不存在を導入失敗とは扱わない。getpidと `/proc/self/status` のPIDはともに3で一致した。旧B005の前提が変わったため、全CIをこの環境で再確認する。
+
+## Cycle 12 — 長い作業で観測と作業記憶を保つ（復元した着手記録）
+
+本当の目的: 多数のソース範囲を読んだ後も、次の判断へ渡す観測を解釈でき、目標と次の作業を再開後まで保持する。
+前提と確かめ方: 現contextはdetail文字列の長さで予算を計上し、外側JSONの再エスケープを数えない。古いReadRangeを途中切断する可能性もある。固定の作業メモは別fieldなので履歴間引き後も残るはず。
+一番安い確認方法: quote/backslash/CRLFを含む6ページを実ReadRange→保存→model contextへ通し、encoded bytesと各ページのJSON完全性を測る。checkpoint後14回の観測と再起動でもgoal/candidate/summary/next_stepを照合する。
+
+前セッションの実fixture結果は失われている。予備のPython転記計算だけで製品の改善前数値とはせず、復元したfixtureを今のnative loopで実行する。
+
+## Cycle 13 — claim済みコマンドの実daemon中断（復元した着手記録）
+
+本当の目的: コマンド実行後・receipt保存前にresidentが失われても、既存成果を保持し、不明な副作用を再実行しないことを確認する。
+前提と確かめ方: 保存済み実daemon試験は推論中断でclaim前。unitのlost receipt試験と実daemon killは異なるため、pending Run保存後の実中断を別に確かめる。
+一番安い確認方法: 一時git・loopback model・候補外counter・期限付きbarrierでRun開始を確認してdaemonをkill/wait。fixture子の効果完了をrelease/ack/EOFで確認し、再起動時Paused・候補保持・追加model/command0を検査後、明示resumeからRead/Finishへ進む。
+
+親killだけで全子孫が終了すると仮定しない。fixture子への明示releaseを行う。socket EOFは効果と待機区間の終了を表し、失われた親の子をwait/reapした保証ではない。
+
+### Cycle 11 復元版の結果（2026-11-10）
+
+独立cursor、v1全件検査→移行→回復→v2保存、claim/観測/spoolの番号一致、cursor枯渇時の推論前pause、Lease Dropの明示unlockを復元。旧local treeと同一とは主張せず、新環境で再コンパイル・再試験した。
+
+| 検証コマンド | 結果 |
+|---|---|
+| `cargo fmt --all -- --check` | PASS exit0、1.52s |
+| `cargo test --locked --offline -p kamimusuhi-resident --lib engineering:: --no-fail-fast` | PASS 45/45、exit0、実試験1.56s・compile込90.59s |
+| `cargo clippy --locked --offline -p kamimusuhi-resident --all-targets --all-features -- -D warnings` | PASS exit0、52.33s |
+
+cursor7群を含む。Write1→Read2、legacyの予約8/14/18、履歴間引き後1000→1001、後半job不正/overflowの原本保持、cursor MAXでmodel0/別job進行を確認。複製descriptorを残してownerをdropしても次ownerが取得でき、旧descriptorのcloseで次ownerを解除しない。pending Replace x→prefixxの再適用0。
+
+復旧記録の公開commitは `ff787610fbb2dce265316b4981ccb6f921ba2d1d`。今回の実装commitは `fix(engineering): 中断後の行動番号とロック解放を復元`。全CIは別に再実行し、45件の成功を全workspace成功と扱わない。

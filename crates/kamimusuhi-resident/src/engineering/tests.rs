@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, mpsc};
 use std::time::Duration;
 
+mod cursor;
+
 struct ScriptedModel {
     actions: Mutex<VecDeque<Action>>,
     contexts: Mutex<Vec<Value>>,
@@ -229,13 +231,20 @@ fn set_pending(fixture: &Fixture, id: &str, pending: Action) {
         .find(|entry| entry["id"] == id)
         .unwrap();
     saved["phase"] = json!("active");
-    let sequence = saved["metrics"]["actions"].as_u64().unwrap() + 1;
-    saved["metrics"]["decisions"] = json!(
-        saved["metrics"]["decisions"]
-            .as_u64()
-            .unwrap()
-            .max(sequence)
-    );
+    let sequence = saved["next_action_sequence"]
+        .as_u64()
+        .unwrap_or_else(|| saved["metrics"]["actions"].as_u64().unwrap() + 1);
+    if saved.get("next_action_sequence").is_some() {
+        saved["next_action_sequence"] = json!(sequence.checked_add(1).unwrap());
+        saved["metrics"]["decisions"] = json!(saved["metrics"]["decisions"].as_u64().unwrap() + 1);
+    } else {
+        saved["metrics"]["decisions"] = json!(
+            saved["metrics"]["decisions"]
+                .as_u64()
+                .unwrap()
+                .max(sequence)
+        );
+    }
     saved["pending"] = json!({"sequence": sequence, "action": pending, "started_at": 1});
     std::fs::write(path, serde_json::to_vec_pretty(&persisted).unwrap()).unwrap();
 }
@@ -558,8 +567,8 @@ fn pause_reload_and_resume_keep_the_same_candidate_and_uncommitted_artifacts() {
 }
 
 #[test]
-fn loading_uncertain_effects_pauses_without_replaying_run_verify_or_finish() {
-    for pending_kind in ["run", "verify", "finish"] {
+fn loading_uncertain_effects_pauses_without_replaying_run_replace_verify_or_finish() {
+    for pending_kind in ["run", "replace", "verify", "finish"] {
         let fixture = fixture();
         let id = create(&fixture.shared);
         prepare(&fixture.shared, &id);
@@ -572,6 +581,18 @@ fn loading_uncertain_effects_pauses_without_replaying_run_verify_or_finish() {
                     fixture.command_count.to_string_lossy().into_owned(),
                 ],
             },
+            "replace" => {
+                std::fs::write(
+                    candidate(&fixture.shared, &id).join("replaced.txt"),
+                    "prefixx",
+                )
+                .unwrap();
+                Action::Replace {
+                    path: "replaced.txt".to_owned(),
+                    old: "x".to_owned(),
+                    new: "prefixx".to_owned(),
+                }
+            }
             "verify" => Action::Verify,
             "finish" => finish(),
             _ => unreachable!(),
@@ -598,12 +619,29 @@ fn loading_uncertain_effects_pauses_without_replaying_run_verify_or_finish() {
         assert_eq!(count(&fixture.command_count), 0);
         assert_eq!(count(&fixture.validation_count), 0);
 
+        if pending_kind == "replace" {
+            assert_eq!(
+                std::fs::read_to_string(candidate(&fixture.shared, &id).join("replaced.txt"))
+                    .unwrap(),
+                "prefixx",
+                "recovery must not apply a non-idempotent replacement again"
+            );
+        }
+
         let (_, reply) = handle(&fixture.shared, &json!({"action": "resume", "id": id}));
         assert_eq!(reply["ok"], true, "{reply}");
         action(&fixture.shared, &model);
         assert_eq!(model.calls(), 1);
         assert_eq!(count(&fixture.command_count), 0);
         assert_eq!(count(&fixture.validation_count), 0);
+        if pending_kind == "replace" {
+            assert_eq!(
+                std::fs::read_to_string(candidate(&fixture.shared, &id).join("replaced.txt"))
+                    .unwrap(),
+                "prefixx",
+                "resume asks for a new decision rather than replaying the old action"
+            );
+        }
         model.assert_consumed();
     }
 }

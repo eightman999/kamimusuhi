@@ -136,6 +136,10 @@ pub struct Job {
     pub phase: Phase,
     pub checkpoint: WorkingMemory,
     pub metrics: Metrics,
+    /// Monotonic claim identity, independent of completed action counts.
+    /// Zero is only the deserialization marker for a legacy v1 checkpoint.
+    #[serde(default)]
+    pub next_action_sequence: u64,
     pub validation: Option<Validation>,
     /// A failed verification remains a repair episode even when an
     /// intervening edit is rejected (for example, a compare-and-swap miss).
@@ -189,9 +193,9 @@ fn clipped(text: &str, bytes: usize) -> String {
     format!("{}{suffix}", &text[..end])
 }
 
-fn observation(job: &mut Job, action: &str, ok: bool, detail: Value) {
+fn observation(job: &mut Job, sequence: u64, action: &str, ok: bool, detail: Value) {
     job.observations.push(ObservationRecord {
-        sequence: job.metrics.actions,
+        sequence,
         action: action.to_owned(),
         ok,
         detail,
@@ -218,7 +222,7 @@ fn action_name(action: &Action) -> &'static str {
 impl Engineering {
     pub fn load(path: PathBuf, candidate_root: PathBuf) -> Self {
         let empty = || Snapshot {
-            schema_version: 1,
+            schema_version: checkpoint::CURRENT_SCHEMA_VERSION,
             jobs: Vec::new(),
         };
         let owned = match lease::acquire(&path.with_extension("lock")) {
@@ -275,6 +279,21 @@ impl Engineering {
                 Some("engineering checkpoint cannot be read".into()),
             ),
         };
+        // Validate every old job before migration or recovery can write any
+        // state. Legacy pending IDs may trail the decision count, so their
+        // recovery must finish before applying the v2 cursor relation.
+        let migrated = if error.is_none() {
+            match checkpoint::migrate(&mut snapshot) {
+                Ok(migrated) => migrated,
+                Err(reason) => {
+                    error = Some(format!("{reason}; original preserved"));
+                    snapshot = empty();
+                    false
+                }
+            }
+        } else {
+            false
+        };
         let mut recovered = false;
         for job in &mut snapshot.jobs {
             if let Some(pending) = job.pending.take() {
@@ -295,6 +314,7 @@ impl Engineering {
                 job.last_error = Some("interrupted_action_outcome_unknown".into());
                 observation(
                     job,
+                    pending.sequence,
                     action_name(&pending.action),
                     false,
                     json!({
@@ -304,7 +324,7 @@ impl Engineering {
                 );
             }
         }
-        if recovered && error.is_none() {
+        if (migrated || recovered) && error.is_none() {
             error = checkpoint::validate(&snapshot, &candidate_root)
                 .and_then(|()| Self::save(&path, &snapshot))
                 .err();
@@ -318,7 +338,7 @@ impl Engineering {
             PathBuf::new(),
             PathBuf::new(),
             Snapshot {
-                schema_version: 1,
+                schema_version: checkpoint::CURRENT_SCHEMA_VERSION,
                 jobs: Vec::new(),
             },
             None,
@@ -517,6 +537,7 @@ fn handle_inner(shared: &Shared, request: &Value) -> Result<(u16, Value), String
                     phase: Phase::Preparing,
                     checkpoint: WorkingMemory::default(),
                     metrics: Metrics::default(),
+                    next_action_sequence: 1,
                     validation: None,
                     repair_pending: false,
                     observations: Vec::new(),
@@ -682,6 +703,24 @@ pub fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Jo
     }) else {
         return Ok(None);
     };
+    // An exhausted cursor cannot be made durable for another claim. Pause
+    // this job before spending a model request, leaving other goals runnable.
+    if job.next_action_sequence.checked_add(1).is_none() {
+        return store
+            .update(&job.id, |current| {
+                current.phase = Phase::Paused;
+                current.last_error = Some("engineering action sequence exhausted".into());
+                observation(
+                    current,
+                    0,
+                    "cursor",
+                    false,
+                    json!({"error":"engineering action sequence exhausted"}),
+                );
+                Ok(())
+            })
+            .map(Some);
+    }
     let policy = match policy(config, &job.workspace) {
         Ok(policy) => policy,
         Err(error) => {
@@ -689,7 +728,7 @@ pub fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Jo
                 .update(&job.id, |current| {
                     current.phase = Phase::Paused;
                     current.last_error = Some(error.clone());
-                    observation(current, "configuration", false, json!({"error":error}));
+                    observation(current, 0, "configuration", false, json!({"error":error}));
                     Ok(())
                 })
                 .map(Some);
@@ -718,6 +757,7 @@ pub fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Jo
                         current.last_error = None;
                         observation(
                             current,
+                            0,
                             "prepare",
                             true,
                             json!({"candidate":current.candidate}),
@@ -726,7 +766,7 @@ pub fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Jo
                     Err(error) => {
                         current.phase = Phase::Paused;
                         current.last_error = Some(error.clone());
-                        observation(current, "prepare", false, json!({"error":error}));
+                        observation(current, 0, "prepare", false, json!({"error":error}));
                     }
                 }
                 Ok(())
@@ -744,6 +784,7 @@ pub fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Jo
                     current.next_attempt_at = unix_now().saturating_add(config.tick_secs);
                     observation(
                         current,
+                        0,
                         "model",
                         false,
                         json!({"error":clipped(&error,1024)}),
@@ -765,14 +806,27 @@ pub fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Jo
         if current.phase != Phase::Active || current.pending.is_some() {
             return Err("engineering job is no longer dispatchable".into());
         }
-        current.metrics.decisions = current.metrics.decisions.saturating_add(1);
+        let sequence = current.next_action_sequence;
+        current.next_action_sequence = sequence
+            .checked_add(1)
+            .ok_or("engineering action sequence exhausted")?;
+        current.metrics.decisions = current
+            .metrics
+            .decisions
+            .checked_add(1)
+            .ok_or("engineering decision counter exhausted")?;
         current.pending = Some(PendingAction {
-            sequence: current.metrics.actions.saturating_add(1),
+            sequence,
             action: action.clone(),
             started_at: unix_now(),
         });
         Ok(())
     })?;
+    let sequence = claimed
+        .pending
+        .as_ref()
+        .ok_or("engineering action claim is missing")?
+        .sequence;
     let limits = config.limits();
     let mut validation = None;
     let result = match &action {
@@ -806,6 +860,9 @@ pub fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Jo
         Err(error) => (false, json!({"error":clipped(&error,2048)})),
     };
     let updated = store.update(&job.id, |current| {
+        if current.pending.as_ref().map(|pending| pending.sequence) != Some(sequence) {
+            return Err("engineering action receipt does not match its claim".into());
+        }
         current.pending = None;
         current.metrics.actions = current.metrics.actions.saturating_add(1);
         current.next_attempt_at = 0;
@@ -844,13 +901,13 @@ pub fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Jo
                 _ => {}
             }
         }
-        observation(current, action_name(&action), ok, detail);
+        observation(current, sequence, action_name(&action), ok, detail);
         Ok(())
     })?;
     let _ = shared.spool.append_sync(
         "logs/engineering",
         json!({
-            "job_id":updated.id,"action":action_name(&action),"sequence":updated.metrics.actions,
+            "job_id":updated.id,"action":action_name(&action),"sequence":sequence,
             "ok":ok,"phase":updated.phase,"metrics":updated.metrics,
         }),
     );

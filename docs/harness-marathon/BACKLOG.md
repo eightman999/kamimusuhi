@@ -2,7 +2,7 @@
 
 ## 次にやること
 
-コンテナ再作成からの復旧。remoteはcycle10まで保存済み。cycle11の独立action cursor・v1移行・lease明示unlockを会話記録から復元して再検証し、早期にcommit/pushする。その後cycle12のcontext予算、cycle13のclaim済みRun実daemon中断、cycle14の反応型mock評価を進める。失われた全CIログの結果はUNKNOWN。
+cycle11復元版の45件・fmt・resident全target clippyがPASS。これをcommit/pushし、cycle12のcontext encoded予算を実fixtureで前後比較する。cycle13の実HTTP5件は検証中。凍結版で全CIを実行し、続いて反応型mockによる4scenario評価を作る。新環境ではgetpidと/procが一致し、旧PID制約は再確認できる。
 
 ## 現在の最優先（2026-11-09更新）
 

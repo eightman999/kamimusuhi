@@ -8,6 +8,10 @@
 
 cycle8でOS lease、checkpoint意味検査、実行途中の実daemon再起動を追加。engineering 31件＋実HTTP2件、resident全target/allfeature clippyはPASS。cycle9で大sourceの範囲読取/一意置換を追加し、engineering 37件とclippyがPASS。凍結全CIはruntime既存FAILを含む途中でwrapper exit137となり未完了。次はmodel/provider回復fixtureの保存と、中断action識別子の非再使用を進める。`STATE.json` の累計を引継ぐ。実作業のない停止時間は加算しない。
 
+## 2026-11-10の復旧
+
+旧コンテナの未転送作業とログが失われ、cycle10の公開commitから再cloneした。cycle11の独立cursor/schema v2/lease明示unlockを会話記録から機能復元し、新環境でengineering45/45、fmt、resident全target/allfeatures clippyがPASS。旧local treeとの同一性は主張しない。実作業2.016521時間を引継ぎ、約22時間の停止時間は除外した。最新の累計はSTATE参照。次はcontext予算、実daemon claim中断試験、凍結全CI。toolchainは `$HOME/.cargo/bin`（新環境HOME=/home/agent）を使用する。
+
 ## 再開
 
 1. GitHubの `exp/harness-marathon-20261109` を取得する。

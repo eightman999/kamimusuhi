@@ -141,5 +141,41 @@
       "candidate_preserved": true
     },
     "scope": "Real resident, router and HTTP transport with loopback fake provider; model_failures includes local no-eligible-provider attempts, not just provider POSTs"
+  },
+  "cycle11_restored_20261110": {
+    "engineering_tests": {
+      "passed": 45,
+      "failed": 0,
+      "test_seconds": 1.56,
+      "compile_and_test_seconds": 90.593
+    },
+    "cursor_groups": 7,
+    "interrupted_action_identity": {
+      "before_source": "previous container verified test",
+      "before_pending": 1,
+      "before_following_read": 1,
+      "after_pending": 1,
+      "after_following_read": 2
+    },
+    "legacy_migration_reserved_sequences": [
+      8,
+      14,
+      18
+    ],
+    "v2_pruned_history_cursor": {
+      "before": 1000,
+      "after": 1001
+    },
+    "duplicate_descriptor_release": "PASS; successor remains protected when old descriptor is dropped",
+    "exhausted_cursor": {
+      "model_calls": 0,
+      "actions": 0,
+      "phase": "paused",
+      "other_job_progress": true
+    },
+    "fmt": "PASS",
+    "resident_clippy_all_targets_all_features": "PASS",
+    "old_local_commit_retrieved": false,
+    "scope": "Functional reconstruction after container replacement, newly compiled/tested; not claimed byte-identical to lost local commit"
   }
 }
