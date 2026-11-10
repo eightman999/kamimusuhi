@@ -508,7 +508,22 @@ fn run() -> Result<ExitCode, String> {
 }
 
 fn main() -> ExitCode {
-    match run() {
+    // The native action worker must not load config, look up tokens, create
+    // Shared, or start any resident services before handling its private IPC.
+    let mut arguments = std::env::args_os().skip(1);
+    let result = if arguments.next().as_deref()
+        == Some(std::ffi::OsStr::new(
+            kamimusuhi_resident::engineering::WORKER_COMMAND,
+        )) {
+        if arguments.next().is_some() {
+            Err("engineering worker accepts no command arguments".to_owned())
+        } else {
+            kamimusuhi_resident::engineering::run_worker_stdio().map(|()| ExitCode::SUCCESS)
+        }
+    } else {
+        run()
+    };
+    match result {
         Ok(code) => code,
         Err(message) => {
             eprintln!("{message}");

@@ -1,5 +1,6 @@
-//! Deterministic resident-harness checks. Only model decisions are mocked:
-//! worktrees, commands, validation receipts and durable state use real files.
+//! Deterministic resident-harness checks. Model decisions and the execution
+//! location are injected; worktrees, commands, checks and state use real files.
+//! Separate integrations exercise the real worker and resident processes.
 
 use super::*;
 use crate::config::Config;
@@ -16,6 +17,42 @@ mod context_budget;
 mod cursor;
 mod evaluation;
 mod model_recovery;
+mod worker_dispatch;
+
+struct InlineRunner;
+
+impl ActionRunner for InlineRunner {
+    fn execute(
+        &self,
+        _state_path: &Path,
+        claimed: &Job,
+        policy: &WorkspaceConfig,
+        limits: &workspace::Limits,
+        cancel: &AtomicBool,
+    ) -> worker::Dispatch {
+        let action = &claimed
+            .pending
+            .as_ref()
+            .expect("durable action claim")
+            .action;
+        let result = match action {
+            Action::Run { .. } => {
+                workspace::execute(policy, &claimed.candidate, action, limits, cancel)
+                    .map(|observation| worker::Outcome::Run { observation })
+            }
+            Action::Verify | Action::Finish { .. } => {
+                workspace::verify(policy, &claimed.candidate, limits, cancel)
+                    .map(|validation| worker::Outcome::Verified { validation })
+            }
+            _ => panic!("only process actions use the runner"),
+        };
+        worker::Dispatch::Completed(result)
+    }
+}
+
+fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Job>, String> {
+    super::tick_with_runner(shared, model, &InlineRunner)
+}
 
 struct ScriptedModel {
     actions: Mutex<VecDeque<Action>>,

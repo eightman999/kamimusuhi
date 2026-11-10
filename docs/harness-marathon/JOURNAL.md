@@ -509,3 +509,37 @@ before/afterのfixture SHA256は `4f3d5935cee9914caa6d588ded534e47c37488aee767bb
 ログは `logs/cycle17-output-before/after-20261110.*`、`cycle17-executor-all-20261110.*`、`cycle17-runtime-clippy-20261110.*`。ACP独自reader/queueは別実装で今回未変更。cycle15公開commitは `deb692a27c92e752fae9235c839526ddced7f44b`。
 
 コミット: `fix(agent-exec): 不完全な標準出力を完了として扱わない`。
+
+## Cycle 18 — 長期修復中も実検証の失敗根拠を保持（着手前）
+
+本当の目的: 12件以上の調査を挟んでも、モデルが何を直すために作業しているかを実チェックの診断へ結び付けられるようにする。
+前提と確かめ方: 保存済みValidationにはstdout/stderrがあるが、contextへの投影はexit code等のみ。失敗観測が12件窓から落ちると診断が消える。重要な失敗だけに小さい独立したencoded予算を割り当てれば、全文を重複せず残せる。
+一番安い確認方法: 実checkの失敗→14回の無関係なread→reload→contextだけを読む修復policyを回し、診断保持・Ready到達・重複副作用を同条件で比較する。新fixtureはcycle16検証中に独立して準備し、製品変更前の失敗を測る。
+
+Cycle16の初回unitは60/60 PASS。実worker integrationの最初のcompileはmainから新公開symbolが見えずFAIL。shared target内の通常lib depfileにはworker.rsが無く、凍結版を05:11にbuildした後のartifactだった（root engineering.rs更新は05:05）。unit版depfileにはworker.rsがある。別worktree間のtarget共有で古い通常libを再利用した状況として、lib.rsのmtimeを更新して再compileする。コード本文は変えない。初回FAILは `cycle16-worker-stale-build-20261110.*` へ保存。次の凍結全CIは独立targetを使い、別tree間でartifactを共有しない。
+
+Cycle16実worker4件PASS（EOF→helper停止44ms/receipt371ms、1秒timeout→停止1005ms/receipt1319ms）。HTTP初回は5 PASS / 1 FAIL: 新worker消失caseの再開後helperに、model呼出し数を完了actions数として渡した試験側assertが不正（unknownはactions0なのに1を期待）。Paused/pending/counter1/副作用保持まではPASS。fixtureをactions0→1の期待へ修正し、そのcaseを対象再試験する。既存503等の5件PASSは区別して残す。
+
+### Cycle 16 の変更と結果
+
+Run/Verify/Finishを同じresident binaryの専用workerへ移した。モデル・config/token・Sharedをworkerで初期化せず、親が作る型付きrequestを渡す。parentは送信後もstdinを開き、workerはEOF/追加入力/errorで取消。既存command期限とprocess group停止/direct child waitをworker側が担当する。親の取消はstdin閉鎖→2秒のcleanup猶予→必要な場合だけkill。新transportではreap済みPID/PGIDへsignalしない。
+
+親はCompleted（確定した失敗を含む）/開始前Rejected/Unknownを区別する。UnknownはjobだけPaused、actionsは増やさずinterruptions+1、candidate/sequenceを保持し、勝手に再実行しない。不明結果の保存にも失敗すればstoreを隔離し、元pendingを保存してreloadで回復する。workerは開始前にdurableなjob/phase/pending action全体/candidate/sequenceを照合し、checkpointを書き換えない。通常経路のinline fallbackは無い。libunitだけ明示したInlineRunnerを注入し、実IPCはintegrationで試す。
+
+| 同一の実daemon親終了fixture | 未導入deb692a | 導入後 |
+|---|---|---|
+| 親終了後5秒以内のhelper EOF | FAIL（5s read timeout） | PASS、47ms |
+| helper自然期限 | 20秒 | 20秒（変更なし） |
+| 確認済み副作用 / 自動再実行 | 1 / 検査未到達 | 1 / 0 |
+
+前値の実試験7.22s/compile込59.059s。後値は実HTTPの同じcaseで測定。停止までの47msはこのfixture/hostの観測で、一般の全子孫回収期限とはしない。
+
+- 親側状態・codec・既存回帰: engineering60/60 PASS、実2.01s、compile込24.738s。
+- 実worker: 4 PASS / helper1 ignored、実1.36s、compile込21.160s。EOFからhelper停止44ms/receipt371ms。owner pipeを開いたまま1秒timeoutではspawn→helper EOF1005ms/receipt1319ms、command duration1305ms。
+- 実HTTP初回: 5 PASS / 新case1 FAIL / helper1 ignored（64.79s）。新caseのactions期待を修正後、その1件はPASS（5.26s、compile込7.696s）。既存5件と合わせて全6caseを成功確認したが、修正後のsuite一括exit0は次の全CIで確認する。
+- worker自身を失う実case: 実Run1/再実行0、unknownをactionsへ加算0、interruptions1、Paused中の追加model0、明示resume後Read2/Finish3・check1でReady。
+- resident全target/allfeature clippy PASS（19.408s）、fmt check PASS（1.375s）、diff check PASS。
+
+request/reply各1MiB、checkpoint64MiB、Unix transport。worker自身のSIGKILL、groupを離脱した子孫、claim検査直後と再開の競合について完全な終了証拠/fencingは未実装。明示resume前に候補と旧実行の停止を確認する境界を維持する。別レビューで既存process.rsのreap後group signalも見つかり、cycle19へ分離した。実運用接続・外部provider・送信は一切無し。
+
+cycle17の公開commitは `0f7c377c9c6d98acf8468af9eb5c39fb157b9a55`。コミット: `fix(engineering): 親の終了後も実行の取消と期限を管理`。次の全CIはartifact取り違えを避けた独立targetで実行する。

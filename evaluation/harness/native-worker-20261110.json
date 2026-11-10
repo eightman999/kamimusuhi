@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "scope": "real local resident/worker/process fixtures; no real model provider or all-descendant containment claim",
+  "date": "2026-11-10",
+  "before_commit": "deb692a27c92e752fae9235c839526ddced7f44b",
+  "parent_death": {
+    "before": {
+      "command_eof_within_5_seconds": false,
+      "observed_eof_ms": null,
+      "fixture_timeout_seconds": 20,
+      "test_seconds": 7.22
+    },
+    "after": {
+      "command_eof_within_5_seconds": true,
+      "observed_eof_ms": 47,
+      "fixture_timeout_seconds": 20,
+      "actual_runs": 1,
+      "replays": 0,
+      "paused_model_calls": 0,
+      "checks": 1
+    }
+  },
+  "direct_worker": {
+    "passed": 4,
+    "failed": 0,
+    "ignored_helper": 1,
+    "test_seconds": 1.36,
+    "eof_command_stop_ms": 44,
+    "eof_receipt_ms": 371,
+    "timeout_ms": 1000,
+    "timeout_spawn_to_command_eof_ms": 1005,
+    "timeout_spawn_to_receipt_ms": 1319,
+    "command_duration_ms": 1305,
+    "checkpoint_writes": 0
+  },
+  "worker_loss": {
+    "passed": 1,
+    "actual_runs": 1,
+    "replays": 0,
+    "unknown_counted_as_actions": 0,
+    "interruptions": 1,
+    "paused_model_calls": 0,
+    "action_sequences": [
+      1,
+      2,
+      3
+    ],
+    "checks": 1,
+    "explicit_resumes": 1
+  },
+  "engineering_unit_contracts": {
+    "passed": 60,
+    "failed": 0,
+    "test_seconds": 2.01,
+    "runner": "explicit inline test injection; real worktree/checks/state"
+  },
+  "http_validation": {
+    "initial_suite_passed": 5,
+    "initial_suite_failed": 1,
+    "fixture_correction": "next_decision expected completed actions, not model call count",
+    "corrected_case_passed": 1,
+    "corrected_case_test_seconds": 5.26,
+    "post_correction_whole_suite": "pending full CI"
+  },
+  "clippy_all_targets_all_features": "PASS",
+  "fmt": "PASS",
+  "limitations": [
+    "worker process itself may die before cleanup",
+    "escaped process groups are not an OS sandbox",
+    "claim check does not provide durable execution fencing",
+    "Unix transport; 1MiB frames and 64MiB checkpoint limit",
+    "latencies are one local fixture observation, not a general service bound"
+  ]
+}

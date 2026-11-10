@@ -1279,9 +1279,9 @@ fn active_engineering_restarts_after_model_interruption_and_excludes_second_resi
     assert!(errors.is_empty(), "{errors:?}");
 }
 
-/// The Run child has a separate process group from the daemon. Release it
-/// explicitly even when an assertion unwinds, instead of assuming that
-/// killing the parent also killed every command it launched.
+/// The Run child has a separate process group from the daemon. The success
+/// path waits for worker cancellation; Drop releases only failed fixtures.
+/// This does not assume that parent death directly kills every descendant.
 struct ClaimedRunBarrier {
     listener: TcpListener,
     stream: Option<TcpStream>,
@@ -1328,19 +1328,18 @@ impl ClaimedRunBarrier {
         assert_eq!(&started, b"started\n");
     }
 
-    fn release_and_wait(&mut self) {
+    fn wait_cancelled(&mut self) {
         let stream = self.stream.as_mut().unwrap();
-        stream.write_all(b"release\n").unwrap();
-        let mut finished = [0; 5];
         stream
-            .read_exact(&mut finished)
-            .expect("the surviving Run child acknowledges release");
-        assert_eq!(&finished, b"done\n");
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
         let mut end = [0; 1];
         assert_eq!(
-            stream.read(&mut end).expect("Run closes its barrier"),
+            stream
+                .read(&mut end)
+                .expect("worker cancels Run within 5s after its owner disappears"),
             0,
-            "the fixture effect is finished before restarting the daemon"
+            "Run stops without release or waiting for the fixture's 20s deadline"
         );
         self.stream = None;
     }
@@ -1392,9 +1391,9 @@ fn claimed_run_barrier_helper() {
         .expect("Run controller releases the bounded fixture");
     assert_eq!(&release, b"release\n");
     barrier.write_all(b"done\n").unwrap();
-    // No candidate or counter mutation follows the acknowledgement. Socket
-    // EOF confirms this helper has left its effect/barrier section; the test
-    // does not claim to wait/reap a process whose original parent was killed.
+    // The driver never releases this helper on the successful crash path:
+    // the worker observes owner EOF, cancels its command group and reaps the
+    // direct child. This deadline/release remains a test-failure fallback.
 }
 
 #[test]
@@ -1454,11 +1453,13 @@ fn claimed_run_is_not_replayed_after_daemon_death_and_explicit_resume() {
     let snapshot: Value = serde_json::from_slice(&durable).unwrap();
     assert_eq!(snapshot["jobs"][0], before);
 
-    // ChildGuard kills and waits for the resident, but Run has its own
-    // process group. Acknowledgement proves that we explicitly release the
-    // surviving fixture child before allowing the successor to continue.
+    // Only the resident's owned group is killed here. Its worker has a
+    // separate group and detects pipe EOF, then cancels/reaps this Run.
+    // The fixture's 20s timeout cannot satisfy the 5s EOF assertion.
+    let parent_exit_started = Instant::now();
     drop(owner);
-    barrier.release_and_wait();
+    barrier.wait_cancelled();
+    let parent_exit_to_command_eof_ms = parent_exit_started.elapsed().as_millis();
     assert_eq!(fs::read(&checkpoint).unwrap(), durable);
     let successor = fixture.start_as(SUCCESSOR, 30);
     let restored = show(&successor.url, &id);
@@ -1560,6 +1561,149 @@ fn claimed_run_is_not_replayed_after_daemon_death_and_explicit_resume() {
     let errors = model.errors.lock().unwrap().clone();
     assert!(errors.is_empty(), "{errors:?}");
     eprintln!(
-        "claimed-run recovery: real_runs=1 replayed_runs=0 paused_model_calls=0 action_sequences=[1,2,3] checks=1"
+        "claimed-run recovery: real_runs=1 replayed_runs=0 paused_model_calls=0 action_sequences=[1,2,3] checks=1 parent_exit_to_command_eof_ms={parent_exit_to_command_eof_ms}"
+    );
+}
+
+#[test]
+fn losing_the_worker_pauses_its_claim_without_replaying_or_counting_an_outcome() {
+    let (model, requests) = ModelFixture::controlled();
+    let fixture = Fixture::new(&model.url);
+    let run_counter = fixture.dir.path().join("actual-runs.txt");
+    let script = fixture.dir.path().join("terminate-own-worker.sh");
+    // This is the worker's direct command. It signals only its live parent,
+    // never the test driver or a process found through a saved/global PID.
+    // It exits immediately afterwards; worker death does not promise that
+    // arbitrary descendants can be discovered or terminated by the resident.
+    fs::write(
+        &script,
+        "#!/bin/sh\nset -eu\nprintf 'run\\n' >> \"$1\"\n\
+         printf 'fixed\\n' > code.txt\nkill -KILL \"$PPID\"\n",
+    )
+    .unwrap();
+    let mut config: Value = serde_json::from_slice(&fs::read(&fixture.config).unwrap()).unwrap();
+    config["engineering"]["workspaces"][0]["commands"] = json!(["/bin/sh"]);
+    fs::write(&fixture.config, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+    let original_head = fixture.git(&fixture.workspace, &["rev-parse", "HEAD"]);
+    let resident = fixture.start_as(MODEL, 30);
+    let created = fixture.cli(&resident.url, &["start", "fixture", OBJECTIVE]);
+    assert_eq!(created["ok"], true, "{created}");
+    let id = created["job"]["id"].as_str().unwrap().to_owned();
+    let planned = created["job"]["candidate"].clone();
+    let candidate = Path::new(planned["path"].as_str().unwrap());
+    next_decision(&requests, MODEL, 0).respond(json!({
+        "action":"run","argv":["/bin/sh",script,run_counter]
+    }));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let paused = loop {
+        let observed = show(&resident.url, &id);
+        if observed["phase"] == "paused" && observed["pending"].is_null() {
+            break observed;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "worker loss did not pause its claim: {observed}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
+    assert_eq!(paused["candidate"], planned);
+    assert_eq!(paused["objective"], OBJECTIVE);
+    assert_eq!(paused["metrics"]["decisions"], 1);
+    assert_eq!(paused["metrics"]["actions"], 0);
+    assert_eq!(paused["metrics"]["interruptions"], 1);
+    assert_eq!(paused["metrics"]["verification_runs"], 0);
+    assert_eq!(paused["metrics"]["model_failures"], 0);
+    assert_eq!(paused["next_action_sequence"], 2);
+    assert_eq!(paused["last_error"], "interrupted_action_outcome_unknown");
+    assert!(paused["validation"].is_null());
+    let unknown = paused["observations"].as_array().unwrap().last().unwrap();
+    assert_eq!(unknown["action"], "run");
+    assert_eq!(unknown["sequence"], 1);
+    assert_eq!(unknown["ok"], false);
+    assert_eq!(unknown["detail"]["sequence"], 1);
+    assert_eq!(
+        unknown["detail"]["kind"],
+        "interrupted_action_outcome_unknown"
+    );
+    assert!(!unknown["detail"]["error"].as_str().unwrap().is_empty());
+    let snapshot: Value = serde_json::from_slice(
+        &fs::read(
+            fixture
+                .dir
+                .path()
+                .join("resident/current_state/engineering.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(snapshot["jobs"][0], paused);
+    assert_eq!(fs::read_to_string(&run_counter).unwrap(), "run\n");
+    assert_eq!(
+        fs::read_to_string(candidate.join("code.txt")).unwrap(),
+        "fixed\n"
+    );
+    assert!(!fixture.counter.exists());
+    assert!(matches!(
+        requests.recv_timeout(Duration::from_millis(1250)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert_eq!(model.calls.lock().unwrap().len(), 1);
+    assert_eq!(show(&resident.url, &id)["metrics"], paused["metrics"]);
+
+    let resumed = fixture.cli(
+        &resident.url,
+        &["resume", &id, "Inspect the unconfirmed worker effect"],
+    );
+    assert_eq!(resumed["job"]["phase"], "active");
+    // The lost worker consumed a decision, but saved no completed action.
+    let read = next_decision(&requests, MODEL, 0);
+    assert_eq!(read.context()["candidate"], planned);
+    assert_eq!(read.context()["metrics"]["interruptions"], 1);
+    read.respond(json!({"action":"read","path":"code.txt"}));
+    let finish = next_decision(&requests, MODEL, 1);
+    let context = finish.context();
+    let observed = context["observations"].as_array().unwrap().last().unwrap();
+    assert_eq!(observed["sequence"], 2);
+    let detail: Value = serde_json::from_str(observed["external_data"].as_str().unwrap()).unwrap();
+    assert_eq!(detail["content"], "fixed\n");
+    finish.respond(json!({"action":"finish","summary":"Reverified the preserved candidate"}));
+    let ready = wait_ready(&resident.url, &id);
+    assert_eq!(ready["metrics"]["decisions"], 3);
+    assert_eq!(ready["metrics"]["actions"], 2);
+    assert_eq!(ready["metrics"]["interruptions"], 1);
+    assert_eq!(ready["metrics"]["verification_runs"], 1);
+    assert_eq!(ready["next_action_sequence"], 4);
+    assert_eq!(ready["validation"]["passed"], true);
+    assert_eq!(
+        ready["validation"]["head"],
+        fixture.git(candidate, &["rev-parse", "HEAD"])
+    );
+    let sequences: Vec<_> = ready["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|record| record["sequence"] != 0)
+        .map(|record| record["sequence"].as_u64().unwrap())
+        .collect();
+    assert_eq!(sequences, [1, 2, 3]);
+    assert_eq!(fs::read_to_string(&run_counter).unwrap(), "run\n");
+    assert_eq!(
+        fs::read_to_string(&fixture.counter).unwrap(),
+        format!("{}\tfixed\n", candidate.display())
+    );
+    assert_eq!(
+        fixture.git(&fixture.workspace, &["rev-parse", "HEAD"]),
+        original_head
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.workspace.join("code.txt")).unwrap(),
+        "initial\n"
+    );
+    assert_eq!(model.calls.lock().unwrap().len(), 3);
+    assert!(requests.try_recv().is_err());
+    let errors = model.errors.lock().unwrap().clone();
+    assert!(errors.is_empty(), "{errors:?}");
+    eprintln!(
+        "worker-loss recovery: real_runs=1 replayed_runs=0 unknown_actions_counted=0 interruptions=1 paused_model_calls=0 action_sequences=[1,2,3] checks=1"
     );
 }

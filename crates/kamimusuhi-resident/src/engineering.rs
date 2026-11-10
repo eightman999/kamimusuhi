@@ -7,9 +7,10 @@
 
 mod checkpoint;
 mod lease;
+mod worker;
 pub mod workspace;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -714,8 +715,104 @@ impl Drop for RunningGuard<'_> {
     }
 }
 
+// Keep the production process boundary explicit. Unit contract tests inject
+// an inline runner while the HTTP/worker integrations launch the real binary.
+trait ActionRunner {
+    fn execute(
+        &self,
+        state_path: &Path,
+        claimed: &Job,
+        policy: &WorkspaceConfig,
+        limits: &workspace::Limits,
+        cancel: &AtomicBool,
+    ) -> worker::Dispatch;
+}
+
+struct WorkerRunner;
+
+impl ActionRunner for WorkerRunner {
+    fn execute(
+        &self,
+        state_path: &Path,
+        claimed: &Job,
+        policy: &WorkspaceConfig,
+        limits: &workspace::Limits,
+        cancel: &AtomicBool,
+    ) -> worker::Dispatch {
+        let request = match worker::Request::new(state_path, claimed, policy, limits) {
+            Ok(request) => request,
+            Err(error) => return worker::Dispatch::Rejected(error),
+        };
+        let executable = match std::env::current_exe() {
+            Ok(executable) => executable,
+            Err(_) => {
+                return worker::Dispatch::Rejected(
+                    "cannot locate the engineering worker executable".into(),
+                );
+            }
+        };
+        worker::dispatch(&executable, &request, cancel)
+    }
+}
+
+#[doc(hidden)]
+pub const WORKER_COMMAND: &str = worker::ENTRY;
+
+/// Internal child entry, reached before reading resident config or tokens.
+#[doc(hidden)]
+pub fn run_worker_stdio() -> Result<(), String> {
+    worker::run_stdio()
+}
+
+fn pause_unknown_action(
+    shared: &Shared,
+    claimed: &Job,
+    sequence: u64,
+    action: &Action,
+    reason: &str,
+) -> Result<Option<Job>, String> {
+    let updated = shared.engineering.update(&claimed.id, |current| {
+        if current.pending.as_ref().map(|pending| pending.sequence) != Some(sequence) {
+            return Err("engineering unknown result does not match its claim".into());
+        }
+        current.pending = None;
+        current.phase = Phase::Paused;
+        current.validation = None;
+        current.next_attempt_at = 0;
+        current.metrics.interruptions = current.metrics.interruptions.saturating_add(1);
+        current.last_error = Some("interrupted_action_outcome_unknown".into());
+        observation(
+            current,
+            sequence,
+            action_name(action),
+            false,
+            json!({
+                "kind":"interrupted_action_outcome_unknown", "sequence":sequence,
+                "error":clipped(reason, 1024),
+                "instruction":"Inspect the preserved candidate and confirm the prior execution has stopped before resuming. The action was not replayed."
+            }),
+        );
+        Ok(())
+    })?;
+    let _ = shared.spool.append_sync(
+        "logs/engineering",
+        json!({"event":"action_outcome_unknown","job_id":updated.id,
+            "action":action_name(action),"sequence":sequence,"ok":false,
+            "phase":updated.phase,"metrics":updated.metrics}),
+    );
+    Ok(Some(updated))
+}
+
 /// One durable action per call; concurrent callers cannot duplicate dispatch.
 pub fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Job>, String> {
+    tick_with_runner(shared, model, &WorkerRunner)
+}
+
+fn tick_with_runner(
+    shared: &Shared,
+    model: &dyn EngineerModel,
+    runner: &dyn ActionRunner,
+) -> Result<Option<Job>, String> {
     let Some(config) = &shared.config.engineering else {
         return Ok(None);
     };
@@ -892,9 +989,14 @@ pub fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Jo
                 })
             }
         }
-        Action::Verify | Action::Finish { .. } => {
-            match workspace::verify(policy, &claimed.candidate, &limits, &store.cancel) {
-                Ok(checks) => {
+        Action::Run { .. } | Action::Verify | Action::Finish { .. } => {
+            match runner.execute(&store.path, &claimed, policy, &limits, &store.cancel) {
+                worker::Dispatch::Completed(Ok(worker::Outcome::Run { observation })) => {
+                    Ok(observation)
+                }
+                worker::Dispatch::Completed(Ok(worker::Outcome::Verified {
+                    validation: checks,
+                })) => {
                     let observed = workspace::Observation {
                         ok: checks.passed,
                         detail: json!({"validation":checks}),
@@ -902,7 +1004,12 @@ pub fn tick_with(shared: &Shared, model: &dyn EngineerModel) -> Result<Option<Jo
                     validation = Some(checks);
                     Ok(observed)
                 }
-                Err(error) => Err(error),
+                worker::Dispatch::Completed(Err(error)) | worker::Dispatch::Rejected(error) => {
+                    Err(error)
+                }
+                worker::Dispatch::Unknown(reason) => {
+                    return pause_unknown_action(shared, &claimed, sequence, &action, &reason);
+                }
             }
         }
         _ => workspace::execute(policy, &claimed.candidate, &action, &limits, &store.cancel),

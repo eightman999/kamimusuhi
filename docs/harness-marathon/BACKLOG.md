@@ -2,7 +2,7 @@
 
 ## 次にやること
 
-cycle15まで保存。推論障害episodeは6群PASS、engineering54件・HTTP5件・clippy/fmt PASS。最後の全CIはcycle13凍結版83dd2d3。次はcycle16の専用workerをnative loopへ接続し、resident死亡後のコマンド停止とworker結果不明のPausedを実測。cycle17は誤成功4件と部分一覧1件を修正、対象9件/全executor14件がPASSして保存済み。次の全CIでcycle12/14/15以降をまとめて検証する。
+cycle16/17まで保存。native workerの親死亡→helper停止47ms、結果不明はPaused/自動再実行0を検証。engineering60件・実worker4件・HTTP全6caseを成功確認（HTTP修正後の一括gateは次の全CI）。独立targetでcycle14/15/17/16を含む全CIを通す。並行してcycle18の長期修復診断保持fixtureを準備、cycle19で既存process runnerのreap後PGID signalを解消する。
 
 ## 現在の最優先（2026-11-09更新）
 
@@ -15,7 +15,8 @@ cycle15まで保存。推論障害episodeは6群PASS、engineering54件・HTTP5�
 | P1 | 検証receiptと候補の変化 | 静的監査で外部commit後も旧Ready表示が残る。show/list/summary/request再送/reloadを一つの実fixtureで再現 |
 | P1 | 検証設定変更とReadyの鮮度 | checks追加後に旧receiptが新設定の成功に見えない。argv証拠を保存して照合 |
 | P2 | ACP出力のメモリと切断 | 独自BufReader::lines/channelの上限と不完全protocolの扱いをfixtureで確認 |
-| P1 | resident crash後の実行子の期限管理 | 親pipe閉鎖とworker側の取消で停止し、古いclaimの遅延実行を防ぐ |
+| P0 | process groupの所有とreap順 | safe WNOWAITで終了観測→group回収→reap、再利用PIDへsignalしない |
+| P1 | 旧workerの実行完了証拠と再開 | job/sequence別ledgerと排他でclaim検査後の競合を閉じ、停止未確認の再開を区別 |
 
 ## 後続候補（検索・skill統合は保留）
 

@@ -2,8 +2,8 @@
 
 `engineering` は resident 自身が開発目標を追う実行系です。外部 coding CLI や
 SKILL.md を必須にせず、設定された推論経路へ一手ずつ判断を求め、隔離した
-git worktree で編集・実行・検証を進めます。会話が終わっても resident の
-スケジューラが続行します。
+git worktree で編集・実行・検証を進めます。resident を稼働させている間は、その
+スケジューラが会話の終了後も続行します。
 
 ## 実行の流れ
 
@@ -165,6 +165,29 @@ JSON を読めることに加え、全 job の ID、候補のパスとブラン�
 件数です。既に履歴から間引かれた過去の総数は含みません。この 32 KiB は観測配列の
 枠であり、目標・設定・作業メモを含むリクエスト全体の上限ではありません。
 
+## コマンドの寿命と結果不明の扱い
+
+Run・Verify・Finishは、resident自身と同じbinaryの専用workerで実行します。追加の
+外部coding CLIは必要ありません。workerはresidentのconfig・token・HTTP serverを
+初期化せず、親が保存したclaimと実行設定を確認してから操作します。
+
+親との制御pipeが閉じるとworkerは取消を通知し、commandのprocess groupを停止して
+direct childを回収します。操作の期限もworker内で監視するため、residentだけが
+終了しても停止処理を続けられます。親側も取消時は先にpipeを閉じ、有限のcleanup
+猶予を与えます。workerが返す失敗receiptと、worker自体の消失で結果が不明な場合を
+区別します。後者はjobをPausedにし、完了actionsへ加算せず、行動番号を保持します。
+
+worker自身も異常終了した場合や、commandが別process groupへ離脱した場合の全子孫
+回収は保証しません。開始前のclaim検査と、その直後の再開操作の間にも完全なfencingは
+ありません。結果不明のjobを明示resumeするときは、候補と旧実行の停止を確認します。
+現在のtransportはUnix向けで、request/replyは各1MiB、workerが読むcheckpointは
+64MiBまでです。上限超過は実行前拒否または結果不明として返し、resident内で同じ
+操作を代わりに実行するfallbackはありません。
+
+`tests/engineering_worker.rs` は実binaryのpipe切断・期限・claim不一致を検査します。
+`tests/engineering_http.rs` は実residentの終了とworker消失後の候補保持・一時停止・
+明示再開を検査します。
+
 ## 推論障害の記録
 
 `model_recovery` は直近の推論障害の経緯です。最初と最新のエラー、各時刻、
@@ -180,7 +203,7 @@ local routingの失敗も含みます。
 
 ## 検証の範囲
 
-`engineering::tests` はモデルの判断だけを fixture に置き換え、一時 git、
+`engineering::tests` はモデルの判断と実行場所の境界をfixtureに置き換え、一時 git、
 実 worktree、実コマンド、ディスクへの保存・再読込を使います。成功を申告した
 モデルでも検証が失敗すれば `ready` にならず、修正後の再検証で初めて到達することを
 確認します。同時 tick の重複実行、再開、保存失敗、元の未コミット成果の保持も
