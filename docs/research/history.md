@@ -1,6 +1,11 @@
 # Kamimusuhi / MIO — experiment and PR history
 
 Status: **research record (non-normative)**
+
+> Current admission policy (2026-11-08): the Active table below records the
+> historical decision, not current production eligibility. All five learned
+> organ candidates are now Shadow pending runtime benefit evidence. See
+> [current dispositions](experiment-dispositions-2026-11-08.md).
 Baseline: `origin/master` @ `a79cd64`, branch `exp/cx0-synthetic-cortex`
 Compiled: 2026-09-14, for the Mio Synthetic Cortex (CX0) integration phase.
 

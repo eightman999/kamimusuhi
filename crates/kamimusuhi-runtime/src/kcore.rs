@@ -555,7 +555,16 @@ mod tests {
 
     #[test]
     fn unknown_and_failed_experiments_cannot_be_promoted() {
-        for key in ["g0", "p0", "unknown", "o0-object-state"] {
+        for key in [
+            "g0",
+            "p0",
+            "unknown",
+            "h0-regulation",
+            "r0-memory-gate",
+            "s0-agency-attribution",
+            "t0-temporal-state",
+            "o0-object-state",
+        ] {
             let config = KCoreConfig {
                 organs: vec![ProcessBinding {
                     key: key.to_owned(),

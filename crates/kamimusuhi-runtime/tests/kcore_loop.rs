@@ -4,7 +4,8 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use kamimusuhi_core::organs::{
-    CognitiveOrgan, OrganDescriptor, OrganError, OrganInput, OrganSignal, PromotionMode,
+    CognitiveOrgan, ExperimentVerdict, OrganDescriptor, OrganError, OrganEvidence, OrganInput,
+    OrganKey, OrganRole, OrganSignal, PromotionMode,
 };
 use kamimusuhi_runtime::kcore::{CoreIntent, KCore, KCoreConfig, PerceptFrame, ProcessBinding};
 use kamimusuhi_runtime::{
@@ -208,8 +209,20 @@ fn organ(
     fail: bool,
     delay: Duration,
 ) -> Box<dyn CognitiveOrgan> {
-    let mut descriptor = validated_experiment_manifest()[index].clone();
-    descriptor.promotion = promotion;
+    // Trusted host fixture, separate from the research promotion manifest.
+    let descriptor = OrganDescriptor {
+        key: OrganKey::new(format!("fixture-{index}")).unwrap(),
+        role: OrganRole::Regulation,
+        implementation: "test-fixture".to_owned(),
+        version: "1".to_owned(),
+        promotion,
+        evidence: OrganEvidence {
+            experiment: "TEST_ONLY_FIXTURE".to_owned(),
+            verdict: ExperimentVerdict::Pass,
+            source_revision: None,
+            report_path: None,
+        },
+    };
     Box::new(FixtureOrgan {
         descriptor,
         fail,
@@ -290,7 +303,7 @@ fn optional_missing_backend_is_not_started_at_boot_and_fails_only_on_input() {
             key: "h0-regulation".to_owned(),
             program: dir.path().join("nonexistent-fixture"),
             args: Vec::new(),
-            promotion: PromotionMode::Active,
+            promotion: PromotionMode::Shadow,
             timeout_ms: 100,
         }],
         ..KCoreConfig::default()
@@ -315,7 +328,7 @@ fn subprocess_state_is_ephemeral_and_does_not_become_evidence() {
             key: "h0-regulation".to_owned(),
             program: "python3".into(),
             args: vec![script.to_string_lossy().into_owned()],
-            promotion: PromotionMode::Active,
+            promotion: PromotionMode::Shadow,
             timeout_ms: 2_000,
         }],
         ..KCoreConfig::default()
@@ -325,15 +338,74 @@ fn subprocess_state_is_ephemeral_and_does_not_become_evidence() {
     for n in 1..=2 {
         core.ingest(frame(n)).unwrap();
         let tick = core.tick().unwrap();
-        assert_eq!(tick.intent, CoreIntent::Observe);
-        assert_eq!(tick.cycle.active[0].payload["n"], n);
-        assert!(tick.cycle.active[0].evidence_refs.is_empty());
-        assert!(!tick.cycle.active[0].authorizes_mutation());
+        assert_eq!(tick.intent, CoreIntent::Wait);
+        assert_eq!(tick.cycle.shadow[0].payload["n"], n);
+        assert!(tick.cycle.shadow[0].evidence_refs.is_empty());
+        assert!(!tick.cycle.shadow[0].authorizes_mutation());
     }
     assert_eq!(before, core.inspect().unwrap());
     drop(core);
     let mut core = KCore::open(dir.path(), RuntimeOptions::default(), config).unwrap();
     core.ingest(frame(1)).unwrap();
-    assert_eq!(core.tick().unwrap().cycle.active[0].payload["n"], 1);
+    assert_eq!(core.tick().unwrap().cycle.shadow[0].payload["n"], 1);
     assert_eq!(before, core.inspect().unwrap());
+}
+
+#[test]
+fn operator_cannot_activate_unvalidated_experiments_before_spawn_or_mutation() {
+    let dir = init();
+    let core = KCore::open(
+        dir.path(),
+        RuntimeOptions::default(),
+        KCoreConfig::default(),
+    )
+    .unwrap();
+    let before = core.inspect().unwrap();
+    drop(core);
+    let marker = dir.path().join("unexpected-child-spawn");
+    let script = dir.path().join("must-not-run.py");
+    std::fs::write(
+        &script,
+        format!(
+            "from pathlib import Path\nPath({:?}).touch()\n",
+            marker.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let mut keys: Vec<String> = validated_experiment_manifest()
+        .into_iter()
+        .map(|d| d.key.as_str().to_owned())
+        .collect();
+    keys.extend(["g0".to_owned(), "p0".to_owned(), "unknown".to_owned()]);
+    for key in keys {
+        let config = KCoreConfig {
+            organs: vec![ProcessBinding {
+                key: key.clone(),
+                program: "python3".into(),
+                args: vec![script.to_string_lossy().into_owned()],
+                promotion: PromotionMode::Active,
+                timeout_ms: 100,
+            }],
+            ..KCoreConfig::default()
+        };
+        assert!(
+            matches!(
+                KCore::open(dir.path(), RuntimeOptions::default(), config),
+                Err(kamimusuhi_runtime::kcore::KCoreError::Config(_))
+            ),
+            "{key}"
+        );
+        assert!(!marker.exists(), "rejected binding spawned child: {key}");
+        let core = KCore::open(
+            dir.path(),
+            RuntimeOptions::default(),
+            KCoreConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            before,
+            core.inspect().unwrap(),
+            "rejected binding changed canonical state: {key}"
+        );
+    }
 }

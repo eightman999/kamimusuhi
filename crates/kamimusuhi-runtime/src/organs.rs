@@ -54,13 +54,13 @@ fn descriptor(
     }
 }
 
-/// Promotion decisions backed by the completed experiment battery.
+/// Research-backed candidates admitted only to shadow evaluation.
 ///
-/// Active means "eligible to influence cognition once a conforming process and
-/// pinned checkpoint are supplied". It does not mean a checkpoint is bundled
-/// in the repository. O0 stays shadow-only because its comparative criterion
-/// remained PARTIAL. G0 and P0 are intentionally absent: their negative
-/// results are controls/design evidence, not deployable cognitive organs.
+/// Synthetic-task PASS establishes a research result, not demonstrated benefit
+/// in resident dialogue. H0/R0/S0/T0 therefore remain shadow-only until a
+/// task-grounded resident ON/OFF evaluation supports activation. O0 also stays
+/// shadow-only because its comparative criterion remained PARTIAL. G0 and P0
+/// are negative results, not deployable cognitive organs.
 pub fn validated_experiment_manifest() -> Vec<OrganDescriptor> {
     vec![
         descriptor(
@@ -68,7 +68,7 @@ pub fn validated_experiment_manifest() -> Vec<OrganDescriptor> {
             OrganRole::Regulation,
             "H0",
             ExperimentVerdict::Pass,
-            PromotionMode::Active,
+            PromotionMode::Shadow,
             "c50c294fd843fa5613fdcacdc741dd2e123175f5",
             "experiments/h0/reports/H0_RESULTS.md",
         ),
@@ -77,7 +77,7 @@ pub fn validated_experiment_manifest() -> Vec<OrganDescriptor> {
             OrganRole::MemoryGate,
             "R0",
             ExperimentVerdict::Pass,
-            PromotionMode::Active,
+            PromotionMode::Shadow,
             "4f95df640c5fb0dba42b1c8bd5f664094b976e47",
             "experiments/r0/reports/R0_RESULTS.md",
         ),
@@ -86,7 +86,7 @@ pub fn validated_experiment_manifest() -> Vec<OrganDescriptor> {
             OrganRole::AgencyAttribution,
             "S0",
             ExperimentVerdict::Pass,
-            PromotionMode::Active,
+            PromotionMode::Shadow,
             "f15aea6bbd8b1a53f020a5924e3ffcb153a96d37",
             "experiments/s0/reports/S0_RESULTS.md",
         ),
@@ -95,7 +95,7 @@ pub fn validated_experiment_manifest() -> Vec<OrganDescriptor> {
             OrganRole::TemporalState,
             "T0",
             ExperimentVerdict::Pass,
-            PromotionMode::Active,
+            PromotionMode::Shadow,
             "72b5011bb629a2992e876e5fc9ec3fd8a430b04c",
             "experiments/t0/reports/T0_RESULTS.md",
         ),
@@ -440,7 +440,7 @@ mod tests {
     }
 
     #[test]
-    fn pass_results_are_active_and_o0_is_shadow() {
+    fn synthetic_pass_does_not_grant_active_runtime_promotion() {
         let manifest = validated_experiment_manifest();
         assert_eq!(manifest.len(), 5);
         for descriptor in &manifest {
@@ -451,7 +451,7 @@ mod tests {
                 .iter()
                 .filter(|d| d.promotion == PromotionMode::Active)
                 .count(),
-            4
+            0
         );
         let o0 = manifest
             .iter()
@@ -544,17 +544,24 @@ mod tests {
 
     #[test]
     fn persona_integration_keeps_shadow_outputs_out_of_context() {
-        let manifest = validated_experiment_manifest();
-        let active = manifest
-            .iter()
-            .find(|d| d.promotion == PromotionMode::Active)
-            .unwrap()
-            .clone();
-        let shadow = manifest
-            .iter()
-            .find(|d| d.promotion == PromotionMode::Shadow)
-            .unwrap()
-            .clone();
+        // Exercise the generic contract with a trusted synthetic host fixture,
+        // without treating any research checkpoint as production-validated.
+        let active = OrganDescriptor {
+            key: OrganKey::new("fixture-active").unwrap(),
+            role: OrganRole::Regulation,
+            implementation: "test-fixture".to_owned(),
+            version: "1".to_owned(),
+            promotion: PromotionMode::Active,
+            evidence: OrganEvidence {
+                experiment: "TEST_ONLY_FIXTURE".to_owned(),
+                verdict: ExperimentVerdict::Pass,
+                source_revision: None,
+                report_path: None,
+            },
+        };
+        let mut shadow = active.clone();
+        shadow.key = OrganKey::new("fixture-shadow").unwrap();
+        shadow.promotion = PromotionMode::Shadow;
         let mut supervisor = OrganSupervisor::new();
         supervisor
             .register(Box::new(FixtureOrgan { descriptor: shadow }))

@@ -1,0 +1,464 @@
+{
+  "schema_version": 1,
+  "audited_at": "2026-11-08",
+  "measurement_scope": "Existing reports/artifacts and static code audit; no training rerun or learned-organ live LLM study.",
+  "production_candidate_means": "candidate for a preregistered runtime study; not approved for production activation",
+  "experiments": [
+    {
+      "id": "C0-Python",
+      "folder": "c0",
+      "disposition": "freeze",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "smokeのみ。Rust C0機構と別系で、再現・実モデル評価未完。",
+      "next_gate": "結果を再現しRust継続性との差分を特定するまで追加投資を止める。",
+      "evidence": [
+        {
+          "path": "experiments/c0/evaluate.py",
+          "kind": "implementation",
+          "sha256": "sha256:aee9be0eeaacd7c78ecea5d97bf16d65f62874d0c2e7612c02dee1a26d5f22a5",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "CX0",
+      "folder": "cx0",
+      "disposition": "reject",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "構造化皮質の優位性なし。generic GRUが最高。lesion手法は保持。",
+      "next_gate": "同じ構造化方式の本番延長を止め、lesion法だけを実益評価へ再利用。",
+      "evidence": [
+        {
+          "path": "experiments/cx0/reports/CX0_OVERNIGHT_REPORT.md",
+          "kind": "report",
+          "sha256": "sha256:ce7f49df1b93329186e704f90f6fd29ef5763b5e95fbc627af4840c48319868e",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "FI0",
+      "folder": "fi0",
+      "disposition": "continue",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "実験コードは存在するが結果artifact未確認。",
+      "next_gate": "固定モデルの完全な評価結果を残す。",
+      "evidence": [
+        {
+          "path": "experiments/fi0/evaluate.py",
+          "kind": "implementation",
+          "sha256": "sha256:0220c35514194f116501427001d8e8a01ffc93ebc3fa8374165491682caa936e",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "FI1",
+      "folder": "fi1",
+      "disposition": "continue",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "障害・永続性実験の結果artifact未確認。Rust kernelとの重複がある。",
+      "next_gate": "既存Rust kernelとの差分を整理し未実証の障害だけ評価。",
+      "evidence": [
+        {
+          "path": "experiments/fi1/repro.py",
+          "kind": "implementation",
+          "sha256": "sha256:05034abb827440b704ca3c83286ddaeaf6ef983abf3a1383821332c1635d68d5",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "FI2-Python",
+      "folder": "fi2",
+      "disposition": "continue",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "Python実験の結果artifactなし。Rust忠実性境界は別途配備済み。",
+      "next_gate": "Python実験結果とRust配備証拠を混同しない。",
+      "evidence": [
+        {
+          "path": "experiments/fi2/analysis/integrity.py",
+          "kind": "implementation",
+          "sha256": "sha256:14acfe7dd94f24f3158735021fe6fe77f8bb1fb738edb108e8076be08d468897",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "FI3-Python",
+      "folder": "fi3",
+      "disposition": "continue",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "Python実験の結果artifactなし。Rust同一性ゲートは別途配備済み。",
+      "next_gate": "Python実験結果とRust配備証拠を混同しない。",
+      "evidence": [
+        {
+          "path": "experiments/fi3/repro.py",
+          "kind": "implementation",
+          "sha256": "sha256:f15d00630faae60ab1361714bc629e96a9fbb2f4a7e16ac5763e01365f8917f7",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "G0",
+      "folder": "g0",
+      "disposition": "reject",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "既存方式はFAIL。untrained reservoir同程度。",
+      "next_gate": "負の結果と対照を保存し、同方式の延長を止める。",
+      "evidence": [
+        {
+          "path": "experiments/g0/reports/G0_RESULTS.md",
+          "kind": "report",
+          "sha256": "sha256:b43b8f43e6f5d96c9f8b30aa3a13935a5d7bc00485d873194d1e885ad0684576",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "G0-v4",
+      "folder": "g0_v4",
+      "disposition": "reject",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "既存predictive-invariant方式はFAIL。",
+      "next_gate": "負の結果を保存し本番対象から除外。",
+      "evidence": [
+        {
+          "path": "experiments/g0_v4/reports/G0_V4_RESULTS.md",
+          "kind": "report",
+          "sha256": "sha256:644091e7993cadd29f6edee7d2a5f7f8764c1377d8d83b2e2b8101c6047f420a",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "G0-v5",
+      "folder": "g0_v5",
+      "disposition": "reject",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "seed0 pilotでFAIL・打切り。full5seed完走とは言わない。",
+      "next_gate": "同方式の延長を止め、pilotの限定結論を保存。",
+      "evidence": [
+        {
+          "path": "experiments/g0_v5/G0_V5_REPORT.md",
+          "kind": "report",
+          "sha256": "sha256:57ea651d1de6d9072c9a0977e974584528efd8a987c26c25dc1a6c6c499e9d8a",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "G0-v6-r2",
+      "folder": "g0_v6",
+      "disposition": "continue",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "旧r1 STRONG_PASSはevaluator bugで無効。現r2結果なし。",
+      "next_gate": "r1を昇格根拠に使わず、修正済r2の凍結protocol結果だけ評価。",
+      "evidence": [
+        {
+          "path": "experiments/g0_v6/README.md",
+          "kind": "protocol",
+          "sha256": "sha256:fa056ae55d2a3d211964fbd8ec7d1fec18c1336c6000ab0d62d9bd3b4ec83047",
+          "required_in_checkout": true
+        },
+        {
+          "path": "experiments/g0_v6/EXPERIMENT_LINEAGE.md",
+          "kind": "protocol",
+          "sha256": "sha256:0db7c8a843c297fb4c34f890618d4d08eaedf60657a0da349a96fde917af34a8",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "H0",
+      "folder": "h0",
+      "disposition": "production_candidate",
+      "production_approved": false,
+      "runtime_key": "h0-regulation",
+      "runtime_mode": "shadow",
+      "reason": "合成課題5/5 PASSだが一部OODはheuristicに劣り、2変数の寄与なし。",
+      "next_gate": "実入力対応・hash固定・実LLMとheuristic対照・因果的ON/OFFを満たす。",
+      "evidence": [
+        {
+          "path": "experiments/h0/reports/H0_RESULTS.md",
+          "kind": "report",
+          "sha256": "sha256:9bcd2b6ec7d39e50574279f41462f7e5af8518d887bdd168f8943246e2a8b4cd",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "K0-E",
+      "folder": "k0_brainstem",
+      "disposition": "freeze",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "現存コードと歴史要約まで。集計成果未確認。",
+      "next_gate": "既存結果の再現・役割の特定まで追加学習を止める。",
+      "evidence": [
+        {
+          "path": "experiments/k0_brainstem/README.md",
+          "kind": "protocol",
+          "sha256": "sha256:2d69c62c3843becaeb6fa0359c3cba9b15e0505d7339402bc645fd1ce379ed5b",
+          "required_in_checkout": true
+        },
+        {
+          "path": "docs/research/history.md",
+          "kind": "historical_summary",
+          "sha256": "sha256:0b62e4c251c0a4d2440a8ff3e54ef32bbbd457efb4912bf356941a1e5988b8d3",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "K0-E2",
+      "folder": "k0_e2_active_info",
+      "disposition": "freeze",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "全体FAIL。PPO退行・未知遅延転移FAIL。",
+      "next_gate": "現方式を本番へ接続しない。",
+      "evidence": [
+        {
+          "path": "experiments/k0_e2_active_info/artifacts/primary/K0_E2_REPORT.md",
+          "kind": "report",
+          "sha256": "sha256:607b5412e06ecea3ee41f9463334348d0bf7ba9c0136da5aa2ac28043a3f34da",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "K0-F2",
+      "folder": "k0_f2_interoception_confirmatory",
+      "disposition": "freeze",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "protocol/testsのみで結果なし。K0-Fの確証成功ではない。",
+      "next_gate": "確証結果が揃うまで採用しない。",
+      "evidence": [
+        {
+          "path": "experiments/k0_f2_interoception_confirmatory/README.md",
+          "kind": "protocol",
+          "sha256": "sha256:25b24d3ee276dbc3e05a5a39f1f42033a8f393b1a710d4ee6a51612dcda699ee",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "K0-F",
+      "folder": "k0_f_interoception",
+      "disposition": "freeze",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "BLINDを上回る確証なし。probe失敗後の部分値は探索的診断。",
+      "next_gate": "現方式の本番接続を止める。",
+      "evidence": [
+        {
+          "path": "experiments/k0_f_interoception/results/20260910/K0_F_REPORT.md",
+          "kind": "report",
+          "sha256": "sha256:5de731994cfd46c5cac68c16884dc646315c5f6d8ca888b49b04f91007f64bee",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "MIOBA",
+      "folder": "mioba",
+      "disposition": "freeze",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "常駐実益なし。ただし後続A3系の因果graft効果・BODY0閉ループの成果はある。全体寄与0とはしない。",
+      "next_gate": "常駐ロードマップとは別研究として保持。graftの課題性能悪化を解消し用途を定義。",
+      "evidence": [
+        {
+          "path": "docs/experiments/A3_1_DROSOPHILA_CALIBRATION_REPORT.md",
+          "kind": "report",
+          "sha256": "sha256:a9ee1b14f170f6e194af6f146e30f9746c875681e6033e43094a515f65f7f597",
+          "required_in_checkout": true
+        },
+        {
+          "path": "docs/experiments/A3_2_PHYSIOLOGY_HARDENING_REPORT.md",
+          "kind": "report",
+          "sha256": "sha256:0c4a3de9c69153e59b243ad3cf5f9ee3eefcd5bad5dff778ecb310340a29767a",
+          "required_in_checkout": true
+        },
+        {
+          "path": "docs/experiments/BODY0_CLOSED_LOOP_REPORT.md",
+          "kind": "report",
+          "sha256": "sha256:8a2cdd261c9e776d0b76a6484d74bffc66811d6614790ad97c63f2e25e27e924",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "O0",
+      "folder": "o0",
+      "disposition": "freeze",
+      "production_approved": false,
+      "runtime_key": "o0-object-state",
+      "runtime_mode": "shadow",
+      "reason": "strong heuristic corridordynが優位。",
+      "next_gate": "強い追跡baselineを事前規定条件で上回るまでShadow。",
+      "evidence": [
+        {
+          "path": "experiments/o0/reports/O0_RESULTS.md",
+          "kind": "report",
+          "sha256": "sha256:d2886812ccd7557dd6bd2ee3bc1653364d292db5f6cb1b5d56a643621822f5ef",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "P0",
+      "folder": "p0",
+      "disposition": "reject",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "既存方式FAIL。vtriggerに劣りsurprise制御を獲得せず。",
+      "next_gate": "負の結果を保存し本番対象から除外。",
+      "evidence": [
+        {
+          "path": "experiments/p0/reports/P0_RESULTS.md",
+          "kind": "report",
+          "sha256": "sha256:374c3c6129c56f3c9f168ad2952567d700aa76c4584f4fbde00e8e58440414c3",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "R0",
+      "folder": "r0",
+      "disposition": "production_candidate",
+      "production_approved": false,
+      "runtime_key": "r0-memory-gate",
+      "runtime_mode": "shadow",
+      "reason": "合成memory gate strong PASS。実メモリ対応未定義・元checkpoint不在。CX0 SlotMemoryは別物。",
+      "next_gate": "元checkpointをhash固定し、実入力対応・強heuristic・ON/OFF/lesionを事前規定して測定。",
+      "evidence": [
+        {
+          "path": "experiments/r0/reports/R0_RESULTS.md",
+          "kind": "report",
+          "sha256": "sha256:851da317ea827ffb14f6134d718a2793a1dec01b1e64a8ef152e50e40022d51f",
+          "required_in_checkout": true
+        },
+        {
+          "path": "experiments/cx0/organs/pretrain.py",
+          "kind": "implementation",
+          "sha256": "sha256:432b75cfe05176db7ac7966de6b851310d5a4d9fc4d8ab6f5d083857cbfdc7cb",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "S0",
+      "folder": "s0",
+      "disposition": "continue",
+      "production_approved": false,
+      "runtime_key": "s0-agency-attribution",
+      "runtime_mode": "shadow",
+      "reason": "合成PASSだがaction delay=2で崩れ、常駐の遅延行動を支持しない。",
+      "next_gate": "遅延・counterfactual・別worldで再検証してから本番評価。",
+      "evidence": [
+        {
+          "path": "experiments/s0/reports/S0_RESULTS.md",
+          "kind": "report",
+          "sha256": "sha256:60b96f342bd1b4bdc12852269e00288201014650eeb72b04b4da664e9fb2b553",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "T0",
+      "folder": "t0",
+      "disposition": "continue",
+      "production_approved": false,
+      "runtime_key": "t0-temporal-state",
+      "runtime_mode": "shadow",
+      "reason": "内挿PASS、外挿0.260・scaling FAIL。",
+      "next_gate": "時間外挿・scalingを解決してから本番評価。",
+      "evidence": [
+        {
+          "path": "experiments/t0/reports/T0_RESULTS.md",
+          "kind": "report",
+          "sha256": "sha256:5bae0e41e0feb070b48fdc4d1826a4f013994289d4a4c84cbf3783ae648ea333",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "U0",
+      "folder": "u0",
+      "disposition": "freeze",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "learned-cleanでU-H1/U-H2未達。他gate全体を評価したとは言わない。",
+      "next_gate": "現形の本番接続を止め、先に2主閾値を再現して満たす。",
+      "evidence": [
+        {
+          "path": "experiments/u0/reports/U0_COMPACT_RESULTS.md",
+          "kind": "report",
+          "sha256": "sha256:9819b199e048beec6151fb679b0293efdd8f12e288ba9f83ccddf3a644eb8aa7",
+          "required_in_checkout": true
+        }
+      ]
+    },
+    {
+      "id": "X0",
+      "folder": "x0",
+      "disposition": "freeze",
+      "production_approved": false,
+      "runtime_key": null,
+      "runtime_mode": "excluded",
+      "reason": "smoke・環境検証のみ。timing heuristic優位が残る。",
+      "next_gate": "時間shortcutを除く対照と完全な結果が揃うまで凍結。",
+      "evidence": [
+        {
+          "path": "experiments/x0/artifacts/env_validation.json",
+          "kind": "artifact",
+          "sha256": "sha256:29c215d10aa30abcb1c4681cc35c1a560773e5b089e6f6b9b60fb68e00328d90",
+          "required_in_checkout": true
+        }
+      ]
+    }
+  ],
+  "separate_production_components": [
+    {
+      "id": "FI2-Rust",
+      "status": "deployed",
+      "report": "docs/verification/p1-production-deployment-2026-11-08.md"
+    },
+    {
+      "id": "FI3-Rust",
+      "status": "deployed",
+      "report": "docs/verification/p1-production-deployment-2026-11-08.md"
+    }
+  ]
+}

@@ -1,6 +1,11 @@
 # Validated experiment → runtime organ integration
 
-Status: **implementation slice 1 — promotion boundary + Persona context path**  
+Status: **current admission audit — 2026-11-08**
+
+Current decisions: [experiment dispositions](../research/experiment-dispositions-2026-11-08.md).
+Synthetic PASS is research evidence; production eligibility additionally needs
+a real runtime adapter, pinned artifact and a preregistered ON/OFF benefit test.
+No learned organ currently meets that production gate.
 Branch: `feat/integrate-experimental-organs`  
 Tracking: issue #37
 
@@ -49,17 +54,19 @@ not how attractive a mechanism looks.
 
 | Experiment | Runtime role | Recorded verdict | Promotion |
 |---|---|---:|---|
-| H0 Artificial Homeostasis | `Regulation` | PASS | **Active** |
-| R0 Learned Memory Gate | `MemoryGate` | PASS / strong | **Active** |
-| S0 Self/World Separation | `AgencyAttribution` | PASS with recorded caveats | **Active** |
-| T0 Temporal Sense v2 | `TemporalState` | PASS with strong-gate failures | **Active** |
+| H0 Artificial Homeostasis | `Regulation` | PASS | **Shadow — production unvalidated** |
+| R0 Learned Memory Gate | `MemoryGate` | PASS / strong | **Shadow — production unvalidated** |
+| S0 Self/World Separation | `AgencyAttribution` | PASS with recorded caveats | **Shadow — production unvalidated** |
+| T0 Temporal Sense v2 | `TemporalState` | PASS with strong-gate failures | **Shadow — production unvalidated** |
 | O0 Object Permanence | `ObjectState` | PARTIAL | **Shadow** |
 | G0 Emergent Grounding | — | FAIL | **Excluded** |
 | P0 Predictive Surprise | — | FAIL | **Excluded** |
 
-`Active` here means *eligible to influence cognition once a conforming adapter
-and pinned checkpoint are supplied*. It does **not** mean the repository now
-ships or auto-loads the experiment checkpoints.
+The former Active eligibility was based on synthetic PASS alone. It has been
+withdrawn for H0/R0/S0/T0: all five manifest entries are Shadow. Explicit
+`ProcessBinding` Active overrides are refused. Research verdicts and original
+report revisions remain unchanged. Generic Active interfaces remain available
+for trusted implementation/fixture work, which is not an experiment promotion.
 
 O0 is intentionally shadow-only: it can be run beside the live path and
 compared, but its output is filtered before the Persona boundary. G0 and P0 are
@@ -183,24 +190,32 @@ Still intentionally **not** done:
 - no claim that combining individually successful experiments produces a
   coherent or better whole system.
 
-## Recommended activation order
+## Production evaluation order
 
-Do not switch every experiment on at once. Promote one mechanism at a time and
-compare against the same runtime with it shadowed.
+1. **R0**, then **H0**, are evaluation candidates. R0's original trained
+   checkpoint is not present locally; CX0's SlotMemory is a different mechanism.
+2. **S0/T0** remain research work: delayed-action failure and extrapolation
+   failure must be resolved before a deployment study.
+3. **O0** remains frozen/Shadow until it beats the strong tracker.
 
-1. **H0 Regulation** — small output surface; establish freshness, latency and
-   failure semantics.
-2. **T0 TemporalState** — keep the known step-counter limitation visible; do
-   not label it a world-clock.
-3. **R0 MemoryGate** — initially gate *workspace admission/retention hints*, not
-   deletion of canonical memory.
-4. **S0 AgencyAttribution** — feed attribution as a derived signal; do not turn
-   it directly into self-belief.
-5. **O0 ObjectState** — remain shadow until it beats the relevant strong
-   hand-written tracker under the predeclared comparative criterion.
+The current resident K-CORE launcher supplies neither an organ config nor
+percept stdin. Its default runner therefore has no organs and performs idle
+steps. The ordinary `DialogueSession` does not call `run_organs_for_persona`.
+The helper and its fixture tests prove that a signal *can* be rendered; they
+are not a deployed conversation path.
 
-For every activation, the acceptance condition is not merely "the old
-experiment still passes". The runtime-level test must also show that disabling,
-crashing, replacing or corrupting the organ does not alter `IndividualId`, the
-continuity head, canonical evidence or durable memory outside the ordinary
-mutation path.
+CX0 wrappers are Python classes for synthetic vectors, not ProcessOrgan JSON
+programs or a natural-language adapter. Its loader can train missing weights;
+production/evaluation loaders must instead refuse missing or mismatched hashes.
+Do not substitute that mechanism and describe the result as a trained R0 test.
+
+Before any Active promotion, freeze an input semantics/adapter version,
+checkpoint hash, actual runtime call path, task set and statistical acceptance
+criteria. Compare OFF, ON, signal-shuffled and lesion controls against a strong
+heuristic on the same model/context. Measure correct source attribution,
+correction regression, subject leakage, latency, tokens, memory and residual
+processes. Signals never become evidence or mutation authority on their own.
+
+A synthetic PASS, a changed model answer, or reaching the prompt is insufficient.
+Missing artifacts or a semantically invalid input mapping blocks the evaluation;
+it is not a reason to launch automatic training or manufacture an ON/OFF study.
