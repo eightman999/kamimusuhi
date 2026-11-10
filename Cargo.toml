@@ -13,6 +13,7 @@ members = [
     "crates/kamimusuhi-tui",
     "crates/kamimusuhi-computer-mcp",
     "crates/kamimusuhi-discord",
+    "crates/kamimusuhi-slack",
     "crates/kamimusuhi-monitoring",
 ]
 
