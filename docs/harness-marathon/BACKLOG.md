@@ -2,7 +2,7 @@
 
 ## 次にやること
 
-cycle18まで保存。14回readとreload後の実診断を保持し、反応型modelが3判断で修復/Ready（修正前は根拠欠落で停止）。全engineering63件・clippy/fmt PASS。11ef050凍結版は独立targetでfmt/clippy/worker buildまでPASS、workspace tests進行中。次はcycle19のprocess group単一所有とreap順をレビュー・保存し、Readyの検証設定digestと鮮度の区別へ進む。
+cycle19の子process所有を保存。runner/server/ACPの単一所有とgroup停止→reap、69件と実worker4件・clippyを確認。cycle20は実check設定の識別情報とReadyの過去証拠を全表示へ接続中。修正前8件FAILを再現済み。同じfixtureのafter、全engineering/worker/clippyを完了して保存し、job別worker実行lockと永続sequence記録で再開競合を閉じる。11ef050凍結全CIはoverlay専用targetで再実行中。
 
 ## 現在の最優先（2026-11-09更新）
 
@@ -15,7 +15,8 @@ cycle18まで保存。14回readとreload後の実診断を保持し、反応型m
 | P1 | 検証receiptと候補の変化 | 静的監査で外部commit後も旧Ready表示が残る。show/list/summary/request再送/reloadを一つの実fixtureで再現 |
 | P1 | 検証設定変更とReadyの鮮度 | checks追加後に旧receiptが新設定の成功に見えない。argv証拠を保存して照合 |
 | P2 | ACP出力のメモリと切断 | 独自BufReader::lines/channelの上限と不完全protocolの扱いをfixtureで確認 |
-| P0 | process groupの所有とreap順 | safe WNOWAITで終了観測→group回収→reap、再利用PIDへsignalしない |
+| P1 | provider transportのprocess所有 | cycle19のOwnedChild以外にあるprovider_processのreap後signalを独立して確認 |
+| P1 | cleanupの確認をreceiptへ伝える | best-effort停止エラーと停止確認を区別し、未知の終了を確定結果にしない |
 | P1 | 旧workerの実行完了証拠と再開 | job/sequence別ledgerと排他でclaim検査後の競合を閉じ、停止未確認の再開を区別 |
 
 ## 後続候補（検索・skill統合は保留）

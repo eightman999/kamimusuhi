@@ -14,6 +14,10 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[path = "process_child.rs"]
+mod child;
+pub(crate) use child::OwnedChild;
+
 /// Variables every harness needs to find its binary, home directory
 /// (where its login lives) and locale.
 pub const BASE_ENV: &[&str] = &[
@@ -152,28 +156,9 @@ pub fn random_hex() -> Option<String> {
     Some(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// Signal the child's whole process group (no `libc`: `unsafe` is
-/// forbidden in this workspace, so this goes through `kill(1)`).
-pub fn kill_group(child: &std::process::Child, signal: &str) {
-    #[cfg(unix)]
-    {
-        let group = format!("-{}", child.id());
-        let _ = Command::new("kill")
-            .args([signal, "--", &group])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    #[cfg(not(unix))]
-    let _ = (child, signal);
-}
-
-pub fn kill_tree(child: &mut std::process::Child) {
-    kill_group(child, "-TERM");
-    thread::sleep(Duration::from_millis(300));
-    kill_group(child, "-KILL");
-    let _ = child.kill();
-    let _ = child.wait();
+/// Stop only a child still owned by this handle. Repeated cleanup is inert.
+pub(crate) fn kill_tree(child: &mut OwnedChild) {
+    let _ = child.terminate();
 }
 
 enum PipeEvent {
@@ -348,11 +333,10 @@ pub fn run(
     let deadline = started
         .checked_add(spec.timeout)
         .ok_or("process timeout is out of range")?;
-    let mut child = command(spec)
-        .spawn()
+    let mut child = OwnedChild::spawn(&mut command(spec))
         .map_err(|e| format!("could not start {}: {e}", spec.program))?;
-    let stdout = child.stdout.take().ok_or("no stdout pipe")?;
-    let stderr = child.stderr.take().ok_or("no stderr pipe")?;
+    let stdout = child.take_stdout().ok_or("no stdout pipe")?;
+    let stderr = child.take_stderr().ok_or("no stderr pipe")?;
     // Read ahead enough for ordinary CLI bursts without an unbounded queue
     // when callbacks are slow. Both pipes together queue at most 1 MiB.
     let (tx, rx) = mpsc::sync_channel(PIPE_QUEUE);
@@ -371,8 +355,12 @@ pub fn run(
         // Let stdout-writing helpers finish (some CLIs use them for their
         // final events), but a child holding only stderr must not delay a
         // completed command until its full task deadline.
-        if !stdout_open && let Ok(Some(status)) = child.try_wait() {
-            break (ProcessEnd::Exited, Some(status));
+        if !stdout_open {
+            match child.try_wait() {
+                Ok(Some(status)) => break (ProcessEnd::Exited, Some(status)),
+                Ok(None) => {}
+                Err(error) => return Err(format!("could not observe harness completion: {error}")),
+            }
         }
         let wait = deadline
             .saturating_duration_since(Instant::now())
@@ -420,10 +408,7 @@ pub fn run(
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
     };
-    if end == ProcessEnd::Exited {
-        // Whatever the harness left running in its group goes with it.
-        kill_group(&child, "-KILL");
-    } else {
+    if end != ProcessEnd::Exited {
         captured.truncated |= stdout_open;
     }
     // Preserve already-written diagnostics without calling back after

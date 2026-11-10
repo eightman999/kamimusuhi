@@ -194,7 +194,10 @@ pub(crate) fn discover_with(spec: &ExecutorSpec, now: u64) -> CatalogEntry {
 pub type Attach = (Vec<String>, Vec<(String, String)>);
 
 struct ServerState {
-    child: Option<std::process::Child>,
+    child: Option<process::OwnedChild>,
+    // Pidfile recovery is for a fresh supervisor only. Once this instance
+    // owned a handle, its numeric pidfile must never replace that ownership.
+    allow_stale_reap: bool,
     password: Option<String>,
     failures: u32,
     next_try: Instant,
@@ -223,6 +226,7 @@ impl ServerSupervisor {
             env_passthrough,
             state: Mutex::new(ServerState {
                 child: None,
+                allow_stale_reap: true,
                 password: None,
                 failures: 0,
                 next_try: Instant::now(),
@@ -238,11 +242,30 @@ impl ServerSupervisor {
     /// Attach arguments and environment, starting the server if needed.
     /// `None` = not available right now.
     pub fn ensure(&self) -> Option<Attach> {
+        self.ensure_with(|child| child.try_wait(), || self.reap_stale())
+    }
+
+    fn ensure_with(
+        &self,
+        mut observe: impl FnMut(
+            &mut process::OwnedChild,
+        ) -> std::io::Result<Option<std::process::ExitStatus>>,
+        reap_stale: impl FnOnce() -> bool,
+    ) -> Option<Attach> {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let alive = state
-            .child
-            .as_mut()
-            .is_some_and(|c| matches!(c.try_wait(), Ok(None)));
+        if state.child.is_some() {
+            state.allow_stale_reap = false;
+        }
+        let alive = match state.child.as_mut().map(&mut observe) {
+            Some(Ok(None)) => true,
+            Some(Err(error)) => {
+                // Keep the handle. Losing/being unable to observe ownership
+                // must not fall through to raw numeric pidfile recovery.
+                self.backoff(&mut state, format!("cannot observe owned server: {error}"));
+                return None;
+            }
+            Some(Ok(Some(_))) | None => false,
+        };
         if !alive {
             if let Some(mut dead) = state.child.take() {
                 process::kill_tree(&mut dead);
@@ -250,7 +273,7 @@ impl ServerSupervisor {
             if Instant::now() < state.next_try {
                 return None;
             }
-            if port_open(self.spec.port) && self.reap_stale() {
+            if state.allow_stale_reap && port_open(self.spec.port) && reap_stale() {
                 let until = Instant::now() + Duration::from_secs(5);
                 while port_open(self.spec.port) && Instant::now() < until {
                     std::thread::sleep(Duration::from_millis(100));
@@ -282,12 +305,12 @@ impl ServerSupervisor {
                 .iter()
                 .map(|a| substitute(a, &[("{port}", &port)]))
                 .collect();
-            let spawned =
+            let spawned = process::OwnedChild::spawn(
                 process::harness_command(&self.command, &args, &self.env_passthrough, &extra)
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn();
+                    .stderr(std::process::Stdio::null()),
+            );
             let mut child = match spawned {
                 Ok(c) => c,
                 Err(e) => {
@@ -295,6 +318,9 @@ impl ServerSupervisor {
                     return None;
                 }
             };
+            // Ownership started at spawn, including a child that exits or
+            // fails observation before it can be stored as a ready server.
+            state.allow_stale_reap = false;
             let deadline = Instant::now() + Duration::from_secs(20);
             while !port_open(self.spec.port) {
                 if Instant::now() >= deadline || !matches!(child.try_wait(), Ok(None)) {
@@ -850,6 +876,110 @@ mod tests {
         let _ = owner.kill();
         let _ = owner.wait();
         let _ = std::fs::remove_file(supervisor.pidfile());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owned_server_results_never_reenter_numeric_pidfile_recovery() {
+        for observation_fails in [false, true] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("owned port");
+            let spec = ServerSpec {
+                args: Vec::new(),
+                port: listener.local_addr().unwrap().port(),
+                attach_args: Vec::new(),
+                password_env: None,
+            };
+            let supervisor =
+                ServerSupervisor::new(spec, "unused-fixture-server".into(), Vec::new());
+            let mut command =
+                process::harness_command("/bin/sh", &["-c".into(), "exit 0".into()], &[], &[]);
+            command
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            let mut child = process::OwnedChild::spawn(&mut command).expect("owned child");
+            if !observation_fails {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while child.try_wait().unwrap().is_none() {
+                    assert!(Instant::now() < deadline, "fixture child did not exit");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+            supervisor.state.lock().unwrap().child = Some(child);
+            let mut reaper_calls = 0;
+            for _ in 0..2 {
+                supervisor.state.lock().unwrap().next_try = Instant::now();
+                assert!(
+                    supervisor
+                        .ensure_with(
+                            |child| {
+                                if observation_fails {
+                                    Err(std::io::Error::other(
+                                        "injected ownership observation failure",
+                                    ))
+                                } else {
+                                    child.try_wait()
+                                }
+                            },
+                            || {
+                                // Record the hazardous fallback; never signal a raw
+                                // PID or try to cause real PID reuse in this test.
+                                reaper_calls += 1;
+                                false
+                            },
+                        )
+                        .is_none()
+                );
+                assert_eq!(reaper_calls, 0);
+                let state = supervisor.state.lock().unwrap();
+                assert!(!state.allow_stale_reap);
+                assert_eq!(state.child.is_some(), observation_fails);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_server_start_never_reenters_numeric_pidfile_recovery() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("owned port");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let spec = ServerSpec {
+            args: vec!["-c".into(), "exit 0".into()],
+            port,
+            attach_args: Vec::new(),
+            password_env: None,
+        };
+        let supervisor = ServerSupervisor::new(spec, "/bin/sh".into(), Vec::new());
+        assert!(
+            supervisor
+                .ensure_with(|child| child.try_wait(), || false)
+                .is_none()
+        );
+        {
+            let state = supervisor.state.lock().unwrap();
+            assert_eq!(state.detail.as_deref(), Some("did not start listening"));
+            assert!(state.child.is_none());
+            assert!(!state.allow_stale_reap);
+        }
+        let _listener =
+            std::net::TcpListener::bind(("127.0.0.1", port)).expect("owned replacement listener");
+        let mut reaper_calls = 0;
+        for _ in 0..2 {
+            supervisor.state.lock().unwrap().next_try = Instant::now();
+            assert!(
+                supervisor
+                    .ensure_with(
+                        |child| child.try_wait(),
+                        || {
+                            reaper_calls += 1;
+                            false
+                        },
+                    )
+                    .is_none()
+            );
+            assert_eq!(reaper_calls, 0);
+        }
     }
 
     #[cfg(unix)]

@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 3.591243,
+  "elapsed_hours": 4.001368,
   "target_hours": 24.0,
-  "cycle": 18,
-  "current_task": "cycle18の長期修復診断保持を検証・保存。cycle19 process group単一所有を実装中",
+  "cycle": 19,
+  "current_task": "cycle19の子process所有を検証・保存。cycle20の検証設定identityを8件の同一fixtureで比較中",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": "83dd2d3162f3f8094ee295b1ee6be17045981f66",
-  "last_checkpoint_at": "2026-11-10T05:34:23Z",
+  "last_checkpoint_at": "2026-11-10T05:58:59Z",
   "active_session_started_at": "2026-11-10T03:59:54Z",
   "session_elapsed_base_hours": 2.016521,
   "status": "active",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
-  "next_task": "11ef050凍結全CIの最終結果を確認し、cycle19の所有wrapperをレビュー・検証・保存",
+  "next_task": "cycle20のafter評価と全engineering/worker/clippy、11ef050の凍結全CI結果を保存",
   "completed_sessions": [
     {
       "started_at": "2026-11-08T16:06:48Z",
@@ -62,13 +62,14 @@
     15,
     16,
     17,
-    18
+    18,
+    19
   ],
   "incomplete_cycles": [
     2,
     3
   ],
-  "last_verified_change_commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
+  "last_verified_change_commit": "bf0b58f9bf8bd0ca9244d6c7035543c2cf1004c5",
   "resume_guide": "docs/harness-marathon/RESUME.md",
   "evaluation": "evaluation/harness/marathon-20261109.json",
   "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。",
@@ -113,9 +114,28 @@
   "cli_output_evaluation": "evaluation/harness/cli-output-integrity-20261110.json",
   "worker_evaluation": "evaluation/harness/native-worker-20261110.json",
   "current_full_ci": {
+    "command": "bash scripts/ci-local.sh",
+    "cwd": "/tmp/kamimusuhi-harness-gate-11ef050",
     "commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
     "tree": "73aae76c8c6556ae839e633f850629a89ae80f46",
+    "target": "/workspace/scratch/5aa3a7808c02/kamimusuhi/target/harness-ci-11ef050",
+    "target_was_empty": true,
     "status": "RUNNING",
+    "started_at": "2026-11-10T05:42:09.908292+00:00",
+    "env": {
+      "CARGO_BUILD_JOBS": "1",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_NET_OFFLINE": "true",
+      "RUST_TEST_THREADS": "1"
+    },
+    "log": "docs/harness-marathon/logs/cycle16-frozen-ci-overlay-20261110.log",
+    "retry_of": "cycle16-frozen-ci-20261110.json"
+  },
+  "validation_memory_evaluation": "evaluation/harness/validation-memory-20261110.json",
+  "previous_full_ci_attempt": {
+    "commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
+    "tree": "73aae76c8c6556ae839e633f850629a89ae80f46",
+    "status": "FAIL",
     "started_at": "2026-11-10T05:24:57Z",
     "target": "/tmp/kamimusuhi-ci-target-11ef050",
     "target_was_empty": true,
@@ -125,7 +145,13 @@
       "workspace_all_targets_all_features_clippy",
       "provider_worker_build"
     ],
-    "current_stage": "cargo test compiling"
+    "current_stage": "cargo test compiling",
+    "exit_code": 101,
+    "ended_at": "2026-11-10T05:34:47Z",
+    "seconds": 589.992,
+    "failure": "ld signal7 Bus error while /tmp tmpfs used99%; source failure not established",
+    "retry_target": "/workspace/scratch/5aa3a7808c02/kamimusuhi/target/harness-ci-11ef050",
+    "failed_artifacts": "/workspace/scratch/5aa3a7808c02/kamimusuhi/target/harness-ci-11ef050-tmpfs-failure"
   },
-  "validation_memory_evaluation": "evaluation/harness/validation-memory-20261110.json"
+  "process_ownership_evaluation": "evaluation/harness/process-ownership-20261110.json"
 }

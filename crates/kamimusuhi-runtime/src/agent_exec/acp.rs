@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Stdio};
+use std::process::{ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -58,7 +58,7 @@ type Routes = Mutex<HashMap<String, Sender<Inbound>>>;
 
 /// One running ACP server.
 pub struct Connection {
-    child: Mutex<Child>,
+    child: Mutex<process::OwnedChild>,
     stdin: Mutex<ChildStdin>,
     next_id: AtomicU64,
     pending: Arc<Mutex<HashMap<u64, Sender<Inbound>>>>,
@@ -129,14 +129,15 @@ impl Connection {
         args: &[String],
         env_passthrough: &[String],
     ) -> Result<Arc<Self>, String> {
-        let mut child = process::harness_command(program, args, env_passthrough, &[])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| format!("could not start {program}: {e}"))?;
-        let stdin = child.stdin.take().ok_or("no stdin pipe")?;
-        let stdout = child.stdout.take().ok_or("no stdout pipe")?;
+        let mut child = process::OwnedChild::spawn(
+            process::harness_command(program, args, env_passthrough, &[])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null()),
+        )
+        .map_err(|e| format!("could not start {program}: {e}"))?;
+        let stdin = child.take_stdin().ok_or("no stdin pipe")?;
+        let stdout = child.take_stdout().ok_or("no stdout pipe")?;
         let pending: Arc<Mutex<HashMap<u64, Sender<Inbound>>>> = Arc::default();
         let sessions: Arc<Routes> = Arc::default();
         let alive = Arc::new(AtomicBool::new(true));

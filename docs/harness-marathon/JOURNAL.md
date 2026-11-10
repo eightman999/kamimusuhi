@@ -577,3 +577,37 @@ Cycle18の修正初回は実修復scenarioと診断選別がPASS、出力枠fixt
 ### 後続設計メモ: Readyと検証設定の鮮度
 
 静的監査ではReadyは過去の固定headに対するreceiptで、外部編集やchecks argv変更をshow/list/statusが実測していない。statusへ全jobのgit呼出しを入れず、既存core::digest::json_digestで検証したchecksのoptional digestを保存し、matching/changed/unknownをpure表示で区別する案を採る候補。旧receiptに現在digestを後付けしない。候補自体は未観測/観測時点一致/変更/到達不能を時刻付きで分離し、後で一件・短い総期限の明示inspectを設計する。workspace::cleanはwrite recoveryを伴うため読取用に流用しない。まだ実装していない。
+
+### 11ef050の全CI: tmpfs不足でリンク停止（2026-11-10 05:34:47 UTC）
+
+独立targetを/tmpへ置いた全CIはfmt/clippy/provider worker buildをPASSし、workspace testのcompile中に `restart_vertical_slice` のldがsignal7 Bus errorで停止した。exit101、589.992s。確認時/tmpは4.9GiB tmpfs、使用4.8GiB/99%/空き86MiB、CI targetは4.2GiB。overlayは空き50GiB。tmpfs不足によるリンク障害が有力だが、この時点ではsource failureやOOMと断定しない。生成targetをoverlayの `target/harness-ci-11ef050-tmpfs-failure` へ移して/tmpを解放し、同じcommitを空のoverlay target `target/harness-ci-11ef050` で再試験する。元ログ/JSONはcycle16-frozen-ci-20261110として保持。
+
+## Cycle 20 — Readyの検証対象と設定を区別する（着手前）
+
+本当の目的: 保存済みの成功がどのcommitと検証設定に対する結果かを明確にし、設定変更後や候補の外部編集後に現在の成功と取り違えないようにする。
+前提と確かめ方: 現状のReadyは過去のhead/checksしか保存せず、show/list/status/request_id再送は設定との対応を表示しない。検証時の設定digestと時刻をoptionalで保存し、read側では純粋な比較と候補未観測の表示だけを行えば、statusへgit待ちや再検証を追加せず区別できる。
+一番安い確認方法: 実checkを通した同一fixtureで、checks argv/順序/期限の変更、旧receiptのreload、候補の外部編集・移動を行い、全表示経路の一致と追加check/model呼出し0を変更前後で比較する。旧receiptへ現在の設定を後付けしない。digestはargv等の設定一致だけを示し、外部script内容や実行環境の一致とは扱わない。
+
+後続のworker再開監査: 旧workerのclaim照合と実行開始の間に再開が競合する余地がある。job別の安定したOS lockをworkerのclaim検査より前から実行完了まで持ち、resumeも同じlockを非blockingで取得する案を検討する。同じclaimの重複workerはlock解放後でも再実行できるため、lockだけでは不十分。開始前にsequenceとrequestのdigestを永続化する単調な実行記録も必要になる。worker死亡後の逃げた子孫の停止や結果の自動採用まで証明するものではなく、後続cycleで境界を分けて実装する。現時点では設計監査のみ。
+
+### Cycle 19 の変更と結果
+
+生のChildをprivateにしたOwnedChildへrunner/ACP/serverを接続した。Linux/macOSではsafe rustixのWNOWAITで終了を観測し、group停止→waitの順でPIDを保持する。reap済み状態とECHILDによる所有喪失は以後のOS操作を止める。EPERM/ENOSYSは観測API不使用として区別し、所有を保ったcleanupへ進む。locked/cache済みrustix1.1.4をruntimeのLinux/macOS依存に追加し、offlineで解決した。
+
+独立レビューで、supervisorが所有喪失後や終了後に古いpidfileから数値PGIDへsignalできる経路を発見。一度でもspawnに成功したinstanceでは、起動待ちの失敗も含めてpidfile回収へ戻らないようにした。観測Errではhandleを保持して停止する。初回の旧resident pidfile回収は別の既存境界。
+
+| 確認項目 | 変更前 | 変更後 |
+|---|---|---|
+| reapとgroup signalの順 | 静的読取でreap後signalを確認 | recorderでgroup停止→reap、再cleanupのOS操作0 |
+| ECHILD後のsignal/reap | 動的前値なし | recorderで追加0 |
+| WNOWAITの実child | 動的前値なし | 2回の未reap観測後に元のexit37を回収 |
+| EPERM/ENOSYSの連続観測失敗 | 動的前値なし | 各3回の注入後も所有childのTERM/KILL/waitへ進む |
+| serverが所有した後のpidfile回収 | 静的レビューで復帰経路を確認 | fake reaperの呼出し0、起動失敗も含む |
+
+PID再利用を無理に起こす実験はせず、所有childと注入recorderで検証した。新規10件を含むagent_exec69/69 PASS（試験1.43s、compile込29.533s）。最後に起動失敗fixtureの初回もfake reaperへ変更し、その1件を再PASS（0.23s）。runtime全target/allfeature clippy PASS（27.025s）、変更Rust4ファイルのrustfmt check PASS、diff check PASS。実worker4 PASS / helper1 ignored（1.34s、compile込46.577s）。owner EOF→command EOF43ms/receipt369ms、1秒timeout→EOF1002ms/receipt1305ms。個別hostでの回帰観測であり、一般の性能改善率とは扱わない。
+
+Macはsource/API/cfg確認のみ。独立SIGCHLD handler/global reaperがない前提、他platformの保守的fallback、best-effort group停止とcleanup error未伝播、provider_process別transportは残る。raw Childを受ける公開kill_groupの削除とkill_treeのcrate-private化はRust公開API変更。repo内callersはすべて接続・確認済み。評価はevaluation/harness/process-ownership-20261110.json。
+
+コミット: `fix(agent-exec): 子プロセスの所有と回収順序を統一`。cycle18公開commitはbf0b58f9bf8bd0ca9244d6c7035543c2cf1004c5。
+
+Cycle20の同一fixtureによる修正前評価は8件すべてFAIL（0.47s、compile込26.251s）。欠落したcontract/表示、不正contract受入、途中recoveryによる保存変更を再現した。verification.rsはこの測定時はmod未接続。runtimeはcycle19の同じ最終差分を使用し、以後変更していない。fixture SHA256: cbabb92cbdb46b5071134ef6e8ad999de315d4e3d64c5280dfc02e5b931a7b75。

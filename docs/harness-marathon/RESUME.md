@@ -71,3 +71,5 @@ cycle8でOS lease、checkpoint意味検査、実行途中の実daemon再起動�
 - 本番resident、Mac/Pi、Slack/Discord、メール、Cloudflare relayには接続しない。
 
 別worktree間で同じCARGO_TARGET_DIRを共有すると、mtimeが新しい別treeの通常libを誤再利用した事象があった。凍結版CIとbaselineは専用targetを使う。失敗ログはJOURNALで製品不具合と区別する。
+
+2026-11-10 cycle19: 子process所有をWNOWAIT/単一handleへ移し、agent_exec69件・実worker4件・clippyを確認。cycle20は検証contractと過去のReady表示を実装中。11ef050全CIの最初の独立targetは/tmpの4.9GiB tmpfsを埋めリンクでFAIL。生成物をoverlayへ移し、空のoverlay専用targetで同じtreeを再実行している。以後、数GiBのCargo targetを/tmpへ置かない。

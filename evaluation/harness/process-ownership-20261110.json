@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-10",
+  "cycle": 19,
+  "scope": "Linux owned-child lifecycle and real local worker regression; no PID reuse experiment or all-descendant containment claim",
+  "baseline": {
+    "kind": "static source finding",
+    "commit": "bf0b58f9bf8bd0ca9244d6c7035543c2cf1004c5",
+    "dynamic_measurement": null,
+    "finding": "raw Child::try_wait reaped before later numeric process-group signal; repeated caller cleanup could re-enter pidfile recovery"
+  },
+  "ownership_contracts": {
+    "new_tests": 10,
+    "recorder_or_owned_child_only": true,
+    "signals_after_cached_reap": 0,
+    "signals_after_observed_echild": 0,
+    "reaps_after_cached_reap": 0,
+    "nowait_real_child_exit_code": 37,
+    "real_child_status_observations_before_reap": 2,
+    "unavailable_observation_errors": [
+      "EPERM",
+      "ENOSYS"
+    ],
+    "unavailable_observation_repetitions_per_case": 3,
+    "server_reaper_calls_after_spawn": 0
+  },
+  "worker_regression": {
+    "passed": 4,
+    "failed": 0,
+    "ignored_helper": 1,
+    "test_seconds": 1.34,
+    "owner_eof_to_command_eof_ms": 43,
+    "owner_eof_to_receipt_ms": 369,
+    "timeout_ms": 1000,
+    "spawn_to_command_eof_ms": 1002,
+    "spawn_to_receipt_ms": 1305,
+    "command_duration_ms": 1300
+  },
+  "checks": {
+    "agent-exec-final2": {
+      "command": [
+        "/home/agent/.cargo/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "kamimusuhi-runtime",
+        "--lib",
+        "agent_exec::",
+        "--",
+        "--nocapture"
+      ],
+      "cwd": "/workspace/scratch/5aa3a7808c02/kamimusuhi",
+      "cargo_target_dir": "/workspace/scratch/5aa3a7808c02/kamimusuhi/target",
+      "base_commit": "bf0b58f9bf8bd0ca9244d6c7035543c2cf1004c5",
+      "started_at": "2026-11-10T05:52:45.655622+00:00",
+      "finished_at": "2026-11-10T05:53:15.185934+00:00",
+      "elapsed_seconds": 29.533,
+      "exit_code": 0,
+      "status": "PASS",
+      "baseline_kind": "static finding; no dynamic before measurement",
+      "owned_child_sha256": "629f5f2297ab6638ed1953f8a47ad1f70a9e1c07ddeca3aeea34d74b58372b32",
+      "test_summaries": [
+        {
+          "result": "ok",
+          "passed": 69,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 188,
+          "test_seconds": 1.43
+        }
+      ]
+    },
+    "server-start-final": {
+      "command": [
+        "/home/agent/.cargo/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "kamimusuhi-runtime",
+        "--lib",
+        "agent_exec::executor::tests::failed_server_start_never_reenters_numeric_pidfile_recovery",
+        "--",
+        "--nocapture"
+      ],
+      "cwd": "/workspace/scratch/5aa3a7808c02/kamimusuhi",
+      "cargo_target_dir": "/workspace/scratch/5aa3a7808c02/kamimusuhi/target",
+      "base_commit": "bf0b58f9bf8bd0ca9244d6c7035543c2cf1004c5",
+      "started_at": "2026-11-10T05:53:41.155662+00:00",
+      "finished_at": "2026-11-10T05:54:10.978965+00:00",
+      "elapsed_seconds": 29.842,
+      "exit_code": 0,
+      "status": "PASS",
+      "baseline_kind": "static finding; no dynamic before measurement",
+      "owned_child_sha256": "629f5f2297ab6638ed1953f8a47ad1f70a9e1c07ddeca3aeea34d74b58372b32",
+      "test_summaries": [
+        {
+          "result": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 256,
+          "test_seconds": 0.23
+        }
+      ]
+    },
+    "runtime-clippy-final": {
+      "command": [
+        "/home/agent/.cargo/bin/cargo",
+        "clippy",
+        "--locked",
+        "--offline",
+        "-p",
+        "kamimusuhi-runtime",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "/workspace/scratch/5aa3a7808c02/kamimusuhi",
+      "cargo_target_dir": "/workspace/scratch/5aa3a7808c02/kamimusuhi/target",
+      "base_commit": "bf0b58f9bf8bd0ca9244d6c7035543c2cf1004c5",
+      "started_at": "2026-11-10T05:54:16.488016+00:00",
+      "finished_at": "2026-11-10T05:54:43.510749+00:00",
+      "elapsed_seconds": 27.025,
+      "exit_code": 0,
+      "status": "PASS",
+      "baseline_kind": "static finding; no dynamic before measurement",
+      "owned_child_sha256": "629f5f2297ab6638ed1953f8a47ad1f70a9e1c07ddeca3aeea34d74b58372b32",
+      "test_summaries": []
+    },
+    "format-final": {
+      "command": [
+        "/home/agent/.cargo/bin/rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "crates/kamimusuhi-runtime/src/agent_exec/process_child.rs",
+        "crates/kamimusuhi-runtime/src/agent_exec/process.rs",
+        "crates/kamimusuhi-runtime/src/agent_exec/executor.rs",
+        "crates/kamimusuhi-runtime/src/agent_exec/acp.rs"
+      ],
+      "cwd": "/workspace/scratch/5aa3a7808c02/kamimusuhi",
+      "cargo_target_dir": "/workspace/scratch/5aa3a7808c02/kamimusuhi/target",
+      "base_commit": "bf0b58f9bf8bd0ca9244d6c7035543c2cf1004c5",
+      "started_at": "2026-11-10T05:54:12.420412+00:00",
+      "finished_at": "2026-11-10T05:54:12.534651+00:00",
+      "elapsed_seconds": 0.117,
+      "exit_code": 0,
+      "status": "PASS",
+      "baseline_kind": "static finding; no dynamic before measurement",
+      "owned_child_sha256": "629f5f2297ab6638ed1953f8a47ad1f70a9e1c07ddeca3aeea34d74b58372b32",
+      "test_summaries": []
+    },
+    "engineering-worker-final": {
+      "command": [
+        "/home/agent/.cargo/bin/cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "kamimusuhi-resident",
+        "--test",
+        "engineering_worker",
+        "--",
+        "--nocapture"
+      ],
+      "cwd": "/workspace/scratch/5aa3a7808c02/kamimusuhi",
+      "cargo_target_dir": "/workspace/scratch/5aa3a7808c02/kamimusuhi/target",
+      "base_commit": "bf0b58f9bf8bd0ca9244d6c7035543c2cf1004c5",
+      "started_at": "2026-11-10T05:54:57.871449+00:00",
+      "finished_at": "2026-11-10T05:55:44.440767+00:00",
+      "elapsed_seconds": 46.577,
+      "exit_code": 0,
+      "status": "PASS",
+      "baseline_kind": "static finding; no dynamic before measurement",
+      "owned_child_sha256": "629f5f2297ab6638ed1953f8a47ad1f70a9e1c07ddeca3aeea34d74b58372b32",
+      "test_summaries": [
+        {
+          "result": "ok",
+          "passed": 4,
+          "failed": 0,
+          "ignored": 1,
+          "measured": 0,
+          "filtered_out": 0,
+          "test_seconds": 1.34
+        }
+      ]
+    }
+  },
+  "source_sha256": "629f5f2297ab6638ed1953f8a47ad1f70a9e1c07ddeca3aeea34d74b58372b32",
+  "limitations": [
+    "Linux execution verified; macOS API/cfg inspected only",
+    "No independent SIGCHLD handler or global child reaper",
+    "Other platforms use conservative std polling fallback",
+    "Group signal and cleanup are best effort; cleanup errors are not a confirmed cleanup receipt",
+    "Separate provider_process transport and first-start pidfile recovery remain outside this change",
+    "Removing public raw-Child kill_group and making kill_tree crate-private is a Rust source API change"
+  ]
+}
