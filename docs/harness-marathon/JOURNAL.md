@@ -401,3 +401,26 @@ Runは結果未保存なのでactionsへ加算しない。元checkout/候補の�
 コマンド: `cargo test --locked --offline -p kamimusuhi-resident --test engineering_http -- --nocapture`。ログ `logs/restore-cycle13-http-20261110.log` とJSON。cycle11復元版は公開commit `83fee46106bc17aaf3e6163a2b0dd0483b9095a1` へtree一致で保存済み。
 
 コミット: `test(engineering): 実行中断後の成果保持と継続を検証`。
+
+### Cycle 12 の実測と結果
+
+実行結果を保存してから構築するnative model contextで、quote/backslash/CRLFを含む6ページを比較。古いReadRangeの途中切断と、再エスケープ分の予算漏れを実fixtureで再現した。
+
+| 同一fixture | 修正前 | 修正後 |
+|---|---:|---:|
+| observations配列のJSON encoded bytes | 63,785（32KiB超過、FAIL） | 24,351（PASS） |
+| contextに残るReadRange | 6 | 2 |
+| 残したReadRangeの完全なJSON | 5/6 | 2/2 |
+| 最新ページ保持 | true | true |
+| 作業メモ14観測後の再読込 | PASS | PASS |
+
+修正は完成したJSON itemのbyte数・array括弧・commaを計上。新しい観測を優先し、入らない古いrecordは全体を省略する。8KiBの元detail枠と32KiBのencoded配列枠を分け、ReadRangeの内容とcursorを分断しない。省略した4ページも全内容をモデルへ渡せたという意味ではない。目標/候補/作業メモ/検証設定は別fieldとして保持。
+
+`observations_omitted` はstoreに残る直近12件以内からcontext構築時に省いた件数。既に履歴から落ちた総数ではない。省略数と残した範囲の時系列順もfixtureで検査した。
+
+- 修正前の対象2件: 1 PASS / 1 FAIL、exit101。修正後2/2 PASS、追加marker/順序assert後も2/2 PASS。
+- 全engineering47/47 PASS（1.91s）。resident全target/allfeatures clippy PASS（18.83s）、fmt PASS（1.42s）、diff check PASS。
+- 固定メモは14回のReadでcheckpoint観測が消えてもsummary/next_stepを保持。再読込の追加actions/check0。ここは既存機能の回帰確認であり、改善前が失敗だったとはしない。
+- cycle13実HTTPの公開commit `83dd2d3162f3f8094ee295b1ee6be17045981f66` と同じtreeの別worktreeで全CI実行中（build jobs1/test threads1）。最終結果はまだ未確定。
+
+コミット: `fix(engineering): 観測のJSON予算と範囲データの完全性を守る`。

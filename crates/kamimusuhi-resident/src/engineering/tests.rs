@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, mpsc};
 use std::time::Duration;
 
+mod context_budget;
 mod cursor;
 
 struct ScriptedModel {

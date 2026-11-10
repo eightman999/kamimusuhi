@@ -645,22 +645,34 @@ impl EngineerModel for RoutedModel<'_> {
 }
 
 fn context(job: &Job, policy: &WorkspaceConfig) -> Value {
-    let mut remaining = CONTEXT_OBSERVATION_BYTES;
+    // Budget the encoded array, including brackets, commas and the second
+    // escaping of external_data. Its raw string length can undercount by 2x.
+    let mut remaining = CONTEXT_OBSERVATION_BYTES.saturating_sub(2);
     let mut observations = Vec::new();
     for record in job.observations.iter().rev() {
-        if remaining < 256 {
-            break;
-        }
         let text = record.detail.to_string();
-        let external_data = clipped(&text, CONTEXT_DETAIL_BYTES.min(remaining));
-        remaining = remaining.saturating_sub(external_data.len().saturating_add(128));
-        observations.push(json!({
+        // A range's content and cursor describe complete lines together.
+        // Keep that JSON intact or omit the older record as a whole.
+        if record.action == "read_range" && text.len() > CONTEXT_DETAIL_BYTES {
+            continue;
+        }
+        let external_data = clipped(&text, CONTEXT_DETAIL_BYTES);
+        let proposed = json!({
             "sequence":record.sequence,"action":record.action,"ok":record.ok,
             "external_data":external_data,
             "context_truncated":external_data.len() < text.len(),
-        }));
+        });
+        let cost = proposed
+            .to_string()
+            .len()
+            .saturating_add(usize::from(!observations.is_empty()));
+        if cost <= remaining {
+            remaining -= cost;
+            observations.push(proposed);
+        }
     }
     observations.reverse();
+    let observations_omitted = job.observations.len().saturating_sub(observations.len());
     // Diagnostic text belongs to the bounded observation window. Keep the
     // independent verification receipt without injecting all output again.
     let validation = job.validation.as_ref().map(|v| json!({
@@ -672,6 +684,7 @@ fn context(job: &Job, policy: &WorkspaceConfig) -> Value {
     }));
     json!({"objective":job.objective,"workspace":job.workspace,"candidate":job.candidate,
         "checkpoint":{"self_authored_unverified":job.checkpoint},"observations":observations,
+        "observations_omitted":observations_omitted,
         "validation":validation,"metrics":job.metrics,"allowed_programs":policy.commands,
         "configured_checks":policy.checks,"last_error":job.last_error})
 }

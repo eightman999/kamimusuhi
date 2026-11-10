@@ -211,5 +211,43 @@
       "checks": 1
     },
     "scope": "Real daemon kill/wait; orphan helper explicitly released by fixture, ack/EOF prove effect/barrier completion, not daemon-wide descendant reaping"
+  },
+  "cycle12": {
+    "engineering_tests": {
+      "passed": 47,
+      "failed": 0,
+      "seconds": 1.91
+    },
+    "encoded_observation_budget": {
+      "limit_bytes": 32768,
+      "before_bytes": 63785,
+      "after_bytes": 24351,
+      "before_retained_range_pages": 6,
+      "before_complete_range_pages": 5,
+      "after_retained_range_pages": 2,
+      "after_complete_range_pages": 2,
+      "latest_page_retained_before": true,
+      "latest_page_retained_after": true,
+      "source_bytes": 18000
+    },
+    "memory_rollover": {
+      "new_observations": 14,
+      "retained_observations": 12,
+      "summary_preserved": true,
+      "next_step_preserved": true,
+      "reload_extra_actions": 0,
+      "resumed_decisions": 1
+    },
+    "before_contracts": {
+      "passed": 1,
+      "failed": 1
+    },
+    "after_contracts": {
+      "passed": 2,
+      "failed": 0
+    },
+    "fmt": "PASS",
+    "resident_clippy_all_targets_all_features": "PASS",
+    "scope": "Encoded observations array only; older complete records omitted, not all context retained; no full-request/token/real-model performance claim"
   }
 }

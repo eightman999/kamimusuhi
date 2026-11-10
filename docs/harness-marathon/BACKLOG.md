@@ -2,13 +2,12 @@
 
 ## 次にやること
 
-cycle11復元版の45件・fmt・resident全target clippyがPASS。これをcommit/pushし、cycle12のcontext encoded予算を実fixtureで前後比較する。cycle13の実HTTP5件は検証中。凍結版で全CIを実行し、続いて反応型mockによる4scenario評価を作る。新環境ではgetpidと/procが一致し、旧PID制約は再確認できる。
+cycle12の47件・全target clippy・fmtがPASSし、観測配列63,785→24,351bytes、残すReadRangeのJSON完全性を改善した。cycle13までを凍結した全CI実行中。次はcycle14のcontext反応型mock評価を登録して測定し、cycle15で長いprovider障害の最初の原因を永続化する。native agent本体を優先し、検索/skill統合は保留。
 
 ## 現在の最優先（2026-11-09更新）
 
 | 優先 | 項目 | 完了条件 |
 |---|---|---|
-| P0 | 中断後のaction識別子 | 未確認のactionと次actionで同じsequenceを再使用しない |
 | P1 | 短い作業記憶と復元 | objective/制約/次step/検証失敗を保持して長期継続 |
 | P1 | 自律loopのtraceと評価 | 決定的成功率/repair/再開重複/action数を記録 |
 | P1 | claim済みactionの実process中断 | コマンド途中のkill後に副作用と未確認receiptを保持し、自動再実行しない |
