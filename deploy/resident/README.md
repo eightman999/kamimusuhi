@@ -43,7 +43,7 @@ persona / memory を含む通常の対話は既定で private とし、
 
 - FAST_CHAT の production latency ceiling は既定 **4,000ms**。resident は非streaming upstreamを使うため、ここでは実リクエストの全応答時間をTTFTの保守的proxyとしてEWMAに戻す。4秒を継続して超えた経路はFAST_CHAT候補から外れる。
 - FreeTier がprivate条件を満たす場合は先行し、Local / Subscription は同じ zero-marginal-cost band で実測 latency（未計測なら設定順）を使う。Metered は最後の fallback。
-- probe（`/v1/models`）の healthy/unhealthy も併用し、known-down tier は healthy 候補がない場合だけ試す。実リクエスト失敗も即 health に反映し、429 は cooldown 対象になる。
+- probe（`/v1/models`）の healthy/unhealthy も併用し、known-down tier は healthy 候補がない場合だけ試す。実completionが失敗したtierは初回から60秒間、自動routing候補から外す。モデル一覧probeの成功では解除せず、期限後の再試行または実completion成功で復帰する。費用上限による拒否はprovider障害に数えない。
 - Pi の既定 zero-marginal 経路: `hai`（`qwen3.8-27b-uncensored`）と `llm_master`（peer resident 経由、`X-Kamimusuhi-Route: local` で peer 側 fallback を抑止）。未計測時は設定順、観測後は同band内で latency が効く。
 - llm_master の既定 zero-marginal 経路: `local`（llama-master :8080）と `hai`。
 - `condition: small_request` の tier は短い要求（既定1200文字以下）か `model: "k0"` のときのみ使う。 `k0` と `X-Kamimusuhi-Route: local` は LocalChat として local tier のみに制限する。
@@ -86,6 +86,14 @@ curl http://127.0.0.1:7860/v1/chat/completions -d '{"model":"kamimusuhi","messag
 Grafanaでモデル別の呼び出し、成功率、応答時間、トークン、料金と利用推移を確認できる。
 ダッシュボードとPrometheus収集設定は [monitoring/README.md](monitoring/README.md) を参照。
 個別履歴は認証付き `/v1/usage/history`、監視メトリクスは `/metrics` で取得する。
+
+## 待機中の自律思考
+
+待機中の自律思考は任意の`cognition`設定で有効化できる。
+設定したsubjectの未処理の実会話を、対話のない時間に既存APIで内省する。
+新規経験がなければAPIを呼ばず、cursor・試行回数・予算は再起動後も保持する。
+[設定fragment](cognition.example.json)と[動作・上限・検証](../../docs/idle-cognition.md)を参照。
+本番反映とFI3の差分承認は明示的に行い、既存個体の初期化はしない。
 
 ## ストレージ
 

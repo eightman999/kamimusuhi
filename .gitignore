@@ -16,6 +16,7 @@
 
 # Editor / OS noise
 .DS_Store
+/.commandcode/
 
 # MIOBA experiment runtime
 /experiments/mioba/.runs/

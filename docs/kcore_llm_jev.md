@@ -5,6 +5,12 @@
 この実装では `DialogueSession` を会話側K-COREのインターフェースとして扱う。
 数値実験系の `KCore::tick()`、16次元観測、J72のtokenizer/学習系列には接続しない。
 
+判断backendはJevに限定しない。`runtime.json`の`decision: "auto"`（既定）は、
+Jev未設定時にprimary Personaと同じOpenAI-compatible APIで発話前判断・回答評価を行う。
+APIへ変更しても会話側の推論閉ループと個体の連続性を維持する。
+選択方法・構造化出力検証・配備条件は[APIによる会話側推論](api-cognition.md)を参照。
+以下のTypeSafe wire契約はJev選択時のもの。
+
 会話の閉ループは次の順序で進む。
 
 ```text

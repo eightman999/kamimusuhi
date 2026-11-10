@@ -1,0 +1,7 @@
+{
+  "cognition": {
+    "subjects": ["operator"],
+    "poll_interval_secs": 30,
+    "timeout_secs": 180
+  }
+}

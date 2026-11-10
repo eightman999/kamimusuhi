@@ -512,7 +512,8 @@ cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase res
   [`deploy/resident/README.md`](./deploy/resident/README.md) と
   [`deepwiki/03-api-reference.md`](./deepwiki/03-api-reference.md)。
 - **接続面**: `kamimusuhi chat`（CLI）、`kami`（TUI）、`kamimusuhi-desktop`（ネイティブ GUI /
-  macOS アプリ）、Discord bot。どの面も同じ個体・同じ subject で会話を共有します。
+  macOS アプリ）、Discord bot、[Slack bot（Socket Mode）](deploy/resident/slack.md)。
+  どの面も同じ個体を使い、同じsubjectを設定すれば会話履歴も共有します。
 - **姉妹個体**: `dialogue` を持つノード同士は別個体（intercom の envelope で会話。
   直接配送 + Cloudflare relay の任意 fallback）。
 - **持続する目標**: Commitment Engine が checkpoint・再計画ラダー L0–L6・予算で
@@ -559,6 +560,8 @@ cargo run -p kamimusuhi-runtime -- demo-continuity --dir .local/demo --phase res
 MIT. [`LICENSE`](./LICENSE) を参照してください。
 
 ## コード自己改善とWeb操作
+
+主推論自身による[直接ツール実行・委譲失敗からの継続](docs/primary-agent.md)に対応します。
 
 resident のツールとして、[コード修正・テスト・評価・適用](docs/code-self-improvement.md)、
 [curl形式のHTTP通信](docs/curl-tool.md)、[Agora登録・投稿・返信](docs/agora.md)、
