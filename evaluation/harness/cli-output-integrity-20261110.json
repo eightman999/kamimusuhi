@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "scope": "CLI completion protocol and discovery, local shell fixtures; not a model coding benchmark",
+  "date": "2026-11-10",
+  "before_commit": "deb692a27c92e752fae9235c839526ddced7f44b",
+  "fixture_sha256": "4f3d5935cee9914caa6d588ded534e47c37488aee767bb4edb948204dbecf73d",
+  "before": {
+    "passed": 4,
+    "failed": 5,
+    "test_seconds": 1.31,
+    "false_task_successes": 4,
+    "partial_discovery_accepted": 1
+  },
+  "after": {
+    "passed": 9,
+    "failed": 0,
+    "test_seconds": 1.31,
+    "false_task_successes": 0,
+    "partial_discovery_accepted": 0
+  },
+  "executor_regression": {
+    "passed": 14,
+    "failed": 0,
+    "test_seconds": 1.35
+  },
+  "runtime_all_targets_all_features_clippy": "PASS",
+  "target_rustfmt_check": "PASS",
+  "controls": [
+    "complete replies with/without stderr truncation, all three CLI formats",
+    "complete discovery with long stderr",
+    "cancellation classification",
+    "timeout classification"
+  ],
+  "preserved": [
+    "partial summary",
+    "session id",
+    "usage",
+    "native verification exit-code semantics"
+  ],
+  "limitations": [
+    "ACP uses a separate reader and is not covered",
+    "fixtures do not imply real providers produce these event sequences",
+    "no automatic replay of uncertain external effects added"
+  ],
+  "invalid_first_fixture": "missing required {prompt}; excluded from before/after and stored separately"
+}

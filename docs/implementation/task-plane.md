@@ -138,6 +138,8 @@ Task Plane のない node（Pi）では、これらは Task Plane を持つ peer
 - read-only タスクは実行前後の `git status --porcelain` と `git diff HEAD` を比較し、作業ツリーが変わっていたら `read_only_violation` として失敗にする。
 - 書き込みタスク（`workspace_write` / `autonomous_workspace`）は後述の worktree 隔離の中でだけ走る。
 - harness の stdout は生のチャンクで即座に読み、行分割は resident 側で行う（Bun 製の `opencode` は読み手が遅いと未書き込みの出力を捨てて終了し、モデル一覧が半分ほど欠けたため）。
+- CLI stdoutは1行1MiB・全体4MiBまでを完全な行単位で保持する。欠落した場合は最終error/resultを見落とした可能性があるため、exit0でも成功にせず、部分回答/session等を証拠として残す。取消・timeoutの分類は保持する。stderrは末尾16KiBで、診断の切詰めだけでは成功を拒否しない。
+- モデル一覧のstdoutが欠落したrefreshも失敗とし、部分一覧を正常な更新として採用しない。これらのstdout規則はCLI protocolの境界であり、独自readerを使うACPとは別。
 - 同時実行は node 全体の `task_plane.max_concurrent` と executor ごとの `max_concurrent` で制限し、超えた分は待機（取消可能）。
 - resident 再起動時、未完了の委譲タスクは「失敗（中断）」になる。
 

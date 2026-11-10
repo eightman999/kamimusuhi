@@ -135,8 +135,7 @@ fn version_of(spec: &ExecutorSpec) -> Option<String> {
         |_| {},
     )
     .ok()?;
-    result
-        .success()
+    (result.success() && !result.stdout_truncated)
         .then(|| result.stdout.lines().next().unwrap_or("").trim().to_owned())
         .filter(|v| !v.is_empty())
 }
@@ -172,6 +171,10 @@ pub(crate) fn discover_with(spec: &ExecutorSpec, now: u64) -> CatalogEntry {
                 r.exit_code,
                 clip_tail(r.stderr_tail.trim(), 300)
             ));
+        }
+        Ok(r) if r.stdout_truncated => {
+            entry.error =
+                Some("discovery stdout was truncated; model listing is incomplete".to_owned());
         }
         Ok(r) => match catalog::parse(discover.format, &r.stdout) {
             Ok(raw) => {
@@ -570,7 +573,14 @@ impl TaskExecutor for CliExecutor {
                 Some(format!("timed out after {}s", self.spec.timeout_secs)),
             ),
             ProcessEnd::Exited => {
-                if parsed.error.is_some() || parsed.reported_success == Some(false) {
+                // Missing stdout may contain a final error or result. Keep the
+                // captured evidence below without certifying task completion.
+                if result.stdout_truncated {
+                    (
+                        RunEnd::Failed,
+                        Some("harness stdout was truncated; completion is unverified".to_owned()),
+                    )
+                } else if parsed.error.is_some() || parsed.reported_success == Some(false) {
                     (RunEnd::Failed, parsed.error.clone().or_else(stderr_hint))
                 } else if result.exit_code != Some(0) {
                     (
@@ -882,4 +892,6 @@ mod tests {
         let canonical = dir.path().canonicalize().expect("canonical");
         assert!(outcome.summary.contains(&canonical.display().to_string()));
     }
+
+    include!("executor/output_integrity_tests.rs");
 }

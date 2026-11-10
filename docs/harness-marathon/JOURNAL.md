@@ -490,3 +490,22 @@ Jobへoptionalな `model_recovery` を追加し、first/latest error、最初/�
 `cargo clippy --locked --offline -p kamimusuhi-resident --all-targets --all-features -- -D warnings` はPASS（17.303s）、fmt check PASS（1.395s）、diff check PASS。ログは `logs/cycle15-*20261110.*`。外部providerは使わずloopback fixtureだけ。cycle14の公開commitは `b230d9c5a885ab95d6e7f4b47d03de74097f53a5`。
 
 コミット: `fix(engineering): 推論障害の最初の原因と回復を保持`。
+
+### Cycle 17 の結果（cycle16と独立に先に完了）
+
+共通CLI executorがrunnerのstdout_truncatedを無視し、取り込めた範囲だけで成功判定していた。Exited時の欠落を固定理由でFailedにし、部分回答/session/usageは保持。Cancelled/TimedOutを優先し、stderrだけの欠落は失敗にしない。discoveryも欠落をerrorにし、versionはNoneにする。native実checkの終了コード判定やProcessResult::successは変更しない。
+
+| 同一fixture | 修正前（凍結deb692a） | 修正後 |
+|---|---|---|
+| Text/OpenCode/CommandCodeの巨大後続行、aggregate欠落 | 4件を誤ってSucceeded | 4件すべてFailed、部分回答を保持 |
+| discovery部分一覧 | 正常一覧として採用 | error、discovered_at=0 |
+| 完全出力/長stderr/cancel/timeoutの4control群 | PASS | PASS |
+| 対象9件 | 4 PASS / 5 FAIL | 9 PASS / 0 FAIL |
+
+before/afterのfixture SHA256は `4f3d5935cee9914caa6d588ded534e47c37488aee767bb4edb948204dbecf73d` で同一。両方の実試験1.31s、before全体31.535s、after29.170s。executor全14/14 PASS（1.35s）、runtime全target/allfeature clippy PASS（25.814s）、対象rustfmt/diff check PASS。ローカルshell mockだけを実行し、外部CLI/providerや本番residentは起動していない。
+
+最初のfixtureはgeneric設定に必須の `{prompt}` がなく9件とも起動前FAIL。これは製品baselineから除外し、`logs/cycle17-output-fixture-invalid-20261110.*` へ理由付きで分離した。修正後の同じfixtureを凍結版と製品修正版の両方へ適用した。
+
+ログは `logs/cycle17-output-before/after-20261110.*`、`cycle17-executor-all-20261110.*`、`cycle17-runtime-clippy-20261110.*`。ACP独自reader/queueは別実装で今回未変更。cycle15公開commitは `deb692a27c92e752fae9235c839526ddced7f44b`。
+
+コミット: `fix(agent-exec): 不完全な標準出力を完了として扱わない`。

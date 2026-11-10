@@ -2,7 +2,7 @@
 
 ## 次にやること
 
-cycle15まで保存。推論障害episodeは6群PASS、engineering54件・HTTP5件・clippy/fmt PASS。最後の全CIはcycle13凍結版83dd2d3。次はcycle16の専用workerをnative loopへ接続し、resident死亡後のコマンド停止とworker結果不明のPausedを実測。cycle17は不完全な外部agent出力を成功にしないfixtureを準備中。次の全CIでcycle12/14/15以降をまとめて検証する。
+cycle15まで保存。推論障害episodeは6群PASS、engineering54件・HTTP5件・clippy/fmt PASS。最後の全CIはcycle13凍結版83dd2d3。次はcycle16の専用workerをnative loopへ接続し、resident死亡後のコマンド停止とworker結果不明のPausedを実測。cycle17は誤成功4件と部分一覧1件を修正、対象9件/全executor14件がPASSして保存済み。次の全CIでcycle12/14/15以降をまとめて検証する。
 
 ## 現在の最優先（2026-11-09更新）
 
@@ -12,7 +12,6 @@ cycle15まで保存。推論障害episodeは6群PASS、engineering54件・HTTP5�
 | P1 | 自律loopのtraceと評価 | 決定的成功率/repair/再開重複/action数を記録 |
 | P1 | claim済みactionの実process中断 | コマンド途中のkill後に副作用と未確認receiptを保持し、自動再実行しない |
 | P1 | 作業記憶の更新と長期修復 | 12件より長い失敗修復シナリオでも目的・重要な根拠・次stepを保持 |
-| P1 | 不完全なprocess出力の伝播 | stdout_truncatedを外部executorが完全な成功protocolとして扱わない |
 | P1 | 検証receiptと候補の変化 | 静的監査で外部commit後も旧Ready表示が残る。show/list/summary/request再送/reloadを一つの実fixtureで再現 |
 | P1 | 検証設定変更とReadyの鮮度 | checks追加後に旧receiptが新設定の成功に見えない。argv証拠を保存して照合 |
 | P2 | ACP出力のメモリと切断 | 独自BufReader::lines/channelの上限と不完全protocolの扱いをfixtureで確認 |
