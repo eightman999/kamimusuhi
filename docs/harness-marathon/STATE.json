@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 4.872755,
+  "elapsed_hours": 5.206055,
   "target_hours": 24.0,
-  "cycle": 20,
-  "current_task": "cycle20の復元版76 tests/実worker4件/clippy/fmt PASSを保存。凍結全CIとcycle21の重複実行抑止へ進む。",
+  "cycle": 21,
+  "current_task": "cycle21のjob別OS lock+永続execution ledger+markerを実装・検証・push済み(266a312)。次は§7優先課題へ。",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
-  "last_checkpoint_at": "2026-11-10T14:36:43.794061Z",
-  "active_session_started_at": "2026-11-10T14:15:59Z",
+  "last_checkpoint_at": "2026-11-11T17:33:00Z",
+  "active_session_started_at": "2026-11-11T17:13:00Z",
   "session_elapsed_base_hours": 4.526979,
   "status": "active",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
-  "next_task": "cycle20の凍結全CIを独立targetで実行。CYCLE21-DESIGNのjob lock/marker/high-waterを実装し、同一claimの並行/逐次重複とresume競合を実測する。",
+  "next_task": "§7(1) Candidate Inspect:過去検証結果と現在HEAD・未commit変更・候補存在の明示的読み取り比較",
   "completed_sessions": [
     {
       "started_at": "2026-11-08T16:06:48Z",
@@ -50,6 +50,12 @@
       "ended_at": "2026-11-10T10:00:51.649069Z",
       "elapsed_hours": 0.206847,
       "end_evidence": "14:31の環境復帰後、workspace内に残るengineering/worker/clippy/fmtの最終logとexit0 JSONを回収。最後は10:00:51.649069。"
+    },
+    {
+      "started_at": "2026-11-11T17:13:00Z",
+      "ended_at": "2026-11-11T17:33:00Z",
+      "elapsed_hours": 0.3333,
+      "end_evidence": "cycle20 CI log終了・cycle21 commit 266a312 push確認 remote HEAD一致"
     }
   ],
   "excluded_idle_interval": {
@@ -76,13 +82,14 @@
     17,
     18,
     19,
-    20
+    20,
+    21
   ],
   "incomplete_cycles": [
     2,
     3
   ],
-  "last_verified_change_commit": "3ee6638447844d7ebb60d9223ffc50548971d887",
+  "last_verified_change_commit": "266a3125cf96374c1940fd0f533732c1f873073f",
   "resume_guide": "docs/harness-marathon/RESUME.md",
   "evaluation": "evaluation/harness/marathon-20261109.json",
   "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。",
@@ -138,8 +145,17 @@
   "cli_output_evaluation": "evaluation/harness/cli-output-integrity-20261110.json",
   "worker_evaluation": "evaluation/harness/native-worker-20261110.json",
   "current_full_ci": {
-    "status": "PLANNED",
-    "scope": "cycle20を含む凍結tree。直近の全CI成功11ef050にはcycle18/19/20を含まない。"
+    "commit": "2b874a447bf7703c18f5cb52caeda9f640f12f2f",
+    "status": "FAIL-ENV-FLAKE",
+    "log": "docs/harness-marathon/logs/cycle20-full-ci-20261112.log",
+    "exit_code": 101,
+    "stages_passed": [
+      "fmt",
+      "clippy",
+      "build"
+    ],
+    "failure": "git_tool::tests::git_hooks_filters_and_remote_credentials_do_not_escape 1件(322 pass/1 fail)。並行CI実行との環境干渉と判断:孤立再実行では3/3 PASS、変更前HEAD 2b874a4でも再現/非再現が変わるflake",
+    "cycle21後の再確認": "孤立runで3連続PASS。変更に起因しない"
   },
   "validation_memory_evaluation": "evaluation/harness/validation-memory-20261110.json",
   "previous_full_ci_attempt": {
@@ -254,5 +270,18 @@
     "identity_fixture_rewritten": false
   },
   "verification_identity_evaluation": "evaluation/harness/verification-identity-20261110.json",
-  "execution_fencing_design": "docs/harness-marathon/CYCLE21-DESIGN.md"
+  "execution_fencing_design": "docs/harness-marathon/CYCLE21-DESIGN.md",
+  "cycle21": {
+    "commit": "266a3125cf96374c1940fd0f533732c1f873073f",
+    "status": "implemented+verified+pushed",
+    "gates": {
+      "fmt": "PASS",
+      "clippy_all_targets_features": "PASS",
+      "engineering_lib": "85/85 PASS",
+      "engineering_worker": "11 PASS +1 ignored",
+      "engineering_http": "7 PASS +1 ignored"
+    },
+    "race_tests": "並行二重送付・完了後再送・同一sequence別引数・予約後実行前終了相当・ledger消失/破損・marker無し・独立job:外部counterで副作用≤1を確認",
+    "wire_version": 2
+  }
 }

@@ -16,6 +16,7 @@
 
 ## 切り分け中
 
+- cycle20全CI(2b874a4)で `git_tool::tests::git_hooks_filters_and_remote_credentials_do_not_escape` が1件FAIL(filter-ran存在)。孤立再実行では3/3 PASSで、並行CI実行との環境干渉flakeと判断。変更に起因しない。
 - 初回baseline CIはclippy段階でexit101だが、保持ログに診断本文が無い。元HEADの別worktreeで再実行し、ソースの既存失敗か環境要因かを確認する。現時点でユーザー操作は不要。
 
 ## 次回の環境で確認する事項

@@ -2,7 +2,7 @@
 
 ## 次にやること
 
-cycle20の凍結全CIを独立overlay targetで実行する。復元版は元fixture hash一致、engineering76/76・実worker4件・clippy/fmt PASSを回収済み。並行してCYCLE21-DESIGN.mdのjob lock＋optional checkpoint marker＋永続high-waterを実装し、同じclaimの並行/逐次重複とresume競合をbefore/afterで実測する。
+cycle21(重複実行抑止)は実装・検証・push済み(commit 266a312)。次の最優先は§7(1) Candidate Inspect: 過去の検証結果と現在git HEAD・未commit変更・候補の存在を明示的な読み取り操作で比較する能力。続いて長期修復の反応型評価、実行証拠の精密化、checkpoint成長とworker 64MiB上限、再計画能力評価。
 
 ## 現在の最優先（2026-11-09更新）
 
@@ -12,13 +12,13 @@ cycle20の凍結全CIを独立overlay targetで実行する。復元版は元fix
 | P1 | 自律loopのtraceと評価 | 決定的成功率/repair/再開重複/action数を記録 |
 | P1 | claim済みactionの実process中断 | コマンド途中のkill後に副作用と未確認receiptを保持し、自動再実行しない |
 | P1 | 長期修復の多段シナリオ | cycle18の診断保持から、異なる失敗原因/複数file/中断を含む反応型評価へ拡張 |
-| P1 | 候補の明示inspect | 一件・短い総期限の読取で観測時刻と一致/変更/到達不能を表示。status全件でgitを起動しない |
+| **P0(次)** | 候補の明示inspect | 一件・短い総期限の読取で観測時刻と一致/変更/到達不能を表示。status全件でgitを起動しない |
 | P1 | 検証試行と実check数の区別 | Rejectedもverification_runsへ入る現状をfixtureで測り、実開始とrequest試行を区別 |
 | P1 | checkpoint成長とworker読取上限 | workerの64MiB上限と無制限job蓄積の接点を測定し、個別claim投影を検討 |
 | P2 | ACP出力のメモリと切断 | 独自BufReader::lines/channelの上限と不完全protocolの扱いをfixtureで確認 |
 | P1 | provider transportのprocess所有 | cycle19のOwnedChild以外にあるprovider_processのreap後signalを独立して確認 |
 | P1 | cleanupの確認をreceiptへ伝える | best-effort停止エラーと停止確認を区別し、未知の終了を確定結果にしない |
-| P1 | 旧workerの実行完了証拠と再開 | job/sequence別ledgerと排他でclaim検査後の競合を閉じ、停止未確認の再開を区別 |
+| ~~P1~~ | ~~旧workerの実行完了証拠と再開~~ | **cycle21で完了**: execution ledger+job lockで副作用≤1を実測(266a312) |
 
 ## 後続候補（検索・skill統合は保留）
 

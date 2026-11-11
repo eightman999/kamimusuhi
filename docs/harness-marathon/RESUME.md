@@ -4,7 +4,7 @@
 
 ## 最新の目的と進捗
 
-2026-11-10 cycle20: 元fixtureと同じsourceを復元し、engineering76/76・実worker4件・resident全target/allfeature clippy・fmtがPASS。検証設定digestと過去commitのreceipt表示を保存済み。全CIは最新11ef050でPASS、cycle20凍結版をこれから実行する。次はCYCLE21-DESIGN.mdの重複実行抑止。以下の記述は各時点の経過であり、最新値はSTATE/BACKLOGを優先する。
+2026-11-12 cycle21: CYCLE21-DESIGN.md通りのjob別OS lock+永続execution ledger+checkpoint markerを実装(commit 266a312、remote HEAD一致確認済み)。同一claimの並行/逐次二重実行・別引数・ledger消失/破損・marker無し・独立jobを実プロセス競合で実測し外部counterで副作用≤1。gates: fmt/clippy PASS、engineering lib 85/85、worker 11+1、http 7+1。cycle20全CI(2b874a4)はgit_tool flake 1件のみ FAIL→孤立run3/3 PASS(環境干渉)。次は§7(1) Candidate Inspect。以下の記述は各時点の経過であり、最新値はSTATE/BACKLOGを優先する。
 
 ### 初期の進展（2026-11-09）
 

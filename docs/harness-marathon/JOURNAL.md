@@ -651,3 +651,38 @@ cycle20は元containerで対象8件が0/8→8/8、live contract codecが1/5→5/
 次のcycle21はjob別OS lock＋optional checkpoint marker＋永続high-waterでworkerのcheck→startとresume、同claimの並行/逐次重複を閉じる。CYCLE21-DESIGN.mdへ静的設計を保存済み。まだ実装・実測していない。
 
 コミット: fix(engineering): 検証結果を記録した設定とcommitへ結び付ける。
+
+## cycle21: 永続実行台帳 + job単位OS lockによる重複実行防止 (2026-11-12 JST / 17:13-17:33 UTC)
+
+### 調査→仮説
+workerが claim 検査と workspace 操作開始の間に再起動/resumeと競合し、同一claimが二重実行されうる。OS lockだけでは先行worker終了後の同一claim再送を防げない。仮説: checkpoint隣にjob単位の安定inodeロック+永続ledger(high_water)を置き、検査→予約公開→実行を同一lock下で行えば副作用≤1になる。
+
+### 実装(266a312)
+- `engineering/execution.rs` 新設: namespace `<checkpoint>.executions/`、`<job>.lock`+`<job>.json`。ledger `{schema_version,job_id,candidate_digest,high_water,request_digest}`、deny_unknown_fields、通常fileのみ(symlink/hardlink拒否)、≤4KiB、genesis `high_water:0`。publish = create_new temp→write→file sync→rename→dir sync。
+- `Job.execution_ledger_version: Option<u32>` marker(schema1のみ、未知版はcheckpoint::validateが拒否)。marker+pendingは同一checkpoint transactionで公開。
+- worker admission順序: request検証→job lock(Existing)→ledger identity/high_water→checkpoint claim照合→cancel→durable予約→workspace操作→Completed/Rejected/Unknown。wire version 1→2、`ReplyResult::Unknown{reason}`。
+- 親claim/resumeも同じlock inodeに参加。claim時Busyはdurable変更なしで次eligible jobへdefer。InlineRunnerも同一admission経由。
+
+### 実測(実プロセス競合・外部counter)
+| 試験 | 結果 |
+|---|---|
+| 同一claim並行二重送付 | PASS(副作用≤1) |
+| 完了後同一claim再送 | PASS(≤1) |
+| 同一sequence別引数 | PASS(再実行拒否) |
+| 予約後実行前終了相当/marker無し/ledger消失・破損 | PASS |
+| 独立job並行 | PASS |
+
+### ゲート
+| gate | 結果 |
+|---|---|
+| cargo fmt --all -- --check | PASS |
+| clippy -p kamimusuhi-resident --all-targets --all-features -D warnings | PASS |
+| --lib engineering:: | 85/85 PASS |
+| --test engineering_worker | 11 PASS + 1 ignored |
+| --test engineering_http | 7 PASS + 1 ignored |
+
+### cycle20 全CI(2b874a4)
+fmt/clippy/build PASS。workspace lib tests 322 pass/1 fail: `git_tool::tests::git_hooks_filters_and_remote_credentials_do_not_escape`(`filter-ran`存在)。並行CI実行との環境干渉flakeと判断 — 孤立再実行では3/3 PASS、変更に起因しない。log: docs/harness-marathon/logs/cycle20-full-ci-20261112.log(ignored)。
+
+### 記録
+commit 266a3125cf96374c1940fd0f533732c1f873073f → push済み、remote HEAD一致確認。実作業+0.3333h(累計5.206055/24h、未達)。
