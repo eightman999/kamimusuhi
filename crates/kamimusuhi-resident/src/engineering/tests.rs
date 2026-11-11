@@ -1748,3 +1748,84 @@ fn independent_jobs_hold_disjoint_ledgers_and_locks() {
         assert_eq!(job(&fixture.shared, id)["execution_ledger_version"], 1);
     }
 }
+
+fn inspect(shared: &Shared, id: &str) -> Value {
+    let model = ScriptedModel::new([Action::Inspect]);
+    action(shared, &model);
+    model.assert_consumed();
+    let observations = job(shared, id)["observations"].as_array().unwrap().clone();
+    let detail = observations.last().unwrap()["detail"].clone();
+    assert_eq!(detail["kind"], "inspect", "{detail}");
+    detail
+}
+
+fn verified_fixture() -> (Fixture, String) {
+    let fixture = fixture();
+    let id = create(&fixture.shared);
+    prepare(&fixture.shared, &id);
+    // A passing Verify records validation evidence but keeps the job
+    // Active, which is where an explicit re-inspection belongs.
+    let model = ScriptedModel::new([fix(), Action::Verify]);
+    action(&fixture.shared, &model);
+    action(&fixture.shared, &model);
+    model.assert_consumed();
+    assert_eq!(job(&fixture.shared, &id)["phase"], "active");
+    assert_eq!(job(&fixture.shared, &id)["validation"]["passed"], true);
+    (fixture, id)
+}
+
+#[test]
+fn inspect_compares_the_recorded_verification_with_the_live_candidate() {
+    let (fixture, id) = verified_fixture();
+    let recorded = job(&fixture.shared, &id)["validation"]["head"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let detail = inspect(&fixture.shared, &id);
+    assert_eq!(detail["candidate"]["state"], "ok");
+    assert_eq!(detail["candidate"]["branch_matches"], true);
+    assert_eq!(detail["head"]["state"], "match");
+    assert_eq!(detail["head"]["current"], recorded);
+    assert_eq!(detail["verification"]["recorded"], true);
+    assert_eq!(detail["verification"]["passed"], true);
+    assert_eq!(detail["uncommitted"]["count"], 0);
+
+    // An uncommitted edit changes the observation without touching the
+    // recorded commit; the verification still matches its bound HEAD.
+    let root = candidate(&fixture.shared, &id);
+    std::fs::write(root.join("notes.txt"), "edited but uncommitted\n").unwrap();
+    let detail = inspect(&fixture.shared, &id);
+    assert_eq!(detail["head"]["state"], "match");
+    assert_eq!(detail["uncommitted"]["count"], 1);
+    assert_eq!(detail["uncommitted"]["sample"], json!(["notes.txt"]));
+
+    // A new candidate commit moves HEAD off the recorded verification.
+    git(&root, &["add", "notes.txt"]);
+    git(
+        &root,
+        &[
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@local",
+            "commit",
+            "-qm",
+            "candidate edit",
+        ],
+    );
+    let detail = inspect(&fixture.shared, &id);
+    assert_eq!(detail["head"]["state"], "changed");
+    assert_ne!(detail["head"]["current"], recorded);
+}
+
+#[test]
+fn inspect_reports_a_missing_candidate_as_data() {
+    let (fixture, id) = verified_fixture();
+    std::fs::remove_dir_all(candidate(&fixture.shared, &id)).unwrap();
+    let detail = inspect(&fixture.shared, &id);
+    assert_eq!(detail["candidate"]["exists"], false);
+    assert_eq!(detail["candidate"]["state"], "missing");
+    assert_eq!(detail["verification"]["recorded"], true);
+    assert!(detail.get("head").is_none(), "{detail}");
+    assert_eq!(job(&fixture.shared, &id)["phase"], "active");
+}

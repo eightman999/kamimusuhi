@@ -100,6 +100,9 @@ pub enum Action {
         argv: Vec<String>,
     },
     Diff,
+    /// One bounded read comparing the recorded verification with the live
+    /// candidate: worktree presence, current HEAD and uncommitted changes.
+    Inspect,
     Verify,
     Checkpoint {
         summary: String,
@@ -959,7 +962,7 @@ pub fn execute(
             )?;
             (true, json!({"diff":diff}))
         }
-        Action::Verify | Action::Checkpoint { .. } | Action::Finish { .. } => {
+        Action::Inspect | Action::Verify | Action::Checkpoint { .. } | Action::Finish { .. } => {
             return Err("lifecycle actions must be handled by the engineering loop".to_owned());
         }
     };
@@ -980,6 +983,142 @@ pub fn clean(candidate: &Candidate) -> Result<bool, String> {
         &["status", "--porcelain", "--untracked-files=all"],
     )?
     .is_empty())
+}
+
+const INSPECT_SAMPLE: usize = 16;
+
+fn recorded_validation(validation: Option<&Validation>) -> Value {
+    match validation {
+        Some(validation) => json!({
+            "recorded": true,
+            "passed": validation.passed,
+            "head": validation.head,
+            "checks": validation.checks.len(),
+            "policy_digest": validation
+                .contract
+                .as_ref()
+                .map(|contract| contract.policy_digest.as_str()),
+            "completed_at": validation
+                .contract
+                .as_ref()
+                .map(|contract| contract.completed_at),
+        }),
+        None => json!({"recorded":false}),
+    }
+}
+
+fn inspect_result(
+    observed_at: u64,
+    candidate: &Candidate,
+    candidate_state: &str,
+    extra: Value,
+    validation: Option<&Validation>,
+) -> Result<Observation, String> {
+    let mut detail = json!({
+        "kind": "inspect",
+        "observed_at": observed_at,
+        "candidate": {
+            "exists": candidate.path.exists(),
+            "state": candidate_state,
+        },
+        "verification": recorded_validation(validation),
+    });
+    for (key, value) in extra.as_object().into_iter().flatten() {
+        detail[key.clone()] = value.clone();
+    }
+    Ok(Observation { ok: true, detail })
+}
+
+/// One bounded read comparing the recorded verification with the live
+/// candidate: worktree presence, current HEAD and uncommitted changes.
+/// Missing or unreachable state is reported as data — the observation is
+/// still `ok`, and a failed probe degrades only its own field.
+pub(super) fn inspect(
+    policy: &WorkspaceConfig,
+    candidate: &Candidate,
+    validation: Option<&Validation>,
+    cancel: &AtomicBool,
+) -> Result<Observation, String> {
+    candidate_valid(policy, candidate)?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err("cancelled".to_owned());
+    }
+    let observed_at = crate::util::unix_now();
+    let probe = |args: &[&str]| git_with(&candidate.path, args, GIT_TIMEOUT, cancel).ok();
+    match fs::symlink_metadata(&candidate.path) {
+        Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => {
+            return inspect_result(
+                observed_at,
+                candidate,
+                "invalid_root",
+                json!({}),
+                validation,
+            );
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return inspect_result(observed_at, candidate, "missing", json!({}), validation);
+        }
+        Err(_) => {
+            return inspect_result(observed_at, candidate, "unreachable", json!({}), validation);
+        }
+    }
+    let top = probe(&["rev-parse", "--show-toplevel"])
+        .and_then(|top| Path::new(top.trim()).canonicalize().ok());
+    let worktree = top.as_ref() == candidate.path.canonicalize().ok().as_ref();
+    let branch = probe(&["symbolic-ref", "--short", "HEAD"]);
+    let branch_matches = branch.as_deref() == Some(candidate.branch.as_str());
+    let head = probe(&["rev-parse", "--verify", "HEAD"]);
+    let status = probe(&["status", "--porcelain", "--untracked-files=all"]);
+    let mut uncommitted = 0usize;
+    let mut sample = Vec::new();
+    for line in status.iter().flat_map(|text| text.lines()) {
+        if line.len() < 3 {
+            continue;
+        }
+        uncommitted = uncommitted.saturating_add(1);
+        if sample.len() < INSPECT_SAMPLE {
+            sample.push(Value::from(line[3..].trim()));
+        }
+    }
+    let head_state = match (&head, validation.map(|v| v.head.as_str())) {
+        (None, _) => "unavailable",
+        (Some(current), Some(recorded)) if current == recorded => "match",
+        (Some(_), Some(_)) => "changed",
+        (Some(_), None) => "unrecorded",
+    };
+    let candidate_state = if !worktree {
+        "not_worktree"
+    } else if !branch_matches {
+        "branch_mismatch"
+    } else {
+        "ok"
+    };
+    inspect_result(
+        observed_at,
+        candidate,
+        candidate_state,
+        json!({
+            "candidate": {
+                "exists": true,
+                "state": candidate_state,
+                "branch": branch,
+                "branch_matches": branch_matches,
+            },
+            "head": {
+                "current": head,
+                "base": candidate.base_commit,
+                "state": head_state,
+            },
+            "uncommitted": {
+                "available": status.is_some(),
+                "count": uncommitted,
+                "sample": sample,
+                "truncated": uncommitted > sample.len(),
+            },
+        }),
+        validation,
+    )
 }
 
 pub fn verify(
