@@ -35,6 +35,9 @@ pub(super) const LEDGER_SCHEMA_VERSION: u32 = 1;
 pub(super) const LEDGER_MARKER_VERSION: u32 = 1;
 /// Ledgers are small fixed-shape records; anything larger is corrupt.
 const MAX_LEDGER_BYTES: u64 = 4096;
+/// The per-claim projection a worker verifies instead of the whole
+/// checkpoint; large enough for any pending action yet firmly bounded.
+const MAX_CLAIM_BYTES: u64 = 1024 * 1024;
 /// Unique suffixes for our own temporary publish files.
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -199,18 +202,24 @@ fn same_file(_a: &fs::Metadata, _b: &fs::Metadata) -> bool {
     true
 }
 
-/// Atomically publish `ledger` as the job's durable record. The caller must
-/// hold the job lock. A unique sibling temp file is created with
+/// Atomically publish `bytes` as `target` inside the namespace. The caller
+/// must hold the job lock. A unique sibling temp file is created with
 /// `create_new`, synced, renamed over the target and the namespace directory
 /// synced. Failure after the write may leave the rename outcome uncertain —
 /// callers report that as unknown rather than assuming either state.
-pub(super) fn publish(namespace: &Namespace, job_id: &str, ledger: &Ledger) -> Result<(), String> {
-    let bytes = serde_json::to_vec(ledger)
-        .map_err(|_| "engineering execution ledger cannot be encoded".to_owned())?;
-    if bytes.len() as u64 > MAX_LEDGER_BYTES {
-        return Err("engineering execution ledger exceeds its bounded size".to_owned());
+fn publish_file(
+    namespace: &Namespace,
+    target: PathBuf,
+    bytes: &[u8],
+    max_bytes: u64,
+) -> Result<(), String> {
+    if bytes.len() as u64 > max_bytes {
+        return Err("engineering execution record exceeds its bounded size".to_owned());
     }
-    let target = namespace.dir.join(format!("{job_id}.json"));
+    let job_id = target
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("job");
     for _ in 0..8 {
         let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let temporary = namespace
@@ -231,9 +240,9 @@ pub(super) fn publish(namespace: &Namespace, job_id: &str, ledger: &Ledger) -> R
             }
         };
         let result = file
-            .write_all(&bytes)
+            .write_all(bytes)
             .and_then(|()| file.sync_all())
-            .map_err(|_| "engineering execution ledger cannot be published".to_owned());
+            .map_err(|_| "engineering execution record cannot be published".to_owned());
         drop(file);
         if let Err(error) = result {
             let _ = fs::remove_file(&temporary);
@@ -254,12 +263,65 @@ pub(super) fn publish(namespace: &Namespace, job_id: &str, ledger: &Ledger) -> R
         }
         fs::rename(&temporary, &target).map_err(|_| {
             let _ = fs::remove_file(&temporary);
-            "engineering execution ledger cannot be published".to_owned()
+            "engineering execution record cannot be published".to_owned()
         })?;
         sync_directory(&namespace.dir)?;
         return Ok(());
     }
-    Err("engineering execution ledger cannot be published".to_owned())
+    Err("engineering execution record cannot be published".to_owned())
+}
+
+/// Atomically publish `ledger` as the job's durable record.
+pub(super) fn publish(namespace: &Namespace, job_id: &str, ledger: &Ledger) -> Result<(), String> {
+    let bytes = serde_json::to_vec(ledger)
+        .map_err(|_| "engineering execution ledger cannot be encoded".to_owned())?;
+    publish_file(
+        namespace,
+        namespace.dir.join(format!("{job_id}.json")),
+        &bytes,
+        MAX_LEDGER_BYTES,
+    )
+}
+
+/// Publish the bounded per-claim projection the worker verifies in place of
+/// the whole checkpoint. Written under the job lock after the pending claim
+/// is committed; a crash leaves an absent or stale projection that the
+/// worker refuses rather than guesses.
+pub(super) fn publish_claim(
+    namespace: &Namespace,
+    job_id: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    publish_file(
+        namespace,
+        namespace.dir.join(format!("{job_id}.claim.json")),
+        bytes,
+        MAX_CLAIM_BYTES,
+    )
+}
+
+/// Read the bounded per-claim projection. `Ok(None)` means it is genuinely
+/// absent; foreign shapes are `Err`.
+pub(super) fn read_claim(namespace: &Namespace, job_id: &str) -> Result<Option<Vec<u8>>, String> {
+    let path = namespace.dir.join(format!("{job_id}.claim.json"));
+    let before = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("engineering claim projection cannot be inspected".to_owned()),
+    };
+    if before.file_type().is_symlink() || !before.is_file() || before.len() > MAX_CLAIM_BYTES {
+        return Err("engineering claim projection is corrupt".to_owned());
+    }
+    let file = File::open(&path)
+        .map_err(|_| "engineering claim projection cannot be opened".to_owned())?;
+    let mut contents = Vec::new();
+    file.take(MAX_CLAIM_BYTES + 1)
+        .read_to_end(&mut contents)
+        .map_err(|_| "engineering claim projection cannot be read".to_owned())?;
+    if contents.len() as u64 > MAX_CLAIM_BYTES {
+        return Err("engineering claim projection exceeds its bounded size".to_owned());
+    }
+    Ok(Some(contents))
 }
 
 fn sync_directory(dir: &Path) -> Result<(), String> {

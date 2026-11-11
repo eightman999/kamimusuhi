@@ -270,7 +270,30 @@ impl Fixture {
         self.write_snapshot(vec![
             self.job_entry(job_id, candidate, sequence, &action, true),
         ]);
+        self.write_claim(job_id, candidate, sequence, &action, true);
         self.request_json(job_id, candidate, sequence, &action, operation_timeout_ms)
+    }
+
+    /// The bounded per-claim projection the parent publishes with the
+    /// pending commit — what the worker verifies instead of the checkpoint.
+    fn write_claim(
+        &self,
+        job_id: &str,
+        candidate: &Candidate,
+        sequence: u64,
+        action: &Value,
+        marker: bool,
+    ) {
+        fs::write(
+            self.executions().join(format!("{job_id}.claim.json")),
+            serde_json::to_vec(&json!({
+                "schema_version":1,"job_id":job_id,"phase":"active",
+                "workspace":"fixture","candidate":candidate,
+                "pending":{"sequence":sequence,"action":action,"started_at":1},
+                "execution_ledger_version":if marker { Value::from(1) } else { Value::Null }}))
+            .unwrap(),
+        )
+        .unwrap();
     }
 
     fn ledger(&self, job_id: &str) -> Value {
@@ -792,6 +815,7 @@ fn a_claim_without_the_ledger_marker_is_refused() {
         &action,
         false,
     )]);
+    fixture.write_claim(JOB, &fixture.candidate, 1, &action, false);
     let request = fixture.request_json(JOB, &fixture.candidate, 1, &action, 5000);
     let mut worker = fixture.spawn(&request);
     let reply = worker.reply();
@@ -813,6 +837,8 @@ fn independent_jobs_execute_independently_under_one_checkpoint() {
         fixture.job_entry(JOB, &fixture.candidate, 1, &action_a, true),
         fixture.job_entry(job_b, &candidate_b, 1, &action_b, true),
     ]);
+    fixture.write_claim(JOB, &fixture.candidate, 1, &action_a, true);
+    fixture.write_claim(job_b, &candidate_b, 1, &action_b, true);
     let request_a = fixture.request_json(JOB, &fixture.candidate, 1, &action_a, 5000);
     let request_b = fixture.request_json(job_b, &candidate_b, 1, &action_b, 5000);
     let mut worker_a = fixture.spawn(&request_a);
@@ -831,4 +857,40 @@ fn independent_jobs_execute_independently_under_one_checkpoint() {
         fs::read_to_string(candidate_b.path.join("out.txt")).unwrap(),
         "b\n"
     );
+}
+
+/// State growth must not strand workers: a checkpoint grown past the worker's
+/// former 64MiB read bound is still admitted because the worker verifies the
+/// bounded per-claim projection, never the whole snapshot.
+#[test]
+fn a_checkpoint_grown_past_the_former_limit_still_executes() {
+    let fixture = Fixture::new();
+    let request = fixture.request(
+        1,
+        json!({"action":"run","argv":["/bin/sh","-c","printf 'x\\n' >> grown.txt"]}),
+        5000,
+    );
+    // Grow the checkpoint beyond 64MiB with inert whitespace; the JSON is
+    // still valid, but no bounded reader may ever parse it here.
+    let mut grown = fs::OpenOptions::new()
+        .append(true)
+        .open(&fixture.state_path)
+        .unwrap();
+    grown.write_all(&vec![b' '; 65 * 1024 * 1024 + 1]).unwrap();
+    grown.sync_all().unwrap();
+    drop(grown);
+    assert!(
+        fs::metadata(&fixture.state_path).unwrap().len() > 64 * 1024 * 1024,
+        "fixture checkpoint exceeds the former worker bound"
+    );
+    let mut worker = fixture.spawn(&request);
+    let reply = worker.reply();
+    identity(&reply, 1, "run");
+    assert_eq!(reply["result"]["status"], "completed", "{reply}");
+    assert_eq!(
+        fs::read_to_string(fixture.candidate.path.join("grown.txt")).unwrap(),
+        "x\n",
+        "the run's side effect landed exactly once"
+    );
+    assert_eq!(fixture.ledger(JOB)["high_water"], 1);
 }

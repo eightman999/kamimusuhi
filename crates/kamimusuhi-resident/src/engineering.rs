@@ -1043,6 +1043,7 @@ fn tick_with_runner(
         // defers this job to a later tick without any durable change, and a
         // ledger that contradicts the marker stops the job instead of guessing.
         let mut job_lock = None;
+        let mut job_namespace = None;
         if worker_target {
             let namespace = match execution::namespace(&store.path) {
                 Ok(namespace) => namespace,
@@ -1073,6 +1074,7 @@ fn tick_with_runner(
                     return stop_admission(shared, &job.id, &reason);
                 }
             }
+            job_namespace = Some(namespace);
         }
         let claimed = store.update(&job.id, |current| {
             if current.phase != Phase::Active || current.pending.is_some() {
@@ -1119,6 +1121,26 @@ fn tick_with_runner(
             }
             Ok(())
         })?;
+        // Publish the bounded per-claim projection under the still-held job
+        // lock: it commits after the pending checkpoint and orders before the
+        // worker's own lock acquisition. A failed publish leaves no executable
+        // claim — the receipt path below clears pending and retries.
+        let mut claim_error = None;
+        if let Some(namespace) = &job_namespace {
+            let projection = json!({
+                "schema_version": 1,
+                "job_id": claimed.id,
+                "phase": claimed.phase,
+                "workspace": claimed.workspace,
+                "candidate": claimed.candidate,
+                "pending": claimed.pending,
+                "execution_ledger_version": claimed.execution_ledger_version,
+            });
+            claim_error = serde_json::to_vec(&projection)
+                .map_err(|_| "engineering claim projection cannot be encoded".to_owned())
+                .and_then(|bytes| execution::publish_claim(namespace, &claimed.id, &bytes))
+                .err();
+        }
         // The worker re-acquires the job lock itself; the parent releases it
         // before dispatch so claim creation and worker admission serialize.
         drop(job_lock);
@@ -1144,29 +1166,35 @@ fn tick_with_runner(
                 }
             }
             Action::Run { .. } | Action::Verify | Action::Finish { .. } => {
-                match runner.execute(&store.path, &claimed, policy, &limits, &store.cancel) {
-                    worker::Dispatch::Completed(Ok(worker::Outcome::Run { observation })) => {
-                        confirmed_run = true;
-                        Ok(observation)
-                    }
-                    worker::Dispatch::Completed(Ok(worker::Outcome::Verified {
-                        validation: checks,
-                    })) => {
-                        confirmed_run = true;
-                        let observed = workspace::Observation {
-                            ok: checks.passed,
-                            detail: json!({"validation":checks}),
-                        };
-                        validation = Some(checks);
-                        Ok(observed)
-                    }
-                    worker::Dispatch::Completed(Err(error)) => {
-                        confirmed_run = true;
-                        Err(error)
-                    }
-                    worker::Dispatch::Rejected(error) => Err(error),
-                    worker::Dispatch::Unknown(reason) => {
-                        return pause_unknown_action(shared, &claimed, sequence, &action, &reason);
+                if let Some(error) = claim_error {
+                    Err(error)
+                } else {
+                    match runner.execute(&store.path, &claimed, policy, &limits, &store.cancel) {
+                        worker::Dispatch::Completed(Ok(worker::Outcome::Run { observation })) => {
+                            confirmed_run = true;
+                            Ok(observation)
+                        }
+                        worker::Dispatch::Completed(Ok(worker::Outcome::Verified {
+                            validation: checks,
+                        })) => {
+                            confirmed_run = true;
+                            let observed = workspace::Observation {
+                                ok: checks.passed,
+                                detail: json!({"validation":checks}),
+                            };
+                            validation = Some(checks);
+                            Ok(observed)
+                        }
+                        worker::Dispatch::Completed(Err(error)) => {
+                            confirmed_run = true;
+                            Err(error)
+                        }
+                        worker::Dispatch::Rejected(error) => Err(error),
+                        worker::Dispatch::Unknown(reason) => {
+                            return pause_unknown_action(
+                                shared, &claimed, sequence, &action, &reason,
+                            );
+                        }
                     }
                 }
             }

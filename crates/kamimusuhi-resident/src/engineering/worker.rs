@@ -6,7 +6,6 @@
 //! while this worker remains alive. This is not an OS sandbox, a durable
 //! execution fence, or a guarantee that escaped descendants have terminated.
 
-use std::fs::File;
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,13 +16,12 @@ use serde::{Deserialize, Serialize};
 
 use super::lease::{AcquireError, Mode};
 use super::workspace::{self, Action, Candidate, Limits, Observation, Validation, WorkspaceConfig};
-use super::{Job, Phase, Snapshot, checkpoint, execution};
+use super::{Job, PendingAction, Phase, execution};
 
 pub(super) const ENTRY: &str = "engineering-worker";
 const VERSION: u32 = 2;
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 const MAX_REPLY_BYTES: usize = 1024 * 1024;
-const MAX_CHECKPOINT_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ERROR_BYTES: usize = 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const CLEANUP_GRACE: Duration = Duration::from_secs(2);
@@ -335,68 +333,62 @@ enum ClaimCheck {
 /// deliberately neither acquires the resident's lease nor recovers/writes
 /// its checkpoint; the per-job lock plus the execution ledger close the
 /// boundary between this check and execution start.
-fn verify_claim(request: &Request) -> Result<(), ClaimCheck> {
+/// The bounded projection of exactly one committed claim. The worker
+/// verifies currency from this file instead of the whole checkpoint, whose
+/// unbounded job accumulation cannot reach the worker's read bound.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClaimProjection {
+    schema_version: u32,
+    job_id: String,
+    phase: Phase,
+    workspace: String,
+    candidate: Candidate,
+    pending: PendingAction,
+    execution_ledger_version: Option<u32>,
+}
+
+/// Read-only stale-claim barrier evaluated while holding the job lock. It
+/// deliberately neither acquires the resident's lease nor recovers/writes
+/// its checkpoint; the per-job lock plus the execution ledger close the
+/// boundary between this check and execution start. The durable checkpoint
+/// file itself must exist as a regular file — an absent store cannot own a
+/// live claim — but it is never fully read here.
+fn verify_claim(request: &Request, namespace: &execution::Namespace) -> Result<(), ClaimCheck> {
     let invalid = |error: &str| ClaimCheck::Invalid(error.to_owned());
     let mismatch = |error: &str| ClaimCheck::Mismatch(error.to_owned());
     let metadata = std::fs::symlink_metadata(&request.state_path)
         .map_err(|_| invalid("engineering worker checkpoint is unavailable"))?;
-    if !metadata.file_type().is_file() || metadata.len() > MAX_CHECKPOINT_BYTES {
-        return Err(invalid(
-            "engineering worker checkpoint is not a bounded regular file",
-        ));
-    }
-    let file = File::open(&request.state_path)
-        .map_err(|_| invalid("engineering worker checkpoint cannot be opened"))?;
-    if !file
-        .metadata()
-        .map_err(|_| invalid("engineering worker checkpoint cannot be inspected"))?
-        .is_file()
-    {
+    if !metadata.file_type().is_file() {
         return Err(invalid(
             "engineering worker checkpoint is not a regular file",
         ));
     }
-    let mut bytes = Vec::new();
-    file.take(MAX_CHECKPOINT_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| invalid("engineering worker checkpoint cannot be read"))?;
-    if bytes.len() as u64 > MAX_CHECKPOINT_BYTES {
+    let bytes = match execution::read_claim(namespace, &request.job_id) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return Err(mismatch("engineering worker claim is not published")),
+        Err(error) => return Err(invalid(&error)),
+    };
+    let claim: ClaimProjection = serde_json::from_slice(&bytes)
+        .map_err(|_| invalid("engineering worker claim projection is malformed"))?;
+    if claim.schema_version != 1 || claim.job_id != request.job_id {
         return Err(invalid(
-            "engineering worker checkpoint exceeds its byte limit",
+            "engineering worker claim projection identity is invalid",
         ));
     }
-    let snapshot: Snapshot = serde_json::from_slice(&bytes)
-        .map_err(|_| invalid("engineering worker checkpoint is malformed"))?;
-    if snapshot.schema_version != checkpoint::CURRENT_SCHEMA_VERSION {
-        return Err(invalid("engineering worker checkpoint requires recovery"));
-    }
-    let candidate_root = request
-        .candidate
-        .path
-        .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| invalid("engineering worker candidate root is invalid"))?;
-    checkpoint::validate(&snapshot, candidate_root)
-        .map_err(|_| invalid("engineering worker checkpoint is inconsistent"))?;
-    let job = snapshot
-        .jobs
-        .iter()
-        .find(|job| job.id == request.job_id)
-        .ok_or_else(|| mismatch("engineering worker pending job no longer exists"))?;
     // The parent publishes the marker with the pending claim in one
     // checkpoint transaction; a claim without the contract marker is a
     // durability defect, not an executable request.
-    if job.execution_ledger_version != Some(execution::LEDGER_MARKER_VERSION) {
+    if claim.execution_ledger_version != Some(execution::LEDGER_MARKER_VERSION) {
         return Err(invalid(
             "engineering worker job lacks its execution ledger marker",
         ));
     }
-    if job.phase != Phase::Active
-        || job.workspace != request.policy.name
-        || job.candidate != request.candidate
-        || !job.pending.as_ref().is_some_and(|pending| {
-            pending.sequence == request.sequence && pending.action == request.claimed_action
-        })
+    if claim.phase != Phase::Active
+        || claim.workspace != request.policy.name
+        || claim.candidate != request.candidate
+        || claim.pending.sequence != request.sequence
+        || claim.pending.action != request.claimed_action
     {
         return Err(mismatch(
             "engineering worker pending action is no longer current",
@@ -443,7 +435,7 @@ fn execute(request: &Request, cancel: &AtomicBool) -> ReplyResult {
     if request.sequence <= ledger.high_water {
         return unknown("engineering execution sequence is already reserved");
     }
-    match verify_claim(request) {
+    match verify_claim(request, &namespace) {
         Ok(()) => {}
         Err(ClaimCheck::Invalid(error)) => return unknown(&error),
         Err(ClaimCheck::Mismatch(error)) => return rejected(&error),
