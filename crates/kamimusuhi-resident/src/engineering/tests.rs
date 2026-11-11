@@ -2085,3 +2085,66 @@ fn semantic_checkpoint_rejects_runs_beyond_recorded_attempts() {
         "runs without attempts must be quarantined"
     );
 }
+
+/// Replanning capability (§7.5): the model receives failed-check evidence in
+/// its decision context, and switching methods on that observation is what
+/// completes the job. Repeating the identical failing method never does.
+#[test]
+fn observed_failures_support_a_method_switch_that_finishes_the_job() {
+    let fixture = fixture();
+    let id = create(&fixture.shared);
+    prepare(&fixture.shared, &id);
+    let wrong_run = || Action::Run {
+        argv: vec![
+            "sh".to_owned(),
+            "-c".to_owned(),
+            "printf 'half-fixed\\n' > code.txt".to_owned(),
+        ],
+    };
+    let model = ScriptedModel::new([
+        wrong_run(),
+        Action::Verify,
+        wrong_run(),
+        Action::Verify,
+        Action::Replace {
+            path: "code.txt".to_owned(),
+            old: "half-fixed\n".to_owned(),
+            new: "fixed\n".to_owned(),
+        },
+        Action::Verify,
+        finish(),
+    ]);
+
+    action(&fixture.shared, &model); // run: writes half-fixed
+    action(&fixture.shared, &model); // verify 1: fails
+    assert_eq!(job(&fixture.shared, &id)["validation"]["passed"], false);
+    action(&fixture.shared, &model); // same method repeated
+    action(&fixture.shared, &model); // verify 2: fails again
+    assert_eq!(job(&fixture.shared, &id)["phase"], "active");
+    assert_eq!(count(&fixture.validation_count), 2);
+
+    // The replanning basis is measured: the model's decision contexts carry
+    // the failed-check evidence, not just an ok flag.
+    let contexts = model.contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 4);
+    let check_text =
+        contexts[3]["validation"].to_string() + &contexts[3]["observations"].to_string();
+    assert!(
+        check_text.contains("exit_code") || check_text.contains("\"ok\":false"),
+        "failed verification is observable to the model: {check_text}"
+    );
+    drop(contexts);
+
+    action(&fixture.shared, &model); // replace: different method
+    action(&fixture.shared, &model); // verify 3: passes
+    assert_eq!(job(&fixture.shared, &id)["validation"]["passed"], true);
+    action(&fixture.shared, &model); // finish: passes
+    assert_eq!(job(&fixture.shared, &id)["phase"], "ready");
+    // finish re-runs the configured checks; verify×3 + finish = 4 measured runs.
+    assert_eq!(count(&fixture.validation_count), 4);
+    assert_eq!(
+        std::fs::read_to_string(candidate(&fixture.shared, &id).join("code.txt")).unwrap(),
+        "fixed\n"
+    );
+    model.assert_consumed();
+}
