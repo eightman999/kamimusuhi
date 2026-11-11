@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 5.206055,
+  "elapsed_hours": 5.235,
   "target_hours": 24.0,
   "cycle": 21,
-  "current_task": "cycle21のjob別OS lock+永続execution ledger+markerを実装・検証・push済み(266a312)。次は§7優先課題へ。",
+  "current_task": "§7優先課題(1)-(5)を実装・測定・push済み:inspect(5153531)/長期修復(799eabd)/証拠精密化(f4baf19)/64MiB成長対策=per-claim projection(44b8750)/再計画能力評価(4151048)。",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
-  "last_checkpoint_at": "2026-11-11T17:33:00Z",
+  "last_checkpoint_at": "2026-11-11T17:34:46Z",
   "active_session_started_at": "2026-11-11T17:13:00Z",
   "session_elapsed_base_hours": 4.526979,
   "status": "active",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
-  "next_task": "§7(1) Candidate Inspect:過去検証結果と現在HEAD・未commit変更・候補存在の明示的読み取り比較",
+  "next_task": "BACKLOG再評価:新しい欠陥候補なら最優先で修正、なければ次の測定課題(worker並行時の親resume競合の実プロセス観測など)を選択",
   "completed_sessions": [
     {
       "started_at": "2026-11-08T16:06:48Z",
@@ -53,9 +53,9 @@
     },
     {
       "started_at": "2026-11-11T17:13:00Z",
-      "ended_at": "2026-11-11T17:33:00Z",
-      "elapsed_hours": 0.3333,
-      "end_evidence": "cycle20 CI log終了・cycle21 commit 266a312 push確認 remote HEAD一致"
+      "ended_at": "2026-11-11T17:34:46Z",
+      "elapsed_hours": 0.3628,
+      "end_evidence": "§7.1-7.5の実装・テスト・commit/push・remote HEAD確認まで連続実作業"
     }
   ],
   "excluded_idle_interval": {
@@ -89,7 +89,7 @@
     2,
     3
   ],
-  "last_verified_change_commit": "266a3125cf96374c1940fd0f533732c1f873073f",
+  "last_verified_change_commit": "415104832c8e5eb11bfba964afa167975e4fc8e5",
   "resume_guide": "docs/harness-marathon/RESUME.md",
   "evaluation": "evaluation/harness/marathon-20261109.json",
   "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。",
@@ -277,11 +277,38 @@
     "gates": {
       "fmt": "PASS",
       "clippy_all_targets_features": "PASS",
-      "engineering_lib": "85/85 PASS",
-      "engineering_worker": "11 PASS +1 ignored",
+      "engineering_lib": "91/91 PASS",
+      "engineering_worker": "12 PASS +1 ignored",
       "engineering_http": "7 PASS +1 ignored"
     },
     "race_tests": "並行二重送付・完了後再送・同一sequence別引数・予約後実行前終了相当・ledger消失/破損・marker無し・独立job:外部counterで副作用≤1を確認",
     "wire_version": 2
+  },
+  "section7_progress": {
+    "inspect_action": {
+      "commit": "51535310232b8cbf3ac62683435fa5900437fe41",
+      "status": "implemented+tested+pushed",
+      "note": "Action::Inspect:記録検証とlive candidate/HEAD/未commit変更をgit probeで比較。missing/unreachableはデータとして報告"
+    },
+    "long_repair_test": {
+      "commit": "799eabdc93a301b36bf9eded692a4e83f427ed58",
+      "status": "implemented+tested+pushed",
+      "note": "複数file・複数失敗原因・途中中断を含む反応型修復テスト。verify()はfail-fastで後段checkは先行成功時のみ計測"
+    },
+    "evidence_precision": {
+      "commit": "f4baf19d55933ed7333d16666ec78fc2433ff5c5",
+      "status": "implemented+tested+pushed",
+      "note": "Metrics.verification_attempts(Option):claim時+1(Verify|Finish)。Rejectedは記録済検証を消さない。checkpoint整合性にruns>attemptsまたはattempts>decisionsを追加"
+    },
+    "state_growth_64mib": {
+      "commit": "44b8750cb26ce7faffb7d6e5765cc3bef1f1e260",
+      "status": "implemented+tested+pushed",
+      "note": "欠陥を確認:worker verify_claimがcheckpoint全体を64MiB上限で読む→成長後は全dispatch不可。per-claim projection(<job>.claim.json、MAX_CLAIM_BYTES=1MiB)をjob lock下でpublishしworkerはそれを検証。65MiB checkpointで実行成功のregression test"
+    },
+    "replanning_evaluation": {
+      "commit": "415104832c8e5eb11bfba964afa167975e4fc8e5",
+      "status": "evaluated+tested+pushed",
+      "note": "同一失敗方法の反復ではjob完了せず、失敗check証拠がmodel contextへ観測可能に供給され、replaceへ切替で完了を測定"
+    }
   }
 }

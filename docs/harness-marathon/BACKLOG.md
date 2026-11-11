@@ -2,7 +2,7 @@
 
 ## 次にやること
 
-cycle21(重複実行抑止)は実装・検証・push済み(commit 266a312)。次の最優先は§7(1) Candidate Inspect: 過去の検証結果と現在git HEAD・未commit変更・候補の存在を明示的な読み取り操作で比較する能力。続いて長期修復の反応型評価、実行証拠の精密化、checkpoint成長とworker 64MiB上限、再計画能力評価。
+§7(1)-(5)は全て実装・測定・push済み: inspect(5153531)、長期修復(799eabd)、証拠精密化(f4baf19)、64MiB成長=per-claim projection(44b8750)、再計画評価(4151048)。次の選択肢: (a) 親resumeと実行中workerの実プロセス競合観測、(b) job増加時のclaim projection増設境界、(c) BACKLOG残項の最安確認。新欠陥が見つかれば修正を優先。
 
 ## 現在の最優先（2026-11-09更新）
 
@@ -12,9 +12,9 @@ cycle21(重複実行抑止)は実装・検証・push済み(commit 266a312)。次
 | P1 | 自律loopのtraceと評価 | 決定的成功率/repair/再開重複/action数を記録 |
 | P1 | claim済みactionの実process中断 | コマンド途中のkill後に副作用と未確認receiptを保持し、自動再実行しない |
 | P1 | 長期修復の多段シナリオ | cycle18の診断保持から、異なる失敗原因/複数file/中断を含む反応型評価へ拡張 |
-| **P0(次)** | 候補の明示inspect | 一件・短い総期限の読取で観測時刻と一致/変更/到達不能を表示。status全件でgitを起動しない |
-| P1 | 検証試行と実check数の区別 | Rejectedもverification_runsへ入る現状をfixtureで測り、実開始とrequest試行を区別 |
-| P1 | checkpoint成長とworker読取上限 | workerの64MiB上限と無制限job蓄積の接点を測定し、個別claim投影を検討 |
+| ~~P0~~ | ~~候補の明示inspect~~ | **完了(5153531)**: Action::Inspectでgit probe比較 |
+| ~~P1~~ | ~~検証試行と実check数の区別~~ | **完了(f4baf19)**: verification_attemptsで区別、Rejectedは消さない |
+| ~~P1~~ | ~~checkpoint成長とworker読取上限~~ | **完了(44b8750)**: per-claim projectionで解消 |
 | P2 | ACP出力のメモリと切断 | 独自BufReader::lines/channelの上限と不完全protocolの扱いをfixtureで確認 |
 | P1 | provider transportのprocess所有 | cycle19のOwnedChild以外にあるprovider_processのreap後signalを独立して確認 |
 | P1 | cleanupの確認をreceiptへ伝える | best-effort停止エラーと停止確認を区別し、未知の終了を確定結果にしない |

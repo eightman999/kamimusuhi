@@ -67,6 +67,10 @@ cycle8でOS lease、checkpoint意味検査、実行途中の実daemon再起動�
 - approval/judgeは現状MCP専用。Approvalへserde(default)のtyped targetを加え、旧recordをMCPとして読む案を検討。承認後はprivateな固定builtin dispatcherで設定/引数を再検証する。
 - `runtime/dialogue.rs` は採用結果のToolCallRecordをResourceResult/Reportedとして保存する。外部本文はtool resultに留める。
 
+## 2026-11-12 JST cycle21+§7(1)-(5) 完了
+
+branch `exp/harness-marathon-20261109`、remote HEAD `4151048`。cycle21(execution ledger+job lock)に続き§7優先課題5件を実装・測定・push済み。workerのclaim検証はcheckpoint全体ではなく有界な per-claim projection(`<job>.claim.json`)を読むため、checkpointの成長でworkerが停止しない。累計実作業5.235h/24h。次はBACKLOG再評価か親resume競合の実プロセス観測。
+
 ## 次の検証
 
 - 最新の全CIはSTATE.last_ci_passed_commitを参照。11ef050のPASSはcycle18/19/20を含まないため、cycle20凍結版で実行する。

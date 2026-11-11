@@ -686,3 +686,32 @@ fmt/clippy/build PASS。workspace lib tests 322 pass/1 fail: `git_tool::tests::g
 
 ### 記録
 commit 266a3125cf96374c1940fd0f533732c1f873073f → push済み、remote HEAD一致確認。実作業+0.3333h(累計5.206055/24h、未達)。
+
+## §7(1)-(5): 引き継ぎ優先課題の実装と測定 (2026-11-12 JST / 17:26-17:35 UTC)
+
+### (1) Candidate Inspect — 5153531
+`Action::Inspect` を追加: 記録済み検証とlive候補を git probe(rev-parse worktree / symbolic-ref branch / rev-parse HEAD / status --porcelain)で比較。detailは `{candidate{exists,state,branch,branch_matches}, head{current,base,state}, uncommitted{count,sample,truncated}, verification{recorded,passed,head,policy_digest,completed_at,state}}`。missing/unreachableはデータとしてok=true報告、probe失敗は該当fieldのみdegrade。テスト: live比較・missing候補のdata報告。→ ready_fixtureではなくverified_fixture使用(Ready jobはtick対象外)。
+
+### (2) 長期修復の反応型評価 — 799eabd
+`repair_spans_files_and_failure_causes_across_a_mid_repair_interruption`: fixture_two_checks(2原因)で fix→verify失敗→fix→verify→中断restart→fix→finishを通し、複数file/複数原因/途中中断を含む修復を測定。実測で `workspace::verify` が fail-fast(`!passed break`)であることを確認 — 後段checkは先行成功時のみ実行され、countは段階的に増える。
+
+### (3) 実行証拠の精密化 — f4baf19
+`Metrics.verification_attempts: Option<u64>`: claim時に Verify|Finish で+1(実check起動と区別)。confirmed_run(Dispatch::Completed)のみ verification_runs/failures/repair_pending/validation を更新し、Rejectedは記録済み検証を消さない(旧欠陥: Rejectedがvalidationをwiped)。checkpoint整合性: runs>attempts または attempts>decisions をinconsistentとしてquarantine。legacy(field無し)は許容、明示0+runs=2は拒否。
+
+### (4) checkpoint成長 vs worker 64MiB — 44b8750
+**欠陥確認**: worker `verify_claim` がcheckpoint全体を MAX_CHECKPOINT_BYTES=64MiB でread→上限超過後は resident の無制限 load は通るが全worker dispatch が verify できず job 永久停止。
+**修正**: `<job>.claim.json` projection(schema_version/job_id/phase/workspace/candidate/pending{sequence,action}/marker)を job lock下・pending commit直後に publish(create_new+sync+rename+dirsync)。workerは有界projectionを検証、checkpointは regular file 存在のみ要求。publish失敗→claim拒否→receipt pathがpendingをclear。
+**実測**: 65MiB超checkpointで run 完了・外部counter=1・ledger high_water=1(新regression test `a_checkpoint_grown_past_the_former_limit_still_executes`)。
+
+### (5) 再計画能力評価 — 4151048
+`observed_failures_support_a_method_switch_that_finishes_the_job`: 同一失敗method(half-fixed run)×2反復ではjob完了せず、model context へ失敗check証拠(exit_code/ok:false)が観測可能に供給されることを測定。replaceへの切替でverify通過→finish→ready。→ ハーネスは観測に基づくmethod switchをサポート。
+
+### ゲート(cumulative)
+| gate | 結果 |
+|---|---|
+| fmt --check | PASS |
+| clippy -D warnings | PASS |
+| --lib engineering:: | 91/91 PASS |
+| --test engineering_worker | 12 PASS +1 ignored |
+
+push: 5153531/799eabd/f4baf19/44b8750/4151048 → exp/harness-marathon-20261109、remote HEAD=4151048一致確認。実作業累計 5.235h/24h(未達)。
