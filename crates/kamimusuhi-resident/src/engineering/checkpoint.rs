@@ -113,6 +113,11 @@ pub(super) fn validate(snapshot: &Snapshot, candidate_root: &Path) -> Result<(),
             || metrics.verification_runs > metrics.actions
             || metrics.actions > metrics.decisions
             || metrics.repairs > metrics.actions
+            // A recorded run requires a recorded attempt; `None` means the
+            // counter predates its introduction and cannot be checked.
+            || metrics.verification_attempts.is_some_and(|attempts| {
+                metrics.verification_runs > attempts || attempts > metrics.decisions
+            })
         {
             return Err("engineering checkpoint counters are inconsistent".into());
         }

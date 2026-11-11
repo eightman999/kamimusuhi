@@ -111,6 +111,13 @@ pub struct WorkingMemory {
 pub struct Metrics {
     pub decisions: u64,
     pub actions: u64,
+    /// Durable claims issued for Verify/Finish. A claim is an attempt even
+    /// when the worker refuses it before any check starts. `None` marks a
+    /// checkpoint written before this counter existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_attempts: Option<u64>,
+    /// Verification commands confirmed executed — the worker ran the
+    /// configured checks and returned a measured result.
     pub verification_runs: u64,
     pub verification_failures: u64,
     pub repairs: u64,
@@ -1092,6 +1099,17 @@ fn tick_with_runner(
             if worker_target {
                 current.execution_ledger_version = Some(execution::LEDGER_MARKER_VERSION);
             }
+            // The claim is the verification attempt; whether a check process
+            // actually started is recorded separately at receipt time.
+            if matches!(action, Action::Verify | Action::Finish { .. }) {
+                current.metrics.verification_attempts = Some(
+                    current
+                        .metrics
+                        .verification_attempts
+                        .unwrap_or(0)
+                        .saturating_add(1),
+                );
+            }
             // Persist recovery with the claim: a paused proposal or failed save
             // must not close the episode, and later actions must not retime it.
             if let Some(episode) = &mut current.model_recovery
@@ -1111,6 +1129,9 @@ fn tick_with_runner(
             .sequence;
         let limits = config.limits();
         let mut validation = None;
+        // A confirmed dispatch started a real process; a rejection or an
+        // unknown outcome must not be measured as a completed verification.
+        let mut confirmed_run = false;
         let result = match &action {
             Action::Checkpoint { summary, next_step } => {
                 if summary.len() > 4096 || next_step.len() > 2048 {
@@ -1125,11 +1146,13 @@ fn tick_with_runner(
             Action::Run { .. } | Action::Verify | Action::Finish { .. } => {
                 match runner.execute(&store.path, &claimed, policy, &limits, &store.cancel) {
                     worker::Dispatch::Completed(Ok(worker::Outcome::Run { observation })) => {
+                        confirmed_run = true;
                         Ok(observation)
                     }
                     worker::Dispatch::Completed(Ok(worker::Outcome::Verified {
                         validation: checks,
                     })) => {
+                        confirmed_run = true;
                         let observed = workspace::Observation {
                             ok: checks.passed,
                             detail: json!({"validation":checks}),
@@ -1137,9 +1160,11 @@ fn tick_with_runner(
                         validation = Some(checks);
                         Ok(observed)
                     }
-                    worker::Dispatch::Completed(Err(error)) | worker::Dispatch::Rejected(error) => {
+                    worker::Dispatch::Completed(Err(error)) => {
+                        confirmed_run = true;
                         Err(error)
                     }
+                    worker::Dispatch::Rejected(error) => Err(error),
                     worker::Dispatch::Unknown(reason) => {
                         return pause_unknown_action(shared, &claimed, sequence, &action, &reason);
                     }
@@ -1165,13 +1190,15 @@ fn tick_with_runner(
             current.metrics.actions = current.metrics.actions.saturating_add(1);
             current.next_attempt_at = 0;
             current.last_error = (!ok).then(|| clipped(&detail.to_string(), 2048));
-            if matches!(action, Action::Verify | Action::Finish { .. }) {
+            if matches!(action, Action::Verify | Action::Finish { .. }) && confirmed_run {
                 current.metrics.verification_runs =
                     current.metrics.verification_runs.saturating_add(1);
                 if !ok {
                     current.metrics.verification_failures =
                         current.metrics.verification_failures.saturating_add(1);
                 }
+                // Only a measured verification opens or closes a repair
+                // episode and replaces the recorded evidence.
                 current.repair_pending = !ok;
                 current.validation = validation;
             } else if matches!(

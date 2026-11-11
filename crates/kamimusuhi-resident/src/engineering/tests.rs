@@ -1993,3 +1993,95 @@ fn repair_spans_files_and_failure_causes_across_a_mid_repair_interruption() {
         "done\n"
     );
 }
+
+/// A runner whose dispatch is refused before any check starts: the claim is
+/// a verification attempt, but no command ran, so the run/failure counters,
+/// recorded evidence and repair episode are left untouched.
+struct RejectingRunner;
+
+impl super::ActionRunner for RejectingRunner {
+    fn execute(
+        &self,
+        _state_path: &Path,
+        _claimed: &Job,
+        _policy: &WorkspaceConfig,
+        _limits: &workspace::Limits,
+        _cancel: &AtomicBool,
+    ) -> worker::Dispatch {
+        worker::Dispatch::Rejected("worker refused the claim before starting".into())
+    }
+}
+
+#[test]
+fn a_rejected_verification_is_an_attempt_not_a_run() {
+    let fixture = fixture();
+    let id = create(&fixture.shared);
+    prepare(&fixture.shared, &id);
+
+    let model = ScriptedModel::new([Action::Verify]);
+    assert!(
+        super::tick_with_runner(&fixture.shared, &model, &RejectingRunner)
+            .expect("rejected tick")
+            .is_some()
+    );
+    let rejected = job(&fixture.shared, &id);
+    assert_eq!(rejected["phase"], "active");
+    assert_eq!(rejected["metrics"]["verification_attempts"], 1);
+    assert_eq!(rejected["metrics"]["verification_runs"], 0);
+    assert_eq!(rejected["metrics"]["verification_failures"], 0);
+    assert_eq!(rejected["validation"], Value::Null);
+    assert_eq!(rejected["repair_pending"], false);
+    assert_eq!(count(&fixture.validation_count), 0);
+
+    // A real dispatch still verifies normally afterwards.
+    let model = ScriptedModel::new([fix(), Action::Verify]);
+    action(&fixture.shared, &model);
+    action(&fixture.shared, &model);
+    let verified = job(&fixture.shared, &id);
+    assert_eq!(verified["metrics"]["verification_attempts"], 2);
+    assert_eq!(verified["metrics"]["verification_runs"], 1);
+    assert_eq!(verified["metrics"]["verification_failures"], 0);
+    assert_eq!(verified["validation"]["passed"], true);
+    assert_eq!(count(&fixture.validation_count), 1);
+}
+
+#[test]
+fn semantic_checkpoint_rejects_runs_beyond_recorded_attempts() {
+    let fixture = fixture();
+    let id = create(&fixture.shared);
+    prepare(&fixture.shared, &id);
+    let model = ScriptedModel::new([fix(), Action::Verify]);
+    action(&fixture.shared, &model);
+    action(&fixture.shared, &model);
+    assert_eq!(
+        job(&fixture.shared, &id)["metrics"]["verification_attempts"],
+        1
+    );
+
+    let mut persisted = checkpoint(&fixture);
+    let saved = persisted["jobs"].as_array_mut().unwrap()[0]
+        .as_object_mut()
+        .unwrap();
+    saved["metrics"]
+        .as_object_mut()
+        .unwrap()
+        .remove("verification_attempts");
+    // A legacy store predating the counter stays loadable.
+    write_checkpoint(&fixture, &persisted);
+    let fixture = restart(fixture);
+    assert_eq!(job(&fixture.shared, &id)["metrics"]["verification_runs"], 1);
+
+    // Rewriting attempts below the recorded runs is inconsistent.
+    let mut persisted = checkpoint(&fixture);
+    let saved = persisted["jobs"].as_array_mut().unwrap()[0]
+        .as_object_mut()
+        .unwrap();
+    saved["metrics"]["verification_attempts"] = json!(0);
+    saved["metrics"]["verification_runs"] = json!(2);
+    write_checkpoint(&fixture, &persisted);
+    let fixture = restart(fixture);
+    assert!(
+        fixture.shared.engineering.get(&id).is_none(),
+        "runs without attempts must be quarantined"
+    );
+}
