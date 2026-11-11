@@ -1829,3 +1829,167 @@ fn inspect_reports_a_missing_candidate_as_data() {
     assert!(detail.get("head").is_none(), "{detail}");
     assert_eq!(job(&fixture.shared, &id)["phase"], "active");
 }
+
+/// Two independent checks measure two distinct failure causes on separate
+/// external counters, across several files and a mid-repair restart.
+fn fixture_two_checks() -> Fixture {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    git(&workspace, &["init", "-q"]);
+    std::fs::write(workspace.join("code.txt"), "broken\n").unwrap();
+    std::fs::write(workspace.join("notes.txt"), "original notes\n").unwrap();
+    git(&workspace, &["add", "."]);
+    git(
+        &workspace,
+        &[
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@local",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "initial",
+        ],
+    );
+
+    let validation_count = dir.path().join("validation-count");
+    let validator = dir.path().join("validate.sh");
+    std::fs::write(
+        &validator,
+        "#!/bin/sh\nset -eu\nprintf 'check\\n' >> \"$1\"\ntest \"$(cat code.txt)\" = fixed\n",
+    )
+    .unwrap();
+    let notes_count = dir.path().join("notes-count");
+    let notes_validator = dir.path().join("validate-notes.sh");
+    std::fs::write(
+        &notes_validator,
+        "#!/bin/sh\nset -eu\nprintf 'notes\\n' >> \"$1\"\ntest \"$(cat notes.txt)\" = done\n",
+    )
+    .unwrap();
+    let command_count = dir.path().join("command-count");
+    let command_script = dir.path().join("command.sh");
+    std::fs::write(
+        &command_script,
+        "#!/bin/sh\nset -eu\nprintf 'run\\n' >> \"$1\"\n",
+    )
+    .unwrap();
+
+    let config: Config = serde_json::from_value(json!({
+        "node": {"id": "test", "role": "cognition", "listen": "127.0.0.1:0"},
+        "paths": {"root": dir.path()},
+        "engineering": {
+            "model": "auto",
+            "operation_timeout_secs": 5,
+            "validation_timeout_secs": 5,
+            "workspaces": [{
+                "name": "fixture",
+                "path": workspace,
+                "checks": [
+                    ["sh", validator, validation_count],
+                    ["sh", notes_validator, notes_count]
+                ],
+                "commands": ["sh"]
+            }]
+        }
+    }))
+    .unwrap();
+    config.validate().unwrap();
+    let spool = Spool::new(dir.path().join("spool"), "test").unwrap();
+    let shared = Shared::new(config, spool, 1, None);
+    Fixture {
+        dir,
+        shared,
+        workspace,
+        validation_count,
+        command_count,
+        command_script,
+    }
+}
+
+#[test]
+fn repair_spans_files_and_failure_causes_across_a_mid_repair_interruption() {
+    let fixture = fixture_two_checks();
+    let notes_count = fixture.dir.path().join("notes-count");
+    let id = create(&fixture.shared);
+    prepare(&fixture.shared, &id);
+
+    // First failure has two independent causes on separate counters.
+    let model = ScriptedModel::new([
+        finish(),
+        Action::Write {
+            path: "code.txt".into(),
+            content: "fixed\n".into(),
+            expected: Some("broken\n".into()),
+        },
+        Action::Verify,
+    ]);
+    action(&fixture.shared, &model);
+    let first = job(&fixture.shared, &id);
+    assert_eq!(first["phase"], "active");
+    assert_eq!(first["validation"]["passed"], false);
+    // Validation is fail-fast: the second check is not measured until the
+    // first cause is repaired.
+    assert_eq!(first["validation"]["checks"].as_array().unwrap().len(), 1);
+    assert_eq!(first["validation"]["checks"][0]["exit_code"], 1);
+    assert_eq!(count(&fixture.validation_count), 1);
+    assert_eq!(count(&notes_count), 0);
+
+    // Repairing one file clears only its own check; the second cause is
+    // measured for the first time on the next verification.
+    action(&fixture.shared, &model);
+    action(&fixture.shared, &model);
+    let partial = job(&fixture.shared, &id);
+    assert_eq!(partial["metrics"]["repairs"], 1);
+    assert_eq!(partial["validation"]["checks"][0]["exit_code"], 0);
+    assert_eq!(partial["validation"]["checks"][1]["exit_code"], 1);
+    assert_eq!(partial["validation"]["passed"], false);
+    assert_eq!(partial["metrics"]["verification_failures"], 2);
+    assert_eq!(count(&fixture.validation_count), 2);
+    assert_eq!(count(&notes_count), 1);
+    model.assert_consumed();
+
+    // An interruption mid-repair preserves the pending failure without
+    // replaying anything or inferring a pass.
+    set_pending(&fixture, &id, Action::Verify);
+    let fixture = restart(fixture);
+    let restored = job(&fixture.shared, &id);
+    assert_eq!(restored["phase"], "paused");
+    assert_eq!(restored["metrics"]["interruptions"], 1);
+    assert_eq!(restored["metrics"]["repairs"], 1);
+    assert_eq!(restored["validation"], Value::Null);
+    assert_eq!(count(&fixture.validation_count), 2);
+    assert_eq!(count(&notes_count), 1);
+    let (status, reply) = handle(&fixture.shared, &json!({"action": "resume", "id": id}));
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(job(&fixture.shared, &id)["phase"], "active");
+
+    // The remaining cause is repaired on the preserved candidate, and only
+    // a real pass completes the job.
+    let model = ScriptedModel::new([
+        Action::Write {
+            path: "notes.txt".into(),
+            content: "done\n".into(),
+            expected: Some("original notes\n".into()),
+        },
+        finish(),
+    ]);
+    action(&fixture.shared, &model);
+    action(&fixture.shared, &model);
+    model.assert_consumed();
+    let completed = job(&fixture.shared, &id);
+    assert_eq!(completed["phase"], "ready");
+    assert_eq!(completed["metrics"]["repairs"], 2);
+    assert_eq!(completed["metrics"]["verification_runs"], 3);
+    assert_eq!(completed["metrics"]["verification_failures"], 2);
+    assert_eq!(completed["metrics"]["interruptions"], 1);
+    assert_eq!(completed["validation"]["passed"], true);
+    assert_eq!(count(&fixture.validation_count), 3);
+    assert_eq!(count(&notes_count), 2);
+    assert_eq!(
+        std::fs::read_to_string(candidate(&fixture.shared, &id).join("notes.txt")).unwrap(),
+        "done\n"
+    );
+}
