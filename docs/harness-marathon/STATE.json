@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 5.235,
+  "elapsed_hours": 5.24,
   "target_hours": 24.0,
   "cycle": 21,
-  "current_task": "§7優先課題(1)-(5)を実装・測定・push済み:inspect(5153531)/長期修復(799eabd)/証拠精密化(f4baf19)/64MiB成長対策=per-claim projection(44b8750)/再計画能力評価(4151048)。",
+  "current_task": "cycle21+§7(1)-(5)+resume競合cellまで全て実装・測定・push済み。§7優先課題は消化完了。",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
-  "last_checkpoint_at": "2026-11-11T17:34:46Z",
+  "last_checkpoint_at": "2026-11-11T17:37:30Z",
   "active_session_started_at": "2026-11-11T17:13:00Z",
   "session_elapsed_base_hours": 4.526979,
-  "status": "active",
+  "status": "paused-for-handoff",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
-  "next_task": "BACKLOG再評価:新しい欠陥候補なら最優先で修正、なければ次の測定課題(worker並行時の親resume競合の実プロセス観測など)を選択",
+  "next_task": "次セッション: BACKLOG最優先の再評価。候補: (a)job増加時のclaim投影増設境界の実測 (b)claim永続化失敗注入で副作用0を確認(BACKLOG P0) (c)実行中workerと親resumeのHTTP経路観測",
   "completed_sessions": [
     {
       "started_at": "2026-11-08T16:06:48Z",
@@ -53,9 +53,9 @@
     },
     {
       "started_at": "2026-11-11T17:13:00Z",
-      "ended_at": "2026-11-11T17:34:46Z",
-      "elapsed_hours": 0.3628,
-      "end_evidence": "§7.1-7.5の実装・テスト・commit/push・remote HEAD確認まで連続実作業"
+      "ended_at": "2026-11-11T17:37:30Z",
+      "elapsed_hours": 0.408,
+      "end_evidence": "resume競合テスト追加・gate全PASS・commit 5fa5515 push・remote HEAD一致まで連続実作業"
     }
   ],
   "excluded_idle_interval": {
@@ -89,7 +89,7 @@
     2,
     3
   ],
-  "last_verified_change_commit": "415104832c8e5eb11bfba964afa167975e4fc8e5",
+  "last_verified_change_commit": "5fa5515d1991aa6eda81f30391d673b1aafda083",
   "resume_guide": "docs/harness-marathon/RESUME.md",
   "evaluation": "evaluation/harness/marathon-20261109.json",
   "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。",
@@ -278,10 +278,10 @@
       "fmt": "PASS",
       "clippy_all_targets_features": "PASS",
       "engineering_lib": "91/91 PASS",
-      "engineering_worker": "12 PASS +1 ignored",
+      "engineering_worker": "13 PASS +1 ignored",
       "engineering_http": "7 PASS +1 ignored"
     },
-    "race_tests": "並行二重送付・完了後再送・同一sequence別引数・予約後実行前終了相当・ledger消失/破損・marker無し・独立job:外部counterで副作用≤1を確認",
+    "race_tests": "並行二重送付・完了後再送・同一sequence別引数・予約後実行前終了相当・ledger消失/破損・marker無し・独立job・実行中workerとresume競合:全て外部counterで副作用≤1を確認",
     "wire_version": 2
   },
   "section7_progress": {
