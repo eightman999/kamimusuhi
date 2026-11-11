@@ -894,3 +894,65 @@ fn a_checkpoint_grown_past_the_former_limit_still_executes() {
     );
     assert_eq!(fixture.ledger(JOB)["high_water"], 1);
 }
+
+/// A resident resume mid-execution publishes a newer claim; a worker for it
+/// defers (the job lock is busy) rather than racing, and the re-dispatched
+/// claim runs exactly once — while a stale resend of the finished claim is
+/// refused by the ledger's high-water.
+#[test]
+fn a_running_worker_serializes_the_resumed_claim() {
+    let fixture = Fixture::new();
+    let mut barrier = Barrier::new();
+    let request_one = fixture.blocking_request(&barrier, 30_000);
+    let mut first = fixture.spawn(&request_one);
+    barrier.started();
+
+    // The resident resumes while the first claim executes: the durable claim
+    // advances to sequence 2 and its projection is republished.
+    let action_two =
+        json!({"action":"run","argv":["/bin/sh","-c","printf 'r2\\n' >> resumed.txt"]});
+    fixture.write_snapshot(vec![fixture.job_entry(
+        JOB,
+        &fixture.candidate,
+        2,
+        &action_two,
+        true,
+    )]);
+    fixture.write_claim(JOB, &fixture.candidate, 2, &action_two, true);
+    let request_two = fixture.request_json(JOB, &fixture.candidate, 2, &action_two, 5000);
+
+    // The deferred worker refuses to race: busy lock, zero new side effects.
+    let mut contender = fixture.spawn(&request_two);
+    let reply = contender.reply();
+    assert_eq!(reply["result"]["status"], "unknown", "{reply}");
+    assert!(!fixture.candidate.path.join("resumed.txt").exists());
+
+    // Finish claim 1; the re-dispatched claim 2 executes exactly once.
+    barrier
+        .stream
+        .as_mut()
+        .unwrap()
+        .write_all(b"release\n")
+        .unwrap();
+    let reply = first.reply();
+    assert_eq!(reply["result"]["status"], "completed", "{reply}");
+    let mut second = fixture.spawn(&request_two);
+    let reply = second.reply();
+    identity(&reply, 2, "run");
+    assert_eq!(reply["result"]["status"], "completed", "{reply}");
+    assert_eq!(fixture.ledger(JOB)["high_water"], 2);
+    assert_eq!(
+        fs::read_to_string(fixture.candidate.path.join("resumed.txt")).unwrap(),
+        "r2\n"
+    );
+
+    // The finished claim 1 can never execute again: high_water refuses it.
+    let mut stale = fixture.spawn(&request_one);
+    let reply = stale.reply();
+    assert_eq!(reply["result"]["status"], "unknown", "{reply}");
+    assert_eq!(
+        fs::read_to_string(fixture.dir.path().join("runs.txt")).unwrap(),
+        "run\n",
+        "claim 1's side effect happened exactly once across resume"
+    );
+}
