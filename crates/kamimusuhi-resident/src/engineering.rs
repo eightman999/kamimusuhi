@@ -6,6 +6,7 @@
 //! Cancellation, process deadlines and explicit workspace policy still apply.
 
 mod checkpoint;
+mod execution;
 mod lease;
 mod verification;
 mod worker;
@@ -165,6 +166,11 @@ pub struct Job {
     pub repair_pending: bool,
     pub observations: Vec<ObservationRecord>,
     pub pending: Option<PendingAction>,
+    /// Execution-ledger contract marker. `None` predates the contract; once
+    /// published it never returns to `None`, and the job's ledger may not be
+    /// recreated or rewound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_ledger_version: Option<u32>,
     pub created_at: u64,
     pub updated_at: u64,
     pub next_attempt_at: u64,
@@ -571,6 +577,7 @@ fn handle_inner(shared: &Shared, request: &Value) -> Result<(u16, Value), String
                     repair_pending: false,
                     observations: Vec::new(),
                     pending: None,
+                    execution_ledger_version: None,
                     created_at: unix_now(),
                     updated_at: unix_now(),
                     next_attempt_at: 0,
@@ -603,6 +610,25 @@ fn handle_inner(shared: &Shared, request: &Value) -> Result<(u16, Value), String
         }
         "resume" => {
             let id = required_text(request, "id", 128)?;
+            store.available()?;
+            let existing = store.get(id).ok_or("unknown engineering job")?;
+            // Serialize resume with any in-flight or stale worker still
+            // holding this job's execution lock, and refuse to resume onto a
+            // ledger that contradicts the checkpoint marker or cursor.
+            let namespace = execution::namespace(&store.path)?;
+            let mode = if existing.execution_ledger_version.is_some() {
+                lease::Mode::Existing
+            } else {
+                lease::Mode::Create
+            };
+            let _job_lock =
+                execution::try_lock(&namespace, id, mode).map_err(|error| match error {
+                    lease::AcquireError::Busy => {
+                        "engineering job is executing; retry after it stops".to_owned()
+                    }
+                    lease::AcquireError::Unavailable(error) => error,
+                })?;
+            execution::parent_consistency(&namespace, &existing)?;
             let job = store.update(id, |job| {
                 if job.pending.is_some() {
                     return Err("wait for the in-flight action to settle before resuming".into());
@@ -623,6 +649,10 @@ fn handle_inner(shared: &Shared, request: &Value) -> Result<(u16, Value), String
                 }
                 Ok(())
             })?;
+            // The lock is released only after the checkpoint save above
+            // completed, so a worker cannot interleave a stale claim between
+            // the ledger check and the durable state change.
+            drop(_job_lock);
             Ok((200, json!({"ok":true,"job":views.job(&job)})))
         }
         _ => Err("action must be create, list, show, pause or resume".into()),
@@ -880,250 +910,332 @@ fn tick_with_runner(
     let mut jobs = store.list();
     // Least recently advanced first, so a long goal cannot starve another.
     jobs.sort_by_key(|j| (j.updated_at, j.metrics.actions));
-    let Some(job) = jobs.into_iter().find(|j| {
+    for job in jobs.into_iter().filter(|j| {
         matches!(j.phase, Phase::Preparing | Phase::Active) && j.next_attempt_at <= unix_now()
-    }) else {
-        return Ok(None);
-    };
-    // An exhausted cursor cannot be made durable for another claim. Pause
-    // this job before spending a model request, leaving other goals runnable.
-    if job.next_action_sequence.checked_add(1).is_none() {
-        return store
-            .update(&job.id, |current| {
-                current.phase = Phase::Paused;
-                current.last_error = Some("engineering action sequence exhausted".into());
-                observation(
-                    current,
-                    0,
-                    "cursor",
-                    false,
-                    json!({"error":"engineering action sequence exhausted"}),
-                );
-                Ok(())
-            })
-            .map(Some);
-    }
-    let policy = match policy(config, &job.workspace) {
-        Ok(policy) => policy,
-        Err(error) => {
+    }) {
+        // An exhausted cursor cannot be made durable for another claim. Pause
+        // this job before spending a model request, leaving other goals runnable.
+        if job.next_action_sequence.checked_add(1).is_none() {
             return store
                 .update(&job.id, |current| {
                     current.phase = Phase::Paused;
-                    current.last_error = Some(error.clone());
-                    observation(current, 0, "configuration", false, json!({"error":error}));
+                    current.last_error = Some("engineering action sequence exhausted".into());
+                    observation(
+                        current,
+                        0,
+                        "cursor",
+                        false,
+                        json!({"error":"engineering action sequence exhausted"}),
+                    );
                     Ok(())
                 })
                 .map(Some);
         }
-    };
-    store.cancel.store(false, Ordering::Relaxed);
-    *store.running.lock().unwrap_or_else(|p| p.into_inner()) = Some(job.id.clone());
-    let _running = RunningGuard(store);
-    if job.phase == Phase::Preparing {
-        // Rewriting the claim first also detects a broken checkpoint volume
-        // before worktree creation. prepare itself is idempotent.
-        store.update(&job.id, |current| {
-            if current.phase != Phase::Preparing {
-                return Err("engineering preparation was paused".into());
+        let policy = match policy(config, &job.workspace) {
+            Ok(policy) => policy,
+            Err(error) => {
+                return store
+                    .update(&job.id, |current| {
+                        current.phase = Phase::Paused;
+                        current.last_error = Some(error.clone());
+                        observation(current, 0, "configuration", false, json!({"error":error}));
+                        Ok(())
+                    })
+                    .map(Some);
+            }
+        };
+        store.cancel.store(false, Ordering::Relaxed);
+        *store.running.lock().unwrap_or_else(|p| p.into_inner()) = Some(job.id.clone());
+        let _running = RunningGuard(store);
+        if job.phase == Phase::Preparing {
+            // Rewriting the claim first also detects a broken checkpoint volume
+            // before worktree creation. prepare itself is idempotent.
+            store.update(&job.id, |current| {
+                if current.phase != Phase::Preparing {
+                    return Err("engineering preparation was paused".into());
+                }
+                Ok(())
+            })?;
+            let result = workspace::prepare(policy, &job.candidate);
+            return store
+                .update(&job.id, |current| {
+                    match result {
+                        Ok(()) => {
+                            if current.phase == Phase::Preparing {
+                                current.phase = Phase::Active;
+                            }
+                            current.last_error = None;
+                            observation(
+                                current,
+                                0,
+                                "prepare",
+                                true,
+                                json!({"candidate":current.candidate}),
+                            );
+                        }
+                        Err(error) => {
+                            current.phase = Phase::Paused;
+                            current.last_error = Some(error.clone());
+                            observation(current, 0, "prepare", false, json!({"error":error}));
+                        }
+                    }
+                    Ok(())
+                })
+                .map(Some);
+        }
+        let action = match model.decide(&context(&job, policy, &config.limits())) {
+            Ok(action) => action,
+            Err(error) => {
+                return store
+                    .update(&job.id, |current| {
+                        let now = unix_now();
+                        let error = clipped(&error, MODEL_ERROR_BYTES);
+                        current.metrics.model_failures =
+                            current.metrics.model_failures.saturating_add(1);
+                        if let Some(episode) = current
+                            .model_recovery
+                            .as_mut()
+                            .filter(|episode| episode.recovered_at.is_none())
+                        {
+                            episode.latest_error = error.clone();
+                            episode.last_failure_at = now;
+                            episode.attempts = episode.attempts.saturating_add(1);
+                        } else {
+                            current.model_recovery = Some(ModelRecovery {
+                                first_error: error.clone(),
+                                latest_error: error.clone(),
+                                first_failure_at: now,
+                                last_failure_at: now,
+                                attempts: 1,
+                                recovered_at: None,
+                            });
+                        }
+                        current.last_error = Some(error.clone());
+                        current.next_attempt_at = now.saturating_add(config.tick_secs);
+                        observation(current, 0, "model", false, json!({"error":error}));
+                        Ok(())
+                    })
+                    .map(Some);
+            }
+        };
+        // A pause arriving during inference prevents its proposed action.
+        if store.cancel.load(Ordering::Relaxed)
+            || store
+                .get(&job.id)
+                .is_none_or(|current| current.phase != Phase::Active)
+        {
+            return Ok(store.get(&job.id));
+        }
+        let worker_target = matches!(
+            action,
+            Action::Run { .. } | Action::Verify | Action::Finish { .. }
+        );
+        // Worker-dispatched claims join the job's execution lock so claim
+        // creation, stale workers and resume serialize on one inode. A busy lock
+        // defers this job to a later tick without any durable change, and a
+        // ledger that contradicts the marker stops the job instead of guessing.
+        let mut job_lock = None;
+        if worker_target {
+            let namespace = match execution::namespace(&store.path) {
+                Ok(namespace) => namespace,
+                Err(error) => return stop_admission(shared, &job.id, &error),
+            };
+            let current_marker = store
+                .get(&job.id)
+                .ok_or("engineering job is no longer dispatchable")?
+                .execution_ledger_version;
+            let mode = if current_marker.is_some() {
+                lease::Mode::Existing
+            } else {
+                lease::Mode::Create
+            };
+            match execution::try_lock(&namespace, &job.id, mode) {
+                Ok(lock) => job_lock = Some(lock),
+                Err(lease::AcquireError::Busy) => continue,
+                Err(lease::AcquireError::Unavailable(error)) => {
+                    return stop_admission(shared, &job.id, &error);
+                }
+            }
+            let fresh = store
+                .get(&job.id)
+                .ok_or("engineering job is no longer dispatchable")?;
+            match execution::parent_admission(&namespace, &fresh) {
+                execution::ParentAdmission::Proceed => {}
+                execution::ParentAdmission::Stop(reason) => {
+                    return stop_admission(shared, &job.id, &reason);
+                }
+            }
+        }
+        let claimed = store.update(&job.id, |current| {
+            if current.phase != Phase::Active || current.pending.is_some() {
+                return Err("engineering job is no longer dispatchable".into());
+            }
+            let sequence = current.next_action_sequence;
+            current.next_action_sequence = sequence
+                .checked_add(1)
+                .ok_or("engineering action sequence exhausted")?;
+            current.metrics.decisions = current
+                .metrics
+                .decisions
+                .checked_add(1)
+                .ok_or("engineering decision counter exhausted")?;
+            current.pending = Some(PendingAction {
+                sequence,
+                action: action.clone(),
+                started_at: unix_now(),
+            });
+            // Marker and pending publish in one checkpoint transaction; the
+            // genesis ledger was already made durable under the job lock, so a
+            // crash here leaves an adoptable empty reservation, never a worker
+            // that can start with no contract.
+            if worker_target {
+                current.execution_ledger_version = Some(execution::LEDGER_MARKER_VERSION);
+            }
+            // Persist recovery with the claim: a paused proposal or failed save
+            // must not close the episode, and later actions must not retime it.
+            if let Some(episode) = &mut current.model_recovery
+                && episode.recovered_at.is_none()
+            {
+                episode.recovered_at = Some(unix_now());
             }
             Ok(())
         })?;
-        let result = workspace::prepare(policy, &job.candidate);
-        return store
-            .update(&job.id, |current| {
-                match result {
-                    Ok(()) => {
-                        if current.phase == Phase::Preparing {
-                            current.phase = Phase::Active;
-                        }
-                        current.last_error = None;
-                        observation(
-                            current,
-                            0,
-                            "prepare",
-                            true,
-                            json!({"candidate":current.candidate}),
-                        );
-                    }
-                    Err(error) => {
-                        current.phase = Phase::Paused;
-                        current.last_error = Some(error.clone());
-                        observation(current, 0, "prepare", false, json!({"error":error}));
-                    }
-                }
-                Ok(())
-            })
-            .map(Some);
-    }
-    let action = match model.decide(&context(&job, policy, &config.limits())) {
-        Ok(action) => action,
-        Err(error) => {
-            return store
-                .update(&job.id, |current| {
-                    let now = unix_now();
-                    let error = clipped(&error, MODEL_ERROR_BYTES);
-                    current.metrics.model_failures =
-                        current.metrics.model_failures.saturating_add(1);
-                    if let Some(episode) = current
-                        .model_recovery
-                        .as_mut()
-                        .filter(|episode| episode.recovered_at.is_none())
-                    {
-                        episode.latest_error = error.clone();
-                        episode.last_failure_at = now;
-                        episode.attempts = episode.attempts.saturating_add(1);
-                    } else {
-                        current.model_recovery = Some(ModelRecovery {
-                            first_error: error.clone(),
-                            latest_error: error.clone(),
-                            first_failure_at: now,
-                            last_failure_at: now,
-                            attempts: 1,
-                            recovered_at: None,
-                        });
-                    }
-                    current.last_error = Some(error.clone());
-                    current.next_attempt_at = now.saturating_add(config.tick_secs);
-                    observation(current, 0, "model", false, json!({"error":error}));
-                    Ok(())
-                })
-                .map(Some);
-        }
-    };
-    // A pause arriving during inference prevents its proposed action.
-    if store.cancel.load(Ordering::Relaxed)
-        || store
-            .get(&job.id)
-            .is_none_or(|current| current.phase != Phase::Active)
-    {
-        return Ok(store.get(&job.id));
-    }
-    let claimed = store.update(&job.id, |current| {
-        if current.phase != Phase::Active || current.pending.is_some() {
-            return Err("engineering job is no longer dispatchable".into());
-        }
-        let sequence = current.next_action_sequence;
-        current.next_action_sequence = sequence
-            .checked_add(1)
-            .ok_or("engineering action sequence exhausted")?;
-        current.metrics.decisions = current
-            .metrics
-            .decisions
-            .checked_add(1)
-            .ok_or("engineering decision counter exhausted")?;
-        current.pending = Some(PendingAction {
-            sequence,
-            action: action.clone(),
-            started_at: unix_now(),
-        });
-        // Persist recovery with the claim: a paused proposal or failed save
-        // must not close the episode, and later actions must not retime it.
-        if let Some(episode) = &mut current.model_recovery
-            && episode.recovered_at.is_none()
-        {
-            episode.recovered_at = Some(unix_now());
-        }
-        Ok(())
-    })?;
-    let sequence = claimed
-        .pending
-        .as_ref()
-        .ok_or("engineering action claim is missing")?
-        .sequence;
-    let limits = config.limits();
-    let mut validation = None;
-    let result = match &action {
-        Action::Checkpoint { summary, next_step } => {
-            if summary.len() > 4096 || next_step.len() > 2048 {
-                Err("checkpoint summary/next_step is too large".into())
-            } else {
-                Ok(workspace::Observation {
-                    ok: true,
-                    detail: json!({"checkpoint_saved":true}),
-                })
-            }
-        }
-        Action::Run { .. } | Action::Verify | Action::Finish { .. } => {
-            match runner.execute(&store.path, &claimed, policy, &limits, &store.cancel) {
-                worker::Dispatch::Completed(Ok(worker::Outcome::Run { observation })) => {
-                    Ok(observation)
-                }
-                worker::Dispatch::Completed(Ok(worker::Outcome::Verified {
-                    validation: checks,
-                })) => {
-                    let observed = workspace::Observation {
-                        ok: checks.passed,
-                        detail: json!({"validation":checks}),
-                    };
-                    validation = Some(checks);
-                    Ok(observed)
-                }
-                worker::Dispatch::Completed(Err(error)) | worker::Dispatch::Rejected(error) => {
-                    Err(error)
-                }
-                worker::Dispatch::Unknown(reason) => {
-                    return pause_unknown_action(shared, &claimed, sequence, &action, &reason);
+        // The worker re-acquires the job lock itself; the parent releases it
+        // before dispatch so claim creation and worker admission serialize.
+        drop(job_lock);
+        let sequence = claimed
+            .pending
+            .as_ref()
+            .ok_or("engineering action claim is missing")?
+            .sequence;
+        let limits = config.limits();
+        let mut validation = None;
+        let result = match &action {
+            Action::Checkpoint { summary, next_step } => {
+                if summary.len() > 4096 || next_step.len() > 2048 {
+                    Err("checkpoint summary/next_step is too large".into())
+                } else {
+                    Ok(workspace::Observation {
+                        ok: true,
+                        detail: json!({"checkpoint_saved":true}),
+                    })
                 }
             }
-        }
-        _ => workspace::execute(policy, &claimed.candidate, &action, &limits, &store.cancel),
-    };
-    let (ok, detail) = match result {
-        Ok(result) => (result.ok, result.detail),
-        Err(error) => (false, json!({"error":clipped(&error,2048)})),
-    };
-    let updated = store.update(&job.id, |current| {
-        if current.pending.as_ref().map(|pending| pending.sequence) != Some(sequence) {
-            return Err("engineering action receipt does not match its claim".into());
-        }
-        current.pending = None;
-        current.metrics.actions = current.metrics.actions.saturating_add(1);
+            Action::Run { .. } | Action::Verify | Action::Finish { .. } => {
+                match runner.execute(&store.path, &claimed, policy, &limits, &store.cancel) {
+                    worker::Dispatch::Completed(Ok(worker::Outcome::Run { observation })) => {
+                        Ok(observation)
+                    }
+                    worker::Dispatch::Completed(Ok(worker::Outcome::Verified {
+                        validation: checks,
+                    })) => {
+                        let observed = workspace::Observation {
+                            ok: checks.passed,
+                            detail: json!({"validation":checks}),
+                        };
+                        validation = Some(checks);
+                        Ok(observed)
+                    }
+                    worker::Dispatch::Completed(Err(error)) | worker::Dispatch::Rejected(error) => {
+                        Err(error)
+                    }
+                    worker::Dispatch::Unknown(reason) => {
+                        return pause_unknown_action(shared, &claimed, sequence, &action, &reason);
+                    }
+                }
+            }
+            _ => workspace::execute(policy, &claimed.candidate, &action, &limits, &store.cancel),
+        };
+        let (ok, detail) = match result {
+            Ok(result) => (result.ok, result.detail),
+            Err(error) => (false, json!({"error":clipped(&error,2048)})),
+        };
+        let updated = store.update(&job.id, |current| {
+            if current.pending.as_ref().map(|pending| pending.sequence) != Some(sequence) {
+                return Err("engineering action receipt does not match its claim".into());
+            }
+            current.pending = None;
+            current.metrics.actions = current.metrics.actions.saturating_add(1);
+            current.next_attempt_at = 0;
+            current.last_error = (!ok).then(|| clipped(&detail.to_string(), 2048));
+            if matches!(action, Action::Verify | Action::Finish { .. }) {
+                current.metrics.verification_runs =
+                    current.metrics.verification_runs.saturating_add(1);
+                if !ok {
+                    current.metrics.verification_failures =
+                        current.metrics.verification_failures.saturating_add(1);
+                }
+                current.repair_pending = !ok;
+                current.validation = validation;
+            } else if matches!(
+                action,
+                Action::Write { .. } | Action::Replace { .. } | Action::Run { .. }
+            ) {
+                if current.repair_pending && ok {
+                    current.metrics.repairs = current.metrics.repairs.saturating_add(1);
+                    current.repair_pending = false;
+                }
+                current.validation = None;
+            }
+            if ok {
+                match &action {
+                    Action::Checkpoint { summary, next_step } => {
+                        current.checkpoint = WorkingMemory {
+                            summary: summary.clone(),
+                            next_step: next_step.clone(),
+                        };
+                    }
+                    Action::Finish { summary } if current.phase == Phase::Active => {
+                        current.phase = Phase::Ready;
+                        current.checkpoint.summary = clipped(summary, 4096);
+                        current.checkpoint.next_step =
+                            "Review the recorded validation commit and current candidate.".into();
+                    }
+                    _ => {}
+                }
+            }
+            observation(current, sequence, action_name(&action), ok, detail);
+            Ok(())
+        })?;
+        let _ = shared.spool.append_sync(
+            "logs/engineering",
+            json!({
+                "job_id":updated.id,"action":action_name(&action),"sequence":sequence,
+                "ok":ok,"phase":updated.phase,"metrics":updated.metrics,
+            }),
+        );
+        return Ok(Some(updated));
+    }
+    Ok(None)
+}
+
+/// Stop a job when execution admission finds the checkpoint marker, ledger
+/// and action cursor inconsistent — a lost ledger is never "repaired" into
+/// an empty one and an uncertain result is never converted into a success.
+/// Runs before a claim exists, so no pending action is cleared here.
+fn stop_admission(shared: &Shared, job_id: &str, reason: &str) -> Result<Option<Job>, String> {
+    let updated = shared.engineering.update(job_id, |current| {
+        current.phase = Phase::Paused;
+        current.validation = None;
         current.next_attempt_at = 0;
-        current.last_error = (!ok).then(|| clipped(&detail.to_string(), 2048));
-        if matches!(action, Action::Verify | Action::Finish { .. }) {
-            current.metrics.verification_runs = current.metrics.verification_runs.saturating_add(1);
-            if !ok {
-                current.metrics.verification_failures =
-                    current.metrics.verification_failures.saturating_add(1);
-            }
-            current.repair_pending = !ok;
-            current.validation = validation;
-        } else if matches!(
-            action,
-            Action::Write { .. } | Action::Replace { .. } | Action::Run { .. }
-        ) {
-            if current.repair_pending && ok {
-                current.metrics.repairs = current.metrics.repairs.saturating_add(1);
-                current.repair_pending = false;
-            }
-            current.validation = None;
-        }
-        if ok {
-            match &action {
-                Action::Checkpoint { summary, next_step } => {
-                    current.checkpoint = WorkingMemory {
-                        summary: summary.clone(),
-                        next_step: next_step.clone(),
-                    };
-                }
-                Action::Finish { summary } if current.phase == Phase::Active => {
-                    current.phase = Phase::Ready;
-                    current.checkpoint.summary = clipped(summary, 4096);
-                    current.checkpoint.next_step =
-                        "Review the recorded validation commit and current candidate.".into();
-                }
-                _ => {}
-            }
-        }
-        observation(current, sequence, action_name(&action), ok, detail);
+        current.last_error = Some(clipped(reason, 1024));
+        observation(
+            current,
+            0,
+            "admission",
+            false,
+            json!({
+                "kind":"execution_admission",
+                "error":clipped(reason, 1024),
+                "instruction":"Restore the job's execution ledger or delete the job. The state was not repaired by recreating an empty ledger."
+            }),
+        );
         Ok(())
     })?;
     let _ = shared.spool.append_sync(
         "logs/engineering",
-        json!({
-            "job_id":updated.id,"action":action_name(&action),"sequence":sequence,
-            "ok":ok,"phase":updated.phase,"metrics":updated.metrics,
-        }),
+        json!({"event":"execution_admission_stopped","job_id":updated.id,
+            "phase":updated.phase,"metrics":updated.metrics}),
     );
     Ok(Some(updated))
 }

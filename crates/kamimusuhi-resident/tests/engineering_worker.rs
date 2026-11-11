@@ -12,11 +12,22 @@ use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use kamimusuhi_core::digest::json_digest;
 use kamimusuhi_resident::engineering::{Candidate, WorkspaceConfig, workspace};
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 const BINARY: &str = env!("CARGO_BIN_EXE_kamimusuhi");
 const JOB: &str = "eng-worker-fixture";
+
+/// Must match `engineering::execution`'s candidate identity digest.
+fn candidate_digest(candidate: &Candidate) -> String {
+    json_digest(&json!({"schema_version":1,"candidate":candidate}))
+}
+
+fn request_digest(request: &Value) -> String {
+    json_digest(&json!({"schema_version":1,"request":request}))
+}
 
 fn wait(child: &mut Child, timeout: Duration) -> ExitStatus {
     let deadline = Instant::now() + timeout;
@@ -82,6 +93,7 @@ struct Fixture {
     policy: WorkspaceConfig,
     candidate: Candidate,
     state_path: PathBuf,
+    attempts: AtomicU64,
 }
 
 impl Fixture {
@@ -142,43 +154,142 @@ impl Fixture {
         )
         .unwrap();
         workspace::prepare(&policy, &candidate).unwrap();
-        Self {
+        let fixture = Self {
             state_path: dir.path().join("resident/current_state/engineering.json"),
             dir,
             policy,
             candidate,
-        }
+            attempts: AtomicU64::new(0),
+        };
+        fixture.add_ledger(JOB, &fixture.candidate);
+        fixture
     }
 
-    fn request(&self, sequence: u64, action: Value, operation_timeout_ms: u64) -> Value {
-        let operation = match action["action"].as_str().unwrap() {
-            "run" => json!({"kind":"run","argv":action["argv"]}),
-            "verify" | "finish" => json!({"kind":"verify"}),
-            _ => panic!("unsupported fixture action"),
-        };
-        let snapshot = json!({"schema_version":2,"jobs":[{
-            "id":JOB,"objective":"Exercise the actual private worker",
-            "workspace":"fixture","candidate":self.candidate,"phase":"active",
+    /// Directory every execution-dedup file for this checkpoint lives in.
+    fn executions(&self) -> PathBuf {
+        self.state_path
+            .parent()
+            .unwrap()
+            .join("engineering.json.executions")
+    }
+
+    /// Create the lockfile and genesis ledger a parent-side claim would have
+    /// published for `job_id`. The ledger persists across `request` calls.
+    fn add_ledger(&self, job_id: &str, candidate: &Candidate) {
+        let executions = self.executions();
+        fs::create_dir_all(&executions).unwrap();
+        let lock = executions.join(format!("{job_id}.lock"));
+        if !lock.exists() {
+            fs::write(&lock, b"").unwrap();
+        }
+        fs::write(
+            executions.join(format!("{job_id}.json")),
+            serde_json::to_vec(&json!({
+                "schema_version":1,"job_id":job_id,
+                "candidate_digest":candidate_digest(candidate),
+                "high_water":0,"request_digest":null}))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// Prepare a second job's worktree, lockfile and genesis ledger.
+    fn add_job(&self, job_id: &str) -> Candidate {
+        let candidate = workspace::plan(
+            &self.policy,
+            &self.dir.path().join("resident/engineering-worktrees"),
+            job_id,
+        )
+        .unwrap();
+        workspace::prepare(&self.policy, &candidate).unwrap();
+        self.add_ledger(job_id, &candidate);
+        candidate
+    }
+
+    fn job_entry(
+        &self,
+        job_id: &str,
+        candidate: &Candidate,
+        sequence: u64,
+        action: &Value,
+        marker: bool,
+    ) -> Value {
+        json!({
+            "id":job_id,"objective":"Exercise the actual private worker",
+            "workspace":"fixture","candidate":candidate,"phase":"active",
             "checkpoint":{"summary":"","next_step":""},
             "metrics":{"decisions":sequence,"actions":sequence-1,
                 "verification_runs":0,"verification_failures":0,"repairs":0,
                 "interruptions":0,"model_failures":0},
             "next_action_sequence":sequence+1,"validation":null,"repair_pending":false,
             "observations":[],"pending":{"sequence":sequence,"action":action,"started_at":1},
+            "execution_ledger_version":if marker { Value::from(1) } else { Value::Null },
             "created_at":1,"updated_at":1,"next_attempt_at":0,"last_error":null,
-            "request_id":null,"model_recovery":null
-        }]});
+            "request_id":null,"model_recovery":null})
+    }
+
+    fn write_snapshot(&self, jobs: Vec<Value>) {
+        let snapshot = json!({"schema_version":2,"jobs":jobs});
         fs::write(&self.state_path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
-        json!({"version":1,"state_path":self.state_path,"job_id":JOB,"sequence":sequence,
-            "policy":self.policy,"candidate":self.candidate,"claimed_action":action,
+    }
+
+    /// The wire frame a resident would dispatch — no checkpoint write.
+    fn request_json(
+        &self,
+        job_id: &str,
+        candidate: &Candidate,
+        sequence: u64,
+        action: &Value,
+        operation_timeout_ms: u64,
+    ) -> Value {
+        let operation = match action["action"].as_str().unwrap() {
+            "run" => json!({"kind":"run","argv":action["argv"]}),
+            "verify" | "finish" => json!({"kind":"verify"}),
+            _ => panic!("unsupported fixture action"),
+        };
+        json!({"version":2,"state_path":self.state_path,"job_id":job_id,"sequence":sequence,
+            "policy":self.policy,"candidate":candidate,"claimed_action":action,
             "limits":{"operation_timeout_ms":operation_timeout_ms,
                 "validation_timeout_ms":5000,"output_bytes":32768},"operation":operation})
     }
 
+    /// Write a one-job snapshot carrying the durable claim, then return the
+    /// matching request frame. The ledger is never rewritten here.
+    fn request(&self, sequence: u64, action: Value, operation_timeout_ms: u64) -> Value {
+        self.request_for(JOB, &self.candidate, sequence, action, operation_timeout_ms)
+    }
+
+    fn request_for(
+        &self,
+        job_id: &str,
+        candidate: &Candidate,
+        sequence: u64,
+        action: Value,
+        operation_timeout_ms: u64,
+    ) -> Value {
+        self.write_snapshot(vec![
+            self.job_entry(job_id, candidate, sequence, &action, true),
+        ]);
+        self.request_json(job_id, candidate, sequence, &action, operation_timeout_ms)
+    }
+
+    fn ledger(&self, job_id: &str) -> Value {
+        serde_json::from_slice(&fs::read(self.executions().join(format!("{job_id}.json"))).unwrap())
+            .unwrap()
+    }
+
     fn spawn(&self, request: &Value) -> Worker {
         let sequence = request["sequence"].as_u64().unwrap();
-        let stdout = self.dir.path().join(format!("worker-{sequence}.out"));
-        let stderr = self.dir.path().join(format!("worker-{sequence}.err"));
+        let job = request["job_id"].as_str().unwrap();
+        let attempt = self.attempts.fetch_add(1, AtomicOrdering::Relaxed);
+        let stdout = self
+            .dir
+            .path()
+            .join(format!("worker-{job}-{sequence}-{attempt}.out"));
+        let stderr = self
+            .dir
+            .path()
+            .join(format!("worker-{job}-{sequence}-{attempt}.err"));
         let mut command = Command::new(BINARY);
         command
             .arg("engineering-worker")
@@ -336,7 +447,7 @@ fn worker_blocking_run_helper() {
 }
 
 fn identity(reply: &Value, sequence: u64, operation: &str) {
-    assert_eq!(reply["version"], 1);
+    assert_eq!(reply["version"], 2);
     assert_eq!(reply["job_id"], JOB);
     assert_eq!(reply["sequence"], sequence);
     assert_eq!(reply["operation"], operation);
@@ -482,4 +593,242 @@ fn worker_rejects_a_request_that_does_not_match_the_durable_action_claim() {
         fixture.candidate.base_commit
     );
     assert_eq!(fs::read(&fixture.state_path).unwrap(), claimed);
+}
+
+/// The same claim given to two live workers at once: the contender is
+/// refused (busy or already reserved), the side effect is measured once by
+/// an external counter, and resending after completion is refused too.
+#[test]
+fn a_claim_dispatched_twice_executes_at_most_once_concurrently_and_after_completion() {
+    let fixture = Fixture::new();
+    let mut barrier = Barrier::new();
+    let request = fixture.blocking_request(&barrier, 30_000);
+    let mut first = fixture.spawn(&request);
+    barrier.started();
+    let ledger = fixture.ledger(JOB);
+    assert_eq!(ledger["high_water"], 1, "reservation precedes execution");
+    assert!(
+        ledger["request_digest"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"),
+        "{ledger}"
+    );
+
+    // A second worker holding the identical request arrives mid-execution.
+    let mut contender = fixture.spawn(&request);
+    let reply = contender.reply();
+    identity(&reply, 1, "run");
+    assert_eq!(reply["result"]["status"], "unknown", "{reply}");
+    assert!(!reply["result"]["reason"].as_str().unwrap().is_empty());
+    assert_eq!(
+        fs::read_to_string(fixture.dir.path().join("runs.txt")).unwrap(),
+        "run\n",
+        "the held claim executed exactly once"
+    );
+
+    // Release the first worker; it confirms one completed run.
+    barrier
+        .stream
+        .as_mut()
+        .unwrap()
+        .write_all(b"release\n")
+        .unwrap();
+    let reply = first.reply();
+    assert_eq!(reply["result"]["status"], "completed", "{reply}");
+    assert_eq!(fixture.ledger(JOB)["high_water"], 1);
+
+    // Resend the finished claim: the ledger refuses it regardless of digest.
+    let mut resent = fixture.spawn(&request);
+    let reply = resent.reply();
+    assert_eq!(reply["result"]["status"], "unknown", "{reply}");
+    assert_eq!(
+        fs::read_to_string(fixture.dir.path().join("runs.txt")).unwrap(),
+        "run\n"
+    );
+}
+
+/// A different argument list under an already-reserved sequence is refused
+/// by the ledger before the claim comparison is even reached.
+#[test]
+fn the_same_sequence_with_different_arguments_never_executes_again() {
+    let fixture = Fixture::new();
+    let request = fixture.request(
+        1,
+        json!({"action":"run","argv":["/bin/sh","-c","printf 'first\\n' >> side-effects.txt"]}),
+        5000,
+    );
+    let mut worker = fixture.spawn(&request);
+    let reply = worker.reply();
+    assert_eq!(reply["result"]["status"], "completed", "{reply}");
+    assert_eq!(
+        fs::read_to_string(fixture.candidate.path.join("side-effects.txt")).unwrap(),
+        "first\n"
+    );
+
+    // The resident's checkpoint still claims the same sequence with new
+    // arguments; digest differs, but high-water already refuses it.
+    let replayed = fixture.request(
+        1,
+        json!({"action":"run","argv":["/bin/sh","-c","printf 'second\\n' >> side-effects.txt"]}),
+        5000,
+    );
+    let mut worker = fixture.spawn(&replayed);
+    let reply = worker.reply();
+    identity(&reply, 1, "run");
+    assert_eq!(reply["result"]["status"], "unknown", "{reply}");
+    assert_eq!(
+        fs::read_to_string(fixture.candidate.path.join("side-effects.txt")).unwrap(),
+        "first\n"
+    );
+}
+
+/// Gaps in the durable sequence are normal — non-worker actions also
+/// consume cursor values — so a higher sequence executes normally.
+#[test]
+fn a_sequence_above_the_high_water_executes_normally() {
+    let fixture = Fixture::new();
+    let request = fixture.request(
+        1,
+        json!({"action":"run","argv":["/bin/sh","-c","printf 'a\\n' >> gap.txt"]}),
+        5000,
+    );
+    let mut worker = fixture.spawn(&request);
+    assert_eq!(worker.reply()["result"]["status"], "completed");
+
+    let request = fixture.request(
+        4,
+        json!({"action":"run","argv":["/bin/sh","-c","printf 'b\\n' >> gap.txt"]}),
+        5000,
+    );
+    let mut worker = fixture.spawn(&request);
+    let reply = worker.reply();
+    identity(&reply, 4, "run");
+    assert_eq!(reply["result"]["status"], "completed", "{reply}");
+    assert_eq!(fixture.ledger(JOB)["high_water"], 4);
+    assert_eq!(
+        fs::read_to_string(fixture.candidate.path.join("gap.txt")).unwrap(),
+        "a\nb\n"
+    );
+}
+
+/// A durable reservation whose execution never started — a worker killed
+/// between publish and the first side effect — blocks any reissue without
+/// ever double-counting.
+#[test]
+fn a_reservation_without_an_effect_blocks_reissue_and_counts_zero() {
+    let fixture = Fixture::new();
+    let request = fixture.request_json(
+        JOB,
+        &fixture.candidate,
+        1,
+        &json!({"action":"run","argv":["/bin/sh","-c","printf 'x\\n' >> counter.txt"]}),
+        5000,
+    );
+    // Simulate the post-crash state: reservation persisted, no side effect.
+    fs::write(
+        fixture.executions().join(format!("{JOB}.json")),
+        serde_json::to_vec(&json!({
+            "schema_version":1,"job_id":JOB,
+            "candidate_digest":candidate_digest(&fixture.candidate),
+            "high_water":1,"request_digest":request_digest(&request)}))
+        .unwrap(),
+    )
+    .unwrap();
+    fixture.request(
+        1,
+        json!({"action":"run","argv":["/bin/sh","-c","printf 'x\\n' >> counter.txt"]}),
+        5000,
+    );
+    let mut worker = fixture.spawn(&request);
+    let reply = worker.reply();
+    assert_eq!(reply["result"]["status"], "unknown", "{reply}");
+    assert!(
+        !fixture.candidate.path.join("counter.txt").exists(),
+        "the reserved-but-unexecuted attempt is never replayed"
+    );
+}
+
+/// A missing or corrupt ledger stops the worker instead of being repaired
+/// into a fresh empty record.
+#[test]
+fn a_missing_or_corrupt_ledger_stops_the_worker_without_executing() {
+    let fixture = Fixture::new();
+    let ledger_path = fixture.executions().join(format!("{JOB}.json"));
+
+    fs::remove_file(&ledger_path).unwrap();
+    let request = fixture.request(
+        1,
+        json!({"action":"run","argv":["/bin/sh","-c","printf 'x\\n' >> never.txt"]}),
+        5000,
+    );
+    let mut worker = fixture.spawn(&request);
+    let reply = worker.reply();
+    assert_eq!(reply["result"]["status"], "unknown", "{reply}");
+    assert!(
+        !ledger_path.exists(),
+        "a vanished ledger is not recreated by the worker"
+    );
+    assert!(!fixture.candidate.path.join("never.txt").exists());
+
+    fs::write(&ledger_path, b"not a ledger").unwrap();
+    let mut worker = fixture.spawn(&request);
+    let reply = worker.reply();
+    assert_eq!(reply["result"]["status"], "unknown", "{reply}");
+    assert!(!fixture.candidate.path.join("never.txt").exists());
+    assert_eq!(fs::read(&ledger_path).unwrap(), b"not a ledger");
+}
+
+/// A claim without the contract marker is a durability defect, not an
+/// executable request — the worker refuses it even with a genesis ledger.
+#[test]
+fn a_claim_without_the_ledger_marker_is_refused() {
+    let fixture = Fixture::new();
+    let action = json!({"action":"run","argv":["/bin/sh","-c","printf 'x\\n' >> never.txt"]});
+    fixture.write_snapshot(vec![fixture.job_entry(
+        JOB,
+        &fixture.candidate,
+        1,
+        &action,
+        false,
+    )]);
+    let request = fixture.request_json(JOB, &fixture.candidate, 1, &action, 5000);
+    let mut worker = fixture.spawn(&request);
+    let reply = worker.reply();
+    assert_eq!(reply["result"]["status"], "unknown", "{reply}");
+    assert!(!fixture.candidate.path.join("never.txt").exists());
+    assert_eq!(fixture.ledger(JOB)["high_water"], 0);
+}
+
+/// Two jobs hold disjoint locks and ledgers under one checkpoint; both
+/// execute exactly once even when dispatched concurrently.
+#[test]
+fn independent_jobs_execute_independently_under_one_checkpoint() {
+    let fixture = Fixture::new();
+    let job_b = "eng-worker-fixture-b";
+    let candidate_b = fixture.add_job(job_b);
+    let action_a = json!({"action":"run","argv":["/bin/sh","-c","printf 'a\\n' >> out.txt"]});
+    let action_b = json!({"action":"run","argv":["/bin/sh","-c","printf 'b\\n' >> out.txt"]});
+    fixture.write_snapshot(vec![
+        fixture.job_entry(JOB, &fixture.candidate, 1, &action_a, true),
+        fixture.job_entry(job_b, &candidate_b, 1, &action_b, true),
+    ]);
+    let request_a = fixture.request_json(JOB, &fixture.candidate, 1, &action_a, 5000);
+    let request_b = fixture.request_json(job_b, &candidate_b, 1, &action_b, 5000);
+    let mut worker_a = fixture.spawn(&request_a);
+    let mut worker_b = fixture.spawn(&request_b);
+    let reply_a = worker_a.reply();
+    let reply_b = worker_b.reply();
+    assert_eq!(reply_a["result"]["status"], "completed", "{reply_a}");
+    assert_eq!(reply_b["result"]["status"], "completed", "{reply_b}");
+    assert_eq!(fixture.ledger(JOB)["high_water"], 1);
+    assert_eq!(fixture.ledger(job_b)["high_water"], 1);
+    assert_eq!(
+        fs::read_to_string(fixture.candidate.path.join("out.txt")).unwrap(),
+        "a\n"
+    );
+    assert_eq!(
+        fs::read_to_string(candidate_b.path.join("out.txt")).unwrap(),
+        "b\n"
+    );
 }

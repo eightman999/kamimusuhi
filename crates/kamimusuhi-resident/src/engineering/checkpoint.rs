@@ -127,6 +127,12 @@ pub(super) fn validate(snapshot: &Snapshot, candidate_root: &Path) -> Result<(),
         // Wall-clock adjustments do not invalidate a durable episode. Error
         // strings may be empty or contain controls; serde escapes them and
         // their byte bound, not human prose validation, governs persistence.
+        if let Some(marker) = job.execution_ledger_version
+            && (marker != super::execution::LEDGER_MARKER_VERSION
+                || snapshot.schema_version != CURRENT_SCHEMA_VERSION)
+        {
+            return Err("engineering checkpoint execution ledger marker is inconsistent".into());
+        }
         let highest = highest_sequence(job)?;
         if snapshot.schema_version == CURRENT_SCHEMA_VERSION
             && (job.next_action_sequence == 0 || job.next_action_sequence <= highest)

@@ -78,6 +78,25 @@ fn verify_identity(path: &Path, opened: &Metadata) -> Result<(), String> {
     }
 }
 
+/// How a lockfile acquisition treats a missing pathname.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// The caller may create the lockfile and its parent directory.
+    Create,
+    /// The lockfile must already exist; a missing one is unavailable, and
+    /// nothing is created to repair that loss.
+    Existing,
+}
+
+/// Nonblocking acquisition outcome. `Busy` is normal contention by another
+/// cooperating owner; `Unavailable` covers inspection, identity and I/O
+/// failures. Callers must not classify these by matching message text.
+#[derive(Debug)]
+pub enum AcquireError {
+    Busy,
+    Unavailable(String),
+}
+
 /// Acquire the dedicated lockfile, normally `engineering.lock` beside the
 /// checkpoint. `path` must not name the checkpoint or a temporary file.
 ///
@@ -85,48 +104,67 @@ fn verify_identity(path: &Path, opened: &Metadata) -> Result<(), String> {
 /// denies ownership; callers must not load or save a checkpoint without it.
 /// The lockfile persists after this value is dropped.
 pub fn acquire(path: &Path) -> Result<Lease, String> {
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+    acquire_mode(path, Mode::Create).map_err(|error| match error {
+        AcquireError::Busy => "engineering state is already owned by another resident".to_owned(),
+        AcquireError::Unavailable(error) => error,
+    })
+}
+
+/// Typed acquisition used by per-job execution locks. `Mode::Existing`
+/// refuses to create directories or files: a vanished lock is reported, not
+/// silently regenerated.
+pub fn acquire_mode(path: &Path, mode: Mode) -> Result<Lease, AcquireError> {
+    let unavailable = |error: &str| AcquireError::Unavailable(error.to_owned());
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty())
+        && mode == Mode::Create
+    {
         fs::create_dir_all(parent)
-            .map_err(|_| "engineering state lock directory is unavailable".to_owned())?;
+            .map_err(|_| unavailable("engineering state lock directory is unavailable"))?;
     }
-    let before = inspect(path)?;
+    let before = inspect(path).map_err(AcquireError::Unavailable)?;
     let mut options = OpenOptions::new();
-    options.create(true).truncate(false).read(true).write(true);
+    options
+        .create(mode == Mode::Create)
+        .truncate(false)
+        .read(true)
+        .write(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
     let file = options.open(path).map_err(|error| {
-        format!(
+        AcquireError::Unavailable(format!(
             "engineering state lock cannot be opened ({:?})",
             error.kind()
-        )
+        ))
     })?;
     let opened = file
         .metadata()
-        .map_err(|_| "engineering state lock handle cannot be inspected".to_owned())?;
-    validate_metadata(&opened)?;
+        .map_err(|_| unavailable("engineering state lock handle cannot be inspected"))?;
+    validate_metadata(&opened).map_err(AcquireError::Unavailable)?;
     if before.as_ref().is_some_and(|old| !same_file(old, &opened)) {
-        return Err("engineering state lock identity changed during acquisition".to_owned());
+        return Err(unavailable(
+            "engineering state lock identity changed during acquisition",
+        ));
     }
-    verify_identity(path, &opened)?;
+    verify_identity(path, &opened).map_err(AcquireError::Unavailable)?;
     match file.try_lock() {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => {
-            return Err("engineering state is already owned by another resident".to_owned());
+            return Err(AcquireError::Busy);
         }
         Err(TryLockError::Error(error)) => {
-            return Err(format!(
+            return Err(AcquireError::Unavailable(format!(
                 "engineering state lock is unavailable ({:?})",
                 error.kind()
-            ));
+            )));
         }
     }
     // Catch replacement during acquisition too. Cooperating owners never
     // replace this pathname; active filesystem tampering is not a sandbox.
     let owned = Lease { _file: file };
-    verify_identity(path, &opened)?;
+    verify_identity(path, &opened).map_err(AcquireError::Unavailable)?;
     Ok(owned)
 }
 

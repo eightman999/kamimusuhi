@@ -21,34 +21,25 @@ mod validation_memory;
 mod verification_identity;
 mod worker_dispatch;
 
+/// In-process runner that still performs the full worker admission —
+/// request build, job lock, ledger check, claim match and durable
+/// reservation — skipping only the IPC transport and spawn.
 struct InlineRunner;
 
 impl ActionRunner for InlineRunner {
     fn execute(
         &self,
-        _state_path: &Path,
+        state_path: &Path,
         claimed: &Job,
         policy: &WorkspaceConfig,
         limits: &workspace::Limits,
         cancel: &AtomicBool,
     ) -> worker::Dispatch {
-        let action = &claimed
-            .pending
-            .as_ref()
-            .expect("durable action claim")
-            .action;
-        let result = match action {
-            Action::Run { .. } => {
-                workspace::execute(policy, &claimed.candidate, action, limits, cancel)
-                    .map(|observation| worker::Outcome::Run { observation })
-            }
-            Action::Verify | Action::Finish { .. } => {
-                workspace::verify(policy, &claimed.candidate, limits, cancel)
-                    .map(|validation| worker::Outcome::Verified { validation })
-            }
-            _ => panic!("only process actions use the runner"),
+        let request = match worker::Request::new(state_path, claimed, policy, limits) {
+            Ok(request) => request,
+            Err(error) => return worker::Dispatch::Rejected(error),
         };
-        worker::Dispatch::Completed(result)
+        worker::execute_inline(&request, cancel)
     }
 }
 
@@ -1527,4 +1518,233 @@ fn native_loop_repairs_a_large_rust_file_from_a_complete_range_observation() {
         serde_json::to_vec(&range).unwrap().len(),
         next_line,
     );
+}
+
+/// A worker-dispatched claim introduces the genesis ledger and the
+/// checkpoint marker together; a lost ledger then stops the job instead of
+/// silently recreating an empty one.
+#[test]
+fn a_worker_claim_introduces_the_ledger_and_a_lost_ledger_stops_the_job() {
+    let fixture = fixture();
+    let id = create(&fixture.shared);
+    prepare(&fixture.shared, &id);
+    let model = ScriptedModel::new([fix(), Action::Verify]);
+    action(&fixture.shared, &model);
+    assert_eq!(
+        job(&fixture.shared, &id)["execution_ledger_version"],
+        Value::Null
+    );
+
+    action(&fixture.shared, &model);
+    let after_verify = job(&fixture.shared, &id);
+    assert_eq!(after_verify["execution_ledger_version"], 1);
+    assert_eq!(after_verify["validation"]["passed"], true);
+    assert_eq!(count(&fixture.validation_count), 1);
+    let executions = checkpoint_path(&fixture)
+        .parent()
+        .unwrap()
+        .join("engineering.json.executions");
+    let ledger_path = executions.join(format!("{id}.json"));
+    let ledger: Value = serde_json::from_slice(&std::fs::read(&ledger_path).unwrap()).unwrap();
+    assert_eq!(ledger["schema_version"], 1);
+    assert_eq!(ledger["job_id"], id);
+    assert_eq!(ledger["high_water"], 2);
+    assert!(
+        ledger["request_digest"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+    assert!(executions.join(format!("{id}.lock")).is_file());
+
+    // The ledger disappears between ticks: the next worker-targeted claim
+    // must stop, never repair the loss into an empty reservation.
+    std::fs::remove_file(&ledger_path).unwrap();
+    let model = ScriptedModel::new([Action::Run {
+        argv: vec![
+            "sh".into(),
+            fixture.command_script.to_string_lossy().into_owned(),
+            fixture.command_count.to_string_lossy().into_owned(),
+        ],
+    }]);
+    action(&fixture.shared, &model);
+    let stopped = job(&fixture.shared, &id);
+    assert_eq!(stopped["phase"], "paused");
+    assert!(stopped["pending"].is_null());
+    assert_eq!(
+        stopped["last_error"],
+        "engineering execution ledger is missing"
+    );
+    assert_eq!(
+        stopped["metrics"]["actions"],
+        after_verify["metrics"]["actions"]
+    );
+    assert_eq!(count(&fixture.command_count), 0, "no side effect started");
+    assert!(!ledger_path.exists(), "no empty ledger was recreated");
+
+    // A corrupt ledger stops it identically.
+    std::fs::write(&ledger_path, b"not a ledger").unwrap();
+    let model = ScriptedModel::new([Action::Run {
+        argv: vec![
+            "sh".into(),
+            fixture.command_script.to_string_lossy().into_owned(),
+            fixture.command_count.to_string_lossy().into_owned(),
+        ],
+    }]);
+    assert!(tick_with(&fixture.shared, &model).is_ok());
+    let stopped = job(&fixture.shared, &id);
+    assert_eq!(stopped["phase"], "paused");
+    assert_eq!(std::fs::read(&ledger_path).unwrap(), b"not a ledger");
+}
+
+/// A positive reservation without the contract marker — an old checkpoint
+/// that somehow gained a ledger — stops the claim instead of adopting it.
+#[test]
+fn a_positive_ledger_without_a_marker_stops_the_claim() {
+    let fixture = fixture();
+    let id = create(&fixture.shared);
+    prepare(&fixture.shared, &id);
+    let persisted = job(&fixture.shared, &id);
+    let candidate: Candidate = serde_json::from_value(persisted["candidate"].clone()).unwrap();
+    let namespace = super::execution::namespace(&checkpoint_path(&fixture)).unwrap();
+    std::fs::create_dir(&namespace.dir).unwrap();
+    super::execution::publish(
+        &namespace,
+        &id,
+        &super::execution::Ledger {
+            schema_version: 1,
+            job_id: id.clone(),
+            candidate_digest: super::execution::candidate_digest(&candidate),
+            high_water: 1,
+            request_digest: Some(format!("sha256:{}", "a".repeat(64))),
+        },
+    )
+    .unwrap();
+
+    let model = ScriptedModel::new([Action::Run {
+        argv: vec![
+            "sh".into(),
+            fixture.command_script.to_string_lossy().into_owned(),
+            fixture.command_count.to_string_lossy().into_owned(),
+        ],
+    }]);
+    action(&fixture.shared, &model);
+    let stopped = job(&fixture.shared, &id);
+    assert_eq!(stopped["phase"], "paused");
+    assert!(stopped["pending"].is_null());
+    assert_eq!(
+        stopped["last_error"],
+        "engineering execution ledger exists without its checkpoint marker"
+    );
+    assert_eq!(count(&fixture.command_count), 0);
+    // The ledger content is preserved untouched for the operator.
+    assert_eq!(stopped["execution_ledger_version"], Value::Null);
+}
+
+/// While another owner holds the job's execution lock, claim creation is
+/// deferred to a later tick without any durable state change — and the job
+/// resumes claiming once the holder is gone.
+#[test]
+fn a_busy_job_lock_defers_the_claim_without_a_durable_change() {
+    let fixture = fixture();
+    let id = create(&fixture.shared);
+    prepare(&fixture.shared, &id);
+    let namespace = super::execution::namespace(&checkpoint_path(&fixture)).unwrap();
+    let held = super::execution::try_lock(&namespace, &id, super::lease::Mode::Create).unwrap();
+
+    let run = || Action::Run {
+        argv: vec![
+            "sh".into(),
+            fixture.command_script.to_string_lossy().into_owned(),
+            fixture.command_count.to_string_lossy().into_owned(),
+        ],
+    };
+    // Inference runs before the lock check, so the deferred tick consumes
+    // one scripted decision; nothing durable changes.
+    let model = ScriptedModel::new([run(), run()]);
+    let result = tick_with(&fixture.shared, &model).expect("deferred tick");
+    assert!(
+        result.is_none_or(|job| job.id != id || job.pending.is_none()),
+        "a busy job lock never spends a durable claim"
+    );
+    let unchanged = job(&fixture.shared, &id);
+    assert_eq!(unchanged["phase"], "active");
+    assert!(unchanged["pending"].is_null());
+    assert_eq!(unchanged["execution_ledger_version"], Value::Null);
+    assert_eq!(unchanged["metrics"]["decisions"], 0);
+    assert_eq!(count(&fixture.command_count), 0);
+    assert!(!namespace.dir.join(format!("{id}.json")).exists());
+
+    drop(held);
+    action(&fixture.shared, &model);
+    let claimed = job(&fixture.shared, &id);
+    assert_eq!(claimed["metrics"]["actions"], 1);
+    assert_eq!(claimed["execution_ledger_version"], 1);
+    assert_eq!(count(&fixture.command_count), 1);
+}
+
+/// `resume` participates in the same job lock as workers and claims: a
+/// held lock reports bounded contention without touching durable state.
+#[test]
+fn resume_reports_a_busy_job_lock_and_leaves_state_untouched() {
+    let fixture = fixture();
+    let id = create(&fixture.shared);
+    prepare(&fixture.shared, &id);
+    let (_, paused) = handle(&fixture.shared, &json!({"action": "pause", "id": id}));
+    assert_eq!(paused["job"]["phase"], "paused");
+
+    let namespace = super::execution::namespace(&checkpoint_path(&fixture)).unwrap();
+    let held = super::execution::try_lock(&namespace, &id, super::lease::Mode::Create).unwrap();
+    let (status, refused) = handle(&fixture.shared, &json!({"action": "resume", "id": id}));
+    assert_eq!(status, 400);
+    assert_eq!(refused["ok"], false);
+    assert!(
+        refused["error"].as_str().unwrap().contains("executing"),
+        "{refused}"
+    );
+    assert_eq!(job(&fixture.shared, &id)["phase"], "paused");
+
+    drop(held);
+    let (status, resumed) = handle(&fixture.shared, &json!({"action": "resume", "id": id}));
+    assert_eq!(status, 200);
+    assert_eq!(resumed["job"]["phase"], "active");
+}
+
+/// Two jobs keep disjoint ledgers and locks under one checkpoint; claiming
+/// both advances each independently.
+#[test]
+fn independent_jobs_hold_disjoint_ledgers_and_locks() {
+    let fixture = fixture();
+    let first = create(&fixture.shared);
+    prepare(&fixture.shared, &first);
+    // Pause the first job so its eligibility cannot consume the second
+    // job's preparation tick.
+    handle(&fixture.shared, &json!({"action": "pause", "id": first}));
+    let second = create(&fixture.shared);
+    prepare(&fixture.shared, &second);
+    handle(&fixture.shared, &json!({"action": "resume", "id": first}));
+    let command = || Action::Run {
+        argv: vec![
+            "sh".into(),
+            fixture.command_script.to_string_lossy().into_owned(),
+            fixture.command_count.to_string_lossy().into_owned(),
+        ],
+    };
+    let model = ScriptedModel::new([command(), command()]);
+    action(&fixture.shared, &model);
+    action(&fixture.shared, &model);
+    model.assert_consumed();
+    assert_eq!(count(&fixture.command_count), 2);
+    let executions = checkpoint_path(&fixture)
+        .parent()
+        .unwrap()
+        .join("engineering.json.executions");
+    for id in [&first, &second] {
+        let ledger: Value =
+            serde_json::from_slice(&std::fs::read(executions.join(format!("{id}.json"))).unwrap())
+                .unwrap();
+        assert_eq!(ledger["high_water"], 1);
+        assert_eq!(job(&fixture.shared, id)["metrics"]["actions"], 1);
+        assert_eq!(job(&fixture.shared, id)["execution_ledger_version"], 1);
+    }
 }

@@ -15,11 +15,12 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use super::lease::{AcquireError, Mode};
 use super::workspace::{self, Action, Candidate, Limits, Observation, Validation, WorkspaceConfig};
-use super::{Job, Phase, Snapshot, checkpoint};
+use super::{Job, Phase, Snapshot, checkpoint, execution};
 
 pub(super) const ENTRY: &str = "engineering-worker";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 const MAX_REPLY_BYTES: usize = 1024 * 1024;
 const MAX_CHECKPOINT_BYTES: u64 = 64 * 1024 * 1024;
@@ -203,8 +204,18 @@ pub(super) enum Dispatch {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 enum ReplyResult {
-    Completed { outcome: Result<Outcome, String> },
-    Rejected { reason: String },
+    Completed {
+        outcome: Result<Outcome, String>,
+    },
+    Rejected {
+        reason: String,
+    },
+    /// The reservation or its durability could not be confirmed; the
+    /// operation may or may not have run. The parent pauses rather than
+    /// replaying it.
+    Unknown {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -302,53 +313,84 @@ fn decode_reply(bytes: &[u8], request: &Request) -> Result<Dispatch, String> {
         ReplyResult::Rejected { .. } => {
             Err("engineering worker rejection exceeds its byte limit".into())
         }
+        ReplyResult::Unknown { reason } if reason.len() <= MAX_ERROR_BYTES => {
+            Ok(Dispatch::Unknown(reason))
+        }
+        ReplyResult::Unknown { .. } => {
+            Err("engineering worker unknown result exceeds its byte limit".into())
+        }
     }
 }
 
-/// A read-only stale-claim barrier immediately before invoking workspace code.
-/// It deliberately neither acquires the resident's lease nor recovers/writes
-/// its checkpoint. A restart after this check can still race execution; a
-/// durable execution ledger is needed to close that separate boundary.
-fn verify_claim(request: &Request) -> Result<(), String> {
+/// Why the durable claim check refused execution.
+enum ClaimCheck {
+    /// The checkpoint could not be read or validated; durability of the
+    /// claim itself is uncertain.
+    Invalid(String),
+    /// The checkpoint is sound but this exact claim is no longer current.
+    Mismatch(String),
+}
+
+/// Read-only stale-claim barrier evaluated while holding the job lock. It
+/// deliberately neither acquires the resident's lease nor recovers/writes
+/// its checkpoint; the per-job lock plus the execution ledger close the
+/// boundary between this check and execution start.
+fn verify_claim(request: &Request) -> Result<(), ClaimCheck> {
+    let invalid = |error: &str| ClaimCheck::Invalid(error.to_owned());
+    let mismatch = |error: &str| ClaimCheck::Mismatch(error.to_owned());
     let metadata = std::fs::symlink_metadata(&request.state_path)
-        .map_err(|_| "engineering worker checkpoint is unavailable")?;
+        .map_err(|_| invalid("engineering worker checkpoint is unavailable"))?;
     if !metadata.file_type().is_file() || metadata.len() > MAX_CHECKPOINT_BYTES {
-        return Err("engineering worker checkpoint is not a bounded regular file".into());
+        return Err(invalid(
+            "engineering worker checkpoint is not a bounded regular file",
+        ));
     }
     let file = File::open(&request.state_path)
-        .map_err(|_| "engineering worker checkpoint cannot be opened")?;
+        .map_err(|_| invalid("engineering worker checkpoint cannot be opened"))?;
     if !file
         .metadata()
-        .map_err(|_| "engineering worker checkpoint cannot be inspected")?
+        .map_err(|_| invalid("engineering worker checkpoint cannot be inspected"))?
         .is_file()
     {
-        return Err("engineering worker checkpoint is not a regular file".into());
+        return Err(invalid(
+            "engineering worker checkpoint is not a regular file",
+        ));
     }
     let mut bytes = Vec::new();
     file.take(MAX_CHECKPOINT_BYTES + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| "engineering worker checkpoint cannot be read")?;
+        .map_err(|_| invalid("engineering worker checkpoint cannot be read"))?;
     if bytes.len() as u64 > MAX_CHECKPOINT_BYTES {
-        return Err("engineering worker checkpoint exceeds its byte limit".into());
+        return Err(invalid(
+            "engineering worker checkpoint exceeds its byte limit",
+        ));
     }
-    let snapshot: Snapshot =
-        serde_json::from_slice(&bytes).map_err(|_| "engineering worker checkpoint is malformed")?;
+    let snapshot: Snapshot = serde_json::from_slice(&bytes)
+        .map_err(|_| invalid("engineering worker checkpoint is malformed"))?;
     if snapshot.schema_version != checkpoint::CURRENT_SCHEMA_VERSION {
-        return Err("engineering worker checkpoint requires recovery".into());
+        return Err(invalid("engineering worker checkpoint requires recovery"));
     }
     let candidate_root = request
         .candidate
         .path
         .parent()
         .and_then(Path::parent)
-        .ok_or("engineering worker candidate root is invalid")?;
+        .ok_or_else(|| invalid("engineering worker candidate root is invalid"))?;
     checkpoint::validate(&snapshot, candidate_root)
-        .map_err(|_| "engineering worker checkpoint is inconsistent")?;
+        .map_err(|_| invalid("engineering worker checkpoint is inconsistent"))?;
     let job = snapshot
         .jobs
         .iter()
         .find(|job| job.id == request.job_id)
-        .ok_or("engineering worker pending job no longer exists")?;
+        .ok_or_else(|| mismatch("engineering worker pending job no longer exists"))?;
+    // The parent publishes the marker with the pending claim in one
+    // checkpoint transaction; a claim without the contract marker is a
+    // durability defect, not an executable request.
+    if job.execution_ledger_version != Some(execution::LEDGER_MARKER_VERSION) {
+        return Err(invalid(
+            "engineering worker job lacks its execution ledger marker",
+        ));
+    }
     if job.phase != Phase::Active
         || job.workspace != request.policy.name
         || job.candidate != request.candidate
@@ -356,19 +398,68 @@ fn verify_claim(request: &Request) -> Result<(), String> {
             pending.sequence == request.sequence && pending.action == request.claimed_action
         })
     {
-        return Err("engineering worker pending action is no longer current".into());
+        return Err(mismatch(
+            "engineering worker pending action is no longer current",
+        ));
     }
     Ok(())
 }
 
+/// Worker admission, in order: request validation, job lock, ledger
+/// identity/high-water, checkpoint claim match, cancel check, durable
+/// reservation, then the workspace operation under the held lock.
 fn execute(request: &Request, cancel: &AtomicBool) -> ReplyResult {
-    if let Err(error) = request.validate().and_then(|()| verify_claim(request)) {
-        return ReplyResult::Rejected { reason: error };
+    let unknown = |reason: &str| ReplyResult::Unknown {
+        reason: reason.to_owned(),
+    };
+    let rejected = |reason: &str| ReplyResult::Rejected {
+        reason: reason.to_owned(),
+    };
+    if let Err(error) = request.validate() {
+        return rejected(&error);
+    }
+    let namespace = match execution::namespace(&request.state_path) {
+        Ok(namespace) => namespace,
+        Err(error) => return unknown(&error),
+    };
+    // Workers never create the namespace or the lockfile; the parent's claim
+    // initialization owns that.
+    let _job_lock = match execution::try_lock(&namespace, &request.job_id, Mode::Existing) {
+        Ok(lock) => lock,
+        Err(AcquireError::Busy) => {
+            return unknown("engineering job is already executing this claim");
+        }
+        Err(AcquireError::Unavailable(error)) => return unknown(&error),
+    };
+    let expected = execution::candidate_digest(&request.candidate);
+    let ledger = match execution::read(&namespace, &request.job_id, &expected) {
+        Ok(Some(ledger)) => ledger,
+        Ok(None) => return unknown("engineering execution ledger is missing"),
+        Err(error) => return unknown(&error),
+    };
+    // A sequence at or below the high-water mark is already reserved —
+    // rejected unconditionally, whether or not this request's digest matches
+    // the earlier attempt's.
+    if request.sequence <= ledger.high_water {
+        return unknown("engineering execution sequence is already reserved");
+    }
+    match verify_claim(request) {
+        Ok(()) => {}
+        Err(ClaimCheck::Invalid(error)) => return unknown(&error),
+        Err(ClaimCheck::Mismatch(error)) => return rejected(&error),
     }
     if cancel.load(Ordering::Acquire) {
-        return ReplyResult::Rejected {
-            reason: "engineering worker parent disconnected before execution".into(),
-        };
+        return rejected("engineering worker parent disconnected before execution");
+    }
+    let reservation = execution::Ledger {
+        schema_version: execution::LEDGER_SCHEMA_VERSION,
+        job_id: request.job_id.clone(),
+        candidate_digest: expected,
+        high_water: request.sequence,
+        request_digest: Some(execution::request_digest(request)),
+    };
+    if let Err(error) = execution::publish(&namespace, &request.job_id, &reservation) {
+        return unknown(&error);
     }
     let limits = request.limits.limits();
     // These functions own their deadlines inside this process. Returning an
@@ -389,6 +480,19 @@ fn execute(request: &Request, cancel: &AtomicBool) -> ReplyResult {
     }
     .map_err(|error| super::clipped(&error, MAX_ERROR_BYTES));
     ReplyResult::Completed { outcome }
+}
+
+/// In-process execution used by tests' `InlineRunner`. It performs the same
+/// admission sequence as the spawned binary — request build, job lock,
+/// ledger check, claim match, reservation, workspace operation — and only
+/// skips the IPC transport.
+#[cfg(test)]
+pub(crate) fn execute_inline(request: &Request, cancel: &AtomicBool) -> Dispatch {
+    match execute(request, cancel) {
+        ReplyResult::Completed { outcome } => Dispatch::Completed(outcome),
+        ReplyResult::Rejected { reason } => Dispatch::Rejected(reason),
+        ReplyResult::Unknown { reason } => Dispatch::Unknown(reason),
+    }
 }
 
 /// Hidden binary entry. No configuration, credentials, Shared, HTTP server,
