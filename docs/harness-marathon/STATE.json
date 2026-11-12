@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 5.24,
+  "elapsed_hours": 5.29,
   "target_hours": 24.0,
   "cycle": 21,
-  "current_task": "cycle21+§7(1)-(5)+resume競合cellまで全て実装・測定・push済み。§7優先課題は消化完了。",
+  "current_task": "§7(1)-(5)+resume競合+claim永続化失敗/oversize拒否まで実装・測定・push済み",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
-  "last_checkpoint_at": "2026-11-11T17:37:30Z",
+  "last_checkpoint_at": "2026-11-12T00:55:00Z",
   "active_session_started_at": "2026-11-11T17:13:00Z",
   "session_elapsed_base_hours": 4.526979,
   "status": "paused-for-handoff",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
-  "next_task": "次セッション: BACKLOG最優先の再評価。候補: (a)job増加時のclaim投影増設境界の実測 (b)claim永続化失敗注入で副作用0を確認(BACKLOG P0) (c)実行中workerと親resumeのHTTP経路観測",
+  "next_task": "次: executions dirの蓄積管理(stale .claim.json の掃除境界)か BACKLOG P0 の実測から選択",
   "completed_sessions": [
     {
       "started_at": "2026-11-08T16:06:48Z",
@@ -56,6 +56,12 @@
       "ended_at": "2026-11-11T17:37:30Z",
       "elapsed_hours": 0.408,
       "end_evidence": "resume競合テスト追加・gate全PASS・commit 5fa5515 push・remote HEAD一致まで連続実作業"
+    },
+    {
+      "started_at": "2026-11-12T00:52:35Z",
+      "ended_at": "2026-11-12T00:55:00Z",
+      "elapsed_hours": 0.042,
+      "end_evidence": "claim永続化失敗/oversize拒否テスト・gate全PASS・commit 741bd8f push・remote HEAD一致まで連続実作業"
     }
   ],
   "excluded_idle_interval": {
@@ -89,7 +95,7 @@
     2,
     3
   ],
-  "last_verified_change_commit": "5fa5515d1991aa6eda81f30391d673b1aafda083",
+  "last_verified_change_commit": "741bd8f81f80960e9765770635f90af41e3e65c4",
   "resume_guide": "docs/harness-marathon/RESUME.md",
   "evaluation": "evaluation/harness/marathon-20261109.json",
   "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。",
@@ -277,7 +283,7 @@
     "gates": {
       "fmt": "PASS",
       "clippy_all_targets_features": "PASS",
-      "engineering_lib": "91/91 PASS",
+      "engineering_lib": "93/93 PASS",
       "engineering_worker": "13 PASS +1 ignored",
       "engineering_http": "7 PASS +1 ignored"
     },

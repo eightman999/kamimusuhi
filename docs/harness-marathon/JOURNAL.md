@@ -715,3 +715,9 @@ commit 266a3125cf96374c1940fd0f533732c1f873073f → push済み、remote HEAD一�
 | --test engineering_worker | 12 PASS +1 ignored |
 
 push: 5153531/799eabd/f4baf19/44b8750/4151048 → exp/harness-marathon-20261109、remote HEAD=4151048一致確認。実作業累計 5.235h/24h(未達)。
+
+## claim永続化失敗・oversize拒否 (2026-11-12 / 00:52-00:55 UTC)
+
+- `an_unpublishable_claim_executes_nothing_and_recovers` (894147d): projection targetをdirectory化→atomic rename失敗→Err receiptでpendingクリア・zero side effects・last_error記録・namespace修復後に1回だけ実行。`publish_file` の対象ガード文言を ledger→record へ修正(claim projectionを覆う汎用名へ)。
+- `an_oversized_claim_is_refused_without_side_effects` (741bd8f): 1MiB超のclaimはpublishのbyte boundで拒否→zero side effects・retryable。
+- gates: fmt PASS / clippy -D warnings PASS / engineering lib 93/93 PASS / worker 13+1。累計5.29h/24h(未達)。
