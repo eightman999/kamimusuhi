@@ -725,3 +725,7 @@ push: 5153531/799eabd/f4baf19/44b8750/4151048 → exp/harness-marathon-20261109�
 ## spent claim projection の掃除 (2026-11-12 / 00:55-00:58 UTC)
 
 `execution::remove_claim` 追加: dispatch 完了後(Completed/Rejected/Unknown pause)に `<job>.claim.json` を remove_file+dir sync。best effort — 残存fileはledger high_waterが拒否、absentはworkerが "claim is not published" として拒否。unpublishable test が dispatch 後の除去を確認する形へ更新。gates: fmt/clippy PASS、lib 93/93、worker 13+1。commit 7f5680d。
+
+## inspect 状態網羅 (2026-11-12 / 00:58-01:02 UTC)
+
+`inspect_reports_branch_mismatch_and_non_worktree_candidates_as_data` (bc4b357): branch detour → `branch_mismatch`+branch名、candidate pathがplain dir → `not_worktree`。両方ともok=trueのデータとして報告。gates: fmt/clippy PASS、lib 94/94。累計5.32h/24h(未達)。

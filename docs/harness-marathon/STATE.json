@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 5.31,
+  "elapsed_hours": 5.32,
   "target_hours": 24.0,
   "cycle": 21,
-  "current_task": "claim永続化失敗/oversize拒否/spent claim掃除まで実装・測定・push済み",
+  "current_task": "inspect状態網羅(branch_mismatch/not_worktree)まで実装・測定・push済み",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
-  "last_checkpoint_at": "2026-11-12T00:58:00Z",
+  "last_checkpoint_at": "2026-11-12T01:02:00Z",
   "active_session_started_at": "2026-11-11T17:13:00Z",
   "session_elapsed_base_hours": 4.526979,
   "status": "paused-for-handoff",
@@ -68,6 +68,12 @@
       "ended_at": "2026-11-12T00:58:00Z",
       "elapsed_hours": 0.062,
       "end_evidence": "unpublishable/oversize/spent-claim掃除の実装・gate全PASS・commit 7f5680d push・remote HEAD一致"
+    },
+    {
+      "started_at": "2026-11-12T00:52:35Z",
+      "ended_at": "2026-11-12T01:02:00Z",
+      "elapsed_hours": 0.075,
+      "end_evidence": "unpublishable/oversize/spent掃除/inspect状態の実装・gate全PASS・bc4b357 push・remote HEAD一致まで連続実作業"
     }
   ],
   "excluded_idle_interval": {
@@ -101,7 +107,7 @@
     2,
     3
   ],
-  "last_verified_change_commit": "7f5680db6c8346f72596cb7b43debe600eb9554d",
+  "last_verified_change_commit": "bc4b357ed7b7ce37bba195f6d8f1f222b7aee45c",
   "resume_guide": "docs/harness-marathon/RESUME.md",
   "evaluation": "evaluation/harness/marathon-20261109.json",
   "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。",
@@ -289,7 +295,7 @@
     "gates": {
       "fmt": "PASS",
       "clippy_all_targets_features": "PASS",
-      "engineering_lib": "93/93 PASS",
+      "engineering_lib": "94/94 PASS",
       "engineering_worker": "13 PASS +1 ignored",
       "engineering_http": "7 PASS +1 ignored"
     },
