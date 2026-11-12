@@ -252,7 +252,7 @@ fn publish_file(
         match fs::symlink_metadata(&target) {
             Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
                 let _ = fs::remove_file(&temporary);
-                return Err("engineering execution ledger is corrupt".to_owned());
+                return Err("engineering execution record target is corrupt".to_owned());
             }
             Ok(_) => {}
             Err(error) if error.kind() == ErrorKind::NotFound => {}

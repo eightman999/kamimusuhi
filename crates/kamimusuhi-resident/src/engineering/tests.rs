@@ -2148,3 +2148,70 @@ fn observed_failures_support_a_method_switch_that_finishes_the_job() {
     );
     model.assert_consumed();
 }
+
+/// A claim whose projection cannot persist must produce zero side effects,
+/// not an execution — and the job recovers once the namespace is usable.
+#[test]
+fn an_unpublishable_claim_executes_nothing_and_recovers() {
+    let fixture = fixture();
+    let id = create(&fixture.shared);
+    prepare(&fixture.shared, &id);
+    let executions = checkpoint_path(&fixture).with_file_name("engineering.json.executions");
+    std::fs::create_dir_all(&executions).unwrap();
+    // A directory at the projection's target makes the atomic rename fail.
+    let blocked = executions.join(format!("{id}.claim.json"));
+    std::fs::create_dir(&blocked).unwrap();
+    let model = ScriptedModel::new([
+        Action::Run {
+            argv: vec![
+                "sh".to_owned(),
+                "-c".to_owned(),
+                format!(
+                    "printf x >> '{}'; printf 'x\\n'",
+                    fixture
+                        .dir
+                        .path()
+                        .join("workspace/never-executed.txt")
+                        .display()
+                ),
+            ],
+        },
+        Action::Run {
+            argv: vec!["sh".to_owned(), "-c".to_owned(), "printf ok\\n".to_owned()],
+        },
+    ]);
+    // First claim: publish fails inside the lock → Err receipt, pending
+    // cleared, zero side effects, job stays retryable.
+    action(&fixture.shared, &model);
+    let current = job(&fixture.shared, &id);
+    assert_eq!(current["phase"], "active");
+    assert!(current["pending"].is_null(), "{current}");
+    assert_eq!(current["metrics"]["actions"], 1);
+    assert!(
+        current["last_error"]
+            .as_str()
+            .unwrap()
+            .contains("execution record target is corrupt"),
+        "{current}"
+    );
+    assert!(
+        !candidate(&fixture.shared, &id)
+            .join("never-executed.txt")
+            .exists(),
+        "no workspace side effect may occur without a durable claim"
+    );
+    assert!(blocked.is_dir(), "publish must not clobber the blocker");
+
+    // Repair the namespace; the next claim publishes and executes once.
+    std::fs::remove_dir(&blocked).unwrap();
+    action(&fixture.shared, &model);
+    let current = job(&fixture.shared, &id);
+    assert!(current["pending"].is_null(), "{current}");
+    assert_eq!(current["metrics"]["actions"], 2);
+    assert!(current["last_error"].is_null(), "{current}");
+    assert!(
+        executions.join(format!("{id}.claim.json")).is_file(),
+        "the projection is durable before execution"
+    );
+    model.assert_consumed();
+}
