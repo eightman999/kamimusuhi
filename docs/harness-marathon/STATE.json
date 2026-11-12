@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "started_at": "2026-11-08T16:06:48Z",
-  "elapsed_hours": 5.29,
+  "elapsed_hours": 5.31,
   "target_hours": 24.0,
   "cycle": 21,
-  "current_task": "§7(1)-(5)+resume競合+claim永続化失敗/oversize拒否まで実装・測定・push済み",
+  "current_task": "claim永続化失敗/oversize拒否/spent claim掃除まで実装・測定・push済み",
   "branch": "exp/harness-marathon-20261109",
   "base_commit": "f31aae8f612a20bc695c1b854661306b90d79217",
   "last_ci_passed_commit": "11ef0509ceceb1676645dd9542f78dfb261d97bb",
-  "last_checkpoint_at": "2026-11-12T00:55:00Z",
+  "last_checkpoint_at": "2026-11-12T00:58:00Z",
   "active_session_started_at": "2026-11-11T17:13:00Z",
   "session_elapsed_base_hours": 4.526979,
   "status": "paused-for-handoff",
   "time_accounting": "実際に作業したセッションの経過時間。別タスク間の停止時間と並行エージェントの時間は加算しない。",
-  "next_task": "次: executions dirの蓄積管理(stale .claim.json の掃除境界)か BACKLOG P0 の実測から選択",
+  "next_task": "次: BACKLOG残項の最安確認。候補: 承認IDの同一ms衝突、tool loop repair予算、checkpoint/resume冪等性の追加測定",
   "completed_sessions": [
     {
       "started_at": "2026-11-08T16:06:48Z",
@@ -62,6 +62,12 @@
       "ended_at": "2026-11-12T00:55:00Z",
       "elapsed_hours": 0.042,
       "end_evidence": "claim永続化失敗/oversize拒否テスト・gate全PASS・commit 741bd8f push・remote HEAD一致まで連続実作業"
+    },
+    {
+      "started_at": "2026-11-12T00:52:35Z",
+      "ended_at": "2026-11-12T00:58:00Z",
+      "elapsed_hours": 0.062,
+      "end_evidence": "unpublishable/oversize/spent-claim掃除の実装・gate全PASS・commit 7f5680d push・remote HEAD一致"
     }
   ],
   "excluded_idle_interval": {
@@ -95,7 +101,7 @@
     2,
     3
   ],
-  "last_verified_change_commit": "741bd8f81f80960e9765770635f90af41e3e65c4",
+  "last_verified_change_commit": "7f5680db6c8346f72596cb7b43debe600eb9554d",
   "resume_guide": "docs/harness-marathon/RESUME.md",
   "evaluation": "evaluation/harness/marathon-20261109.json",
   "scope_update": "2026-11-09 JST: ユーザーがskills/検索tool追加を後回しにし、エージェント本体へのエンジニアハーネス実装を指定。§6の禁止事項は継続。",

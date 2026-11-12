@@ -721,3 +721,7 @@ push: 5153531/799eabd/f4baf19/44b8750/4151048 → exp/harness-marathon-20261109�
 - `an_unpublishable_claim_executes_nothing_and_recovers` (894147d): projection targetをdirectory化→atomic rename失敗→Err receiptでpendingクリア・zero side effects・last_error記録・namespace修復後に1回だけ実行。`publish_file` の対象ガード文言を ledger→record へ修正(claim projectionを覆う汎用名へ)。
 - `an_oversized_claim_is_refused_without_side_effects` (741bd8f): 1MiB超のclaimはpublishのbyte boundで拒否→zero side effects・retryable。
 - gates: fmt PASS / clippy -D warnings PASS / engineering lib 93/93 PASS / worker 13+1。累計5.29h/24h(未達)。
+
+## spent claim projection の掃除 (2026-11-12 / 00:55-00:58 UTC)
+
+`execution::remove_claim` 追加: dispatch 完了後(Completed/Rejected/Unknown pause)に `<job>.claim.json` を remove_file+dir sync。best effort — 残存fileはledger high_waterが拒否、absentはworkerが "claim is not published" として拒否。unpublishable test が dispatch 後の除去を確認する形へ更新。gates: fmt/clippy PASS、lib 93/93、worker 13+1。commit 7f5680d。
