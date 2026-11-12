@@ -300,6 +300,18 @@ pub(super) fn publish_claim(
     )
 }
 
+/// Remove a spent claim projection after its dispatch completes. Best
+/// effort: a stale or absent file is refused by the worker anyway, so a
+/// removal failure only defers cleanup.
+pub(super) fn remove_claim(namespace: &Namespace, job_id: &str) -> Result<(), String> {
+    let path = namespace.dir.join(format!("{job_id}.claim.json"));
+    match fs::remove_file(&path) {
+        Ok(()) => sync_directory(&namespace.dir),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(_) => Err("engineering claim projection cannot be removed".to_owned()),
+    }
+}
+
 /// Read the bounded per-claim projection. `Ok(None)` means it is genuinely
 /// absent; foreign shapes are `Err`.
 pub(super) fn read_claim(namespace: &Namespace, job_id: &str) -> Result<Option<Vec<u8>>, String> {

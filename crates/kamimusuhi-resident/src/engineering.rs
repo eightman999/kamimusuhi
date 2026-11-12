@@ -1191,6 +1191,12 @@ fn tick_with_runner(
                         }
                         worker::Dispatch::Rejected(error) => Err(error),
                         worker::Dispatch::Unknown(reason) => {
+                            // The claim's outcome is unknown and the job
+                            // pauses; the spent projection is removed so it
+                            // cannot accumulate or mislead a later worker.
+                            if let Some(namespace) = &job_namespace {
+                                let _ = execution::remove_claim(namespace, &job.id);
+                            }
                             return pause_unknown_action(
                                 shared, &claimed, sequence, &action, &reason,
                             );
@@ -1206,6 +1212,11 @@ fn tick_with_runner(
             ),
             _ => workspace::execute(policy, &claimed.candidate, &action, &limits, &store.cancel),
         };
+        // A dispatched claim's projection is spent. Removal is best effort —
+        // a lingering file is still refused by the ledger's high-water.
+        if let Some(namespace) = &job_namespace {
+            let _ = execution::remove_claim(namespace, &job.id);
+        }
         let (ok, detail) = match result {
             Ok(result) => (result.ok, result.detail),
             Err(error) => (false, json!({"error":clipped(&error,2048)})),

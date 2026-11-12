@@ -2210,8 +2210,8 @@ fn an_unpublishable_claim_executes_nothing_and_recovers() {
     assert_eq!(current["metrics"]["actions"], 2);
     assert!(current["last_error"].is_null(), "{current}");
     assert!(
-        executions.join(format!("{id}.claim.json")).is_file(),
-        "the projection is durable before execution"
+        !executions.join(format!("{id}.claim.json")).exists(),
+        "a spent claim projection is removed after dispatch"
     );
     model.assert_consumed();
 }
