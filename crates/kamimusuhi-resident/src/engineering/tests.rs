@@ -2215,3 +2215,40 @@ fn an_unpublishable_claim_executes_nothing_and_recovers() {
     );
     model.assert_consumed();
 }
+
+/// The claim projection is a bounded record: a claim whose serialized form
+/// exceeds MAX_CLAIM_BYTES is refused before any workspace side effect, and
+/// the job stays retryable.
+#[test]
+fn an_oversized_claim_is_refused_without_side_effects() {
+    let fixture = fixture();
+    let id = create(&fixture.shared);
+    prepare(&fixture.shared, &id);
+    let huge = "x".repeat(1024 * 1024 + 1);
+    let model = ScriptedModel::new([
+        Action::Run {
+            argv: vec!["sh".to_owned(), "-c".to_owned(), format!("echo {huge}")],
+        },
+        Action::Run {
+            argv: vec!["sh".to_owned(), "-c".to_owned(), "printf ok\\n".to_owned()],
+        },
+    ]);
+    action(&fixture.shared, &model);
+    let current = job(&fixture.shared, &id);
+    assert_eq!(current["phase"], "active");
+    assert!(current["pending"].is_null(), "{current}");
+    assert!(
+        current["last_error"]
+            .as_str()
+            .unwrap()
+            .contains("execution record exceeds its bounded size"),
+        "{current}"
+    );
+    // Recovery: a bounded claim proceeds on the next decision.
+    action(&fixture.shared, &model);
+    let current = job(&fixture.shared, &id);
+    assert!(current["pending"].is_null(), "{current}");
+    assert!(current["last_error"].is_null(), "{current}");
+    assert_eq!(current["metrics"]["actions"], 2);
+    model.assert_consumed();
+}
