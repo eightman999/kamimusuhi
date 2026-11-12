@@ -2252,3 +2252,28 @@ fn an_oversized_claim_is_refused_without_side_effects() {
     assert_eq!(current["metrics"]["actions"], 2);
     model.assert_consumed();
 }
+
+/// A moved branch or a plain directory at the candidate path is reported as
+/// measured data — never guessed.
+#[test]
+fn inspect_reports_branch_mismatch_and_non_worktree_candidates_as_data() {
+    let (fixture, id) = verified_fixture();
+    let root = candidate(&fixture.shared, &id);
+    git(&root, &["checkout", "-qb", "fixture-detour"]);
+    let detail = inspect(&fixture.shared, &id);
+    assert_eq!(detail["candidate"]["exists"], true);
+    assert_eq!(detail["candidate"]["state"], "branch_mismatch");
+    assert_eq!(detail["candidate"]["branch_matches"], false);
+    assert_eq!(detail["candidate"]["branch"], "fixture-detour");
+    assert_eq!(detail["verification"]["recorded"], true);
+
+    // A directory that is no worktree reports its state, not an error.
+    let (fixture2, id2) = verified_fixture();
+    let root2 = candidate(&fixture2.shared, &id2);
+    std::fs::remove_dir_all(&root2).unwrap();
+    std::fs::create_dir(&root2).unwrap();
+    let detail = inspect(&fixture2.shared, &id2);
+    assert_eq!(detail["candidate"]["exists"], true);
+    assert_eq!(detail["candidate"]["state"], "not_worktree");
+    assert_eq!(job(&fixture2.shared, &id2)["phase"], "active");
+}
