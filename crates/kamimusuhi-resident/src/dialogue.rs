@@ -362,11 +362,31 @@ pub fn history(shared: &Shared, request: &Value) -> (u16, Value) {
         lines
     })
     .unwrap_or_default();
-    let mut seen = std::collections::HashSet::new();
-    let all: Vec<Value> = collected
+    let mut parsed: Vec<Value> = collected
         .into_iter()
         .filter_map(|(_, line)| serde_json::from_str::<Value>(&line).ok())
-        .filter(|v| v["subject"].as_str() == Some(subject.as_str()))
+        .collect();
+    // Discover all active subjects in the recent journal, newest turn first.
+    let mut latest_by_subject: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    for v in &parsed {
+        if let Some(sub) = v["subject"].as_str().filter(|s| !s.is_empty()) {
+            let ts = v["ts"].as_str().unwrap_or("");
+            let entry = latest_by_subject.entry(sub.to_owned()).or_default();
+            if ts >= entry.as_str() {
+                *entry = ts.to_owned();
+            }
+        }
+    }
+    let mut subjects_with_ts: Vec<(String, String)> = latest_by_subject.into_iter().collect();
+    subjects_with_ts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let subjects: Vec<String> = subjects_with_ts.into_iter().map(|(s, _)| s).collect();
+
+    let all_subjects = matches!(subject.as_str(), "*" | "all");
+    let mut seen = std::collections::HashSet::new();
+    let all: Vec<Value> = parsed
+        .drain(..)
+        .filter(|v| all_subjects || v["subject"].as_str() == Some(subject.as_str()))
         .filter(|v| seen.insert(v["id"].as_str().unwrap_or("").to_owned()))
         .collect();
     // A `received` intake record with a matching outcome record is folded
@@ -390,13 +410,17 @@ pub fn history(shared: &Shared, request: &Value) -> (u16, Value) {
         .iter()
         .map(|t| {
             json!({"ts": t["ts"], "kind": t["kind"].as_str().unwrap_or("answered"),
+                   "subject": t["subject"],
                    "task_id": t["task_id"], "message": t["message"],
                    "response": t["response"], "error": t["error"],
                    "latency_ms": t["latency_ms"], "tool_calls": t["tool_calls"],
                    "background": t["background"], "route": t["route"]})
         })
         .collect();
-    (200, json!({"subject": subject, "turns": turns}))
+    (
+        200,
+        json!({"subject": subject, "subjects": subjects, "turns": turns}),
+    )
 }
 
 #[cfg(test)]
@@ -585,5 +609,45 @@ mod tests {
         assert_eq!(s3, 200);
         assert_eq!(shared.dialogue_hosts.total_spawns(), 2);
         assert_eq!(shared.dialogue_hosts.host_count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn history_discovers_subjects_and_supports_wildcard_query() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (shared, cfg) = shared_with_runtime(
+            dir.path(),
+            "printf '%s\\n' '{\"response\":\"pong\",\"session_id\":\"s1\"}'",
+        );
+        let (s1, _) = talk(
+            &shared,
+            &cfg,
+            &json!({"subject": "eightman", "message": "hello"}),
+        );
+        let (s2, _) = talk(
+            &shared,
+            &cfg,
+            &json!({"subject": "slack-u123", "message": "from slack"}),
+        );
+        assert_eq!(s1, 200);
+        assert_eq!(s2, 200);
+
+        let (_, scoped) = history(&shared, &json!({"subject": "eightman"}));
+        let subjects = scoped["subjects"].as_array().expect("subjects");
+        assert!(subjects.contains(&json!("eightman")));
+        assert!(subjects.contains(&json!("slack-u123")));
+        let scoped_turns = scoped["turns"].as_array().expect("turns");
+        assert_eq!(scoped_turns.len(), 1);
+        assert_eq!(scoped_turns[0]["subject"], json!("eightman"));
+
+        let (_, all) = history(&shared, &json!({"subject": "*"}));
+        let all_turns = all["turns"].as_array().expect("turns");
+        assert_eq!(all_turns.len(), 2);
+        assert!(all_turns.iter().any(|t| t["subject"] == json!("eightman")));
+        assert!(
+            all_turns
+                .iter()
+                .any(|t| t["subject"] == json!("slack-u123"))
+        );
     }
 }

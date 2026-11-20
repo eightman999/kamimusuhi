@@ -426,10 +426,23 @@ impl NativeApp {
                         && (input.modifiers.ctrl || input.modifiers.command)
                 });
             ui.horizontal(|ui| {
+                let bytes = self.input.trim().len();
+                let limit = kamimusuhi_runtime::dialogue::MAX_INPUT_BYTES;
+                let over = bytes > limit;
                 ui.label(
-                    RichText::new("Enter: 改行  /  Ctrl+Enter: 送信")
+                    RichText::new("Enter: 改行  /  ⌘/Ctrl+Enter: 送信")
                         .small()
                         .color(MUTED),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(format!("{bytes} / {limit} B"))
+                        .small()
+                        .color(if over {
+                            Color32::from_rgb(235, 96, 110)
+                        } else {
+                            MUTED
+                        }),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
@@ -444,6 +457,13 @@ impl NativeApp {
                         || shortcut
                     {
                         self.send_current();
+                    }
+                    if !self.input.is_empty()
+                        && ui
+                            .add_enabled(!self.busy, egui::Button::new("クリア"))
+                            .clicked()
+                    {
+                        self.input.clear();
                     }
                 });
             });
@@ -711,6 +731,18 @@ impl NativeApp {
 impl App for NativeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
         self.poll_events(ctx);
+        ctx.input(|i| {
+            let cmd = i.modifiers.ctrl || i.modifiers.command;
+            if (cmd && i.key_pressed(egui::Key::Num1)) || i.key_pressed(egui::Key::F1) {
+                self.view = View::Chat;
+            } else if (cmd && i.key_pressed(egui::Key::Num2)) || i.key_pressed(egui::Key::F2) {
+                self.view = View::Status;
+            } else if (cmd && i.key_pressed(egui::Key::Num3)) || i.key_pressed(egui::Key::F3) {
+                self.view = View::Trace;
+            } else if (cmd && i.key_pressed(egui::Key::Num4)) || i.key_pressed(egui::Key::F4) {
+                self.view = View::Connections;
+            }
+        });
         egui::TopBottomPanel::top("topbar")
             .frame(egui::Frame::new().fill(PANEL).inner_margin(12.0))
             .show(ctx, |ui| self.top_bar(ui));
@@ -761,14 +793,26 @@ pub(crate) fn configure_theme(ctx: &egui::Context) {
     visuals.window_fill = PANEL;
     visuals.faint_bg_color = BG;
     visuals.extreme_bg_color = BG;
+    let radius = egui::CornerRadius::same(6);
     visuals.widgets.noninteractive.bg_fill = PANEL;
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
     visuals.widgets.noninteractive.fg_stroke.color = TEXT;
+    visuals.widgets.noninteractive.corner_radius = radius;
     visuals.widgets.inactive.bg_fill = PANEL_RAISED;
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
     visuals.widgets.inactive.fg_stroke.color = MUTED;
+    visuals.widgets.inactive.corner_radius = radius;
     visuals.widgets.hovered.bg_fill = Color32::from_rgb(26, 51, 79);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(70, 118, 178));
     visuals.widgets.hovered.fg_stroke.color = TEXT;
+    visuals.widgets.hovered.corner_radius = radius;
     visuals.widgets.active.bg_fill = Color32::from_rgb(29, 79, 138);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, BLUE);
     visuals.widgets.active.fg_stroke.color = TEXT;
+    visuals.widgets.active.corner_radius = radius;
+    visuals.widgets.open.bg_fill = PANEL_RAISED;
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0, BORDER);
+    visuals.widgets.open.corner_radius = radius;
     visuals.selection.bg_fill = BLUE;
     visuals.selection.stroke.color = Color32::WHITE;
     ctx.set_visuals(visuals);
@@ -806,6 +850,11 @@ pub(crate) fn configure_theme(ctx: &egui::Context) {
     }
     ctx.set_fonts(fonts);
     ctx.style_mut(|style| {
+        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+        style.spacing.button_padding = egui::vec2(10.0, 5.0);
+        style
+            .text_styles
+            .insert(TextStyle::Small, egui::FontId::proportional(12.0));
         style
             .text_styles
             .insert(TextStyle::Body, egui::FontId::proportional(14.0));
@@ -814,7 +863,10 @@ pub(crate) fn configure_theme(ctx: &egui::Context) {
             .insert(TextStyle::Button, egui::FontId::proportional(13.0));
         style
             .text_styles
-            .insert(TextStyle::Heading, egui::FontId::proportional(20.0));
+            .insert(TextStyle::Heading, egui::FontId::proportional(19.0));
+        style
+            .text_styles
+            .insert(TextStyle::Monospace, egui::FontId::monospace(12.5));
     });
 }
 
@@ -986,7 +1038,7 @@ impl NativeApp {
 fn message_bubble(ui: &mut egui::Ui, message: &UiMessage) {
     let user = message.role == ConversationRole::User;
     let fill = if user {
-        Color32::from_rgb(25, 75, 145)
+        Color32::from_rgb(22, 66, 126)
     } else {
         PANEL_RAISED
     };
@@ -1005,22 +1057,37 @@ fn message_bubble(ui: &mut egui::Ui, message: &UiMessage) {
             egui::Frame::new()
                 .fill(fill)
                 .stroke(Stroke::new(1.0, stroke))
-                .corner_radius(egui::CornerRadius::same(9))
-                .inner_margin(10.0)
+                .corner_radius(egui::CornerRadius::same(10))
+                .inner_margin(12.0)
                 .show(ui, |ui| {
-                    ui.set_max_width(ui.available_width().min(720.0));
-                    ui.label(
-                        RichText::new(if user { "あなた" } else { "澪" })
-                            .small()
-                            .strong()
-                            .color(if user {
-                                Color32::from_rgb(183, 218, 255)
-                            } else {
-                                Color32::from_rgb(133, 219, 184)
-                            }),
-                    );
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(&message.text).color(TEXT));
+                    ui.set_max_width(ui.available_width().min(740.0));
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(if user { "あなた" } else { "澪" })
+                                    .small()
+                                    .strong()
+                                    .color(if user {
+                                        Color32::from_rgb(183, 218, 255)
+                                    } else {
+                                        Color32::from_rgb(133, 219, 184)
+                                    }),
+                            );
+                            if ui
+                                .small_button(RichText::new("📋 コピー").small().color(MUTED))
+                                .on_hover_text("メッセージをクリップボードにコピー")
+                                .clicked()
+                            {
+                                ui.ctx().copy_text(message.text.clone());
+                            }
+                        });
+                        ui.add_space(4.0);
+                        ui.add(
+                            egui::Label::new(RichText::new(&message.text).color(TEXT))
+                                .wrap()
+                                .selectable(true),
+                        );
+                    });
                 });
         },
     );
@@ -1030,10 +1097,10 @@ fn stat_card(ui: &mut egui::Ui, label: &str, value: &str, note: &str, color: Col
     egui::Frame::new()
         .fill(PANEL_RAISED)
         .stroke(Stroke::new(1.0, BORDER))
-        .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(9.0)
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(10.0)
         .show(ui, |ui| {
-            ui.set_min_width(92.0);
+            ui.set_min_width(96.0);
             ui.label(RichText::new(label).small().color(MUTED));
             ui.label(RichText::new(value).strong().size(20.0).color(color));
             ui.label(RichText::new(note).small().color(MUTED));
@@ -1044,8 +1111,8 @@ pub(crate) fn card(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egu
     egui::Frame::new()
         .fill(PANEL)
         .stroke(Stroke::new(1.0, BORDER))
-        .corner_radius(egui::CornerRadius::same(7))
-        .inner_margin(10.0)
+        .corner_radius(egui::CornerRadius::same(10))
+        .inner_margin(12.0)
         .show(ui, |ui| {
             ui.label(RichText::new(title).strong().color(TEXT));
             ui.add_space(6.0);

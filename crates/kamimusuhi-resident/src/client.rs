@@ -41,12 +41,12 @@ pub fn token() -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
-pub fn history(
+pub fn history_full(
     url: &str,
     token: Option<&str>,
     subject: &str,
     limit: u64,
-) -> Result<Vec<Value>, String> {
+) -> Result<Value, String> {
     let endpoint = Endpoint::parse(url, "/v1/kamimusuhi/history")?;
     let body = json!({"subject": subject, "limit": limit});
     let response = http::post_json(
@@ -61,7 +61,63 @@ pub fn history(
     if !response.is_success() {
         return Err(format!("HTTP {}", response.status));
     }
+    Ok(value)
+}
+
+pub fn history(
+    url: &str,
+    token: Option<&str>,
+    subject: &str,
+    limit: u64,
+) -> Result<Vec<Value>, String> {
+    let value = history_full(url, token, subject, limit)?;
     Ok(value["turns"].as_array().cloned().unwrap_or_default())
+}
+
+pub fn memory(
+    url: &str,
+    token: Option<&str>,
+    subject: Option<&str>,
+    limit: u64,
+) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/v1/kamimusuhi/memory")?;
+    let body = match subject {
+        Some(subject) => json!({"subject": subject, "limit": limit}),
+        None => json!({"limit": limit}),
+    };
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        Duration::from_secs(45),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
+}
+
+pub fn self_notes(url: &str, token: Option<&str>, limit: u64) -> Result<Value, String> {
+    let endpoint = Endpoint::parse(url, "/v1/kamimusuhi/self_notes")?;
+    let body = json!({"limit": limit});
+    let response = http::post_json(
+        &endpoint,
+        &body.to_string(),
+        &auth(token),
+        Duration::from_secs(15),
+        &TrustAnchors::Webpki,
+    )
+    .map_err(|e| describe(&e))?;
+    let value: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    if response.is_success() {
+        Ok(value)
+    } else {
+        Err(format!("HTTP {}: {value}", response.status))
+    }
 }
 
 pub fn tools(url: &str, token: Option<&str>) -> Result<Value, String> {

@@ -35,19 +35,41 @@ const DETAIL_KEYS: [(&str, &str); 13] = [
     ("eval", "評価"),
 ];
 
-#[derive(Default)]
 pub(crate) struct AgentsPanel {
     /// Last panel document; `None` until the first fetch.
     panel: Option<Value>,
     /// The node answered 404: it has no task plane.
     absent: bool,
     selected: Option<String>,
-    running_only: bool,
+    filter: String,
+    status_filter: &'static str,
     instruction: String,
     reply: Option<String>,
 }
 
+impl Default for AgentsPanel {
+    fn default() -> Self {
+        Self {
+            panel: None,
+            absent: false,
+            selected: None,
+            filter: String::new(),
+            status_filter: "all",
+            instruction: String::new(),
+            reply: None,
+        }
+    }
+}
+
 impl AgentsPanel {
+    pub(crate) fn has_selection(&self) -> bool {
+        self.selected.is_some()
+    }
+
+    pub(crate) fn clear_selection(&mut self) {
+        self.selected = None;
+    }
+
     pub(crate) fn set_panel(&mut self, panel: Value) {
         if panel.is_null() {
             self.absent = true;
@@ -106,10 +128,27 @@ impl AgentsPanel {
                 if ui.button("↻ 再検査").clicked() {
                     send(json!({"action": "refresh"}));
                 }
-                ui.add_space(10.0);
-                ui.selectable_value(&mut self.running_only, false, "すべて");
-                ui.selectable_value(&mut self.running_only, true, "実行中のみ");
+                ui.add_space(8.0);
+                for (key, label) in [
+                    ("failed", "失敗"),
+                    ("done", "完了"),
+                    ("active", "実行中"),
+                    ("all", "すべて"),
+                ] {
+                    ui.selectable_value(&mut self.status_filter, key, label);
+                }
             });
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.filter)
+                    .hint_text("🔍 タスク・実行者・モデルで検索…")
+                    .desired_width(280.0),
+            );
+            if !self.filter.is_empty() && ui.small_button("✕").clicked() {
+                self.filter.clear();
+            }
         });
         ui.separator();
         if self.absent {
@@ -137,11 +176,32 @@ impl AgentsPanel {
         }
         ui.add_space(6.0);
 
+        let needle = self.filter.trim().to_lowercase();
         let mut tasks: Vec<&Value> = panel["tasks"]
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|t| !self.running_only || is_active(t))
+            .filter(|t| match self.status_filter {
+                "active" => is_active(t),
+                "done" => t["status"] == "done",
+                "failed" => matches!(t["status"].as_str(), Some("failed" | "cancelled")),
+                _ => true,
+            })
+            .filter(|t| {
+                if needle.is_empty() {
+                    return true;
+                }
+                let hay = format!(
+                    "{} {} {} {} {}",
+                    t["id"].as_str().unwrap_or(""),
+                    t["title"].as_str().unwrap_or(""),
+                    t["detail"]["executor"].as_str().unwrap_or(""),
+                    t["detail"]["model"].as_str().unwrap_or(""),
+                    t["detail"]["task_kind"].as_str().unwrap_or(""),
+                )
+                .to_lowercase();
+                hay.contains(&needle)
+            })
             .collect();
         tasks.sort_by(|a, b| sort_key(b).cmp(sort_key(a)));
         if self
@@ -215,18 +275,32 @@ impl AgentsPanel {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     chip(ui, status_label(status), status_color(status));
-                    ui.label(RichText::new(id).small().color(MUTED));
+                    ui.add(
+                        egui::Label::new(RichText::new(id).small().monospace().color(MUTED))
+                            .selectable(true),
+                    );
+                    if ui
+                        .small_button("📋")
+                        .on_hover_text("タスク ID をコピー")
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(id.to_owned());
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                        if ui.small_button("閉じる").clicked() {
+                        if ui.small_button("閉じる (Esc)").clicked() {
                             close = true;
                         }
                     });
                 });
-                ui.label(
-                    RichText::new(t["title"].as_str().unwrap_or(DASH))
-                        .strong()
-                        .size(16.0)
-                        .color(TEXT),
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(t["title"].as_str().unwrap_or(DASH))
+                            .strong()
+                            .size(16.0)
+                            .color(TEXT),
+                    )
+                    .wrap()
+                    .selectable(true),
                 );
                 ui.add_space(6.0);
 
@@ -277,18 +351,24 @@ impl AgentsPanel {
                         .as_str()
                         .is_some_and(|s| !s.is_empty())
                 {
-                    ui.add(
+                    let edit = ui.add(
                         egui::TextEdit::multiline(&mut self.instruction)
-                            .hint_text("同じセッションで続けて依頼する内容")
+                            .hint_text("同じセッションで続けて依頼する内容 (⌘/Ctrl+Enter で送信)")
                             .desired_rows(2)
                             .desired_width(f32::INFINITY),
                     );
-                    if ui
+                    let shortcut = edit.has_focus()
+                        && ui.ctx().input(|i| {
+                            i.key_pressed(egui::Key::Enter)
+                                && (i.modifiers.ctrl || i.modifiers.command)
+                        });
+                    if (ui
                         .add(
                             egui::Button::new(RichText::new("続けて依頼").color(Color32::WHITE))
                                 .fill(BLUE),
                         )
                         .clicked()
+                        || shortcut)
                         && !self.instruction.trim().is_empty()
                     {
                         send(json!({"action": "continue", "id": id,
@@ -515,10 +595,31 @@ fn task_row(ui: &mut egui::Ui, t: &Value, selected: Option<&str>) -> bool {
                 fmt_duration(t["duration_secs"].as_f64()),
                 num_or_dash(&d["tool_calls"]),
             );
+            let files_n = t["result"]["files_changed"].as_array().map_or(0, Vec::len);
+            if files_n > 0 {
+                meta.push_str(&format!(" · 📄 {files_n}"));
+            }
+            let cost = &t["result"]["cost"];
+            if cost["reported_usd"].is_number() {
+                meta.push_str(&format!(" · 報告 {}", fmt_usd(&cost["reported_usd"])));
+            } else if cost["estimated_usd"].is_number() {
+                meta.push_str(&format!(" · 推定 {}", fmt_usd(&cost["estimated_usd"])));
+            }
             if t["result"]["read_only_violation"].as_bool() == Some(true) {
                 meta.push_str(" · ⚠ 読み取り専用違反");
             }
-            ui.label(RichText::new(meta).small().color(MUTED));
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(meta).small().color(MUTED));
+                if is_finished(t) {
+                    let (rlabel, rcolor) = review_label(&d["review"]);
+                    chip(ui, &rlabel, rcolor);
+                    match t["result"]["feedback"].as_str() {
+                        Some("accept") => chip(ui, "✔ 採用", GREEN),
+                        Some("reject") => chip(ui, "✖ 不採用", RED),
+                        _ => {}
+                    }
+                }
+            });
         });
     ui.add_space(4.0);
     ui.interact(
@@ -554,6 +655,17 @@ fn result_block(ui: &mut egui::Ui, id: &str, result: &Value) {
         .corner_radius(egui::CornerRadius::same(8))
         .inner_margin(8.0)
         .show(ui, |ui| {
+            if !summary.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("要約").small().color(MUTED));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("📋 要約をコピー").clicked() {
+                            ui.ctx().copy_text(summary.to_owned());
+                        }
+                    });
+                });
+                ui.add_space(2.0);
+            }
             egui::ScrollArea::vertical()
                 .id_salt(("agent-summary", id))
                 .max_height(240.0)

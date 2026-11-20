@@ -48,7 +48,8 @@ struct DesktopOptions {
     local: bool,
     /// Resident URL for the default (resident) mode.
     url: Option<String>,
-    /// Initial view in resident mode: chat | tasks | approvals | status | tools.
+    /// Initial view in resident mode:
+    /// chat | tasks | map | agents | approvals | memory | status | tools.
     view: Option<String>,
 }
 
@@ -99,7 +100,7 @@ impl DesktopOptions {
                 }
                 "--help" | "-h" => {
                     println!(
-                        "kamimusuhi-desktop [--url <resident-url>] [--subject <id>] [--view chat|tasks|approvals|status|tools]\n       kamimusuhi-desktop --local [--dir <path>] [--subject <id>] [--privacy <scope>]\n\nDefault: dialogue with the always-on individual through its resident (--url, $KAMIMUSUHI_URL or ~/.config/kamimusuhi/nodes; token from ~/.config/kamimusuhi/node_token).\n--local: the Jev test surface against a local runtime. Its default privacy scope is local-only; use --privacy unconstrained explicitly for Jev/Grokbot external calls."
+                        "kamimusuhi-desktop [--url <resident-url>] [--subject <id>] [--view chat|tasks|map|agents|approvals|memory|status|tools]\n       kamimusuhi-desktop --local [--dir <path>] [--subject <id>] [--privacy <scope>]\n\nDefault: dialogue with the always-on individual through its resident (--url, $KAMIMUSUHI_URL or ~/.config/kamimusuhi/nodes; token from ~/.config/kamimusuhi/node_token).\n--local: the Jev test surface against a local runtime. Its default privacy scope is local-only; use --privacy unconstrained explicitly for Jev/Grokbot external calls."
                     );
                     std::process::exit(0);
                 }

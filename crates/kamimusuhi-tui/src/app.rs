@@ -342,6 +342,7 @@ impl App {
                     });
                 }
             }
+            RemoteEvent::History { .. } | RemoteEvent::Memory { .. } => {}
             RemoteEvent::Reply(reply) => {
                 self.busy_since = None;
                 self.error = None;

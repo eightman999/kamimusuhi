@@ -3,124 +3,421 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>かみむすび dashboard</title>
+<title>かみむすび · kamimusuhi dashboard</title>
 <style>
   :root {
-    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --border: #2d333f;
-    --fg: #e6edf3; --dim: #8b949e; --accent: #7aa2f7; --ok: #3fb950;
-    --warn: #d29922; --bad: #f85149; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --bg: #080f18;
+    --panel: #0d1824;
+    --panel2: #13202f;
+    --panel3: #18283b;
+    --border: #25394e;
+    --border-strong: #375575;
+    --fg: #e0e9f4;
+    --dim: #8ba0b9;
+    --accent: #3181eb;
+    --accent-soft: rgba(49, 129, 235, 0.16);
+    --ok: #2fce84;
+    --warn: #f3b53e;
+    --bad: #eb606e;
+    --violet: #a68aff;
+    --cyan: #4ab9e8;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg);
-         font: 14px/1.5 -apple-system, "Hiragino Sans", "Segoe UI", sans-serif; }
-  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline;
-           padding: 12px 16px; border-bottom: 1px solid var(--border);
-           position: sticky; top: 0; background: var(--bg); z-index: 5; }
-  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
-  header .who { color: var(--dim); font-size: 12px; }
-  header .spacer { flex: 1; }
-  header select, header input, header button {
-    background: var(--panel); color: var(--fg); border: 1px solid var(--border);
-    border-radius: 6px; padding: 4px 8px; font-size: 12px; }
-  header button { cursor: pointer; }
-  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
-         background: var(--dim); margin-right: 5px; }
-  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
-  #stamp { color: var(--dim); font-size: 11px; }
-  main { padding: 14px; display: grid; gap: 14px;
-         grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
-  section { background: var(--panel); border: 1px solid var(--border);
-            border-radius: 10px; padding: 12px 14px; min-width: 0; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+               font: 13.5px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Segoe UI", sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: rgba(13, 24, 36, 0.96); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+  }
+  .hdr-top { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+  .brand { display: flex; align-items: baseline; gap: 8px; }
+  .brand h1 { font-size: 17px; margin: 0; font-weight: 700; letter-spacing: 0.01em; }
+  .brand .who { color: var(--dim); font-size: 12px; font-family: var(--mono); }
+  .spacer { flex: 1; min-width: 8px; }
+  .ctl-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  label.ctl { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--dim); }
+  select, input[type="text"], input[type="password"], input:not([type]) {
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 8px; font-size: 12px; outline: none;
+  }
+  select:focus, input:focus { border-color: var(--accent); }
+  button {
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+    transition: background .12s ease, border-color .12s ease;
+  }
+  button:hover { background: var(--panel3); border-color: var(--border-strong); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.08); }
+  button.small-btn { padding: 2px 7px; font-size: 11px; border-radius: 5px; }
+  button.active { background: #183e6f; border-color: #2e6cb9; color: #fff; font-weight: 600; }
+
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; align-items: center; }
+  .tab-btn {
+    padding: 4px 11px; border-radius: 7px; font-size: 12px; color: var(--dim);
+    background: transparent; border: 1px solid transparent;
+  }
+  .tab-btn:hover { color: var(--fg); background: var(--panel2); }
+  .tab-btn.active { color: var(--fg); background: #183e6f; border-color: #2e6cb9; font-weight: 600; }
+  .tab-btn .kbd { font-size: 10px; color: var(--dim); margin-left: 5px; font-family: var(--mono); }
+
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--dim); margin-right: 5px; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 6px rgba(47, 206, 132, 0.45); }
+  .dot.bad { background: var(--bad); box-shadow: 0 0 6px rgba(235, 96, 110, 0.45); }
+  .dot.warn { background: var(--warn); }
+  #stamp { color: var(--dim); font-size: 11px; font-family: var(--mono); }
+
+  .kpi-strip {
+    display: grid; gap: 10px; padding: 12px 16px 2px;
+    grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+  }
+  .kpi {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 9px;
+    padding: 9px 12px; min-width: 0;
+  }
+  .kpi .k-lbl { font-size: 10.5px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+  .kpi .k-val { font-size: 17px; font-weight: 700; margin: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kpi .k-sub { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  main {
+    padding: 12px 16px 28px; display: grid; gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  }
+  section {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px; min-width: 0;
+  }
   section.wide { grid-column: 1 / -1; }
-  h2 { margin: 0 0 8px; font-size: 13px; color: var(--accent);
-       text-transform: uppercase; letter-spacing: .06em; }
-  .err { color: var(--bad); font-size: 12px; white-space: pre-wrap; }
+  section.hidden { display: none; }
+  .sec-head {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin-bottom: 10px; border-bottom: 1px solid rgba(37, 57, 78, 0.55); padding-bottom: 6px;
+  }
+  h2 {
+    margin: 0; font-size: 12.5px; color: var(--accent);
+    text-transform: uppercase; letter-spacing: 0.07em; font-weight: 700;
+  }
+  .sec-head .sub { font-size: 11.5px; color: var(--dim); }
+  .err { color: var(--bad); font-size: 12px; white-space: pre-wrap; margin-top: 6px; }
   .muted { color: var(--dim); }
-  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
-  th, td { text-align: left; padding: 3px 8px 3px 0; vertical-align: top;
-           border-bottom: 1px solid var(--border); }
-  th { color: var(--dim); font-weight: 500; font-size: 11px; }
-  tr:last-child td { border-bottom: none; }
-  .pill { display: inline-block; padding: 0 7px; border-radius: 9px;
-          font-size: 10.5px; border: 1px solid var(--border); color: var(--dim);
-          margin-right: 4px; white-space: nowrap; }
-  .pill.ok { color: var(--ok); border-color: var(--ok); }
-  .pill.bad { color: var(--bad); border-color: var(--bad); }
-  .pill.warn { color: var(--warn); border-color: var(--warn); }
-  .pill.accent { color: var(--accent); border-color: var(--accent); }
-  .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 12.5px; }
-  .kv dt { color: var(--dim); } .kv dd { margin: 0; font-family: var(--mono); font-size: 12px; }
-  .kanban { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
-  .col { flex: 1 0 220px; min-width: 200px; background: var(--panel2);
-         border-radius: 8px; padding: 8px; }
-  .col h3 { margin: 0 0 6px; font-size: 11.5px; color: var(--dim);
-            text-transform: uppercase; letter-spacing: .05em; }
-  .card { background: var(--panel); border: 1px solid var(--border);
-          border-radius: 7px; padding: 7px 9px; margin-bottom: 7px; font-size: 12.5px; }
-  .card .t { font-weight: 600; margin-bottom: 2px; word-break: break-word; }
-  .card .m { color: var(--dim); font-size: 11px; }
-  .turn { border-bottom: 1px solid var(--border); padding: 8px 0; }
-  .turn:last-child { border-bottom: none; }
-  .turn .msg { color: var(--fg); }
-  .turn .resp { color: #b8c4d4; margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
-  .turn .meta { color: var(--dim); font-size: 11px; margin-top: 3px; font-family: var(--mono); }
-  details summary { cursor: pointer; color: var(--dim); font-size: 11.5px; }
-  details[open] summary { margin-bottom: 4px; }
-  pre { background: var(--panel2); border-radius: 6px; padding: 8px;
-        overflow-x: auto; font-size: 11px; font-family: var(--mono); }
-  #setup { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 10;
-           display: none; align-items: center; justify-content: center; padding: 16px; }
-  #setup .box { background: var(--panel); border: 1px solid var(--border);
-                border-radius: 10px; padding: 20px; width: 100%; max-width: 440px; }
-  #setup label { display: block; margin: 10px 0 3px; font-size: 12px; color: var(--dim); }
-  #setup input { width: 100%; padding: 7px 9px; background: var(--panel2); color: var(--fg);
-                 border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
-  #setup button { margin-top: 14px; width: 100%; padding: 9px; background: var(--accent);
-                  color: #0d1117; border: none; border-radius: 6px; font-weight: 600;
-                  cursor: pointer; }
-  .clip { max-height: 4.4em; overflow: hidden; }
   .small { font-size: 11.5px; }
+  .mono { font-family: var(--mono); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 12.2px; }
+  th, td { text-align: left; padding: 4px 8px 4px 0; vertical-align: top; border-bottom: 1px solid rgba(37, 57, 78, 0.65); }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; }
+  tr:last-child td { border-bottom: none; }
+
+  .pill {
+    display: inline-block; padding: 1px 7px; border-radius: 999px;
+    font-size: 10.5px; border: 1px solid var(--border); color: var(--dim);
+    margin: 1px 4px 1px 0; white-space: nowrap; font-family: var(--mono);
+  }
+  .pill.ok { color: var(--ok); border-color: rgba(47, 206, 132, 0.55); background: rgba(47, 206, 132, 0.08); }
+  .pill.bad { color: var(--bad); border-color: rgba(235, 96, 110, 0.6); background: rgba(235, 96, 110, 0.1); }
+  .pill.warn { color: var(--warn); border-color: rgba(243, 181, 62, 0.6); background: rgba(243, 181, 62, 0.1); }
+  .pill.accent { color: #7cb6ff; border-color: rgba(49, 129, 235, 0.6); background: rgba(49, 129, 235, 0.1); }
+  .pill.violet { color: var(--violet); border-color: rgba(166, 138, 255, 0.55); background: rgba(166, 138, 255, 0.09); }
+  .pill.cyan { color: var(--cyan); border-color: rgba(74, 185, 232, 0.55); background: rgba(74, 185, 232, 0.1); }
+
+  .kv { display: grid; grid-template-columns: minmax(90px, auto) 1fr; gap: 3px 12px; font-size: 12.2px; }
+  .kv dt { color: var(--dim); }
+  .kv dd { margin: 0; font-family: var(--mono); font-size: 11.8px; word-break: break-word; }
+  .sub-box {
+    margin-top: 10px; padding-top: 8px; border-top: 1px dashed rgba(37, 57, 78, 0.8);
+  }
+  .sub-title { font-size: 11.5px; font-weight: 600; color: var(--dim); margin-bottom: 5px; }
+
+  .card {
+    background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px; margin-bottom: 7px; font-size: 12.5px;
+    transition: border-color .12s ease;
+  }
+  .card.clickable { cursor: pointer; }
+  .card.clickable:hover { border-color: var(--border-strong); }
+  .card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .card .t { font-weight: 600; margin-bottom: 3px; word-break: break-word; }
+  .card .m { color: var(--dim); font-size: 11px; }
+
+  /* Kanban & Task Map */
+  .task-split { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
+  .task-split.has-detail { grid-template-columns: 1fr 340px; }
+  @media (max-width: 960px) { .task-split.has-detail { grid-template-columns: 1fr; } }
+
+  .kanban { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; }
+  .col {
+    flex: 1 0 230px; min-width: 220px; background: rgba(19, 32, 47, 0.6);
+    border: 1px solid var(--border); border-radius: 9px; padding: 8px;
+    max-height: 540px; overflow-y: auto;
+  }
+  .col h3 {
+    margin: 0 0 8px; font-size: 11.5px; color: var(--dim); display: flex;
+    justify-content: space-between; align-items: center; letter-spacing: 0.04em;
+  }
+  .task-card { border-left: 3px solid var(--border); }
+  .task-card.st-in_progress { border-left-color: var(--accent); }
+  .task-card.st-awaiting_operator { border-left-color: var(--warn); background: rgba(40, 34, 18, 0.45); }
+  .task-card.st-waiting { border-left-color: var(--violet); }
+  .task-card.st-done { border-left-color: var(--ok); }
+  .task-card.st-failed { border-left-color: var(--bad); }
+
+  .map-wrap {
+    position: relative; overflow: auto; max-height: 580px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 8px;
+  }
+  .map-canvas { position: relative; }
+  .map-svg { position: absolute; inset: 0; pointer-events: none; }
+  .map-cluster {
+    position: absolute; border: 1px solid rgba(37, 57, 78, 0.8);
+    background: rgba(13, 24, 36, 0.72); border-radius: 10px; pointer-events: none;
+  }
+  .map-node {
+    position: absolute; width: 210px; height: 58px;
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 5px 8px 5px 10px; cursor: pointer; overflow: hidden;
+    display: flex; flex-direction: column; justify-content: space-between;
+  }
+  .map-node::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+    background: var(--ok);
+  }
+  .map-node.st-in_progress::before { background: var(--accent); }
+  .map-node.st-awaiting_operator::before { background: var(--warn); }
+  .map-node.st-awaiting_operator { box-shadow: 0 0 14px rgba(243, 181, 62, 0.35); border-color: var(--warn); }
+  .map-node.st-waiting::before { background: var(--violet); }
+  .map-node.st-on_hold::before, .map-node.st-cancelled::before { background: var(--dim); }
+  .map-node.st-failed::before { background: var(--bad); }
+  .map-node.selected { border: 2px solid #fff; }
+  .map-node .mn-title {
+    font-size: 11.5px; font-weight: 600; line-height: 1.25;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .map-node .mn-meta { font-size: 10px; color: var(--dim); font-family: var(--mono); white-space: nowrap; }
+
+  .detail-box {
+    background: var(--panel2); border: 1px solid var(--border-strong);
+    border-radius: 9px; padding: 10px 12px; max-height: 580px; overflow-y: auto;
+  }
+
+  /* Thoughts */
+  .turn { border-bottom: 1px solid rgba(37, 57, 78, 0.7); padding: 9px 0; }
+  .turn:last-child { border-bottom: none; }
+  .turn .turn-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .turn .msg { color: var(--fg); font-weight: 600; white-space: pre-wrap; word-break: break-word; }
+  .turn .resp { color: #b8c8dc; margin-top: 5px; white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
+  .turn .meta { color: var(--dim); font-size: 11px; margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+
+  /* Agents */
+  .exec-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; margin-bottom: 10px; }
+  .split-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; }
+
+  details summary { cursor: pointer; color: var(--dim); font-size: 11.5px; user-select: none; }
+  details[open] summary { margin-bottom: 5px; }
+  pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px;
+        overflow-x: auto; font-size: 11px; font-family: var(--mono); margin: 4px 0 0; }
+
+  #setup {
+    position: fixed; inset: 0; background: rgba(0, 0, 0, 0.65); z-index: 30;
+    display: none; align-items: center; justify-content: center; padding: 16px;
+  }
+  #setup .box {
+    background: var(--panel); border: 1px solid var(--border-strong);
+    border-radius: 11px; padding: 20px; width: 100%; max-width: 440px;
+  }
+  #setup label { display: block; margin: 10px 0 3px; font-size: 12px; color: var(--dim); }
+  #setup input { width: 100%; padding: 7px 9px; font-size: 13px; }
+  #setup .actions { display: flex; gap: 8px; margin-top: 14px; }
+  #setup .actions button { flex: 1; padding: 8px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>かみむすび <span class="who" id="who">dashboard</span></h1>
-  <span><span class="dot" id="conn"></span><span id="connText" class="small muted">connecting…</span></span>
-  <span class="spacer"></span>
-  <label class="small muted">subject <input id="subject" style="width:110px" placeholder="local-user"></label>
-  <label class="small muted">poll <select id="pollSel">
-    <option value="10000">10s</option><option value="15000" selected>15s</option>
-    <option value="30000">30s</option><option value="60000">60s</option>
-  </select></label>
-  <button id="refresh">refresh</button>
-  <button id="reconfig">config</button>
-  <span id="stamp"></span>
+  <div class="hdr-top">
+    <div class="brand">
+      <h1>かみむすび</h1>
+      <span class="who" id="who">kamimusuhi dashboard</span>
+    </div>
+    <span class="small muted"><span class="dot" id="conn"></span><span id="connText">connecting…</span></span>
+    <span class="spacer"></span>
+    <div class="ctl-group">
+      <label class="ctl">subject
+        <select id="subjectSel"><option value="local-user">local-user</option></select>
+        <input id="subject" style="width:110px" placeholder="任意入力">
+      </label>
+      <label class="ctl">poll
+        <select id="pollSel">
+          <option value="10000">10s</option>
+          <option value="15000" selected>15s</option>
+          <option value="30000">30s</option>
+          <option value="60000">60s</option>
+          <option value="0">手動</option>
+        </select>
+      </label>
+      <button id="refresh" title="R キーで更新">↻ 更新</button>
+      <button id="reconfig">⚙ 接続設定</button>
+      <span id="stamp"></span>
+    </div>
+  </div>
+  <nav class="tabs" id="viewTabs">
+    <button class="tab-btn active" data-tab="all">すべて<span class="kbd">1</span></button>
+    <button class="tab-btn" data-tab="overview">概要・状態<span class="kbd">2</span></button>
+    <button class="tab-btn" data-tab="thoughts">対話・思考<span class="kbd">3</span></button>
+    <button class="tab-btn" data-tab="tasks">タスク・マップ<span class="kbd">4</span></button>
+    <button class="tab-btn" data-tab="agents">エージェント<span class="kbd">5</span></button>
+    <button class="tab-btn" data-tab="memory">記憶・自己改善<span class="kbd">6</span></button>
+  </nav>
 </header>
+
+<div class="kpi-strip" id="kpi-strip">
+  <div class="kpi"><div class="k-lbl">Node / Process</div><div class="k-val" id="kpi-node">—</div><div class="k-sub" id="kpi-node-sub">—</div></div>
+  <div class="kpi"><div class="k-lbl">Primary Route</div><div class="k-val" id="kpi-route">—</div><div class="k-sub" id="kpi-route-sub">—</div></div>
+  <div class="kpi"><div class="k-lbl">Cost Guard</div><div class="k-val" id="kpi-cost">—</div><div class="k-sub" id="kpi-cost-sub">—</div></div>
+  <div class="kpi"><div class="k-lbl">Hosts / Pending</div><div class="k-val" id="kpi-queue">—</div><div class="k-sub" id="kpi-queue-sub">—</div></div>
+  <div class="kpi"><div class="k-lbl">Memory / Proposals</div><div class="k-val" id="kpi-mem">—</div><div class="k-sub" id="kpi-mem-sub">—</div></div>
+  <div class="kpi"><div class="k-lbl">Cognition</div><div class="k-val" id="kpi-cog">—</div><div class="k-sub" id="kpi-cog-sub">—</div></div>
+</div>
+
 <main>
-  <section id="sec-node"><h2>Node</h2><div class="kv" id="node"></div><div class="err" id="nodeErr"></div></section>
-  <section id="sec-tiers"><h2>Tiers</h2><div id="tiers"></div><div class="err" id="tiersErr"></div></section>
-  <section id="sec-peers"><h2>Peers &amp; Cost</h2><div id="peers"></div><div class="err" id="peersErr"></div></section>
-  <section id="sec-commit"><h2>Commitments</h2><div id="commitments"></div><div class="err" id="commitmentsErr"></div></section>
-  <section id="sec-agents"><h2>Agents / Delegations / Intercom</h2><div id="agents"></div><div class="err" id="agentsErr"></div></section>
-  <section id="sec-memory"><h2>Memory</h2><div id="memory"></div><div class="err" id="memoryErr"></div></section>
-  <section id="sec-self"><h2>Self-improvement</h2>
-    <div class="small muted">self notes <span class="muted">(self-authored, unverified)</span></div>
-    <div id="selfnotes"></div>
-    <div class="small muted" style="margin-top:8px">pending improvement proposals</div>
-    <div id="proposals"></div>
-    <div class="err" id="selfErr"></div></section>
-  <section id="sec-thoughts" class="wide"><h2>Thoughts — recent turns</h2><div id="thoughts"></div><div class="err" id="thoughtsErr"></div></section>
-  <section id="sec-tasks" class="wide"><h2>Task board</h2><div class="kanban" id="tasks"></div><div class="err" id="tasksErr"></div></section>
+  <section id="sec-node" data-group="overview">
+    <div class="sec-head"><h2>Node · Cognition · K-CORE</h2></div>
+    <div class="kv" id="node"></div>
+    <div class="sub-box"><div class="sub-title">Cognition &amp; K-CORE</div><div class="kv" id="cognition"></div></div>
+    <div class="err" id="nodeErr"></div>
+  </section>
+
+  <section id="sec-tiers" data-group="overview">
+    <div class="sec-head"><h2>Routing · Cost Guard · Tiers</h2></div>
+    <div id="tiers"></div>
+    <div class="err" id="tiersErr"></div>
+  </section>
+
+  <section id="sec-peers" data-group="overview">
+    <div class="sec-head"><h2>Peers · Intercom · Delegations</h2></div>
+    <div id="peers"></div>
+    <div class="err" id="peersErr"></div>
+  </section>
+
+  <section id="sec-infra" data-group="overview">
+    <div class="sec-head"><h2>NAS · HAI · MCP · Jobs</h2></div>
+    <div id="infra"></div>
+    <div class="err" id="infraErr"></div>
+  </section>
+
+  <section id="sec-commit" data-group="overview">
+    <div class="sec-head"><h2>Commitments &amp; Approvals</h2></div>
+    <div id="commitments"></div>
+    <div class="err" id="commitmentsErr"></div>
+  </section>
+
+  <section id="sec-thoughts" class="wide" data-group="thoughts">
+    <div class="sec-head">
+      <h2>Thoughts — recent turns</h2>
+      <span class="sub" id="thoughtsCount"></span>
+      <span class="spacer"></span>
+      <input id="thoughtsFilter" class="search-input" style="width:220px" placeholder="🔍 対話・ツールを検索 (/キー)">
+    </div>
+    <div id="thoughts"></div>
+    <div class="err" id="thoughtsErr"></div>
+  </section>
+
+  <section id="sec-tasks" class="wide" data-group="tasks">
+    <div class="sec-head">
+      <h2>Task board &amp; Dependency map</h2>
+      <span class="sub" id="tasksCount"></span>
+      <span class="spacer"></span>
+      <input id="tasksFilter" class="search-input" style="width:190px" placeholder="🔍 タスク検索…">
+      <select id="tasksKind">
+        <option value="all">すべての種類</option>
+        <option value="dialogue">dialogue</option>
+        <option value="tool">tool</option>
+        <option value="approval">approval</option>
+        <option value="commit">commit</option>
+        <option value="job">job</option>
+        <option value="manual">manual</option>
+        <option value="promise">promise</option>
+        <option value="delegated">delegated</option>
+      </select>
+      <label class="ctl"><input type="checkbox" id="tasksShowDone" checked> 完了表示</label>
+      <button id="tasksModeBoard" class="small-btn active">ボード</button>
+      <button id="tasksModeMap" class="small-btn">マップ</button>
+    </div>
+    <div class="task-split" id="taskSplit">
+      <div id="tasks"></div>
+      <div id="taskDetailWrap" style="display:none"></div>
+    </div>
+    <div class="err" id="tasksErr"></div>
+  </section>
+
+  <section id="sec-agents" class="wide" data-group="agents">
+    <div class="sec-head">
+      <h2>External Agents (Task Plane)</h2>
+      <span class="sub" id="agentsSummary"></span>
+      <span class="spacer"></span>
+      <input id="agentsFilter" class="search-input" style="width:200px" placeholder="🔍 タスク・実行者・モデル">
+      <button class="small-btn active" data-ast="all">すべて</button>
+      <button class="small-btn" data-ast="active">実行中</button>
+      <button class="small-btn" data-ast="done">完了</button>
+      <button class="small-btn" data-ast="failed">失敗</button>
+    </div>
+    <div id="agents"></div>
+    <div class="err" id="agentsErr"></div>
+  </section>
+
+  <section id="sec-memory" class="wide" data-group="memory">
+    <div class="sec-head">
+      <h2>Memory · Self Model · Self-Improvement</h2>
+      <span class="sub" id="memorySummary"></span>
+      <span class="spacer"></span>
+      <input id="memoryFilter" class="search-input" style="width:200px" placeholder="🔍 記憶・タグを検索…">
+      <label class="ctl"><input type="checkbox" id="memoryScoped"> subject絞込</label>
+      <button class="small-btn active" data-dom="all">すべて</button>
+      <button class="small-btn" data-dom="episodic">episodic</button>
+      <button class="small-btn" data-dom="relationship">relationship</button>
+    </div>
+    <div class="split-2">
+      <div>
+        <div class="sub-title">記憶レコード</div>
+        <div id="memoryRecords"></div>
+      </div>
+      <div>
+        <div class="sub-title">自己モデル &amp; Writeback 健全性</div>
+        <div id="memoryOverview"></div>
+        <div class="sub-box">
+          <div class="sub-title">未承認の改善提案 (Pending Proposals)</div>
+          <div id="proposals"></div>
+        </div>
+        <div class="sub-box">
+          <div class="sub-title">自己ノート (Self Notes · unverified)</div>
+          <div id="selfnotes"></div>
+        </div>
+      </div>
+    </div>
+    <div class="err" id="memoryErr"></div>
+    <div class="err" id="selfErr"></div>
+  </section>
 </main>
+
 <div id="setup"><div class="box">
-  <h2 style="text-transform:none;letter-spacing:0">接続設定</h2>
-  <div class="small muted">トークンは localStorage にのみ保存。このページ自体を resident (<code>http://&lt;pi&gt;:7860/</code>) から開くと API base は同一オリジンでそのまま動く。</div>
+  <h2 style="text-transform:none;letter-spacing:0;font-size:16px">接続設定</h2>
+  <div class="small muted" style="margin-top:4px">トークンは localStorage にのみ保存されます。resident 本体 (<code>http://&lt;pi&gt;:7860/</code>) から直接開いた場合は同一オリジンで接続します。</div>
   <label>API base URL</label>
   <input id="cfgBase" placeholder="http://100.111.150.4:7860">
   <label>Node token (KAMIMUSUHI_NODE_TOKEN)</label>
-  <input id="cfgToken" type="password" placeholder="Bearer token">
-  <button id="cfgSave">Save &amp; connect</button>
+  <input id="cfgToken" type="password" placeholder="Bearer token (loopback は不要)">
+  <div class="actions">
+    <button id="cfgCancel" type="button">閉じる</button>
+    <button id="cfgSave" class="primary" type="button">Save &amp; connect</button>
+  </div>
 </div></div>
+
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -131,233 +428,1054 @@ const cfg = {
   get base() { return localStorage.getItem("km.base") || location.origin; },
   get token() { return localStorage.getItem("km.token") || ""; },
   get subject() { return localStorage.getItem("km.subject") || "local-user"; },
+  get view() { return localStorage.getItem("km.view") || "all"; },
+  get taskMode() { return localStorage.getItem("km.taskMode") || "board"; },
 };
-$("subject").value = cfg.subject === "local-user" ? "" : cfg.subject;
-$("subject").placeholder = cfg.subject;
+
+const state = {
+  status: null,
+  tasks: [],
+  turns: [],
+  subjects: [],
+  memory: null,
+  selfNotes: null,
+  agentsPanel: null,
+  selectedTaskId: null,
+  selectedAgentId: null,
+  agentStatusFilter: "all",
+  memoryDomain: "all",
+  taskMode: cfg.taskMode,
+  setupDismissed: false,
+  expandedTurns: new Set(),
+};
+
+function syncSubjectInputs(val) {
+  $("subject").value = val === "local-user" ? "" : val;
+  $("subject").placeholder = val;
+  const sel = $("subjectSel");
+  if (Array.from(sel.options).some(o => o.value === val)) {
+    sel.value = val;
+  }
+}
+syncSubjectInputs(cfg.subject);
+
+function applyTab(tab) {
+  localStorage.setItem("km.view", tab);
+  document.querySelectorAll("#viewTabs .tab-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.tab === tab);
+  });
+  document.querySelectorAll("main > section").forEach(sec => {
+    const show = tab === "all" || sec.dataset.group === tab;
+    sec.classList.toggle("hidden", !show);
+  });
+}
+applyTab(cfg.view);
+
+document.querySelectorAll("#viewTabs .tab-btn").forEach(btn => {
+  btn.onclick = () => applyTab(btn.dataset.tab);
+});
 
 function showSetup() {
   $("cfgBase").value = cfg.base;
+  $("cfgToken").value = cfg.token;
   $("setup").style.display = "flex";
 }
-$("reconfig").onclick = showSetup;
-$("cfgSave").onclick = () => {
-  localStorage.setItem("km.base", $("cfgBase").value.trim().replace(/\/+$/,""));
-  localStorage.setItem("km.token", $("cfgToken").value.trim());
+function hideSetup() {
   $("setup").style.display = "none";
+}
+$("reconfig").onclick = showSetup;
+$("cfgCancel").onclick = () => { state.setupDismissed = true; hideSetup(); };
+$("cfgSave").onclick = () => {
+  localStorage.setItem("km.base", $("cfgBase").value.trim().replace(/\/+$/, ""));
+  localStorage.setItem("km.token", $("cfgToken").value.trim());
+  state.setupDismissed = false;
+  hideSetup();
   refresh();
 };
-$("subject").onchange = e =>
-  localStorage.setItem("km.subject", e.target.value.trim() || "local-user");
+
+function setSubject(next) {
+  const clean = (next || "").trim() || "local-user";
+  localStorage.setItem("km.subject", clean);
+  syncSubjectInputs(clean);
+  refresh();
+}
+$("subject").onchange = e => setSubject(e.target.value);
+$("subjectSel").onchange = e => setSubject(e.target.value);
 $("refresh").onclick = refresh;
 
 async function api(path, opts) {
   const headers = {"Accept": "application/json"};
   if (cfg.token) headers["Authorization"] = "Bearer " + cfg.token;
   if (opts && opts.body) headers["Content-Type"] = "application/json";
-  const r = await fetch(cfg.base + path, {method: (opts && opts.method) || "GET",
-                                          headers, body: opts && opts.body});
+  const r = await fetch(cfg.base + path, {
+    method: (opts && opts.method) || "GET",
+    headers,
+    body: opts && opts.body,
+  });
   const text = await r.text();
   let data; try { data = JSON.parse(text); } catch { data = {raw: text}; }
   if (!r.ok) {
     const msg = (data && (data.error && (data.error.message || data.error))) || r.status;
     const e = new Error("HTTP " + r.status + " " + (typeof msg === "string" ? msg : JSON.stringify(msg)));
-    e.status = r.status; throw e;
+    e.status = r.status;
+    throw e;
   }
   return data;
 }
 const post = (p, body) => api(p, {method: "POST", body: JSON.stringify(body || {})});
 
 function setErr(id, e) {
-  $(id).textContent = e ? (e.status === 401 ? "401 unauthorized — token を確認" : String(e.message||e)) : "";
+  if (!$(id)) return;
+  if (e && e.status === 401 && !cfg.token && !state.setupDismissed) {
+    showSetup();
+  }
+  $(id).textContent = e ? (e.status === 401 ? "401 unauthorized — token を確認" : String(e.message || e)) : "";
 }
+
 const fmtT = s => { if (!s) return "—"; const d = new Date(s); return isNaN(d) ? s : d.toLocaleString(); };
-const ago = s => { const d = new Date(s); if (isNaN(d)) return "—";
-  const sec = Math.max(0,(Date.now()-d)/1e3)|0;
-  if (sec<60) return sec+"s"; if (sec<3600) return (sec/60|0)+"m";
-  if (sec<86400) return (sec/3600|0)+"h"; return (sec/86400|0)+"d"; };
-const bool = v => v ? '<span class="pill ok">ok</span>' : '<span class="pill bad">down</span>';
-const pill = (t,c) => `<span class="pill ${c||""}">${esc(t)}</span>`;
+const ago = s => {
+  if (!s) return "—";
+  const d = new Date(s);
+  if (isNaN(d)) return "—";
+  const sec = Math.max(0, (Date.now() - d) / 1e3) | 0;
+  if (sec < 60) return sec + "s";
+  if (sec < 3600) return (sec / 60 | 0) + "m";
+  if (sec < 86400) return (sec / 3600 | 0) + "h";
+  return (sec / 86400 | 0) + "d";
+};
+const fmtUptime = sec => {
+  const s = Number(sec || 0);
+  if (s < 60) return s + "s";
+  if (s < 3600) return (s / 60 | 0) + "m";
+  if (s < 86400) return `${s / 3600 | 0}h ${(s % 3600) / 60 | 0}m`;
+  return `${s / 86400 | 0}d ${(s % 86400) / 3600 | 0}h`;
+};
+const fmtUsd = (v, digits = 3) => (typeof v === "number" && isFinite(v)) ? "$" + v.toFixed(digits) : "—";
+const boolPill = (v, okLbl = "ok", badLbl = "down") =>
+  v ? `<span class="pill ok">${esc(okLbl)}</span>` : `<span class="pill bad">${esc(badLbl)}</span>`;
+const pill = (t, c) => `<span class="pill ${c || ""}">${esc(t)}</span>`;
+
+function channelPill(subj) {
+  if (!subj) return "";
+  if (subj === "*" || subj === "all") return pill("横断", "violet");
+  if (subj.startsWith("slack-")) return pill("Slack", "cyan");
+  if (subj.startsWith("discord-")) return pill("Discord", "violet");
+  return "";
+}
 
 function rowKV(id, rows) {
   $(id).innerHTML = rows.filter(r => r[1] !== undefined)
     .map(r => `<dt>${esc(r[0])}</dt><dd>${r[1]}</dd>`).join("");
 }
 
+function copyText(text, btn) {
+  if (!navigator.clipboard) return;
+  navigator.clipboard.writeText(text).then(() => {
+    if (!btn) return;
+    const prev = btn.textContent;
+    btn.textContent = "✓ コピー済";
+    setTimeout(() => { btn.textContent = prev; }, 1200);
+  }).catch(() => {});
+}
+
+function updateSubjectDropdown(subjects) {
+  const list = Array.isArray(subjects) ? subjects : [];
+  state.subjects = list;
+  const sel = $("subjectSel");
+  const cur = cfg.subject;
+  const seen = new Set(["*"]);
+  const opts = [`<option value="*">* (全subject横断)</option>`];
+  if (cur && cur !== "*" && cur !== "all") {
+    seen.add(cur);
+    const ch = cur.startsWith("slack-") ? "[Slack] " : cur.startsWith("discord-") ? "[Discord] " : "";
+    opts.push(`<option value="${esc(cur)}">${esc(ch + cur)}</option>`);
+  }
+  for (const s of list) {
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    const ch = s.startsWith("slack-") ? "[Slack] " : s.startsWith("discord-") ? "[Discord] " : "";
+    opts.push(`<option value="${esc(s)}">${esc(ch + s)}</option>`);
+  }
+  sel.innerHTML = opts.join("");
+  sel.value = cur === "all" ? "*" : cur;
+}
+
+function updateKPIs() {
+  const s = state.status;
+  if (s) {
+    const n = s.node || {};
+    const ns = s.node_state || {};
+    const proc = s.process || {};
+    const r = s.routing || {};
+    const cg = r.cost_guard || {};
+    const cog = s.cognition || {};
+    const rss = typeof proc.rss_bytes === "number" ? `${(proc.rss_bytes / (1024 * 1024)).toFixed(0)} MiB` : "—";
+    const cpu = typeof proc.cpu_pct_avg === "number" ? `${proc.cpu_pct_avg.toFixed(1)}%` : "—";
+    $("kpi-node").textContent = `${ns.status || "—"} · ${ns.mode || n.mode || "?"}`;
+    $("kpi-node-sub").textContent = `up ${fmtUptime(n.uptime_secs)} · RSS ${rss} · CPU ${cpu}`;
+
+    $("kpi-route").textContent = r.active_primary || "なし";
+    const last = r.last_route;
+    $("kpi-route-sub").textContent = last
+      ? `直近 ${last.tier || "-"}/${last.model || "-"} (${last.latency_ms ?? "?"}ms) · req ${r.requests ?? 0}`
+      : `総リクエスト ${r.requests ?? 0}`;
+
+    $("kpi-cost").textContent = fmtUsd(cg.daily_usd, 3) + " / day";
+    $("kpi-cost-sub").textContent = `session ${fmtUsd(cg.session_usd, 3)} · month ${fmtUsd(cg.monthly_usd, 2)}`;
+
+    const apN = (s.approvals_pending || []).length;
+    const escN = ((s.commitments || {}).escalated || []).length;
+    $("kpi-queue").textContent = `hosts ${n.dialogue_hosts ?? 0} · 承認 ${apN}`;
+    $("kpi-queue-sub").textContent = `escalated ${escN} · pending tasks ${n.pending_tasks ?? 0}`;
+
+    const cogSt = cog.state || "disabled";
+    $("kpi-cog").textContent = cogSt;
+    $("kpi-cog-sub").textContent = cogSt === "disabled"
+      ? "未設定"
+      : `${cog.subject || "—"} · ${cog.reason || "—"} (${ago(cog.last_run)})`;
+  }
+  const mem = state.memory;
+  if (mem) {
+    const dom = mem.domains || {};
+    const ep = dom.episodic || {};
+    const rel = dom.relationship || {};
+    const pendingN = (mem.pending_proposals || []).length;
+    const selfCount = Object.values((mem.self_model && mem.self_model.fields) || {})
+      .reduce((acc, a) => acc + (Array.isArray(a) ? a.length : 0), 0);
+    $("kpi-mem").textContent = `ep ${ep.active ?? "?"}/${ep.total ?? "?"} · rel ${rel.active ?? "?"}/${rel.total ?? "?"}`;
+    $("kpi-mem-sub").textContent = `self ${selfCount} entries · proposals ${pendingN}`;
+  }
+}
+
 async function loadNode() {
   try {
     const [h, s] = await Promise.all([api("/health"), api("/status")]);
-    $("who").textContent = `${h.node || "?"} · ${h.role || "?"}`;
+    state.status = s;
+    $("who").textContent = `${h.node || "?"} · ${h.role || "?"} · ${h.mode || "?"}`;
     const ns = (s && s.node_state) || {};
-    const cg = s && s.routing && s.routing.cost_guard || {};
+    const proc = (s && s.process) || {};
+    const caps = Array.isArray(h.capabilities) ? h.capabilities.map(c => pill(c, "accent")).join("") : "—";
     rowKV("node", [
       ["state", pill(ns.status || "—", ns.status === "busy" ? "warn" : "ok")],
-      ["uptime", esc(((h.uptime_secs||0)/3600).toFixed(1)) + " h"],
-      ["mode", esc(h.mode)], ["kcore", esc(JSON.stringify(h.kcore))],
-      ["nas", bool(h.nas)], ["local_llm", bool(h.local_llm)],
-      ["pending", esc(h.pending_tasks)],
-      ["active_goal", esc(ns.active_goal ? (ns.active_goal.goal||"").slice(0,60) : "—")],
-      ["sessions", esc((ns.active_sessions||[]).join(", ") || "—")],
-      ["session $", esc(cg.session_usd ?? "—") + " / day " + esc(cg.daily_usd ?? "—")],
+      ["uptime", `${esc(fmtUptime(h.uptime_secs))} (epoch ${esc(h.boot_epoch ?? "?")})`],
+      ["mode / role", `${esc(h.mode)} / ${esc(h.role)}`],
+      ["process", `RSS ${typeof proc.rss_bytes === "number" ? (proc.rss_bytes / 1048576).toFixed(1) + " MiB" : "—"} · CPU ${typeof proc.cpu_pct_avg === "number" ? proc.cpu_pct_avg.toFixed(1) + "%" : "—"}`],
+      ["dialogue_hosts", esc(h.dialogue_hosts ?? 0)],
+      ["active_goal", esc(ns.active_goal ? (ns.active_goal.goal || ns.active_goal.id || "") : "—")],
+      ["sessions", esc((ns.active_sessions || []).join(", ") || "—")],
+      ["capabilities", caps],
+    ]);
+    const cog = s.cognition || {};
+    const kc = s.kcore || {};
+    const cogSt = cog.state || "disabled";
+    const cogTone = cogSt === "failed" ? "bad" : cogSt === "busy" ? "warn" : cogSt === "disabled" ? "" : "ok";
+    rowKV("cognition", [
+      ["cognition", `${pill(cogSt, cogTone)} ${esc(cog.subject || "")} ${esc(cog.reason || "")}`],
+      ["last_run", cog.last_run ? `${esc(fmtT(cog.last_run))} (${esc(ago(cog.last_run))}, ${esc(cog.latency_ms ?? "?")}ms)` : "—"],
+      ["kcore", `${pill(kc.state || h.kcore || "—", kc.state === "failed" ? "bad" : "ok")} restarts=${esc(kc.restarts ?? 0)}`],
     ]);
     setErr("nodeErr");
-    renderTiers(s); renderPeers(s); renderAgents(s); return s;
-  } catch (e) { setErr("nodeErr", e); setErr("tiersErr", e); setErr("peersErr", e); setErr("agentsErr", e); }
+    renderTiers(s);
+    renderPeersAndDelegations(s);
+    renderInfra(s);
+    renderCommitments(s);
+    updateKPIs();
+    return s;
+  } catch (e) {
+    setErr("nodeErr", e); setErr("tiersErr", e); setErr("peersErr", e); setErr("infraErr", e);
+  }
 }
 
 function renderTiers(s) {
-  const tiers = s && s.routing && s.routing.tiers || {};
+  const r = s && s.routing || {};
+  const tiers = r.tiers || {};
   const names = Object.keys(tiers);
-  $("tiers").innerHTML = names.length
+  const cg = r.cost_guard || {};
+  const order = Array.isArray(r.order) && r.order.length
+    ? r.order.map(x => x === r.active_primary ? pill(x + " ★", "ok") : pill(x)).join(" → ")
+    : '<span class="muted">—</span>';
+  let html = `<div class="kv" style="margin-bottom:8px">
+    <dt>primary</dt><dd>${r.active_primary ? pill(r.active_primary, "ok") : pill("なし", "bad")} <span class="muted">req=${esc(r.requests ?? 0)}</span></dd>
+    <dt>order</dt><dd>${order}</dd>
+    <dt>cost_guard</dt><dd>session ${esc(fmtUsd(cg.session_usd, 4))} (残 ${esc(fmtUsd(cg.session_remaining_usd, 3))}) · day ${esc(fmtUsd(cg.daily_usd, 4))} · month ${esc(fmtUsd(cg.monthly_usd, 3))} · unpriced=${esc(cg.unpriced_requests ?? 0)}</dd>
+  </div>`;
+  html += names.length
     ? "<table><tr><th></th><th>tier</th><th>latency</th><th>last ok</th><th>error</th></tr>" +
-      names.map(n => { const t = tiers[n];
-        return `<tr><td>${bool(t.healthy)}</td><td>${esc(n)}</td>
-          <td>${esc(t.latency_ms||0)} ms</td><td title="${esc(fmtT(t.last_ok))}">${esc(ago(t.last_ok))}</td>
-          <td class="muted">${esc((t.error||"").slice(0,60))}</td></tr>`; }).join("") + "</table>"
+      names.map(n => {
+        const t = tiers[n];
+        return `<tr><td>${boolPill(t.healthy)}</td><td>${esc(n)}</td>
+          <td class="mono">${esc(t.latency_ms || 0)} ms</td><td title="${esc(fmtT(t.last_ok))}">${esc(ago(t.last_ok))}</td>
+          <td class="muted">${esc((t.error || "").slice(0, 80))}</td></tr>`;
+      }).join("") + "</table>"
     : '<span class="muted">no tiers</span>';
+
+  const last = r.last_route;
+  if (last) {
+    const cacheTotal = (last.prompt_tokens || 0) + (last.cached_tokens || 0);
+    const cacheStr = typeof last.cached_tokens === "number"
+      ? ` · cached=${last.cached_tokens}${cacheTotal > 0 ? ` (${Math.round(100 * last.cached_tokens / cacheTotal)}%)` : ""}`
+      : "";
+    html += `<div class="sub-box"><div class="sub-title">直近ルート</div>
+      <div class="small mono">${last.lane ? pill(last.lane, "accent") : ""} ${esc(last.tier || "-")}/${esc(last.model || "-")} · ${esc(last.billing || "-")} · ${esc(last.latency_ms ?? "?")}ms${last.cost_usd != null ? " · " + esc(fmtUsd(last.cost_usd, 4)) : ""}${esc(cacheStr)}</div></div>`;
+  }
+  $("tiers").innerHTML = html;
 }
 
-function renderPeers(s) {
+function renderPeersAndDelegations(s) {
   const peers = s.peers || {};
   const names = Object.keys(peers);
-  const ic = s.intercom || {};
-  $("peers").innerHTML =
-    (names.length ? "<table><tr><th></th><th>peer</th><th>last ok</th><th>error</th></tr>" +
-      names.map(n => { const p = peers[n];
-        return `<tr><td>${bool(p.healthy)}</td><td>${esc(n)}</td>
+  let html = names.length
+    ? "<table><tr><th></th><th>peer</th><th>role / GPU</th><th>last ok</th><th>error</th></tr>" +
+      names.map(n => {
+        const p = peers[n];
+        const d = p.detail || {};
+        const gpu = Array.isArray(d.gpu)
+          ? d.gpu.map(g => `${g.name || "GPU"} ${g.memory_used_mib}/${g.memory_total_mib}MiB`).join(", ")
+          : "";
+        return `<tr><td>${boolPill(p.healthy)}</td><td>${esc(n)}</td>
+          <td class="small">${esc(d.role || "—")} ${d.local_llm ? pill("local_llm", "ok") : ""} ${esc(gpu)}</td>
           <td title="${esc(fmtT(p.last_ok))}">${esc(ago(p.last_ok))}</td>
-          <td class="muted">${esc((p.error||"").slice(0,50))}</td></tr>`; }).join("") + "</table>"
-      : '<span class="muted">no peers</span>') +
-    (ic.outbox_pending !== undefined || ic.conversations !== undefined
-      ? `<div class="small muted" style="margin-top:6px">intercom: ${esc(JSON.stringify(ic).slice(0,200))}</div>` : "");
+          <td class="muted">${esc((p.error || "").slice(0, 60))}</td></tr>`;
+      }).join("") + "</table>"
+    : '<span class="muted">no peers</span>';
+
+  const ic = s.intercom || {};
+  html += `<div class="sub-box"><div class="sub-title">Intercom (個体間通信)</div>`;
+  if (ic.enabled) {
+    const ob = ic.outbox || {};
+    const convs = ic.conversations || [];
+    html += `<div class="small mono" style="margin-bottom:6px">
+      ${pill("enabled", "ok")} inbound ${esc(ic.inbound_queued ?? 0)} · outbox queued ${esc(ob.queued ?? 0)} / dead ${esc(ob.dead ?? 0)} · relay ${esc((ic.relay && ic.relay.configured) ? "configured" : "direct")}
+    </div>`;
+    if (convs.length) {
+      html += convs.slice(0, 4).map(c => `<div class="card"><div class="m">${pill(c.peer || "?", "accent")} opened_by=${esc(c.opened_by || "?")} · auto_left=${esc(c.auto_left ?? 0)} · ${esc(ago(c.updated))}</div>
+        ${c.last_in ? `<div class="small">← ${esc(String(c.last_in).slice(0, 120))}</div>` : ""}
+        ${c.last_out ? `<div class="small muted">→ ${esc(String(c.last_out).slice(0, 120))}</div>` : ""}</div>`).join("");
+    }
+  } else {
+    html += '<span class="muted small">disabled</span>';
+  }
+  html += `</div>`;
+
+  const del = s.delegations || {};
+  html += `<div class="sub-box"><div class="sub-title">Light / Heavy Delegations</div>`;
+  if (del.enabled) {
+    html += `<div class="small mono" style="margin-bottom:6px">
+      pending=${esc(del.pending ?? 0)} · completed=${esc(del.completed ?? 0)} · failed=${esc(del.failed ?? 0)} · timeouts=${esc(del.timeouts ?? 0)} · last=${esc(del.last_latency_ms ?? "—")}ms
+    </div>`;
+    if (del.last_error) html += `<div class="err">${esc(del.last_error)}</div>`;
+    const recent = del.recent || [];
+    if (recent.length) {
+      html += "<table><tr><th>state</th><th>task</th><th>type</th><th>node</th></tr>" +
+        recent.slice(0, 5).map(r => `<tr><td>${pill(r.state, r.state === "completed" ? "ok" : r.state === "failed" || r.state === "timeout" ? "bad" : "accent")}</td>
+          <td class="mono small">${esc(r.task_id)}</td><td class="small">${esc(r.type)}</td><td class="small">${esc(r.node || "—")}</td></tr>`).join("") + "</table>";
+    }
+  } else {
+    html += '<span class="muted small">disabled</span>';
+  }
+  html += `</div>`;
+  $("peers").innerHTML = html;
 }
 
-async function loadTasks() {
-  try {
-    const d = await post("/v1/tasks", {action: "list"});
-    const tasks = d.tasks || [];
-    const cols = [["in_progress","進行中"],["awaiting_operator","判断待ち"],
-                  ["waiting","待ち / on_hold"],["done","完了"],["other","その他"]];
-    const bucket = t => t.status === "on_hold" ? "waiting"
-      : ["in_progress","awaiting_operator","waiting","done"].includes(t.status) ? t.status : "other";
-    $("tasks").innerHTML = cols.map(([key,label]) => {
-      const list = tasks.filter(t => bucket(t) === key);
-      const shown = key === "done" ? list.slice(-10).reverse() : list.slice().reverse();
-      return `<div class="col"><h3>${label} (${list.length})</h3>` +
-        (shown.map(t => `<div class="card"><div class="t">${esc(t.title)}</div>
-          <div class="m">${pill(t.kind,"accent")}${pill(t.status)} ${esc(t.node||"")} · ${esc(ago(t.updated))}
-          ${t.notes && t.notes.length ? " · " + t.notes.length + " notes" : ""}</div></div>`).join("")
-         || '<div class="muted small">—</div>') + `</div>`;
-    }).join("");
-    setErr("tasksErr");
-  } catch (e) { setErr("tasksErr", e); }
+function renderInfra(s) {
+  const nas = s.nas || {};
+  const haiTier = ((s.routing || {}).tiers || {}).hai || {};
+  const haiAcct = (s.hai_account || {}).detail || {};
+  const mcp = s.mcp || [];
+  const jobs = s.jobs || {};
+  const snap = s.snapshot || {};
+
+  let html = `<div class="kv">
+    <dt>NAS</dt><dd>${nas.configured ? boolPill(nas.probe && nas.probe.healthy) : pill("未設定")} <span class="mono">${esc(nas.root || "")}</span>
+      · backlog ${esc(nas.spool_backlog_files ?? 0)} files / ${esc(nas.spool_backlog_bytes ?? 0)} B ${nas.spool_warn ? pill("WARN", "warn") : ""}
+      · sync ${esc(ago(nas.sync && nas.sync.last_success))}</dd>
+    <dt>HAI</dt><dd>${boolPill(haiTier.healthy)} ${esc(haiTier.latency_ms ?? "—")}ms · 残高 ${esc(haiAcct.balance_jpy ?? "—")} JPY ${haiAcct.low_balance ? pill("LOW", "warn") : ""}</dd>
+    <dt>Snapshot</dt><dd>${snap.ok != null ? boolPill(snap.ok) : pill("—")} ${esc(fmtT(snap.at))} ${snap.error ? pill(snap.error, "bad") : ""}</dd>
+  </div>`;
+
+  if (mcp.length) {
+    html += `<div class="sub-box"><div class="sub-title">MCP Servers</div><table><tr><th></th><th>name</th><th>tools</th><th>error</th></tr>` +
+      mcp.map(m => `<tr><td>${boolPill(m.state === "running", "run", m.state || "down")}</td><td>${esc(m.name)}</td><td class="mono">${esc(m.tools ?? 0)}</td><td class="muted small">${esc(m.error || "")}</td></tr>`).join("") +
+      `</table></div>`;
+  }
+  const jobNames = Object.keys(jobs);
+  if (jobNames.length) {
+    html += `<div class="sub-box"><div class="sub-title">Jobs</div><table><tr><th></th><th>job</th><th>last run</th><th>error</th></tr>` +
+      jobNames.map(k => {
+        const j = jobs[k];
+        return `<tr><td>${boolPill(j.ok)}</td><td>${esc(k)}</td><td title="${esc(fmtT(j.last_run))}">${esc(ago(j.last_run))}</td><td class="muted small">${esc(j.error || "")}</td></tr>`;
+      }).join("") + `</table></div>`;
+  }
+  $("infra").innerHTML = html;
+}
+
+function renderCommitments(s) {
+  const cm = s.commitments || {};
+  const tot = cm.totals || {};
+  const escList = cm.escalated || [];
+  const apList = s.approvals_pending || [];
+
+  let html = `<div class="small mono" style="margin-bottom:8px">
+    Commitments: created=${esc(tot.created ?? 0)} · attempts=${esc(tot.attempts ?? 0)} · resumes=${esc(tot.resumes ?? 0)} · escalated=${esc(tot.escalated_now ?? escList.length)}
+  </div>`;
+  if (escList.length) {
+    html += escList.map(c => `<div class="card" style="border-color:var(--warn)"><div class="t">⚠ ${esc(c.question || c.goal || c.id)}</div><div class="m">${pill("escalated", "warn")} ${esc(c.id)} · waiting ${esc(c.waiting_secs ?? 0)}s</div></div>`).join("");
+  }
+  if (apList.length) {
+    html += `<div class="sub-box"><div class="sub-title">Approvals Pending (${apList.length})</div>` +
+      apList.map(a => `<div class="card" style="border-color:var(--warn)"><div class="t">✋ ${esc(a.exposed || a.tool || a.id)}</div>
+        <div class="m">${esc(a.id || "")} · ${esc(ago(a.created))} · ${esc(JSON.stringify(a.arguments || {}).slice(0, 140))}</div></div>`).join("") +
+      `</div>`;
+  }
+  $("commitments").innerHTML = html;
 }
 
 async function loadCommitments() {
   try {
     const d = await post("/v1/commitments", {action: "list"});
     const list = d.commitments || [];
-    $("commitments").innerHTML = list.length ? list.map(c => {
-      const goal = c.goal || c.question || c.id || "";
-      return `<div class="card"><div class="t">${esc(goal).slice(0,160)}</div>
-        <div class="m">${pill(c.state || c.status || "?")} ${esc(c.id||"")}
-        ${c.next_action ? " · next: " + esc(String(c.next_action).slice(0,60)) : ""}</div></div>`;
-    }).join("") : '<span class="muted">no open commitments</span>';
+    const openHtml = list.length ? `<div class="sub-box"><div class="sub-title">Open Commitments (${list.length})</div>` +
+      list.map(c => {
+        const goal = c.goal || c.question || c.id || "";
+        return `<div class="card"><div class="t">${esc(goal).slice(0, 200)}</div>
+          <div class="m">${pill(c.state || c.status || "?", c.state === "escalated" ? "warn" : "accent")} ${esc(c.id || "")}
+          ${c.next_action ? " · next: " + esc(String(c.next_action).slice(0, 80)) : ""}</div></div>`;
+      }).join("") + `</div>` : '<div class="sub-box muted small">no open commitments</div>';
+    if (state.status) renderCommitments(state.status);
+    $("commitments").insertAdjacentHTML("beforeend", openHtml);
     setErr("commitmentsErr");
   } catch (e) { setErr("commitmentsErr", e); }
 }
 
-function renderAgents(s) {
-  const tp = s.task_plane, dels = s.delegations, ap = s.approvals_pending || [];
-  let html = "";
-  if (tp) html += `<div class="small">${pill("task_plane","accent")} ${esc(JSON.stringify(tp).slice(0,240))}</div>`;
-  if (dels) html += `<div class="small" style="margin-top:5px">${pill("delegations")} ${esc(JSON.stringify(dels).slice(0,240))}</div>`;
-  if (ap.length) html += `<div class="small" style="margin-top:5px">${pill("approvals " + ap.length,"warn")} ` +
-    ap.map(a => esc((a.summary || a.tool || a.id || JSON.stringify(a)).slice(0,80))).join("<br>") + `</div>`;
-  if (!html) html = '<span class="muted">—</span>';
-  $("agents").innerHTML = html;
+function renderTasks() {
+  const tasks = state.tasks || [];
+  const needle = ($("tasksFilter").value || "").trim().toLowerCase();
+  const kind = $("tasksKind").value;
+  const showDone = $("tasksShowDone").checked;
+  const visible = tasks.filter(t => {
+    if (!showDone && ["done", "failed", "cancelled"].includes(t.status)) return false;
+    if (kind !== "all" && t.kind !== kind) return false;
+    if (needle) {
+      const hay = `${t.id || ""} ${t.title || ""} ${t.kind || ""} ${t.node || ""} ${t.owner || ""}`.toLowerCase();
+      if (!hay.includes(needle)) return false;
+    }
+    return true;
+  });
+  const running = tasks.filter(t => t.status === "in_progress").length;
+  $("tasksCount").textContent = `進行中 ${running} 件 · 表示 ${visible.length}/${tasks.length} 件`;
+
+  if (state.taskMode === "map") {
+    renderTaskMap(visible);
+  } else {
+    renderTaskBoard(visible);
+  }
+  renderTaskDetail();
+}
+
+function renderTaskBoard(visible) {
+  const cols = [
+    ["in_progress", "進行中"],
+    ["awaiting_operator", "判断待ち"],
+    ["waiting", "待機 / 保留"],
+    ["done", "完了"],
+    ["other", "その他"],
+  ];
+  const bucket = t => (t.status === "on_hold" || t.status === "waiting") ? "waiting"
+    : ["in_progress", "awaiting_operator", "done"].includes(t.status) ? t.status
+    : (t.status === "failed" || t.status === "cancelled") ? "done" : "other";
+  $("tasks").className = "kanban";
+  $("tasks").innerHTML = cols.map(([key, label]) => {
+    const list = visible.filter(t => bucket(t) === key);
+    const shown = key === "done" ? list.slice(-20).reverse() : list.slice().reverse();
+    return `<div class="col"><h3><span>${label}</span><span>${list.length}</span></h3>` +
+      (shown.map(t => {
+        const sel = state.selectedTaskId === t.id ? " selected" : "";
+        const notesN = (t.notes || []).length;
+        const depsN = (t.depends_on || []).length;
+        return `<div class="card clickable task-card st-${esc(t.status)}${sel}" data-tid="${esc(t.id)}">
+          <div class="t">${esc(t.title)}</div>
+          <div class="m">${pill(t.kind, "accent")}${pill(t.status, t.status === "failed" ? "bad" : t.status === "awaiting_operator" ? "warn" : "")}
+          ${esc(t.node || "")} · ${esc(ago(t.updated))}${depsN ? " · ⛓" + depsN : ""}${notesN ? " · 💬" + notesN : ""}</div></div>`;
+      }).join("") || '<div class="muted small">—</div>') + `</div>`;
+  }).join("");
+  $("tasks").querySelectorAll("[data-tid]").forEach(el => {
+    el.onclick = () => {
+      const id = el.dataset.tid;
+      state.selectedTaskId = state.selectedTaskId === id ? null : id;
+      renderTasks();
+    };
+  });
+}
+
+function renderTaskMap(visible) {
+  $("tasks").className = "map-wrap";
+  if (!visible.length) {
+    $("tasks").innerHTML = '<div class="muted small">表示するタスクはありません</div>';
+    return;
+  }
+  const NODE_W = 210, NODE_H = 58, COL_GAP = 70, ROW_GAP = 14, GROUP_GAP = 30;
+  const ids = new Set(visible.map(t => t.id).filter(Boolean));
+  const byId = Object.fromEntries(visible.map(t => [t.id, t]));
+  const deps = {};
+  for (const t of visible) {
+    deps[t.id] = (t.depends_on || []).filter(d => ids.has(d));
+  }
+  const memo = {}, stack = new Set();
+  const depth = id => {
+    if (memo[id] !== undefined) return memo[id];
+    if (stack.has(id)) return 0;
+    stack.add(id);
+    const d = (deps[id] || []).reduce((mx, p) => Math.max(mx, depth(p) + 1), 0);
+    stack.delete(id);
+    return (memo[id] = d);
+  };
+  ids.forEach(depth);
+
+  const parent = {};
+  ids.forEach(i => { parent[i] = i; });
+  const find = x => { while (parent[x] !== x) x = parent[x] = parent[parent[x]]; return x; };
+  for (const id of ids) {
+    for (const d of deps[id]) {
+      const a = find(id), b = find(d);
+      if (a !== b) parent[a] = b;
+    }
+  }
+  const groupsMap = {};
+  for (const t of visible) {
+    const r = find(t.id);
+    (groupsMap[r] = groupsMap[r] || []).push(t);
+  }
+  const groups = Object.values(groupsMap).sort((a, b) => {
+    const ma = Math.max(...a.map(t => Number(t.updated_at || 0)));
+    const mb = Math.max(...b.map(t => Number(t.updated_at || 0)));
+    return mb - ma;
+  });
+
+  const pos = {}, clusters = [];
+  let y = 12, maxX = 240;
+  for (const members of groups) {
+    members.sort((a, b) => Number(a.created_at || 0) - Number(b.created_at || 0));
+    const rows = {};
+    let rowsUsed = 0, grpMaxX = 0;
+    const startY = y;
+    for (const t of members) {
+      const col = memo[t.id] || 0;
+      const r = rows[col] || 0;
+      rows[col] = r + 1;
+      rowsUsed = Math.max(rowsUsed, r + 1);
+      const x = 14 + col * (NODE_W + COL_GAP);
+      const ny = y + r * (NODE_H + ROW_GAP);
+      pos[t.id] = {x, y: ny};
+      maxX = Math.max(maxX, x + NODE_W);
+      grpMaxX = Math.max(grpMaxX, x + NODE_W);
+    }
+    if (members.length > 1) {
+      clusters.push({x: 6, y: startY - 8, w: grpMaxX + 2, h: rowsUsed * (NODE_H + ROW_GAP) - ROW_GAP + 16});
+    }
+    y += rowsUsed * (NODE_H + ROW_GAP) + GROUP_GAP;
+  }
+  const W = maxX + 24, H = y + 10;
+  const sel = state.selectedTaskId;
+
+  let svg = `<svg class="map-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+    <defs>
+      <marker id="arr" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="rgba(150,170,200,0.65)"/></marker>
+      <marker id="arr-hot" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#f3b53e"/></marker>
+    </defs>`;
+  for (const hotPass of [false, true]) {
+    for (const t of visible) {
+      const to = pos[t.id]; if (!to) continue;
+      for (const dep of deps[t.id]) {
+        const from = pos[dep]; if (!from) continue;
+        const hot = sel && (dep === sel || t.id === sel);
+        if (Boolean(hot) !== hotPass) continue;
+        const ax = from.x + NODE_W, ay = from.y + NODE_H / 2;
+        const bx = to.x, by = to.y + NODE_H / 2;
+        const dx = Math.max(30, (bx - ax) * 0.5);
+        svg += `<path d="M${ax},${ay} C${ax + dx},${ay} ${bx - dx},${by} ${bx},${by}" fill="none"
+          stroke="${hot ? "#f3b53e" : "rgba(150,170,200,0.45)"}" stroke-width="${hot ? 2.4 : 1.4}"
+          marker-end="url(#${hot ? "arr-hot" : "arr"})"/>`;
+      }
+    }
+  }
+  svg += "</svg>";
+
+  const clusterHtml = clusters.map(c =>
+    `<div class="map-cluster" style="left:${c.x}px;top:${c.y}px;width:${c.w}px;height:${c.h}px"></div>`
+  ).join("");
+
+  const nodesHtml = visible.map(t => {
+    const p = pos[t.id];
+    const isSel = sel === t.id ? " selected" : "";
+    return `<div class="map-node st-${esc(t.status)}${isSel}" style="left:${p.x}px;top:${p.y}px" data-mid="${esc(t.id)}" title="${esc(t.title)}">
+      <div class="mn-title">${esc(t.title)}</div>
+      <div class="mn-meta">${esc(t.status)} · ${esc(t.kind)} · ${esc(t.node || "")}</div>
+    </div>`;
+  }).join("");
+
+  $("tasks").innerHTML = `<div class="map-canvas" style="width:${W}px;height:${H}px">${clusterHtml}${svg}${nodesHtml}</div>`;
+  $("tasks").querySelectorAll("[data-mid]").forEach(el => {
+    el.onclick = () => {
+      const id = el.dataset.mid;
+      state.selectedTaskId = state.selectedTaskId === id ? null : id;
+      renderTasks();
+    };
+  });
+}
+
+function renderTaskDetail() {
+  const split = $("taskSplit");
+  const wrap = $("taskDetailWrap");
+  const t = state.selectedTaskId && (state.tasks || []).find(x => x.id === state.selectedTaskId);
+  if (!t) {
+    split.classList.remove("has-detail");
+    wrap.style.display = "none";
+    wrap.innerHTML = "";
+    return;
+  }
+  split.classList.add("has-detail");
+  wrap.style.display = "block";
+  const byId = Object.fromEntries((state.tasks || []).map(x => [x.id, x]));
+  const deps = t.depends_on || [];
+  const next = (state.tasks || []).filter(x => (x.depends_on || []).includes(t.id));
+  const notes = (t.notes || []).slice().reverse();
+
+  wrap.innerHTML = `<div class="detail-box">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+      ${pill(t.kind, "accent")} ${pill(t.status, t.status === "failed" ? "bad" : t.status === "awaiting_operator" ? "warn" : "")}
+      <span class="mono small muted">${esc(t.id)}</span>
+      <span class="spacer"></span>
+      <button class="small-btn" id="tdClose">✕</button>
+    </div>
+    <div style="font-weight:700;font-size:14px;margin-bottom:8px">${esc(t.title)}</div>
+    <div class="kv">
+      <dt>node</dt><dd>${esc(t.node || "—")}</dd>
+      <dt>owner</dt><dd>${esc(t.owner || "—")}</dd>
+      <dt>created</dt><dd>${esc(fmtT(t.created))}</dd>
+      <dt>updated</dt><dd>${esc(fmtT(t.updated))}</dd>
+    </div>
+    <div class="sub-box"><div class="sub-title">前タスク (${deps.length})</div>
+      ${deps.map(d => `<div class="small"><a href="#" data-jump="${esc(d)}" style="color:var(--cyan)">← ${esc((byId[d] && byId[d].title) || d)}</a></div>`).join("") || '<span class="muted small">なし</span>'}
+    </div>
+    <div class="sub-box"><div class="sub-title">次タスク (${next.length})</div>
+      ${next.map(n => `<div class="small"><a href="#" data-jump="${esc(n.id)}" style="color:var(--cyan)">→ ${esc(n.title)}</a></div>`).join("") || '<span class="muted small">なし</span>'}
+    </div>
+    <div class="sub-box"><div class="sub-title">メモ・経過 (${notes.length})</div>
+      ${notes.map(n => `<div class="small" style="margin-bottom:3px"><span class="muted">[${esc(n.by)}]</span> ${esc(n.text)}</div>`).join("") || '<span class="muted small">なし</span>'}
+    </div>
+    ${t.detail ? `<details class="sub-box"><summary>detail JSON</summary><pre>${esc(JSON.stringify(t.detail, null, 2))}</pre></details>` : ""}
+  </div>`;
+  $("tdClose").onclick = () => { state.selectedTaskId = null; renderTasks(); };
+  wrap.querySelectorAll("[data-jump]").forEach(a => {
+    a.onclick = e => { e.preventDefault(); state.selectedTaskId = a.dataset.jump; renderTasks(); };
+  });
+}
+
+async function loadTasks() {
+  try {
+    const d = await post("/v1/tasks", {action: "list"});
+    state.tasks = d.tasks || [];
+    renderTasks();
+    setErr("tasksErr");
+  } catch (e) { setErr("tasksErr", e); }
+}
+
+function renderThoughts() {
+  const turns = state.turns || [];
+  const needle = ($("thoughtsFilter").value || "").trim().toLowerCase();
+  const filtered = needle
+    ? turns.filter(t => {
+        const toolsStr = (t.tool_calls || []).map(x => x.name || "").join(" ");
+        const hay = `${t.subject || ""} ${t.message || ""} ${t.response || ""} ${t.error || ""} ${toolsStr}`.toLowerCase();
+        return hay.includes(needle);
+      })
+    : turns;
+  $("thoughtsCount").textContent = `${filtered.length}/${turns.length} turns`;
+
+  $("thoughts").innerHTML = filtered.length ? filtered.map((t, idx) => {
+    const r = t.route || {};
+    const subj = t.subject || "";
+    const resp = t.response || (t.error ? "⚠ " + t.error : "");
+    const key = t.task_id || `${t.ts || idx}`;
+    const expanded = state.expandedTurns.has(key);
+    const longResp = resp && String(resp).length > 520;
+    const shownResp = (!longResp || expanded) ? String(resp) : String(resp).slice(0, 520) + "…";
+    const tools = t.tool_calls || [];
+    const pills = [
+      t.kind && t.kind !== "answered" ? pill(t.kind, "warn") : "",
+      r.tier ? pill(`${r.tier}${r.model ? "/" + r.model : ""}`, r.tier === "hai" ? "warn" : "ok") : "",
+      r.billing ? pill(r.billing, r.billing === "metered" ? "warn" : "ok") : "",
+      r.cost_usd != null ? pill(fmtUsd(r.cost_usd, 4), "warn") : "",
+      r.cached_tokens ? pill(`cache ${r.cached_tokens}`) : "",
+      t.latency_ms ? pill(`${(t.latency_ms / 1000).toFixed(1)}s`) : "",
+      ...tools.map(tc => pill(`🔧 ${String(tc.name || "?").replace(/^mcp__/, "").replace(/__/g, "/")}`, tc.ok === false ? "bad" : "violet")),
+    ].filter(Boolean).join("");
+
+    return `<div class="turn">
+      <div class="turn-head">
+        ${channelPill(subj)}${subj ? `<span class="pill">${esc(subj)}</span>` : ""}
+        <span class="small muted mono" title="${esc(fmtT(t.ts))}">${esc(fmtT(t.ts))} (${esc(ago(t.ts))})</span>
+        <span class="spacer"></span>
+        ${resp ? `<button class="small-btn" data-copy-turn="${idx}">📋 コピー</button>` : ""}
+      </div>
+      <div class="msg">${esc(t.message || "")}</div>
+      ${resp ? `<div class="resp">${esc(shownResp)}</div>` : ""}
+      ${longResp ? `<button class="small-btn" style="margin-top:4px" data-exp-turn="${esc(key)}">${expanded ? "折りたたむ" : "全文を表示 (" + String(resp).length + " chars)"}</button>` : ""}
+      <div class="meta">${pills}</div>
+      ${tools.length ? `<details style="margin-top:4px"><summary>tool calls (${tools.length})</summary><pre>${esc(JSON.stringify(tools, null, 2))}</pre></details>` : ""}
+    </div>`;
+  }).join("") : '<span class="muted">該当するターンはありません (subject: ' + esc(cfg.subject) + ')</span>';
+
+  $("thoughts").querySelectorAll("[data-copy-turn]").forEach(btn => {
+    btn.onclick = () => {
+      const t = filtered[Number(btn.dataset.copyTurn)];
+      if (t) copyText(t.response || t.message || "", btn);
+    };
+  });
+  $("thoughts").querySelectorAll("[data-exp-turn]").forEach(btn => {
+    btn.onclick = () => {
+      const k = btn.dataset.expTurn;
+      if (state.expandedTurns.has(k)) state.expandedTurns.delete(k);
+      else state.expandedTurns.add(k);
+      renderThoughts();
+    };
+  });
 }
 
 async function loadThoughts() {
   try {
-    const d = await post("/v1/kamimusuhi/history", {subject: cfg.subject, limit: 30});
-    const turns = (d.turns || []).slice().reverse();
-    $("thoughts").innerHTML = turns.length ? turns.map(t => {
-      const r = t.route || {};
-      const meta = [fmtT(t.ts), t.kind !== "answered" ? t.kind : "",
-        r.tier ? "tier " + r.tier : "", r.model || "",
-        t.latency_ms ? t.latency_ms + "ms" : "",
-        (t.tool_calls||[]).length ? "tools " + t.tool_calls.length : ""].filter(Boolean).join(" · ");
-      const resp = t.response || (t.error ? "⚠ " + t.error : "");
-      return `<div class="turn"><div class="msg">${esc(t.message||"")}</div>
-        ${resp ? `<div class="resp">${esc(String(resp).slice(0,600))}${String(resp).length>600?"…":""}</div>` : ""}
-        <div class="meta">${esc(meta)}</div></div>`;
-    }).join("") : '<span class="muted">no turns for subject ' + esc(cfg.subject) + '</span>';
+    const d = await post("/v1/kamimusuhi/history", {subject: cfg.subject, limit: 40});
+    if (Array.isArray(d.subjects)) updateSubjectDropdown(d.subjects);
+    state.turns = (d.turns || []).slice().reverse();
+    renderThoughts();
     setErr("thoughtsErr");
   } catch (e) { setErr("thoughtsErr", e); }
 }
 
+function renderAgents() {
+  const p = state.agentsPanel;
+  if (!p) {
+    $("agents").innerHTML = '<span class="muted">このノードでは Task Plane が無効か未取得です。</span>';
+    $("agentsSummary").textContent = "";
+    return;
+  }
+  const h = p.health || {};
+  $("agentsSummary").textContent = `実行中 ${h.running ?? 0}/${h.max_concurrent ?? "?"} · 経路 ${h.routing_mode || "—"}`;
+
+  const execs = h.executors || [];
+  let html = `<div class="exec-strip">` + execs.map(e => {
+    const st = !e.enabled ? ["無効", ""] : !e.ok ? ["未検出", "bad"] : e.needs_login ? ["要ログイン", "warn"] : ["OK", "ok"];
+    const modelsN = Array.isArray(e.models) ? e.models.length : (e.models && typeof e.models === "object" ? Object.keys(e.models).length : "—");
+    return `<div class="card">
+      <div class="t">${pill(st[0], st[1])} ${esc(e.name)}</div>
+      <div class="m mono">${esc(e.adapter || "-")} / ${esc(e.protocol || "-")} · running ${esc(e.running ?? 0)}/${esc(e.max_concurrent ?? "?")}</div>
+      <div class="m">models ${esc(modelsN)} · default ${esc(e.default_model || "—")} · ${esc(e.harness_version || "—")}</div>
+      ${e.catalog_error ? `<div class="small muted">${esc(String(e.catalog_error).slice(0, 80))}</div>` : ""}
+    </div>`;
+  }).join("") + `</div>`;
+
+  const needle = ($("agentsFilter").value || "").trim().toLowerCase();
+  const tasks = (p.tasks || []).slice().sort((a, b) => String(b.created || "").localeCompare(String(a.created || "")))
+    .filter(t => {
+      if (state.agentStatusFilter === "active" && !["waiting", "in_progress"].includes(t.status)) return false;
+      if (state.agentStatusFilter === "done" && t.status !== "done") return false;
+      if (state.agentStatusFilter === "failed" && !["failed", "cancelled"].includes(t.status)) return false;
+      if (needle) {
+        const d = t.detail || {};
+        const hay = `${t.id || ""} ${t.title || ""} ${d.executor || ""} ${d.model || ""} ${d.task_kind || ""}`.toLowerCase();
+        if (!hay.includes(needle)) return false;
+      }
+      return true;
+    });
+
+  const selTask = state.selectedAgentId && tasks.find(t => t.id === state.selectedAgentId);
+  html += `<div class="task-split ${selTask ? "has-detail" : ""}">
+    <div style="max-height:460px;overflow-y:auto">` +
+    (tasks.length ? tasks.map(t => {
+      const d = t.detail || {};
+      const sel = state.selectedAgentId === t.id ? " selected" : "";
+      const stCls = t.status === "done" ? "ok" : t.status === "failed" ? "bad" : t.status === "in_progress" ? "accent" : "violet";
+      const rev = d.review && d.review.verdict;
+      const fb = t.result && t.result.feedback;
+      return `<div class="card clickable${sel}" data-agid="${esc(t.id)}">
+        <div class="t">${pill(t.status, stCls)} ${esc(t.title)}</div>
+        <div class="m mono">${esc(d.executor || "—")} · ${esc(d.model || "—")} · ${esc(t.duration_secs != null ? Math.round(t.duration_secs) + "s" : "—")} · tools ${esc(d.tool_calls ?? "—")}
+        ${rev ? pill("澪:" + rev, rev === "accept" ? "ok" : rev === "reject" ? "bad" : "warn") : ""}
+        ${fb ? pill("人:" + fb, fb === "accept" ? "ok" : "bad") : ""}</div></div>`;
+    }).join("") : '<div class="muted small">該当する委譲タスクはありません</div>') +
+    `</div>`;
+
+  if (selTask) {
+    const res = selTask.result || {};
+    const cost = res.cost || {};
+    html += `<div class="detail-box">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+        ${pill(selTask.status, selTask.status === "done" ? "ok" : selTask.status === "failed" ? "bad" : "accent")}
+        <span class="mono small muted">${esc(selTask.id)}</span>
+        <span class="spacer"></span>
+        ${res.summary ? `<button class="small-btn" id="agCopy">📋 要約</button>` : ""}
+        <button class="small-btn" id="agClose">✕</button>
+      </div>
+      <div style="font-weight:700;margin-bottom:6px">${esc(selTask.title)}</div>
+      <div class="kv">
+        <dt>executor</dt><dd>${esc((selTask.detail || {}).executor || "—")}</dd>
+        <dt>model</dt><dd>${esc((selTask.detail || {}).model || "—")}</dd>
+        <dt>cost</dt><dd>reported ${esc(fmtUsd(cost.reported_usd, 4))} · est ${esc(fmtUsd(cost.estimated_usd, 4))} (${esc(cost.billing || "—")})</dd>
+        <dt>files</dt><dd>${esc((res.files_changed || []).join(", ") || "—")}</dd>
+        <dt>session</dt><dd>${esc(res.session_id || "—")}</dd>
+      </div>
+      ${res.error ? `<div class="err">${esc(res.error)}</div>` : ""}
+      ${res.summary ? `<pre style="max-height:220px;overflow-y:auto;white-space:pre-wrap">${esc(res.summary)}</pre>` : ""}
+    </div>`;
+  }
+  html += `</div>`;
+
+  // Usage Ledger table
+  const ledger = p.ledger || {};
+  const today = ledger.today || {}, month = ledger.this_month || {}, quotas = ledger.quotas || {};
+  const lNames = Array.from(new Set([...Object.keys(today), ...Object.keys(month), ...Object.keys(quotas)].filter(k => k !== "_total"))).sort();
+  if (lNames.length || quotas._total) {
+    const sumSide = obj => Object.entries(obj).filter(([k]) => k !== "_total").reduce((a, [, v]) => ({
+      tasks: a.tasks + (v.tasks || 0), usd: a.usd + (v.usd || 0), tokens: a.tokens + (v.tokens || 0), unpriced: a.unpriced + (v.unpriced || 0)
+    }), {tasks: 0, usd: 0, tokens: 0, unpriced: 0});
+    const rows = lNames.map(n => [n, today[n] || {}, month[n] || {}, quotas[n] || {}]);
+    if (quotas._total || lNames.length > 1) {
+      rows.push(["合計", today._total || sumSide(today), month._total || sumSide(month), quotas._total || {}]);
+    }
+    const fmtQ = (u, m, suffix = "") => m != null ? `${u ?? 0}/${m}${suffix}` : `${u ?? 0}${suffix}`;
+    const fmtUsdQ = (u, unp, m) => (u == null ? "$0.00" : fmtUsd(u, 2)) + (m != null ? "/" + fmtUsd(m, 2) : "") + (unp > 0 ? ` (+${unp}不明)` : "");
+    html += `<details class="sub-box"><summary>利用台帳 (今日 ${esc(ledger.day || "—")} · 今月 ${esc(ledger.month || "—")})</summary>
+      <table><tr><th>実行者</th><th>今日 件数</th><th>今日 費用</th><th>今日 tokens</th><th>今月 件数</th><th>今月 費用</th></tr>` +
+      rows.map(([n, d, m, q]) => `<tr><td>${esc(n)}</td>
+        <td class="mono">${esc(fmtQ(d.tasks, q.max_tasks_per_day, "件"))}</td>
+        <td class="mono">${esc(fmtUsdQ(d.usd, d.unpriced, q.max_usd_per_day))}</td>
+        <td class="mono">${esc(fmtQ(d.tokens, q.max_tokens_per_day))}</td>
+        <td class="mono">${esc(fmtQ(m.tasks, q.max_tasks_per_month, "件"))}</td>
+        <td class="mono">${esc(fmtUsdQ(m.usd, m.unpriced, q.max_usd_per_month))}</td></tr>`).join("") +
+      `</table></details>`;
+  }
+
+  // Stats table
+  const stats = p.stats || [];
+  if (stats.length) {
+    html += `<details class="sub-box"><summary>実績 (モデル × ハーネス: ${stats.length} 行)</summary>
+      <table><tr><th>kind</th><th>executor</th><th>model</th><th>n</th><th>ok</th><th>accept/reject</th><th>median</th><th>mean $</th><th>score</th></tr>` +
+      stats.map(r => `<tr><td>${esc(r.task_kind || "—")}</td><td>${esc(r.executor || "—")}</td><td class="mono">${esc(r.model || "—")}</td>
+        <td class="mono">${esc(r.n ?? 0)}</td><td class="mono">${esc(r.succeeded ?? 0)}</td>
+        <td class="mono">${esc(r.accepted ?? 0)}/${esc(r.rejected ?? 0)}</td>
+        <td class="mono">${esc(r.median_ms != null ? (r.median_ms / 1000).toFixed(1) + "s" : "—")}</td>
+        <td class="mono">${esc(fmtUsd(r.mean_usd, 4))}</td><td class="mono">${esc(r.score != null ? Number(r.score).toFixed(2) : "—")}</td></tr>`).join("") +
+      `</table></details>`;
+  }
+
+  $("agents").innerHTML = html;
+  $("agents").querySelectorAll("[data-agid]").forEach(el => {
+    el.onclick = () => {
+      const id = el.dataset.agid;
+      state.selectedAgentId = state.selectedAgentId === id ? null : id;
+      renderAgents();
+    };
+  });
+  if ($("agClose")) $("agClose").onclick = () => { state.selectedAgentId = null; renderAgents(); };
+  if ($("agCopy") && selTask && selTask.result && selTask.result.summary) {
+    $("agCopy").onclick = () => copyText(selTask.result.summary, $("agCopy"));
+  }
+}
+
+async function loadAgents() {
+  try {
+    const p = await post("/v1/agents", {action: "panel"});
+    state.agentsPanel = p;
+    setErr("agentsErr");
+    renderAgents();
+  } catch (e) {
+    if (e.status === 404) {
+      state.agentsPanel = null;
+      setErr("agentsErr");
+      renderAgents();
+    } else {
+      setErr("agentsErr", e);
+    }
+  }
+}
+
+function renderMemory() {
+  const d = state.memory;
+  if (!d) return;
+  const dom = d.domains || {};
+  const ep = dom.episodic || {};
+  const rel = dom.relationship || {};
+  const fields = (d.self_model && d.self_model.fields) || {};
+  const selfCount = Object.values(fields).reduce((acc, a) => acc + (Array.isArray(a) ? a.length : 0), 0);
+  const wb = d.memory_writeback || {};
+  const proj = d.self_projection || {};
+
+  $("memorySummary").textContent = `activation #${d.activation_seq ?? "?"} · episodic ${ep.active ?? "?"}/${ep.total ?? "?"} · relationship ${rel.active ?? "?"}/${rel.total ?? "?"}`;
+
+  $("memoryOverview").innerHTML = `<div class="kv">
+    <dt>individual_id</dt><dd>${esc(d.individual_id || d.individual || "—")}</dd>
+    <dt>activation_seq</dt><dd>#${esc(d.activation_seq ?? "—")}</dd>
+    <dt>writeback</dt><dd>${pill(wb.state || "—", (wb.unresolved || 0) === 0 && (wb.aborted || 0) === 0 ? "ok" : "warn")} unresolved=${esc(wb.unresolved ?? 0)} aborted=${esc(wb.aborted ?? 0)}</dd>
+    <dt>self_projection</dt><dd>surfaced ${esc(proj.surfaced_entries ?? "?")}/${esc(proj.stored_entries ?? "?")} (excluded ${esc(proj.excluded_count ?? 0)})</dd>
+    <dt>self_model</dt><dd>${esc(selfCount)} entries across ${esc(Object.keys(fields).length)} fields</dd>
+  </div>` +
+  (Object.keys(fields).length
+    ? `<details style="margin-top:6px"><summary>self_model fields (${selfCount})</summary>` +
+      Object.entries(fields).filter(([, arr]) => Array.isArray(arr) && arr.length).map(([k, arr]) =>
+        `<div class="card"><div class="m">${pill(k, "accent")} (${arr.length})</div>` +
+        arr.map(e => `<div class="small">${e.key ? `<span class="mono muted">[${esc(e.key)}]</span> ` : ""}${esc(typeof e.value === "string" ? e.value : JSON.stringify(e.value))}</div>`).join("") +
+        `</div>`
+      ).join("") + `</details>`
+    : "");
+
+  const needle = ($("memoryFilter").value || "").trim().toLowerCase();
+  const recs = ["episodic", "relationship"]
+    .filter(k => state.memoryDomain === "all" || state.memoryDomain === k)
+    .flatMap(k => ((dom[k] || {}).records || []).map(r => ({dom: k, ...r})))
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))
+    .filter(r => {
+      if (!needle) return true;
+      const body = typeof r.payload === "string" ? r.payload
+        : (r.payload && (r.payload.text || r.payload.summary || r.payload.fact)) || JSON.stringify(r.payload || {});
+      const hay = `${r.subject_key || ""} ${body} ${(r.tags || []).join(" ")}`.toLowerCase();
+      return hay.includes(needle);
+    });
+
+  $("memoryRecords").innerHTML = recs.length ? recs.map(r => {
+    const body = typeof r.payload === "string" ? r.payload
+      : (r.payload && (r.payload.text || r.payload.summary || r.payload.fact)) || JSON.stringify(r.payload || {});
+    return `<div class="card">
+      <div class="m">${pill(r.dom, r.dom === "episodic" ? "ok" : "violet")} ${channelPill(r.subject_key)}${esc(r.subject_key || "—")}
+        · ${esc(ago(r.created_at))}${r.use_count !== undefined ? " · ×" + esc(r.use_count) : ""}</div>
+      <div class="t" style="font-weight:500">${esc(String(body).slice(0, 320))}</div>
+      ${r.tags && r.tags.length ? `<div class="m">${r.tags.map(t => pill(t)).join("")}</div>` : ""}
+    </div>`;
+  }).join("") : '<div class="muted small">一致する記憶レコードはありません</div>';
+
+  const pending = d.pending_proposals || [];
+  $("proposals").innerHTML = pending.length ? pending.map(p =>
+    `<div class="card" style="border-color:rgba(243,181,62,0.5)">
+      <div class="t">${esc(p.target)}${p.target_key ? "." + esc(p.target_key) : ""} → ${esc(JSON.stringify(p.proposed_value))}</div>
+      <div class="m">${pill(p.kind, "warn")} ${pill(p.status)} ${esc(p.proposal_id || "")}</div>
+      ${p.expected_effect ? `<div class="small muted">期待効果: ${esc(p.expected_effect)}</div>` : ""}
+    </div>`
+  ).join("") : '<span class="muted small">none pending</span>';
+  updateKPIs();
+}
+
 async function loadMemory() {
   try {
-    const d = await post("/v1/kamimusuhi/memory", {limit: 16});
-    const dom = d.domains || {};
-    let html = `<div class="kv">` +
-      ["individual","activation_seq","generated_at"].map(k =>
-        `<dt>${k}</dt><dd>${esc(String(d[k] ?? "—")).slice(0,40)}</dd>`).join("") +
-      ["episodic","relationship"].map(k =>
-        `<dt>${k}</dt><dd>${esc((dom[k]||{}).active ?? "?")} active / ${esc((dom[k]||{}).total ?? "?")} total</dd>`).join("") +
-      `<dt>self_model</dt><dd>${esc((d.self_model && d.self_model.entry_count) || "?")} entries</dd>
-       <dt>pending</dt><dd>${esc((d.pending_proposals||[]).length)} proposals</dd></div>`;
-    const recs = ["episodic","relationship"].flatMap(k =>
-      ((dom[k]||{}).records||[]).map(r => ({dom:k, ...r})));
-    html += `<details style="margin-top:8px"><summary>recent records (${recs.length})</summary>` +
-      (recs.map(r => {
-        const body = typeof r.payload === "string" ? r.payload
-          : (r.payload && (r.payload.text || r.payload.summary || r.payload.fact)) || JSON.stringify(r.payload||{});
-        return `<div class="card"><div class="m">${pill(r.dom,"accent")} ${esc(r.subject_key||"—")}
-          · ${esc(ago(r.created_at))}${r.use_count!==undefined?" · ×"+r.use_count:""}</div>
-          <div class="t">${esc(String(body).slice(0,240))}</div>
-          ${r.tags&&r.tags.length?`<div class="m">${r.tags.map(t=>pill(t)).join("")}</div>`:""}</div>`;
-      }).join("") || '<div class="muted small">—</div>') + `</details>`;
-    $("memory").innerHTML = html;
-    // The same report feeds the self-improvement card's proposal list —
-    // a second spawn of the runtime report would buy nothing.
-    const pending = d.pending_proposals || [];
-    $("proposals").innerHTML = pending.length ? pending.map(p =>
-      `<div class="card"><div class="t">${esc(p.target)} → ${esc(JSON.stringify(p.proposed_value))}</div>
-        <div class="m">${pill(p.kind,"warn")} ${pill(p.status)} ${esc(p.proposal_id||"")}
-        ${p.target_key ? " · key " + esc(p.target_key) : ""}</div></div>`
-    ).join("") : '<span class="muted">none pending</span>';
+    const scoped = $("memoryScoped") && $("memoryScoped").checked && cfg.subject && cfg.subject !== "*" && cfg.subject !== "all";
+    const body = scoped ? {subject: cfg.subject, limit: 32} : {limit: 32};
+    const d = await post("/v1/kamimusuhi/memory", body);
+    state.memory = d;
+    renderMemory();
     setErr("memoryErr");
   } catch (e) { setErr("memoryErr", e); }
 }
 
 async function loadSelfNotes() {
   try {
-    const d = await post("/v1/kamimusuhi/self_notes", {limit: 8});
+    const d = await post("/v1/kamimusuhi/self_notes", {limit: 12});
+    state.selfNotes = d;
     const notes = (d.self_notes || []).slice().reverse();
     $("selfnotes").innerHTML = notes.length ? notes.map(n =>
-      `<div class="card"><div class="t">${esc(String(n.text||"").slice(0,240))}</div>
-        <div class="m">${pill(n.kind,"accent")} ${esc(n.note_id || "sn-"+n.seq)} · ${esc(ago(n.created_at))}
-        ${(n.evidence_refs||[]).length ? " · refs " + esc(n.evidence_refs.join(",").slice(0,60)) : ""}</div></div>`
-    ).join("") : '<span class="muted">no self notes yet</span>';
+      `<div class="card"><div class="t" style="font-weight:500">${esc(String(n.text || "").slice(0, 320))}</div>
+        <div class="m">${pill(n.kind, "accent")} ${esc(n.note_id || "sn-" + n.seq)} · ${esc(ago(n.created_at))}
+        ${(n.evidence_refs || []).length ? " · refs " + esc(n.evidence_refs.join(", ").slice(0, 80)) : ""}</div></div>`
+    ).join("") : '<span class="muted small">no self notes yet</span>';
     setErr("selfErr");
   } catch (e) { setErr("selfErr", e); }
 }
 
+// Event wiring for filters & controls
+$("thoughtsFilter").oninput = renderThoughts;
+$("tasksFilter").oninput = renderTasks;
+$("tasksKind").onchange = renderTasks;
+$("tasksShowDone").onchange = renderTasks;
+$("tasksModeBoard").onclick = () => {
+  state.taskMode = "board";
+  localStorage.setItem("km.taskMode", "board");
+  $("tasksModeBoard").classList.add("active");
+  $("tasksModeMap").classList.remove("active");
+  renderTasks();
+};
+$("tasksModeMap").onclick = () => {
+  state.taskMode = "map";
+  localStorage.setItem("km.taskMode", "map");
+  $("tasksModeMap").classList.add("active");
+  $("tasksModeBoard").classList.remove("active");
+  renderTasks();
+};
+if (state.taskMode === "map") {
+  $("tasksModeMap").classList.add("active");
+  $("tasksModeBoard").classList.remove("active");
+}
+$("agentsFilter").oninput = renderAgents;
+document.querySelectorAll("[data-ast]").forEach(btn => {
+  btn.onclick = () => {
+    state.agentStatusFilter = btn.dataset.ast;
+    document.querySelectorAll("[data-ast]").forEach(b => b.classList.toggle("active", b === btn));
+    renderAgents();
+  };
+});
+$("memoryFilter").oninput = renderMemory;
+$("memoryScoped").onchange = loadMemory;
+document.querySelectorAll("[data-dom]").forEach(btn => {
+  btn.onclick = () => {
+    state.memoryDomain = btn.dataset.dom;
+    document.querySelectorAll("[data-dom]").forEach(b => b.classList.toggle("active", b === btn));
+    renderMemory();
+  };
+});
+
+document.addEventListener("keydown", e => {
+  const tag = (e.target && e.target.tagName || "").toLowerCase();
+  const typing = tag === "input" || tag === "textarea" || tag === "select";
+  if (e.key === "Escape") {
+    if ($("setup").style.display === "flex") { state.setupDismissed = true; hideSetup(); return; }
+    if (state.selectedTaskId) { state.selectedTaskId = null; renderTasks(); }
+    if (state.selectedAgentId) { state.selectedAgentId = null; renderAgents(); }
+    return;
+  }
+  if (typing) return;
+  const tabMap = {"1":"all","2":"overview","3":"thoughts","4":"tasks","5":"agents","6":"memory"};
+  if (tabMap[e.key]) { applyTab(tabMap[e.key]); return; }
+  if (e.key === "r" || e.key === "R") { refresh(); return; }
+  if (e.key === "/") {
+    e.preventDefault();
+    const active = cfg.view;
+    const focusMap = {thoughts: "thoughtsFilter", tasks: "tasksFilter", agents: "agentsFilter", memory: "memoryFilter"};
+    const el = $(focusMap[active] || "thoughtsFilter");
+    if (el) el.focus();
+  }
+});
+
 async function refresh() {
   const t0 = Date.now();
-  $("conn").className = "dot";
-  await Promise.allSettled([loadNode(), loadTasks(), loadCommitments(), loadThoughts(), loadMemory(), loadSelfNotes()]);
+  $("conn").className = "dot warn";
+  await Promise.allSettled([
+    loadNode(),
+    loadTasks(),
+    loadCommitments(),
+    loadThoughts(),
+    loadAgents(),
+    loadMemory(),
+    loadSelfNotes(),
+  ]);
   const ok = !$("nodeErr").textContent;
   $("conn").className = "dot " + (ok ? "ok" : "bad");
   $("connText").textContent = ok ? "connected" : "error";
-  $("stamp").textContent = new Date().toLocaleTimeString() + " · " + (Date.now()-t0) + "ms";
+  $("stamp").textContent = new Date().toLocaleTimeString() + " · " + (Date.now() - t0) + "ms";
 }
 
-if (!cfg.token) showSetup();
 refresh();
 let timer = setInterval(refresh, 15000);
-$("pollSel").onchange = e => { clearInterval(timer); timer = setInterval(refresh, +e.target.value); };
+$("pollSel").onchange = e => {
+  clearInterval(timer);
+  const ms = Number(e.target.value);
+  if (ms > 0) timer = setInterval(refresh, ms);
+};
 </script>
 </body>
 </html>

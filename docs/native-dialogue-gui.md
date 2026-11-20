@@ -16,23 +16,35 @@ memory, reference material and tool calling; the GUI holds no state of its own.
 
 - **対話**: recent turns for the subject are loaded from the resident journal;
   each reply shows its route (llm_master / HAI), latency, reference lookups
-  and the tools it called. Pending approvals appear inline with
+  and the tools it called (with expandable call details), plus inline search,
+  text selection and copy buttons. Pending approvals appear inline with
   承認して実行 / 却下 buttons.
 - **タスク**: the resident task board as lanes (進行中 / あなたの判断待ち /
-  待機 / 保留 / 完了). Cards show kind, node, owner and age; curves connect
-  predecessor → successor (`depends_on`). Selecting a card highlights its
-  neighbours and opens a detail panel with 前タスク / 次タスク links, notes,
-  status changes (manual/agent tasks) and approve/reject for approval tasks.
-  The **マップ** toggle draws the whole graph mind-map style: prerequisites to
-  the left, successors to the right, one block per connected group, approval
-  waits glowing amber. `--view tasks|map` opens the window on that view.
+  待機 / 保留 / 完了) with search and kind filtering. Cards show kind, node,
+  owner and age; curves with arrowheads connect predecessor → successor
+  (`depends_on`). Selecting a card highlights its neighbours and opens a detail
+  panel with 前タスク / 次タスク links, notes, status changes (manual/agent
+  tasks) and approve/reject for approval tasks. The **マップ** toggle (`⌘/Ctrl+M`)
+  draws the whole graph mind-map style: prerequisites to the left, successors
+  to the right, clustered per connected group, approval waits glowing amber.
+  `--view tasks|map` opens the window on that view.
+- **外部エージェント**: Task Plane executors, filterable delegated tasks, review
+  verdicts, operator accept/reject feedback, session continuation, usage ledger
+  and model×harness stats (`--view agents`).
 - **承認**: the approval queue (`/v1/approvals`) with the full requested
   content and arguments, plus recent decisions and their commit/push result.
-- **状態**: nodes, routing tiers, NAS, HAI, MCP servers, jobs and snapshots
-  (`/status`, refreshed every 10 s).
+- **記憶・自己改善**: episodic/relationship memory records with domain/keyword
+  filtering, `self_model` fields, `pending_proposals`, `self_notes`, writeback
+  status and Idle/API Cognition state (`--view memory`).
+- **状態**: KPI summary, nodes, peers, routing tiers, cost guard, delegations,
+  cognition, K-CORE, commitments, intercom, NAS, HAI, MCP servers, jobs and
+  snapshots (`/status`), with one-click status report copy.
 - **ツール**: libraries, MCP servers on both nodes and a filterable tool list.
 
-The subject defaults to `$USER`; `--subject` selects another history.
+The subject defaults to `$USER`; `--subject` or the top-bar subject switcher
+selects another history (`*` inspects turns across Slack, Discord and operator
+subjects). Shortcuts: `⌘/Ctrl+1..7` or `F1..F7` switch views, `⌘/Ctrl+R`
+refreshes, `⌘/Ctrl+M` toggles task board/map, and `Esc` closes detail panels.
 
 ## Local mode (`--local`): the Jev test surface
 
