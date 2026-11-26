@@ -36,6 +36,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 コードから逆引きした現状地図は [`../deepwiki/`](../deepwiki/README.md) を参照。
 
 - [`implementation/recall-v0.md`](./implementation/recall-v0.md) — **Recall v0（宣言リンク＋タグ想起・使用追跡）**。FIO 実測由来の想起機構。宣言 `links` の outbound BFS（depth 3・×0.45）＋共有タグ枠を 2:1 で Jev 候補へ、`valid_to` 期限フィルタ、`state_record_usage` 別テーブルによる「応答で id を名指した分だけ温める」規則（凍結アトラクタ回避）。宣言リンク recall は `recall-eval` CLI が時点再現で計測（FIO recall_lab 相当）。
+- [`social-embodiment.md`](./social-embodiment.md) — **Kamimusuhi Social Embodiment 基本仕様 (v0.1)**。単一個体としての Discord 閉ループ（`Observe → Reason → Propose → Authorize → Act → Verify → Persist`）、`SocialPolicyGate`、`InitiativeEngine`、公開範囲分離、保持期限・削除連動。
 - [`implementation/commitment-engine.md`](./implementation/commitment-engine.md) — **Commitment Engine**。再起動・失敗・別タスク割り込みを跨ぐ耐久目標の機構。`current_state/commitments.json` 正本・checkpoint・再計画ラダー L0–L6・成功条件検証・ピア委譲・`notify_subject` 通知・PersistenceScore 評価指標。
 - [`implementation/intercom.md`](./implementation/intercom.md) — **Intercom（姉妹個体どうしの会話）**。別 continuity root を持つ個体間の envelope 配送。outbox 永続化・直接配送→relay fallback・seen 冪等受理・`sister-<from>` subject・`peer_say` 能動返信・`auto_left`/`max_hops` の無人連鎖上限。
 - [`implementation/task-plane.md`](./implementation/task-plane.md) — **Task Plane（外部エージェント委譲）**。Devin / OpenCode / Command Code / generic CLI を個体の作業器官として使う構造。executor は設定データで `executors_file` は再起動なし再読込、実績 routing、worktree 書き込みと `agents apply`、課金 unknown の非自動選択。

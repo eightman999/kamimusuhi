@@ -13,7 +13,10 @@ use crate::app::{
     AMBER, BG, BLUE, BORDER, GREEN, MUTED, PANEL, PANEL_RAISED, TEXT, card, configure_theme,
 };
 use crate::task_panel::AgentsPanel;
-use kamimusuhi_resident::remote::{RemoteCommand, RemoteEvent};
+use crate::ui_helpers::{
+    Toast, fmt_ts_compact, handle_zoom_shortcuts, nav_item, render_markdown, show_toast,
+};
+use kamimusuhi_resident::remote::{RemoteCommand, RemoteConfig, RemoteEvent};
 
 pub(crate) const RED: Color32 = Color32::from_rgb(235, 96, 110);
 pub(crate) const VIOLET: Color32 = Color32::from_rgb(166, 138, 255);
@@ -48,10 +51,28 @@ enum Entry {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskViewMode {
+    List,
+    Board,
+    Map,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskStatusFilter {
+    All,
+    Active,
+    Attention,
+    Waiting,
+    Failed,
+    Done,
+}
+
 pub fn run(
     commands: Sender<RemoteCommand>,
     events: Receiver<RemoteEvent>,
     subject: String,
+    initial_url: Option<String>,
     initial_view: Option<&str>,
 ) -> Result<(), String> {
     let view = match initial_view {
@@ -75,9 +96,12 @@ pub fn run(
         options,
         Box::new(move |cc| {
             configure_theme(&cc.egui_ctx);
-            let mut app = RemoteApp::new(commands, events, subject);
+            let mut app = RemoteApp::new(commands, events, subject, initial_url);
             app.view = view;
-            app.map_mode = initial_view == Some("map");
+            if initial_view == Some("map") {
+                app.task_view = TaskViewMode::Map;
+            }
+            app.focus_chat_input = view == View::Chat;
             Ok(Box::new(app))
         }),
     )
@@ -91,6 +115,8 @@ struct RemoteApp {
     subjects: Vec<String>,
     subject_draft: String,
     history_subject: Option<String>,
+    configured_url: Option<String>,
+    url_draft: String,
     url: Option<String>,
     view: View,
     entries: Vec<Entry>,
@@ -99,6 +125,17 @@ struct RemoteApp {
     scroll_chat_bottom: bool,
     busy_since: Option<Instant>,
     error: Option<String>,
+    last_failed_text: Option<String>,
+    sent_history: Vec<String>,
+    history_cursor: Option<usize>,
+    send_on_enter: bool,
+    compact_meta: bool,
+    sidebar_compact: bool,
+    ui_zoom: f32,
+    show_settings: bool,
+    focus_chat_input: bool,
+    focus_search: bool,
+    toast: Option<Toast>,
     status: Option<Value>,
     status_at: Option<Instant>,
     approvals: Vec<Value>,
@@ -114,12 +151,18 @@ struct RemoteApp {
     tasks: Vec<Value>,
     task_filter: String,
     task_kind_filter: String,
+    task_status_filter: TaskStatusFilter,
+    task_hide_logs: bool,
+    collapsed_lanes: HashSet<String>,
+    expanded_done_lane: bool,
+    expanded_notes_task: Option<String>,
     selected_task: Option<String>,
     show_done: bool,
     new_task_title: String,
     new_task_after_selected: bool,
     task_note: String,
-    map_mode: bool,
+    task_view: TaskViewMode,
+    map_zoom: f32,
     agents: AgentsPanel,
     memory: Option<Value>,
     self_notes: Option<Value>,
@@ -132,7 +175,9 @@ impl RemoteApp {
         commands: Sender<RemoteCommand>,
         events: Receiver<RemoteEvent>,
         subject: String,
+        initial_url: Option<String>,
     ) -> Self {
+        let url_draft = initial_url.as_deref().unwrap_or("").to_owned();
         Self {
             commands,
             events,
@@ -140,6 +185,8 @@ impl RemoteApp {
             subjects: Vec::new(),
             subject_draft: String::new(),
             history_subject: None,
+            configured_url: initial_url,
+            url_draft,
             url: None,
             view: View::Chat,
             entries: Vec::new(),
@@ -148,6 +195,17 @@ impl RemoteApp {
             scroll_chat_bottom: false,
             busy_since: None,
             error: None,
+            last_failed_text: None,
+            sent_history: Vec::new(),
+            history_cursor: None,
+            send_on_enter: false,
+            compact_meta: false,
+            sidebar_compact: false,
+            ui_zoom: 1.0,
+            show_settings: false,
+            focus_chat_input: true,
+            focus_search: false,
+            toast: None,
             status: None,
             status_at: None,
             approvals: Vec::new(),
@@ -161,12 +219,18 @@ impl RemoteApp {
             tasks: Vec::new(),
             task_filter: String::new(),
             task_kind_filter: "all".to_owned(),
+            task_status_filter: TaskStatusFilter::All,
+            task_hide_logs: true,
+            collapsed_lanes: HashSet::new(),
+            expanded_done_lane: false,
+            expanded_notes_task: None,
             selected_task: None,
             show_done: true,
             new_task_title: String::new(),
             new_task_after_selected: false,
             task_note: String::new(),
-            map_mode: false,
+            task_view: TaskViewMode::List,
+            map_zoom: 1.0,
             agents: AgentsPanel::default(),
             memory: None,
             self_notes: None,
@@ -235,6 +299,23 @@ impl RemoteApp {
         let _ = self.commands.send(RemoteCommand::SwitchSubject(trimmed));
     }
 
+    fn reconnect(&mut self, url_override: Option<String>) {
+        let _ = self.commands.send(RemoteCommand::Shutdown);
+        self.configured_url = url_override.filter(|u| !u.trim().is_empty());
+        self.url_draft = self.configured_url.as_deref().unwrap_or("").to_owned();
+        let (commands, events) = kamimusuhi_resident::remote::spawn(RemoteConfig {
+            url: self.configured_url.clone(),
+            subject: self.subject.clone(),
+        });
+        self.commands = commands;
+        self.events = events;
+        self.url = None;
+        self.history_subject = None;
+        self.busy_since = None;
+        self.error = None;
+        self.toast = Some(Toast::info("再接続を開始しました…"));
+    }
+
     fn poll(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.events.try_recv() {
             match event {
@@ -267,6 +348,7 @@ impl RemoteApp {
                 RemoteEvent::Reply(reply) => {
                     self.busy_since = None;
                     self.error = None;
+                    self.last_failed_text = None;
                     self.entries.push(Entry::Assistant {
                         text: reply["response"].as_str().unwrap_or("").to_owned(),
                         meta: Some(reply),
@@ -350,6 +432,9 @@ impl RemoteApp {
                     if message.starts_with("応答") {
                         self.busy_since = None;
                     }
+                    if self.view != View::Chat {
+                        self.toast = Some(Toast::warn(message.clone()));
+                    }
                     self.error = Some(message);
                 }
             }
@@ -362,27 +447,42 @@ impl RemoteApp {
     }
 
     fn send(&mut self) {
+        let text = self.input.trim().to_owned();
+        if text.is_empty() || !self.send_text(text) {
+            return;
+        }
+        self.input.clear();
+        self.history_cursor = None;
+        self.focus_chat_input = true;
+    }
+
+    fn send_text(&mut self, text: String) -> bool {
         if matches!(self.subject.as_str(), "*" | "all") {
             self.error = Some(
                 "全 subject 横断表示中は送信できません。具体的な subject を選択してください。"
                     .to_owned(),
             );
-            return;
+            return false;
         }
-        let text = self.input.trim().to_owned();
         if text.is_empty() || self.busy_since.is_some() || self.url.is_none() {
-            return;
+            return false;
         }
         if text.len() > MAX_INPUT_BYTES {
             self.error = Some(format!("入力が {MAX_INPUT_BYTES} bytes を超えています。"));
-            return;
+            return false;
         }
+        if self.sent_history.last().map(String::as_str) != Some(text.as_str()) {
+            self.sent_history.push(text.clone());
+            if self.sent_history.len() > 50 {
+                self.sent_history.remove(0);
+            }
+        }
+        self.last_failed_text = Some(text.clone());
         self.entries.push(Entry::User {
             text: text.clone(),
             at: None,
             subject: Some(self.subject.clone()),
         });
-        self.input.clear();
         self.error = None;
         self.scroll_chat_bottom = true;
         self.busy_since = Some(Instant::now());
@@ -390,6 +490,7 @@ impl RemoteApp {
             self.busy_since = None;
             self.error = Some("通信ワーカーが停止しています。".to_owned());
         }
+        true
     }
 
     /// Start an unbacked promise as a delegated task, or drop it.
@@ -416,33 +517,38 @@ impl RemoteApp {
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         let mut next_subject: Option<String> = None;
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("澪").strong().size(19.0).color(TEXT));
-            ui.label(RichText::new("常駐個体").small().color(MUTED));
+        let mut do_reconnect = false;
+        ui.horizontal(|ui| {
+            if ui
+                .small_button(if self.sidebar_compact { "▶" } else { "☰" })
+                .on_hover_text("サイドバーを切り替え (⌘B)")
+                .clicked()
+            {
+                self.sidebar_compact = !self.sidebar_compact;
+            }
+            ui.label(RichText::new("澪").strong().size(18.0).color(TEXT));
             if let Some(s) = &self.status {
                 let node = s["node"]["node"].as_str().unwrap_or("?");
                 let role = s["node"]["role"].as_str().unwrap_or("");
-                chip(ui, &format!("{node} · {role}"), BLUE);
                 let primary = s["routing"]["active_primary"].as_str().unwrap_or("なし");
-                chip(
-                    ui,
-                    &format!("経路 {primary}"),
-                    if primary == "なし" { AMBER } else { GREEN },
-                );
-                if let Some(cog) = s.get("cognition").filter(|c| !c.is_null()) {
-                    let st = cog["state"].as_str().unwrap_or("disabled");
-                    if st != "disabled" {
-                        let color = match st {
-                            "completed" | "idle" => GREEN,
-                            "busy" => AMBER,
-                            "failed" => RED,
-                            _ => MUTED,
-                        };
-                        chip(ui, &format!("思考 {st}"), color);
-                    }
-                }
-                if let Some(day_usd) = s["routing"]["cost_guard"]["daily_usd"].as_f64() {
-                    chip(ui, &format!("今日 ${day_usd:.3}"), MUTED);
+                let cog_state = s["cognition"]["state"].as_str().unwrap_or("disabled");
+                let day_usd = s["routing"]["cost_guard"]["daily_usd"]
+                    .as_f64()
+                    .map(|v| format!(" · 今日 ${v:.3}"))
+                    .unwrap_or_default();
+                let color = if primary == "なし" { AMBER } else { GREEN };
+                let hover = format!("ノード: {node} ({role})\n経路: {primary}\n思考: {cog_state}{day_usd}\nクリックで状態画面へ");
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new(format!("{node} · {primary}")).small().color(color))
+                            .fill(PANEL_RAISED)
+                            .stroke(Stroke::new(1.0, BORDER))
+                            .corner_radius(egui::CornerRadius::same(4)),
+                    )
+                    .on_hover_text(hover)
+                    .clicked()
+                {
+                    self.view = View::Status;
                 }
             } else {
                 ui.label(RichText::new("接続中…").small().color(MUTED));
@@ -458,7 +564,7 @@ impl RemoteApp {
                 self.subject.clone()
             };
             egui::ComboBox::from_id_salt("subject-select")
-                .width(150.0)
+                .width(168.0)
                 .selected_text(selected_label)
                 .show_ui(ui, |ui| {
                     if ui
@@ -480,21 +586,30 @@ impl RemoteApp {
                             next_subject = Some(s);
                         }
                     }
+                    ui.separator();
+                    if ui.selectable_label(false, "任意の subject を入力… (⚙)").clicked() {
+                        self.show_settings = true;
+                    }
                 });
-            let draft_resp = ui.add(
-                egui::TextEdit::singleline(&mut self.subject_draft)
-                    .hint_text("任意の subject")
-                    .desired_width(110.0),
-            );
-            let enter = draft_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if (ui.small_button("切替").clicked() || enter) && !self.subject_draft.trim().is_empty()
-            {
-                next_subject = Some(self.subject_draft.trim().to_owned());
-            }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .small_button("⚙")
+                    .on_hover_text("設定・ショートカット (⌘, / ?)")
+                    .clicked()
+                {
+                    self.show_settings = !self.show_settings;
+                }
+                if self.url.is_none()
+                    && ui
+                        .small_button("↻ 再接続")
+                        .on_hover_text("常駐個体へ再接続します (⌘R)")
+                        .clicked()
+                {
+                    do_reconnect = true;
+                }
                 let (label, color) = match (&self.url, self.busy_since) {
-                    (None, _) => ("○ 接続待ち".to_owned(), MUTED),
+                    (None, _) => ("○ 未接続".to_owned(), MUTED),
                     (Some(_), Some(t)) => (format!("考え中 {}s", t.elapsed().as_secs()), AMBER),
                     (Some(_), None) => ("● オンライン".to_owned(), GREEN),
                 };
@@ -530,19 +645,30 @@ impl RemoteApp {
                         .clicked()
                 {
                     self.view = View::Tasks;
+                    self.task_status_filter = TaskStatusFilter::Attention;
                 }
             });
         });
+        if do_reconnect {
+            self.reconnect(self.configured_url.clone());
+        }
         if let Some(subj) = next_subject {
             self.switch_subject(subj);
         }
     }
 
     fn nav(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(6.0);
-        ui.label(RichText::new("KAMIMUSUHI").small().strong().color(TEXT));
-        ui.label(RichText::new("Pi / llm_master 常駐").small().color(MUTED));
-        ui.add_space(14.0);
+        ui.add_space(4.0);
+        if self.sidebar_compact {
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("澪").strong().size(18.0).color(TEXT));
+            });
+            ui.add_space(10.0);
+        } else {
+            ui.label(RichText::new("KAMIMUSUHI").small().strong().color(TEXT));
+            ui.label(RichText::new("Pi / llm_master 常駐").small().color(MUTED));
+            ui.add_space(12.0);
+        }
         let pending = self.pending().len();
         let proposals = self.pending_proposals_count();
         let running_tasks = self
@@ -550,147 +676,264 @@ impl RemoteApp {
             .iter()
             .filter(|t| t["status"] == "in_progress")
             .count();
-        let items: [(String, &str, View, bool); 7] = [
-            ("▣  対話".to_owned(), "⌘1", View::Chat, false),
+        let running_agents = self.agents.running();
+        let items = [
+            ("▣", "対話", None, "⌘1", View::Chat),
             (
-                if running_tasks > 0 {
-                    format!("☰  タスク ({running_tasks})")
-                } else {
-                    "☰  タスク".to_owned()
-                },
+                "☰",
+                "タスク",
+                (running_tasks > 0).then(|| (running_tasks.to_string(), BLUE)),
                 "⌘2",
                 View::Tasks,
-                false,
             ),
             (
-                match self.agents.running() {
-                    0 => "⇄  外部エージェント".to_owned(),
-                    n => format!("⇄  外部エージェント ({n})"),
-                },
+                "⇄",
+                "外部エージェント",
+                (running_agents > 0).then(|| (running_agents.to_string(), BLUE)),
                 "⌘3",
                 View::Agents,
-                false,
             ),
             (
-                if pending > 0 {
-                    format!("✋  承認 ({pending})")
-                } else {
-                    "✋  承認".to_owned()
-                },
+                "✋",
+                "承認",
+                (pending > 0).then(|| (pending.to_string(), AMBER)),
                 "⌘4",
                 View::Approvals,
-                pending > 0,
             ),
             (
-                if proposals > 0 {
-                    format!("◈  記憶・自己改善 ({proposals})")
-                } else {
-                    "◈  記憶・自己改善".to_owned()
-                },
+                "◈",
+                "記憶・自己",
+                (proposals > 0).then(|| (proposals.to_string(), AMBER)),
                 "⌘5",
                 View::Memory,
-                proposals > 0,
             ),
-            ("◌  状態".to_owned(), "⌘6", View::Status, false),
-            ("⚒  ツール".to_owned(), "⌘7", View::Tools, false),
+            ("◌", "状態", None, "⌘6", View::Status),
+            ("⚒", "ツール", None, "⌘7", View::Tools),
         ];
-        for (label, key_hint, view, alert) in items {
-            let selected = self.view == view;
-            let color = if alert {
-                AMBER
-            } else if selected {
-                TEXT
-            } else {
-                MUTED
-            };
-            let btn_resp = ui.add_sized(
-                [ui.available_width(), 34.0],
-                egui::Button::new(RichText::new(format!("{label}   ")).color(color))
-                    .fill(if selected {
-                        Color32::from_rgb(24, 62, 111)
-                    } else {
-                        Color32::TRANSPARENT
-                    })
-                    .stroke(if selected {
-                        Stroke::new(1.0, Color32::from_rgb(46, 108, 185))
-                    } else {
-                        Stroke::NONE
-                    }),
-            );
-            ui.painter().text(
-                btn_resp.rect.right_center() + egui::vec2(-8.0, 0.0),
-                egui::Align2::RIGHT_CENTER,
+        for (icon, label, badge, key_hint, view) in items {
+            if nav_item(
+                ui,
+                icon,
+                label,
+                badge,
                 key_hint,
-                egui::FontId::proportional(10.0),
-                MUTED,
-            );
-            if btn_resp.clicked() {
+                self.view == view,
+                self.sidebar_compact,
+            ) {
                 self.view = view;
+                if view == View::Chat {
+                    self.focus_chat_input = true;
+                }
             }
         }
-        ui.add_space(12.0);
-        ui.separator();
-        if let Some(s) = &self.status {
-            ui.add_space(8.0);
-            ui.label(RichText::new("インフラ状態").small().strong().color(MUTED));
-            ui.add_space(4.0);
-            health_line(ui, "Pi", true);
-            for (id, peer) in s["peers"].as_object().into_iter().flatten() {
-                health_line(ui, id, peer["healthy"].as_bool().unwrap_or(false));
-            }
-            health_line(
-                ui,
-                "NAS",
-                s["nas"]["probe"]["healthy"].as_bool().unwrap_or(false),
-            );
-            health_line(
-                ui,
-                "HAI",
-                s["routing"]["tiers"]["hai"]["healthy"]
-                    .as_bool()
-                    .unwrap_or(false),
-            );
-            let mcp_ok = s["mcp"]
-                .as_array()
-                .is_some_and(|m| m.iter().all(|x| x["state"] == "running"));
-            health_line(ui, "MCP", mcp_ok);
-            if let Some(cog) = s.get("cognition").filter(|c| !c.is_null())
-                && cog["state"].as_str() != Some("disabled")
-            {
-                health_line(ui, "思考", cog["state"].as_str() != Some("failed"));
+        if !self.sidebar_compact {
+            ui.add_space(10.0);
+            ui.separator();
+            if let Some(s) = &self.status {
+                ui.add_space(8.0);
+                ui.label(RichText::new("インフラ状態").small().strong().color(MUTED));
+                ui.add_space(4.0);
+                health_line(ui, "Pi", true);
+                for (id, peer) in s["peers"].as_object().into_iter().flatten() {
+                    health_line(ui, id, peer["healthy"].as_bool().unwrap_or(false));
+                }
+                health_line(
+                    ui,
+                    "NAS",
+                    s["nas"]["probe"]["healthy"].as_bool().unwrap_or(false),
+                );
+                health_line(
+                    ui,
+                    "HAI",
+                    s["routing"]["tiers"]["hai"]["healthy"]
+                        .as_bool()
+                        .unwrap_or(false),
+                );
+                let mcp_ok = s["mcp"]
+                    .as_array()
+                    .is_some_and(|m| m.iter().all(|x| x["state"] == "running"));
+                health_line(ui, "MCP", mcp_ok);
+                if let Some(cog) = s.get("cognition").filter(|c| !c.is_null())
+                    && cog["state"].as_str() != Some("disabled")
+                {
+                    health_line(ui, "思考", cog["state"].as_str() != Some("failed"));
+                }
             }
         }
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-            if ui.button("↻ 更新 (⌘R)").clicked() {
-                let _ = self.commands.send(RemoteCommand::Refresh);
+            let btn_label = if self.sidebar_compact {
+                "↻"
+            } else if self.url.is_none() {
+                "↻ 再接続 (⌘R)"
+            } else {
+                "↻ 更新 (⌘R)"
+            };
+            if ui
+                .button(btn_label)
+                .on_hover_text("更新（未接続時は再接続） (⌘R)")
+                .clicked()
+            {
+                if self.url.is_none() {
+                    self.reconnect(self.configured_url.clone());
+                } else {
+                    let _ = self.commands.send(RemoteCommand::Refresh);
+                }
             }
-            if let Some(t) = self.status_at {
-                ui.label(
-                    RichText::new(format!("{}秒前に取得", t.elapsed().as_secs()))
-                        .small()
-                        .color(MUTED),
+            if !self.sidebar_compact {
+                if let Some(t) = self.status_at {
+                    ui.label(
+                        RichText::new(format!("{}秒前に取得", t.elapsed().as_secs()))
+                            .small()
+                            .color(MUTED),
+                    );
+                }
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(self.url.clone().unwrap_or_default())
+                            .small()
+                            .color(MUTED),
+                    )
+                    .truncate(),
                 );
             }
-            ui.add(
-                egui::Label::new(
-                    RichText::new(self.url.clone().unwrap_or_default())
-                        .small()
-                        .color(MUTED),
-                )
-                .truncate(),
-            );
         });
+    }
+
+    fn settings_window(&mut self, ctx: &egui::Context) {
+        if !self.show_settings {
+            return;
+        }
+        let mut open = self.show_settings;
+        let mut reconnect_action: Option<Option<String>> = None;
+        let mut next_subject: Option<String> = None;
+        let mut next_zoom: Option<f32> = None;
+        egui::Window::new("設定・ショートカット")
+            .open(&mut open)
+            .resizable(false)
+            .default_width(440.0)
+            .show(ctx, |ui| {
+                ui.label(RichText::new("操作・表示").strong().color(TEXT));
+                ui.checkbox(
+                    &mut self.send_on_enter,
+                    "Enter で送信（Shift+Enter / Alt+Enter で改行）",
+                );
+                ui.checkbox(
+                    &mut self.compact_meta,
+                    "返答のメタ情報（経路・コスト・ツール）を折りたたむ",
+                );
+                ui.checkbox(
+                    &mut self.sidebar_compact,
+                    "左メニューをアイコンのみに折りたたむ (⌘B)",
+                );
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("UI 拡大率").small().color(MUTED));
+                    if ui.small_button("－").clicked() {
+                        next_zoom =
+                            Some(((self.ui_zoom - 0.1).clamp(0.8, 1.4) * 10.0).round() / 10.0);
+                    }
+                    ui.label(
+                        RichText::new(format!("{:.0}%", self.ui_zoom * 100.0))
+                            .monospace()
+                            .color(TEXT),
+                    );
+                    if ui.small_button("＋").clicked() {
+                        next_zoom =
+                            Some(((self.ui_zoom + 0.1).clamp(0.8, 1.4) * 10.0).round() / 10.0);
+                    }
+                    if ui.small_button("100%").clicked() {
+                        next_zoom = Some(1.0);
+                    }
+                });
+                ui.separator();
+                ui.label(RichText::new("接続先・Subject").strong().color(TEXT));
+                ui.label(
+                    RichText::new(format!(
+                        "現在の接続: {}",
+                        self.url.as_deref().unwrap_or("未接続")
+                    ))
+                    .small()
+                    .color(MUTED),
+                );
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.url_draft)
+                            .hint_text("http://host:port（空欄で自動検出）")
+                            .desired_width(240.0),
+                    );
+                    if ui.small_button("再接続").clicked() {
+                        reconnect_action = Some(Some(self.url_draft.trim().to_owned()));
+                    }
+                    if ui.small_button("自動").clicked() {
+                        reconnect_action = Some(None);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    let draft_resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.subject_draft)
+                            .hint_text("任意の subject を入力…")
+                            .desired_width(240.0),
+                    );
+                    let enter =
+                        draft_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if (ui.small_button("subject 切替").clicked() || enter)
+                        && !self.subject_draft.trim().is_empty()
+                    {
+                        next_subject = Some(self.subject_draft.trim().to_owned());
+                    }
+                });
+                ui.separator();
+                ui.label(
+                    RichText::new("キーボードショートカット")
+                        .strong()
+                        .color(TEXT),
+                );
+                egui::Grid::new("shortcut-help-grid")
+                    .num_columns(2)
+                    .spacing([16.0, 4.0])
+                    .show(ui, |ui| {
+                        for (keys, desc) in [
+                            ("⌘/Ctrl + 1..7 / F1..F7", "画面を切り替え"),
+                            ("⌘/Ctrl + L  /  i", "対話入力欄へ移動"),
+                            ("⌘/Ctrl + K  /  /", "現在の画面の検索欄へフォーカス"),
+                            ("⌘/Ctrl + B", "左メニュー折りたたみ"),
+                            ("⌘/Ctrl + M", "タスク一覧 / マップ表示を切り替え"),
+                            ("⌘/Ctrl + R", "最新状態へ更新（未接続時は再接続）"),
+                            ("⌘/Ctrl + +/-/0", "UI を拡大・縮小・リセット"),
+                            ("⌘/Ctrl + ,  /  ?", "この設定・ヘルプを表示"),
+                            ("↑ / ↓", "送信履歴を呼び出し（入力欄が空のとき）"),
+                            ("Esc", "モーダル・詳細パネル・検索を閉じる"),
+                        ] {
+                            ui.label(RichText::new(keys).small().monospace().color(BLUE));
+                            ui.label(RichText::new(desc).small().color(TEXT));
+                            ui.end_row();
+                        }
+                    });
+            });
+        self.show_settings = open;
+        if let Some(zoom) = next_zoom {
+            self.ui_zoom = zoom;
+            ctx.set_zoom_factor(zoom);
+        }
+        if let Some(url_opt) = reconnect_action {
+            self.reconnect(url_opt);
+        }
+        if let Some(subj) = next_subject {
+            self.switch_subject(subj);
+        }
     }
 
     // ── views ───────────────────────────────────────────────────────────
 
     fn chat(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.horizontal(|ui| {
-            ui.add(
+            let search_resp = ui.add(
                 egui::TextEdit::singleline(&mut self.chat_filter)
-                    .hint_text("🔍 会話を検索…")
+                    .hint_text("🔍 会話を検索… (⌘K / /)")
                     .desired_width(240.0),
             );
+            if std::mem::take(&mut self.focus_search) {
+                search_resp.request_focus();
+            }
             if !self.chat_filter.is_empty() && ui.small_button("✕").clicked() {
                 self.chat_filter.clear();
             }
@@ -722,178 +965,373 @@ impl RemoteApp {
                 if ui.small_button("⬇ 最新へ").clicked() {
                     self.scroll_chat_bottom = true;
                 }
+                let meta_label = if self.compact_meta {
+                    "メタ: 簡潔"
+                } else {
+                    "メタ: 詳細"
+                };
+                if ui
+                    .small_button(meta_label)
+                    .on_hover_text("返答の経路・コスト・ツール表示を切り替え")
+                    .clicked()
+                {
+                    self.compact_meta = !self.compact_meta;
+                }
             });
         });
         ui.add_space(4.0);
-        let composer = 122.0 + if self.error.is_some() { 48.0 } else { 0.0 };
-        let height = (ui.available_height() - composer).max(120.0);
-        let width = ui.available_width();
+
+        // Allocate the composer at the bottom first so multiline input and
+        // dismissible error banners never clip the scroll viewport.
+        let mut resend_text: Option<String> = None;
+        let mut do_reconnect = false;
+        let mut do_send = false;
+        egui::TopBottomPanel::bottom("remote-chat-composer")
+            .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin {
+                left: 0,
+                right: 0,
+                top: 8,
+                bottom: 0,
+            }))
+            .show_inside(ui, |ui| {
+                if let Some(error) = self.error.clone() {
+                    let mut clear_err = false;
+                    egui::Frame::new()
+                        .fill(Color32::from_rgb(66, 28, 37))
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(145, 53, 69)))
+                        .corner_radius(egui::CornerRadius::same(6))
+                        .inner_margin(8.0)
+                        .show(ui, |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new(&error).color(Color32::from_rgb(255, 191, 196)));
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button("✕").clicked() {
+                                            clear_err = true;
+                                        }
+                                        if self.url.is_none() && ui.small_button("↻ 再接続").clicked()
+                                        {
+                                            do_reconnect = true;
+                                        }
+                                        if let Some(failed) = self.last_failed_text.clone()
+                                            && self.busy_since.is_none()
+                                            && self.url.is_some()
+                                        {
+                                            if ui.small_button("入力欄へ戻す").clicked() {
+                                                self.input = failed.clone();
+                                                clear_err = true;
+                                                self.focus_chat_input = true;
+                                            }
+                                            if ui.small_button("↻ 再送").clicked() {
+                                                resend_text = Some(failed);
+                                            }
+                                        }
+                                    },
+                                );
+                            });
+                        });
+                    if clear_err {
+                        self.error = None;
+                    }
+                    ui.add_space(6.0);
+                }
+
+                egui::Frame::new()
+                    .fill(PANEL_RAISED)
+                    .stroke(Stroke::new(1.0, BORDER))
+                    .corner_radius(egui::CornerRadius::same(8))
+                    .inner_margin(8.0)
+                    .show(ui, |ui| {
+                        let wildcard = matches!(self.subject.as_str(), "*" | "all");
+                        let can_send = self.busy_since.is_none()
+                            && self.url.is_some()
+                            && !wildcard
+                            && !self.input.trim().is_empty();
+                        let hint = if wildcard {
+                            "全 subject 横断表示中 — 送信するには上のプルダウンから具体的な subject を選択してください"
+                        } else if self.url.is_none() {
+                            "未接続（下書きのみ可能 — 右上の「↻ 再接続」または ⌘R で接続）"
+                        } else if self.busy_since.is_some() {
+                            "応答待ち中… 次のメッセージを下書きできます"
+                        } else if self.send_on_enter {
+                            "メッセージを入力…  (Enter で送信 / Shift+Enter で改行)"
+                        } else {
+                            "メッセージを入力…  (⌘/Ctrl + Enter で送信 / ↑↓ で履歴)"
+                        };
+
+                        let input_id = ui.make_persistent_id("remote-chat-input");
+                        let input_focused = ctx.memory(|m| m.focused() == Some(input_id));
+                        let mut history_step: isize = 0;
+                        if input_focused {
+                            ctx.input_mut(|i| {
+                                let cmd = i.modifiers.ctrl || i.modifiers.command;
+                                if i.key_pressed(egui::Key::Enter) && cmd {
+                                    i.consume_key(i.modifiers, egui::Key::Enter);
+                                    if can_send {
+                                        do_send = true;
+                                    }
+                                } else if self.send_on_enter
+                                    && !i.modifiers.shift
+                                    && !i.modifiers.alt
+                                    && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                                {
+                                    if can_send {
+                                        do_send = true;
+                                    }
+                                } else if i.key_pressed(egui::Key::ArrowUp)
+                                    && !self.sent_history.is_empty()
+                                    && (self.input.is_empty()
+                                        || self.history_cursor.is_some_and(|c| {
+                                            self.sent_history.get(c) == Some(&self.input)
+                                        }))
+                                {
+                                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+                                    history_step = -1;
+                                } else if i.key_pressed(egui::Key::ArrowDown)
+                                    && self.history_cursor.is_some_and(|c| {
+                                        self.sent_history.get(c) == Some(&self.input)
+                                    })
+                                {
+                                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+                                    history_step = 1;
+                                }
+                            });
+                        }
+                        if history_step < 0 && !self.sent_history.is_empty() {
+                            let next = match self.history_cursor {
+                                None => self.sent_history.len() - 1,
+                                Some(0) => 0,
+                                Some(idx) => idx - 1,
+                            };
+                            self.history_cursor = Some(next);
+                            self.input = self.sent_history[next].clone();
+                        } else if history_step > 0 {
+                            match self.history_cursor {
+                                Some(idx) if idx + 1 < self.sent_history.len() => {
+                                    self.history_cursor = Some(idx + 1);
+                                    self.input = self.sent_history[idx + 1].clone();
+                                }
+                                Some(_) => {
+                                    self.history_cursor = None;
+                                    self.input.clear();
+                                }
+                                None => {}
+                            }
+                        }
+
+                        let edit = egui::TextEdit::multiline(&mut self.input)
+                            .id(input_id)
+                            .hint_text(hint)
+                            .desired_rows(3)
+                            .desired_width(f32::INFINITY);
+                        let response = ui.add(edit);
+                        if std::mem::take(&mut self.focus_chat_input) {
+                            response.request_focus();
+                        }
+                        ui.horizontal(|ui| {
+                            let bytes = self.input.trim().len();
+                            let over = bytes > MAX_INPUT_BYTES;
+                            let mode_label = if self.send_on_enter {
+                                "Enter: 送信 / Shift+Enter: 改行"
+                            } else {
+                                "⌘+Enter: 送信 / Enter: 改行"
+                            };
+                            if ui
+                                .small_button(RichText::new(mode_label).small().color(MUTED))
+                                .on_hover_text("クリックで送信キーを切り替え")
+                                .clicked()
+                            {
+                                self.send_on_enter = !self.send_on_enter;
+                            }
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new(format!("{bytes} / {MAX_INPUT_BYTES} B"))
+                                    .small()
+                                    .color(if over { RED } else { MUTED }),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui
+                                        .add_enabled(
+                                            can_send && !over,
+                                            egui::Button::new(
+                                                RichText::new("送信  ➤")
+                                                    .strong()
+                                                    .color(Color32::WHITE),
+                                            )
+                                            .fill(BLUE),
+                                        )
+                                        .clicked()
+                                    {
+                                        do_send = true;
+                                    }
+                                    if !self.input.is_empty() && ui.button("クリア").clicked() {
+                                        self.input.clear();
+                                        self.history_cursor = None;
+                                    }
+                                },
+                            );
+                        });
+                    });
+            });
+
+        if do_reconnect {
+            self.reconnect(self.configured_url.clone());
+        }
+        if let Some(text) = resend_text {
+            self.send_text(text);
+        }
+        if do_send {
+            self.send();
+        }
+
         let mut decisions = Vec::new();
         let mut commitment_actions = Vec::new();
         let needle = self.chat_filter.trim().to_lowercase();
         let scroll_bottom = self.scroll_chat_bottom;
         self.scroll_chat_bottom = false;
-        ui.allocate_ui(egui::vec2(width, height), |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("remote-chat")
-                .stick_to_bottom(true)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    if self.entries.is_empty() {
-                        ui.add_space(80.0);
-                        ui.vertical_centered(|ui| {
-                            ui.label(RichText::new("澪と話す").size(22.0).color(TEXT));
-                            ui.label(
-                                RichText::new("Pi の常駐個体が記憶と連続性を持って応答します。必要に応じて参照データや MCP ツールを使います。")
-                                    .color(MUTED),
-                            );
-                        });
-                    }
-                    for (idx, entry) in self.entries.iter().enumerate() {
-                        if !needle.is_empty() && !entry_matches(entry, &needle) {
-                            continue;
-                        }
-                        match entry {
-                            Entry::User { text, at, subject } => bubble(
-                                ui,
-                                idx,
-                                true,
-                                text,
-                                None,
-                                at.as_deref(),
-                                subject.as_deref(),
-                            ),
-                            Entry::Assistant { text, meta } => {
-                                let subj = meta.as_ref().and_then(|m| m["subject"].as_str());
-                                bubble(ui, idx, false, text, meta.as_ref(), None, subj);
-                                if let Some(action) = meta
-                                    .as_ref()
-                                    .and_then(|m| background_of(m, &self.tasks))
-                                    .and_then(|bg| background_strip(ui, &bg))
+        let show_subject_badges = self.subject == "*";
+        let compact_meta = self.compact_meta;
+        let mut copied_msg: Option<String> = None;
+
+        egui::ScrollArea::vertical()
+            .id_salt("remote-chat")
+            .stick_to_bottom(true)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if self.entries.is_empty() {
+                    ui.add_space(56.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(RichText::new("澪と話す").size(22.0).color(TEXT));
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new("Pi の常駐個体が記憶と連続性を持って応答します。必要に応じて参照データや MCP ツールを使います。")
+                                .color(MUTED),
+                        );
+                        ui.add_space(16.0);
+                        ui.label(RichText::new("よく使う質問を挿入:").small().color(MUTED));
+                        ui.add_space(6.0);
+                        ui.horizontal_wrapped(|ui| {
+                            for prompt in [
+                                "今日の状態を教えて",
+                                "保留中の承認やタスクはある？",
+                                "最近の出来事を要約して",
+                            ] {
+                                if ui
+                                    .add(
+                                        egui::Button::new(RichText::new(prompt).small().color(TEXT))
+                                            .fill(PANEL_RAISED)
+                                            .stroke(Stroke::new(1.0, BORDER))
+                                            .corner_radius(egui::CornerRadius::same(6)),
+                                    )
+                                    .on_hover_text("入力欄に挿入")
+                                    .clicked()
                                 {
-                                    commitment_actions.push(action);
+                                    self.input = prompt.to_owned();
+                                    self.focus_chat_input = true;
                                 }
                             }
-                            Entry::Notice { text, color } => {
-                                ui.vertical_centered(|ui| {
-                                    ui.label(RichText::new(text).small().color(*color));
-                                });
+                        });
+                    });
+                }
+                for (idx, entry) in self.entries.iter().enumerate() {
+                    if !needle.is_empty() && !entry_matches(entry, &needle) {
+                        continue;
+                    }
+                    match entry {
+                        Entry::User { text, at, subject } => {
+                            let badge_subj = subject
+                                .as_deref()
+                                .filter(|s| show_subject_badges || *s != self.subject.as_str());
+                            if let Some(msg) =
+                                bubble(ui, idx, true, text, None, at.as_deref(), badge_subj, compact_meta)
+                            {
+                                copied_msg = Some(msg);
                             }
                         }
-                        ui.add_space(8.0);
-                    }
-                    // Pending approvals are actionable right in the conversation.
-                    for a in self.pending() {
-                        let id = a["id"].as_str().unwrap_or("").to_owned();
-                        if let Some(approve) = approval_card(ui, a, self.deciding.contains(&id), true) {
-                            decisions.push((id, approve));
+                        Entry::Assistant { text, meta } => {
+                            let subj = meta
+                                .as_ref()
+                                .and_then(|m| m["subject"].as_str())
+                                .filter(|s| show_subject_badges || *s != self.subject.as_str());
+                            if let Some(msg) = bubble(
+                                ui,
+                                idx,
+                                false,
+                                text,
+                                meta.as_ref(),
+                                None,
+                                subj,
+                                compact_meta,
+                            ) {
+                                copied_msg = Some(msg);
+                            }
+                            if let Some(action) = meta
+                                .as_ref()
+                                .and_then(|m| background_of(m, &self.tasks))
+                                .and_then(|bg| background_strip(ui, &bg))
+                            {
+                                commitment_actions.push(action);
+                            }
                         }
-                        ui.add_space(8.0);
-                    }
-                    // So are promises no task backs, from any surface.
-                    for t in self.tasks.iter().filter(|t| needs_decision(t)) {
-                        if let Some(action) = commitment_card(ui, t) {
-                            commitment_actions.push(action);
+                        Entry::Notice { text, color } => {
+                            ui.vertical_centered(|ui| {
+                                ui.label(RichText::new(text).small().color(*color));
+                            });
                         }
-                        ui.add_space(8.0);
                     }
-                    if let Some(t) = self.busy_since {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.label(
-                                RichText::new(format!(
-                                    "考えています… {}s（参照・ツール使用時は 1〜2 分かかることがあります）",
-                                    t.elapsed().as_secs()
-                                ))
-                                .small()
-                                .color(MUTED),
-                            );
-                        });
+                    ui.add_space(8.0);
+                }
+                // Pending approvals are actionable right in the conversation.
+                for a in self.pending() {
+                    let id = a["id"].as_str().unwrap_or("").to_owned();
+                    let out = approval_card(ui, a, self.deciding.contains(&id), true);
+                    if let Some(approve) = out.decision {
+                        decisions.push((id, approve));
                     }
-                    if scroll_bottom {
-                        let (_, end_rect) =
-                            ui.allocate_space(egui::vec2(ui.available_width(), 1.0));
-                        ui.scroll_to_rect(end_rect, Some(egui::Align::BOTTOM));
+                    if let Some(msg) = out.toast {
+                        copied_msg = Some(msg);
                     }
-                });
-        });
+                    ui.add_space(8.0);
+                }
+                // So are promises no task backs, from any surface.
+                for t in self.tasks.iter().filter(|t| needs_decision(t)) {
+                    if let Some(action) = commitment_card(ui, t) {
+                        commitment_actions.push(action);
+                    }
+                    ui.add_space(8.0);
+                }
+                if let Some(t) = self.busy_since {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(
+                            RichText::new(format!(
+                                "考えています… {}s（参照・ツール使用時は 1〜2 分かかることがあります）",
+                                t.elapsed().as_secs()
+                            ))
+                            .small()
+                            .color(MUTED),
+                        );
+                    });
+                }
+                if scroll_bottom {
+                    let (_, end_rect) =
+                        ui.allocate_space(egui::vec2(ui.available_width(), 1.0));
+                    ui.scroll_to_rect(end_rect, Some(egui::Align::BOTTOM));
+                }
+            });
+
+        if let Some(msg) = copied_msg {
+            self.toast = Some(Toast::info(msg));
+        }
         for (id, approve) in decisions {
             self.decide(&id, approve);
         }
         for (id, start) in commitment_actions {
             self.commitment_action(&id, start);
         }
-        if let Some(error) = &self.error {
-            egui::Frame::new()
-                .fill(Color32::from_rgb(66, 28, 37))
-                .stroke(Stroke::new(1.0, Color32::from_rgb(145, 53, 69)))
-                .corner_radius(egui::CornerRadius::same(6))
-                .inner_margin(8.0)
-                .show(ui, |ui| {
-                    ui.label(RichText::new(error).color(Color32::from_rgb(255, 191, 196)));
-                });
-            ui.add_space(6.0);
-        }
-        egui::Frame::new()
-            .fill(PANEL_RAISED)
-            .stroke(Stroke::new(1.0, BORDER))
-            .corner_radius(egui::CornerRadius::same(8))
-            .inner_margin(8.0)
-            .show(ui, |ui| {
-                let wildcard = matches!(self.subject.as_str(), "*" | "all");
-                let enabled = self.busy_since.is_none() && self.url.is_some() && !wildcard;
-                let hint = if wildcard {
-                    "全 subject 横断表示中 — 送信するには上のプルダウンから具体的な subject を選択してください"
-                } else {
-                    "メッセージを入力…  (⌘/Ctrl + Enter で送信)"
-                };
-                let edit = egui::TextEdit::multiline(&mut self.input)
-                    .hint_text(hint)
-                    .desired_rows(3)
-                    .desired_width((ui.available_width() - 92.0).max(240.0));
-                let response = ui.add_enabled(enabled, edit);
-                let shortcut = response.has_focus()
-                    && ctx.input(|i| {
-                        i.key_pressed(egui::Key::Enter) && (i.modifiers.ctrl || i.modifiers.command)
-                    });
-                ui.horizontal(|ui| {
-                    let bytes = self.input.trim().len();
-                    let over = bytes > MAX_INPUT_BYTES;
-                    ui.label(
-                        RichText::new("Enter: 改行 / ⌘+Enter: 送信")
-                            .small()
-                            .color(MUTED),
-                    );
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new(format!("{bytes} / {MAX_INPUT_BYTES} B"))
-                            .small()
-                            .color(if over { RED } else { MUTED }),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add_enabled(
-                                enabled,
-                                egui::Button::new(
-                                    RichText::new("送信  ➤").strong().color(Color32::WHITE),
-                                )
-                                .fill(BLUE),
-                            )
-                            .clicked()
-                            || shortcut
-                        {
-                            self.send();
-                        }
-                        if !self.input.is_empty()
-                            && ui
-                                .add_enabled(self.busy_since.is_none(), egui::Button::new("クリア"))
-                                .clicked()
-                        {
-                            self.input.clear();
-                        }
-                    });
-                });
-            });
     }
 
     fn approvals_view(&mut self, ui: &mut egui::Ui) {
@@ -905,6 +1343,7 @@ impl RemoteApp {
         );
         ui.separator();
         let mut decisions = Vec::new();
+        let mut copied_msg: Option<String> = None;
         egui::ScrollArea::vertical()
             .id_salt("approvals")
             .show(ui, |ui| {
@@ -914,9 +1353,12 @@ impl RemoteApp {
                 }
                 for a in pending {
                     let id = a["id"].as_str().unwrap_or("").to_owned();
-                    if let Some(approve) = approval_card(ui, a, self.deciding.contains(&id), false)
-                    {
+                    let out = approval_card(ui, a, self.deciding.contains(&id), false);
+                    if let Some(approve) = out.decision {
                         decisions.push((id, approve));
+                    }
+                    if let Some(msg) = out.toast {
+                        copied_msg = Some(msg);
                     }
                     ui.add_space(10.0);
                 }
@@ -928,21 +1370,18 @@ impl RemoteApp {
                     .filter(|a| a["state"] != "pending")
                     .take(20)
                 {
-                    let color = match a["state"].as_str() {
-                        Some("done") => GREEN,
-                        Some("failed") => RED,
-                        _ => MUTED,
+                    let (state_label, color) = match a["state"].as_str() {
+                        Some("done") => ("承認・実行済", GREEN),
+                        Some("rejected") => ("却下", MUTED),
+                        Some("failed") => ("失敗", RED),
+                        Some(other) => (other, MUTED),
+                        None => ("?", MUTED),
                     };
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(a["state"].as_str().unwrap_or("?"))
-                                .small()
-                                .strong()
-                                .color(color),
-                        );
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(state_label).small().strong().color(color));
                         ui.label(RichText::new(approval_title(a)).small().color(TEXT));
                         ui.label(
-                            RichText::new(a["decided"].as_str().unwrap_or(""))
+                            RichText::new(fmt_ts_compact(a["decided"].as_str().unwrap_or("")))
                                 .small()
                                 .color(MUTED),
                         );
@@ -970,6 +1409,9 @@ impl RemoteApp {
                     }
                 }
             });
+        if let Some(msg) = copied_msg {
+            self.toast = Some(Toast::info(msg));
+        }
         for (id, approve) in decisions {
             self.decide(&id, approve);
         }
@@ -1002,275 +1444,292 @@ impl RemoteApp {
         );
         ui.separator();
 
-        // KPI strip
         let mem = self.memory.clone();
-        let dom = mem.as_ref().map(|m| &m["domains"]);
-        let ep_active = dom.and_then(|d| d["episodic"]["active"].as_u64());
-        let ep_total = dom.and_then(|d| d["episodic"]["total"].as_u64());
-        let rel_active = dom.and_then(|d| d["relationship"]["active"].as_u64());
-        let rel_total = dom.and_then(|d| d["relationship"]["total"].as_u64());
-        let self_entries = mem
+        let cog_opt = self
+            .status
             .as_ref()
-            .and_then(|m| m["self_model"]["fields"].as_object())
-            .map_or(0usize, |f| {
-                f.values().map(|v| v.as_array().map_or(0, Vec::len)).sum()
-            });
-        let proposals_n = self.pending_proposals_count();
-        let notes_n = self
-            .self_notes
-            .as_ref()
-            .and_then(|n| n["self_notes"].as_array())
-            .map_or(0, Vec::len);
-
-        ui.horizontal_wrapped(|ui| {
-            kpi_tile(
-                ui,
-                "ACTIVATION",
-                &mem.as_ref()
-                    .and_then(|m| m["activation_seq"].as_u64())
-                    .map_or_else(|| "—".to_owned(), |n| format!("#{n}")),
-                &mem.as_ref()
-                    .and_then(|m| {
-                        m["individual_id"]
-                            .as_str()
-                            .or_else(|| m["individual"].as_str())
-                    })
-                    .map(short_str)
-                    .unwrap_or_else(|| "読み込み中".to_owned()),
-                BLUE,
-            );
-            kpi_tile(
-                ui,
-                "EPISODIC",
-                &match (ep_active, ep_total) {
-                    (Some(a), Some(t)) => format!("{a}/{t}"),
-                    _ => "—".to_owned(),
-                },
-                "active / total",
-                GREEN,
-            );
-            kpi_tile(
-                ui,
-                "RELATIONSHIP",
-                &match (rel_active, rel_total) {
-                    (Some(a), Some(t)) => format!("{a}/{t}"),
-                    _ => "—".to_owned(),
-                },
-                "active / total",
-                VIOLET,
-            );
-            kpi_tile(
-                ui,
-                "SELF MODEL",
-                &if mem.is_some() {
-                    self_entries.to_string()
-                } else {
-                    "—".to_owned()
-                },
-                "entries",
-                TEXT,
-            );
-            kpi_tile(
-                ui,
-                "PROPOSALS",
-                &if mem.is_some() {
-                    proposals_n.to_string()
-                } else {
-                    "—".to_owned()
-                },
-                "pending",
-                if proposals_n > 0 { AMBER } else { MUTED },
-            );
-            kpi_tile(
-                ui,
-                "SELF NOTES",
-                &if self.self_notes.is_some() {
-                    notes_n.to_string()
-                } else {
-                    "—".to_owned()
-                },
-                "recent scratch",
-                BLUE,
-            );
-        });
-        ui.add_space(8.0);
-
-        if let Some(s) = &self.status
-            && let Some(cog) = s.get("cognition").filter(|c| !c.is_null())
-        {
-            card(ui, "自律思考 (Idle / API Cognition)", |ui| {
-                let st = cog["state"].as_str().unwrap_or("disabled");
-                let color = match st {
-                    "completed" | "idle" => GREEN,
-                    "busy" => AMBER,
-                    "failed" => RED,
-                    _ => MUTED,
-                };
-                ui.horizontal_wrapped(|ui| {
-                    chip(ui, st, color);
-                    if let Some(subj) = cog["subject"].as_str().filter(|x| !x.is_empty()) {
-                        chip(ui, &format!("subject: {subj}"), BLUE);
-                    }
-                    if let Some(ms) = cog["latency_ms"].as_u64() {
-                        chip(ui, &format!("{ms} ms"), MUTED);
-                    }
-                    if let Some(reason) = cog["reason"].as_str().filter(|x| !x.is_empty()) {
-                        ui.label(RichText::new(reason).small().color(TEXT));
-                    }
-                    if let Some(at) = cog["last_run"].as_str().filter(|x| !x.is_empty()) {
-                        ui.label(
-                            RichText::new(format!("最終実行 {}", fmt_ts(at)))
-                                .small()
-                                .color(MUTED),
-                        );
-                    }
-                });
-            });
-            ui.add_space(8.0);
-        }
-
-        let Some(mem) = mem else {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(RichText::new("記憶レポートを取得中…").small().color(MUTED));
-            });
-            return;
-        };
+            .and_then(|s| s.get("cognition"))
+            .filter(|c| !c.is_null())
+            .cloned();
+        let memory_domain = &mut self.memory_domain;
+        let memory_filter = &mut self.memory_filter;
+        let focus_search = std::mem::take(&mut self.focus_search);
+        let self_notes = self.self_notes.as_ref();
 
         egui::ScrollArea::vertical()
             .id_salt("memory-view")
             .show(ui, |ui| {
-                ui.columns(2, |cols| {
-                    // Left: memory records
-                    card(&mut cols[0], "記憶レコード", |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            for (key, label) in [
-                                ("all", "すべて"),
-                                ("episodic", "episodic"),
-                                ("relationship", "relationship"),
-                            ] {
-                                ui.selectable_value(&mut self.memory_domain, key, label);
-                            }
-                        });
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.memory_filter)
-                                    .hint_text("🔍 記憶を検索…")
-                                    .desired_width(240.0),
-                            );
-                            if !self.memory_filter.is_empty() && ui.small_button("✕").clicked() {
-                                self.memory_filter.clear();
-                            }
-                        });
-                        ui.add_space(6.0);
+                // KPI strip
+                let dom = mem.as_ref().map(|m| &m["domains"]);
+                let ep_active = dom.and_then(|d| d["episodic"]["active"].as_u64());
+                let ep_total = dom.and_then(|d| d["episodic"]["total"].as_u64());
+                let rel_active = dom.and_then(|d| d["relationship"]["active"].as_u64());
+                let rel_total = dom.and_then(|d| d["relationship"]["total"].as_u64());
+                let self_entries = mem
+                    .as_ref()
+                    .and_then(|m| m["self_model"]["fields"].as_object())
+                    .map_or(0usize, |f| {
+                        f.values().map(|v| v.as_array().map_or(0, Vec::len)).sum()
+                    });
+                let proposals_n = mem
+                    .as_ref()
+                    .and_then(|m| m["pending_proposals"].as_array())
+                    .map_or(0, Vec::len);
+                let notes_n = self_notes
+                    .and_then(|n| n["self_notes"].as_array())
+                    .map_or(0, Vec::len);
 
-                        let needle = self.memory_filter.trim().to_lowercase();
-                        let mut records: Vec<(&str, &Value)> = Vec::new();
-                        for dom_name in ["episodic", "relationship"] {
-                            if self.memory_domain != "all" && self.memory_domain != dom_name {
-                                continue;
+                ui.horizontal_wrapped(|ui| {
+                    kpi_tile(
+                        ui,
+                        "ACTIVATION",
+                        &mem.as_ref()
+                            .and_then(|m| m["activation_seq"].as_u64())
+                            .map_or_else(|| "—".to_owned(), |n| format!("#{n}")),
+                        &mem.as_ref()
+                            .and_then(|m| {
+                                m["individual_id"]
+                                    .as_str()
+                                    .or_else(|| m["individual"].as_str())
+                            })
+                            .map(short_str)
+                            .unwrap_or_else(|| "読み込み中".to_owned()),
+                        BLUE,
+                    );
+                    kpi_tile(
+                        ui,
+                        "EPISODIC",
+                        &match (ep_active, ep_total) {
+                            (Some(a), Some(t)) => format!("{a}/{t}"),
+                            _ => "—".to_owned(),
+                        },
+                        "active / total",
+                        GREEN,
+                    );
+                    kpi_tile(
+                        ui,
+                        "RELATIONSHIP",
+                        &match (rel_active, rel_total) {
+                            (Some(a), Some(t)) => format!("{a}/{t}"),
+                            _ => "—".to_owned(),
+                        },
+                        "active / total",
+                        VIOLET,
+                    );
+                    kpi_tile(
+                        ui,
+                        "SELF MODEL",
+                        &if mem.is_some() {
+                            self_entries.to_string()
+                        } else {
+                            "—".to_owned()
+                        },
+                        "entries",
+                        TEXT,
+                    );
+                    kpi_tile(
+                        ui,
+                        "PROPOSALS",
+                        &if mem.is_some() {
+                            proposals_n.to_string()
+                        } else {
+                            "—".to_owned()
+                        },
+                        "pending",
+                        if proposals_n > 0 { AMBER } else { MUTED },
+                    );
+                    kpi_tile(
+                        ui,
+                        "SELF NOTES",
+                        &if self_notes.is_some() {
+                            notes_n.to_string()
+                        } else {
+                            "—".to_owned()
+                        },
+                        "recent scratch",
+                        BLUE,
+                    );
+                });
+                ui.add_space(8.0);
+
+                if let Some(cog) = &cog_opt {
+                    card(ui, "自律思考 (Idle / API Cognition)", |ui| {
+                        let st = cog["state"].as_str().unwrap_or("disabled");
+                        let color = match st {
+                            "completed" | "idle" => GREEN,
+                            "busy" => AMBER,
+                            "failed" => RED,
+                            _ => MUTED,
+                        };
+                        ui.horizontal_wrapped(|ui| {
+                            chip(ui, st, color);
+                            if let Some(subj) = cog["subject"].as_str().filter(|x| !x.is_empty()) {
+                                chip(ui, &format!("subject: {subj}"), BLUE);
                             }
-                            if let Some(arr) = mem["domains"][dom_name]["records"].as_array() {
-                                for r in arr {
-                                    records.push((dom_name, r));
+                            if let Some(ms) = cog["latency_ms"].as_u64() {
+                                chip(ui, &format!("{ms} ms"), MUTED);
+                            }
+                            if let Some(reason) = cog["reason"].as_str().filter(|x| !x.is_empty()) {
+                                ui.label(RichText::new(reason).small().color(TEXT));
+                            }
+                            if let Some(at) = cog["last_run"].as_str().filter(|x| !x.is_empty()) {
+                                ui.label(
+                                    RichText::new(format!("最終実行 {}", fmt_ts(at)))
+                                        .small()
+                                        .color(MUTED),
+                                );
+                            }
+                        });
+                    });
+                    ui.add_space(8.0);
+                }
+
+                let Some(mem) = &mem else {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(RichText::new("記憶レポートを取得中…").small().color(MUTED));
+                    });
+                    return;
+                };
+
+                responsive_two_col(
+                    ui,
+                    |ui| {
+                        // Left: memory records
+                        card(ui, "記憶レコード", |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                for (key, label) in [
+                                    ("all", "すべて"),
+                                    ("episodic", "episodic"),
+                                    ("relationship", "relationship"),
+                                ] {
+                                    ui.selectable_value(memory_domain, key, label);
+                                }
+                            });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                let resp = ui.add(
+                                    egui::TextEdit::singleline(memory_filter)
+                                        .hint_text("🔍 記憶を検索… (⌘K / /)")
+                                        .desired_width(240.0),
+                                );
+                                if focus_search {
+                                    resp.request_focus();
+                                }
+                                if !memory_filter.is_empty() && ui.small_button("✕").clicked() {
+                                    memory_filter.clear();
+                                }
+                            });
+                            ui.add_space(6.0);
+
+                            let needle = memory_filter.trim().to_lowercase();
+                            let mut records: Vec<(&str, &Value)> = Vec::new();
+                            for dom_name in ["episodic", "relationship"] {
+                                if *memory_domain != "all" && *memory_domain != dom_name {
+                                    continue;
+                                }
+                                if let Some(arr) = mem["domains"][dom_name]["records"].as_array() {
+                                    for r in arr {
+                                        records.push((dom_name, r));
+                                    }
                                 }
                             }
-                        }
-                        records.sort_by(|a, b| {
-                            b.1["created_at"]
-                                .as_str()
-                                .unwrap_or("")
-                                .cmp(a.1["created_at"].as_str().unwrap_or(""))
-                        });
-                        let mut shown = 0usize;
-                        for (dom_name, r) in &records {
-                            let body = memory_payload_text(&r["payload"]);
-                            let subj_key = r["subject_key"].as_str().unwrap_or("—");
-                            let tags_str = r["tags"]
-                                .as_array()
-                                .map(|a| {
-                                    a.iter()
-                                        .filter_map(Value::as_str)
-                                        .collect::<Vec<_>>()
-                                        .join(" ")
-                                })
-                                .unwrap_or_default();
-                            if !needle.is_empty()
-                                && !body.to_lowercase().contains(&needle)
-                                && !subj_key.to_lowercase().contains(&needle)
-                                && !tags_str.to_lowercase().contains(&needle)
-                            {
-                                continue;
-                            }
-                            shown += 1;
-                            egui::Frame::new()
-                                .fill(PANEL_RAISED)
-                                .stroke(Stroke::new(1.0, BORDER))
-                                .corner_radius(egui::CornerRadius::same(8))
-                                .inner_margin(8.0)
-                                .show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal_wrapped(|ui| {
-                                        chip(
-                                            ui,
-                                            dom_name,
-                                            if *dom_name == "episodic" {
-                                                GREEN
-                                            } else {
-                                                VIOLET
-                                            },
-                                        );
-                                        chip(ui, subj_key, BLUE);
-                                        if let Some((ch, c)) = channel_badge(subj_key) {
-                                            chip(ui, ch, c);
-                                        }
-                                        if let Some(u) = r["use_count"].as_u64() {
-                                            ui.label(
-                                                RichText::new(format!("×{u}")).small().color(MUTED),
-                                            );
-                                        }
-                                        if let Some(at) = r["created_at"].as_str() {
-                                            ui.label(
-                                                RichText::new(fmt_ts(at)).small().color(MUTED),
-                                            );
-                                        }
-                                    });
-                                    ui.add_space(4.0);
-                                    ui.add(
-                                        egui::Label::new(RichText::new(&body).small().color(TEXT))
-                                            .wrap()
-                                            .selectable(true),
-                                    );
-                                    if let Some(tags) =
-                                        r["tags"].as_array().filter(|t| !t.is_empty())
-                                    {
-                                        ui.add_space(4.0);
+                            records.sort_by(|a, b| {
+                                b.1["created_at"]
+                                    .as_str()
+                                    .unwrap_or("")
+                                    .cmp(a.1["created_at"].as_str().unwrap_or(""))
+                            });
+                            let mut shown = 0usize;
+                            for (dom_name, r) in &records {
+                                let body = memory_payload_text(&r["payload"]);
+                                let subj_key = r["subject_key"].as_str().unwrap_or("—");
+                                let tags_str = r["tags"]
+                                    .as_array()
+                                    .map(|a| {
+                                        a.iter()
+                                            .filter_map(Value::as_str)
+                                            .collect::<Vec<_>>()
+                                            .join(" ")
+                                    })
+                                    .unwrap_or_default();
+                                if !needle.is_empty()
+                                    && !body.to_lowercase().contains(&needle)
+                                    && !subj_key.to_lowercase().contains(&needle)
+                                    && !tags_str.to_lowercase().contains(&needle)
+                                {
+                                    continue;
+                                }
+                                shown += 1;
+                                egui::Frame::new()
+                                    .fill(PANEL_RAISED)
+                                    .stroke(Stroke::new(1.0, BORDER))
+                                    .corner_radius(egui::CornerRadius::same(8))
+                                    .inner_margin(8.0)
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
                                         ui.horizontal_wrapped(|ui| {
-                                            for t in tags {
-                                                if let Some(ts) = t.as_str() {
-                                                    chip(ui, ts, MUTED);
-                                                }
+                                            chip(
+                                                ui,
+                                                dom_name,
+                                                if *dom_name == "episodic" {
+                                                    GREEN
+                                                } else {
+                                                    VIOLET
+                                                },
+                                            );
+                                            chip(ui, subj_key, BLUE);
+                                            if let Some((ch, c)) = channel_badge(subj_key) {
+                                                chip(ui, ch, c);
+                                            }
+                                            if let Some(u) = r["use_count"].as_u64() {
+                                                ui.label(
+                                                    RichText::new(format!("×{u}"))
+                                                        .small()
+                                                        .color(MUTED),
+                                                );
+                                            }
+                                            if let Some(at) = r["created_at"].as_str() {
+                                                ui.label(
+                                                    RichText::new(fmt_ts(at)).small().color(MUTED),
+                                                );
                                             }
                                         });
-                                    }
-                                });
-                            ui.add_space(6.0);
-                        }
-                        if shown == 0 {
-                            ui.label(
-                                RichText::new("一致する記憶レコードはありません。")
-                                    .small()
-                                    .color(MUTED),
-                            );
-                        }
-                    });
-
-                    // Right: proposals, self_notes, self_model, writeback
-                    card(
-                        &mut cols[1],
-                        "未承認の改善提案 (Pending Proposals)",
-                        |ui| {
+                                        ui.add_space(4.0);
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&body).small().color(TEXT),
+                                            )
+                                            .wrap()
+                                            .selectable(true),
+                                        );
+                                        if let Some(tags) =
+                                            r["tags"].as_array().filter(|t| !t.is_empty())
+                                        {
+                                            ui.add_space(4.0);
+                                            ui.horizontal_wrapped(|ui| {
+                                                for t in tags {
+                                                    if let Some(ts) = t.as_str() {
+                                                        chip(ui, ts, MUTED);
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    });
+                                ui.add_space(6.0);
+                            }
+                            if shown == 0 {
+                                ui.label(
+                                    RichText::new("一致する記憶レコードはありません。")
+                                        .small()
+                                        .color(MUTED),
+                                );
+                            }
+                        });
+                    },
+                    |ui| {
+                        // Right: proposals, self_notes, self_model, writeback
+                        card(ui, "未承認の改善提案 (Pending Proposals)", |ui| {
                             let pending = mem["pending_proposals"]
                                 .as_array()
                                 .map(Vec::as_slice)
@@ -1338,16 +1797,10 @@ impl RemoteApp {
                                     ui.add_space(6.0);
                                 }
                             }
-                        },
-                    );
-                    cols[1].add_space(8.0);
-                    card(
-                        &mut cols[1],
-                        "自己ノート (Self Notes · unverified)",
-                        |ui| {
-                            let notes = self
-                                .self_notes
-                                .as_ref()
+                        });
+                        ui.add_space(8.0);
+                        card(ui, "自己ノート (Self Notes · unverified)", |ui| {
+                            let notes = self_notes
                                 .and_then(|n| n["self_notes"].as_array())
                                 .map(Vec::as_slice)
                                 .unwrap_or(&[]);
@@ -1424,80 +1877,84 @@ impl RemoteApp {
                                     ui.add_space(6.0);
                                 }
                             }
-                        },
-                    );
-                    cols[1].add_space(8.0);
-                    card(&mut cols[1], "自己モデル / Writeback 健全性", |ui| {
-                        let wb = &mem["memory_writeback"];
-                        if wb.is_object() {
-                            let wb_state = wb["state"].as_str().unwrap_or("?");
-                            let ok = wb["unresolved"].as_u64().unwrap_or(0) == 0
-                                && wb["aborted"].as_u64().unwrap_or(0) == 0;
-                            node_row(
-                                ui,
-                                "writeback",
-                                ok,
-                                &format!(
-                                    "{wb_state} · unresolved {} · aborted {}",
-                                    wb["unresolved"], wb["aborted"]
-                                ),
-                            );
-                        }
-                        let proj = &mem["self_projection"];
-                        if proj.is_object() {
-                            ui.label(
-                                RichText::new(format!(
-                                    "self_projection: surfaced {}/{} · excluded {}",
-                                    proj["surfaced_entries"],
-                                    proj["stored_entries"],
-                                    proj["excluded_count"]
-                                ))
-                                .small()
-                                .color(MUTED),
-                            );
-                        }
-                        ui.add_space(4.0);
-                        if let Some(fields) = mem["self_model"]["fields"].as_object() {
-                            for (field, entries) in fields {
-                                let arr = entries.as_array().map(Vec::as_slice).unwrap_or(&[]);
-                                if arr.is_empty() {
-                                    continue;
-                                }
-                                egui::CollapsingHeader::new(
-                                    RichText::new(format!("{field} ({})", arr.len()))
-                                        .small()
-                                        .color(TEXT),
-                                )
-                                .id_salt(("self-field", field))
-                                .show(ui, |ui| {
-                                    for e in arr {
-                                        let key = e["key"]
-                                            .as_str()
-                                            .map(|k| format!("[{k}] "))
-                                            .unwrap_or_default();
-                                        let conf = e["confidence"]
-                                            .as_f64()
-                                            .map(|c| format!(" ({c:.2})"))
-                                            .unwrap_or_default();
-                                        ui.add(
-                                            egui::Label::new(
-                                                RichText::new(format!("{key}{}{conf}", e["value"]))
+                        });
+                        ui.add_space(8.0);
+                        card(ui, "自己モデル / Writeback 健全性", |ui| {
+                            let wb = &mem["memory_writeback"];
+                            if wb.is_object() {
+                                let wb_state = wb["state"].as_str().unwrap_or("?");
+                                let ok = wb["unresolved"].as_u64().unwrap_or(0) == 0
+                                    && wb["aborted"].as_u64().unwrap_or(0) == 0;
+                                node_row(
+                                    ui,
+                                    "writeback",
+                                    ok,
+                                    &format!(
+                                        "{wb_state} · unresolved {} · aborted {}",
+                                        wb["unresolved"], wb["aborted"]
+                                    ),
+                                );
+                            }
+                            let proj = &mem["self_projection"];
+                            if proj.is_object() {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "self_projection: surfaced {}/{} · excluded {}",
+                                        proj["surfaced_entries"],
+                                        proj["stored_entries"],
+                                        proj["excluded_count"]
+                                    ))
+                                    .small()
+                                    .color(MUTED),
+                                );
+                            }
+                            ui.add_space(4.0);
+                            if let Some(fields) = mem["self_model"]["fields"].as_object() {
+                                for (field, entries) in fields {
+                                    let arr = entries.as_array().map(Vec::as_slice).unwrap_or(&[]);
+                                    if arr.is_empty() {
+                                        continue;
+                                    }
+                                    egui::CollapsingHeader::new(
+                                        RichText::new(format!("{field} ({})", arr.len()))
+                                            .small()
+                                            .color(TEXT),
+                                    )
+                                    .id_salt(("self-field", field))
+                                    .show(ui, |ui| {
+                                        for e in arr {
+                                            let key = e["key"]
+                                                .as_str()
+                                                .map(|k| format!("[{k}] "))
+                                                .unwrap_or_default();
+                                            let conf = e["confidence"]
+                                                .as_f64()
+                                                .map(|c| format!(" ({c:.2})"))
+                                                .unwrap_or_default();
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(format!(
+                                                        "{key}{}{conf}",
+                                                        e["value"]
+                                                    ))
                                                     .small()
                                                     .color(MUTED),
-                                            )
-                                            .wrap()
-                                            .selectable(true),
-                                        );
-                                    }
-                                });
+                                                )
+                                                .wrap()
+                                                .selectable(true),
+                                            );
+                                        }
+                                    });
+                                }
                             }
-                        }
-                    });
-                });
+                        });
+                    },
+                );
             });
     }
 
-    fn status_view(&self, ui: &mut egui::Ui) {
+    fn status_view(&mut self, ui: &mut egui::Ui) {
+        let mut copied_report = false;
         ui.horizontal(|ui| {
             ui.heading(RichText::new("状態").color(TEXT));
             if let Some(t) = self.status_at {
@@ -1512,101 +1969,108 @@ impl RemoteApp {
                     if ui.button("📋 状態レポートをコピー").clicked() {
                         let (rendered, _) = kamimusuhi_resident::status::render(s);
                         ui.ctx().copy_text(rendered);
+                        copied_report = true;
                     }
                 });
             }
         });
+        if copied_report {
+            self.toast = Some(Toast::info("状態レポートをコピーしました"));
+        }
         ui.separator();
         let Some(s) = &self.status else {
             ui.spinner();
             return;
         };
 
-        // Top KPI strip
         let n = &s["node"];
         let ns = &s["node_state"];
         let r = &s["routing"];
         let cg = &r["cost_guard"];
         let proc_m = &s["process"];
         let cog = &s["cognition"];
-        ui.horizontal_wrapped(|ui| {
-            let uptime = n["uptime_secs"]
-                .as_u64()
-                .map_or_else(|| "—".to_owned(), fmt_uptime);
-            kpi_tile(
-                ui,
-                "NODE",
-                ns["status"].as_str().unwrap_or("—"),
-                &format!(
-                    "{} · {} · up {uptime}",
-                    n["node"].as_str().unwrap_or("?"),
-                    ns["mode"]
-                        .as_str()
-                        .unwrap_or(n["mode"].as_str().unwrap_or("?"))
-                ),
-                if ns["status"] == "busy" { AMBER } else { GREEN },
-            );
-            kpi_tile(
-                ui,
-                "PRIMARY ROUTE",
-                r["active_primary"].as_str().unwrap_or("なし"),
-                &format!("総リクエスト {}", r["requests"]),
-                if r["active_primary"].is_null() {
-                    RED
-                } else {
-                    BLUE
-                },
-            );
-            let day_usd = cg["daily_usd"]
-                .as_f64()
-                .map_or_else(|| "—".to_owned(), |v| format!("${v:.3}"));
-            let month_usd = cg["monthly_usd"]
-                .as_f64()
-                .map_or_else(|| "—".to_owned(), |v| format!("${v:.2}"));
-            kpi_tile(
-                ui,
-                "COST GUARD",
-                &day_usd,
-                &format!(
-                    "今月 {month_usd} · session {}",
-                    fmt_opt_usd(&cg["session_usd"])
-                ),
-                AMBER,
-            );
-            let rss = proc_m["rss_bytes"]
-                .as_u64()
-                .map_or_else(|| "—".to_owned(), |b| format!("{} MiB", b / (1024 * 1024)));
-            let cpu = proc_m["cpu_pct_avg"]
-                .as_f64()
-                .map_or_else(|| "—".to_owned(), |c| format!("{c:.1}%"));
-            kpi_tile(
-                ui,
-                "PROCESS / HOSTS",
-                &rss,
-                &format!("CPU {cpu} · hosts {}", n["dialogue_hosts"]),
-                VIOLET,
-            );
-            let cog_st = cog["state"].as_str().unwrap_or("disabled");
-            kpi_tile(
-                ui,
-                "COGNITION",
-                cog_st,
-                cog["subject"].as_str().unwrap_or("—"),
-                match cog_st {
-                    "completed" | "idle" => GREEN,
-                    "busy" => AMBER,
-                    "failed" => RED,
-                    _ => MUTED,
-                },
-            );
-        });
-        ui.add_space(8.0);
 
         egui::ScrollArea::vertical()
             .id_salt("status")
             .show(ui, |ui| {
-                ui.columns(2, |cols| {
-                    card(&mut cols[0], "ノード & ピア", |ui| {
+                // Top KPI strip
+                ui.horizontal_wrapped(|ui| {
+                    let uptime = n["uptime_secs"]
+                        .as_u64()
+                        .map_or_else(|| "—".to_owned(), fmt_uptime);
+                    kpi_tile(
+                        ui,
+                        "NODE",
+                        ns["status"].as_str().unwrap_or("—"),
+                        &format!(
+                            "{} · {} · up {uptime}",
+                            n["node"].as_str().unwrap_or("?"),
+                            ns["mode"]
+                                .as_str()
+                                .unwrap_or(n["mode"].as_str().unwrap_or("?"))
+                        ),
+                        if ns["status"] == "busy" { AMBER } else { GREEN },
+                    );
+                    kpi_tile(
+                        ui,
+                        "PRIMARY ROUTE",
+                        r["active_primary"].as_str().unwrap_or("なし"),
+                        &format!("総リクエスト {}", r["requests"]),
+                        if r["active_primary"].is_null() {
+                            RED
+                        } else {
+                            BLUE
+                        },
+                    );
+                    let day_usd = cg["daily_usd"]
+                        .as_f64()
+                        .map_or_else(|| "—".to_owned(), |v| format!("${v:.3}"));
+                    let month_usd = cg["monthly_usd"]
+                        .as_f64()
+                        .map_or_else(|| "—".to_owned(), |v| format!("${v:.2}"));
+                    kpi_tile(
+                        ui,
+                        "COST GUARD",
+                        &day_usd,
+                        &format!(
+                            "今月 {month_usd} · session {}",
+                            fmt_opt_usd(&cg["session_usd"])
+                        ),
+                        AMBER,
+                    );
+                    let rss = proc_m["rss_bytes"]
+                        .as_u64()
+                        .map_or_else(|| "—".to_owned(), |b| format!("{} MiB", b / (1024 * 1024)));
+                    let cpu = proc_m["cpu_pct_avg"]
+                        .as_f64()
+                        .map_or_else(|| "—".to_owned(), |c| format!("{c:.1}%"));
+                    kpi_tile(
+                        ui,
+                        "PROCESS / HOSTS",
+                        &rss,
+                        &format!("CPU {cpu} · hosts {}", n["dialogue_hosts"]),
+                        VIOLET,
+                    );
+                    let cog_st = cog["state"].as_str().unwrap_or("disabled");
+                    kpi_tile(
+                        ui,
+                        "COGNITION",
+                        cog_st,
+                        cog["subject"].as_str().unwrap_or("—"),
+                        match cog_st {
+                            "completed" | "idle" => GREEN,
+                            "busy" => AMBER,
+                            "failed" => RED,
+                            _ => MUTED,
+                        },
+                    );
+                });
+                ui.add_space(8.0);
+
+                responsive_two_col(
+                    ui,
+                    |ui| {
+                    card(ui, "ノード & ピア", |ui| {
                         node_row(
                             ui,
                             n["node"].as_str().unwrap_or("?"),
@@ -1677,8 +2141,8 @@ impl RemoteApp {
                             );
                         }
                     });
-                    cols[0].add_space(8.0);
-                    card(&mut cols[0], "ルーティング & Cost Guard", |ui| {
+                    ui.add_space(8.0);
+                    card(ui, "ルーティング & Cost Guard", |ui| {
                         let order = r["order"]
                             .as_array()
                             .map(|o| {
@@ -1745,8 +2209,8 @@ impl RemoteApp {
                             );
                         }
                     });
-                    cols[0].add_space(8.0);
-                    card(&mut cols[0], "Light / Heavy 委譲 (Delegations)", |ui| {
+                    ui.add_space(8.0);
+                    card(ui, "Light / Heavy 委譲 (Delegations)", |ui| {
                         let del = &s["delegations"];
                         if !del["enabled"].as_bool().unwrap_or(false) {
                             ui.label(RichText::new("無効").small().color(MUTED));
@@ -1782,9 +2246,10 @@ impl RemoteApp {
                             }
                         }
                     });
-
+                    },
+                    |ui| {
                     // Right column
-                    card(&mut cols[1], "Cognition & K-CORE", |ui| {
+                    card(ui, "Cognition & K-CORE", |ui| {
                         let cog_st = cog["state"].as_str().unwrap_or("disabled");
                         node_row(
                             ui,
@@ -1813,8 +2278,8 @@ impl RemoteApp {
                             ),
                         );
                     });
-                    cols[1].add_space(8.0);
-                    card(&mut cols[1], "Commitments & Intercom (個体間通信)", |ui| {
+                    ui.add_space(8.0);
+                    card(ui, "Commitments & Intercom (個体間通信)", |ui| {
                         let cm = &s["commitments"];
                         if cm["enabled"].as_bool().unwrap_or(false) {
                             let tot = &cm["totals"];
@@ -1863,8 +2328,8 @@ impl RemoteApp {
                             ui.label(RichText::new("Intercom: 無効").small().color(MUTED));
                         }
                     });
-                    cols[1].add_space(8.0);
-                    card(&mut cols[1], "NAS & HAI", |ui| {
+                    ui.add_space(8.0);
+                    card(ui, "NAS & HAI", |ui| {
                         let nas = &s["nas"];
                         let warn = nas["spool_warn"].as_bool().unwrap_or(false);
                         node_row(
@@ -1900,8 +2365,8 @@ impl RemoteApp {
                             ),
                         );
                     });
-                    cols[1].add_space(8.0);
-                    card(&mut cols[1], "MCP サーバー / 定期ジョブ / Snapshot", |ui| {
+                    ui.add_space(8.0);
+                    card(ui, "MCP サーバー / 定期ジョブ / Snapshot", |ui| {
                         for m in s["mcp"].as_array().into_iter().flatten() {
                             let ok = m["state"] == "running";
                             node_row(
@@ -1940,7 +2405,8 @@ impl RemoteApp {
                                 .unwrap_or_else(|| "-".to_owned()),
                         );
                     });
-                });
+                    },
+                );
             });
     }
 
@@ -1956,6 +2422,7 @@ impl RemoteApp {
             ui.spinner();
             return;
         };
+        let focus_search = std::mem::take(&mut self.focus_search);
         egui::ScrollArea::vertical()
             .id_salt("tools")
             .show(ui, |ui| {
@@ -2022,11 +2489,14 @@ impl RemoteApp {
                         .strong()
                         .color(TEXT),
                     );
-                    ui.add(
+                    let search_resp = ui.add(
                         egui::TextEdit::singleline(&mut self.tool_filter)
-                            .hint_text("🔍 名前・説明で絞り込み…")
+                            .hint_text("🔍 名前・説明で絞り込み… (⌘K / /)")
                             .desired_width(240.0),
                     );
+                    if focus_search {
+                        search_resp.request_focus();
+                    }
                     if !self.tool_filter.is_empty() && ui.small_button("✕").clicked() {
                         self.tool_filter.clear();
                     }
@@ -2060,10 +2530,16 @@ impl RemoteApp {
 impl App for RemoteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
         self.poll(ctx);
+        if let Some(msg) = handle_zoom_shortcuts(ctx, &mut self.ui_zoom) {
+            self.toast = Some(Toast::info(msg));
+        }
+        let typing = ctx.wants_keyboard_input();
+        let mut trigger_refresh = false;
         ctx.input(|i| {
             let cmd = i.modifiers.ctrl || i.modifiers.command;
             if (cmd && i.key_pressed(egui::Key::Num1)) || i.key_pressed(egui::Key::F1) {
                 self.view = View::Chat;
+                self.focus_chat_input = true;
             } else if (cmd && i.key_pressed(egui::Key::Num2)) || i.key_pressed(egui::Key::F2) {
                 self.view = View::Tasks;
             } else if (cmd && i.key_pressed(egui::Key::Num3)) || i.key_pressed(egui::Key::F3) {
@@ -2076,37 +2552,95 @@ impl App for RemoteApp {
                 self.view = View::Status;
             } else if (cmd && i.key_pressed(egui::Key::Num7)) || i.key_pressed(egui::Key::F7) {
                 self.view = View::Tools;
+            } else if cmd && i.key_pressed(egui::Key::K) {
+                self.focus_search = true;
+            } else if cmd && i.key_pressed(egui::Key::L) {
+                self.view = View::Chat;
+                self.focus_chat_input = true;
+            } else if cmd && i.key_pressed(egui::Key::B) {
+                self.sidebar_compact = !self.sidebar_compact;
+            } else if cmd && i.key_pressed(egui::Key::Comma) {
+                self.show_settings = !self.show_settings;
             } else if cmd && i.key_pressed(egui::Key::R) {
-                let _ = self.commands.send(RemoteCommand::Refresh);
+                trigger_refresh = true;
             } else if cmd && i.key_pressed(egui::Key::M) && self.view == View::Tasks {
-                self.map_mode = !self.map_mode;
+                self.task_view = if self.task_view == TaskViewMode::Map {
+                    TaskViewMode::List
+                } else {
+                    TaskViewMode::Map
+                };
             } else if i.key_pressed(egui::Key::Escape) {
-                if self.view == View::Tasks && self.selected_task.is_some() {
+                if self.show_settings {
+                    self.show_settings = false;
+                } else if self.view == View::Tasks && self.selected_task.is_some() {
                     self.selected_task = None;
                 } else if self.view == View::Agents && self.agents.has_selection() {
                     self.agents.clear_selection();
+                } else {
+                    match self.view {
+                        View::Chat => self.chat_filter.clear(),
+                        View::Tasks => {
+                            self.task_filter.clear();
+                            self.task_status_filter = TaskStatusFilter::All;
+                        }
+                        View::Memory => self.memory_filter.clear(),
+                        View::Tools => self.tool_filter.clear(),
+                        _ => {}
+                    }
+                }
+            } else if !typing {
+                if i.events
+                    .iter()
+                    .any(|ev| matches!(ev, egui::Event::Text(t) if t == "?"))
+                    || (i.key_pressed(egui::Key::Slash) && i.modifiers.shift)
+                {
+                    self.show_settings = !self.show_settings;
+                } else if i.key_pressed(egui::Key::Slash) && !cmd {
+                    self.focus_search = true;
+                } else if i.key_pressed(egui::Key::I) && !cmd {
+                    self.view = View::Chat;
+                    self.focus_chat_input = true;
                 }
             }
         });
+        if trigger_refresh {
+            if self.url.is_none() {
+                self.reconnect(self.configured_url.clone());
+            } else {
+                let _ = self.commands.send(RemoteCommand::Refresh);
+                self.toast = Some(Toast::info("最新状態を取得しています…"));
+            }
+        }
         egui::TopBottomPanel::top("remote-top")
             .frame(egui::Frame::new().fill(PANEL).inner_margin(10.0))
             .show(ctx, |ui| self.top_bar(ui));
         egui::SidePanel::left("remote-nav")
-            .frame(egui::Frame::new().fill(BG).inner_margin(12.0))
+            .frame(
+                egui::Frame::new()
+                    .fill(BG)
+                    .inner_margin(if self.sidebar_compact { 6.0 } else { 10.0 }),
+            )
             .resizable(false)
-            .default_width(214.0)
+            .exact_width(if self.sidebar_compact { 56.0 } else { 226.0 })
             .show(ctx, |ui| self.nav(ui));
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(BG).inner_margin(16.0))
             .show(ctx, |ui| match self.view {
                 View::Chat => self.chat(ui, ctx),
                 View::Tasks => self.tasks_view(ui),
-                View::Agents => self.agents.show(ui, &self.commands),
+                View::Agents => {
+                    let focus = std::mem::take(&mut self.focus_search);
+                    if let Some(msg) = self.agents.show(ui, &self.commands, focus) {
+                        self.toast = Some(Toast::info(msg));
+                    }
+                }
                 View::Approvals => self.approvals_view(ui),
                 View::Memory => self.memory_view(ui),
                 View::Status => self.status_view(ui),
                 View::Tools => self.tools_view(ui),
             });
+        self.settings_window(ctx);
+        show_toast(ctx, &mut self.toast);
     }
 }
 
@@ -2245,6 +2779,30 @@ pub(crate) fn chip(ui: &mut egui::Ui, text: &str, color: Color32) {
         });
 }
 
+fn responsive_two_col(
+    ui: &mut egui::Ui,
+    left: impl FnOnce(&mut egui::Ui),
+    right: impl FnOnce(&mut egui::Ui),
+) {
+    if ui.available_width() >= 860.0 {
+        let mut left = Some(left);
+        let mut right = Some(right);
+        ui.columns(2, |cols| {
+            if let Some(f) = left.take() {
+                f(&mut cols[0]);
+            }
+            if let Some(f) = right.take() {
+                f(&mut cols[1]);
+            }
+        });
+    } else {
+        left(ui);
+        ui.add_space(10.0);
+        right(ui);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn bubble(
     ui: &mut egui::Ui,
     idx: usize,
@@ -2253,7 +2811,9 @@ fn bubble(
     meta: Option<&Value>,
     at: Option<&str>,
     subject: Option<&str>,
-) {
+    compact_meta: bool,
+) -> Option<String> {
+    let mut copied = None;
     let (fill, stroke) = if user {
         (
             Color32::from_rgb(22, 66, 126),
@@ -2298,7 +2858,8 @@ fn bubble(
                                 }
                             }
                             if let Some(ts) = at.or_else(|| meta.and_then(|m| m["ts"].as_str())) {
-                                ui.label(RichText::new(fmt_ts(ts)).small().color(MUTED));
+                                ui.label(RichText::new(fmt_ts_compact(ts)).small().color(MUTED))
+                                    .on_hover_text(fmt_ts(ts));
                             }
                             if ui
                                 .small_button(RichText::new("📋").small().color(MUTED))
@@ -2306,14 +2867,19 @@ fn bubble(
                                 .clicked()
                             {
                                 ui.ctx().copy_text(text.to_owned());
+                                copied = Some("本文をコピーしました".to_owned());
                             }
                         });
                         ui.add_space(4.0);
-                        ui.add(
-                            egui::Label::new(RichText::new(text).color(TEXT))
-                                .wrap()
-                                .selectable(true),
-                        );
+                        if user {
+                            ui.add(
+                                egui::Label::new(RichText::new(text).color(TEXT))
+                                    .wrap()
+                                    .selectable(true),
+                            );
+                        } else if let Some(msg) = render_markdown(ui, ("remote-md", idx), text) {
+                            copied = Some(msg);
+                        }
                         if let Some(meta) = meta {
                             let tools = meta["tool_calls"].as_array().cloned().unwrap_or_default();
                             let tier = meta["tier"].as_str();
@@ -2327,120 +2893,148 @@ fn bubble(
                                 || lookups > 0
                             {
                                 ui.add_space(6.0);
-                                ui.horizontal_wrapped(|ui| {
-                                    if let Some(route) = route {
-                                        if let Some(target) =
-                                            kamimusuhi_resident::status::route_target_label(route)
-                                        {
+                                let render_meta = |ui: &mut egui::Ui| {
+                                    ui.horizontal_wrapped(|ui| {
+                                        if let Some(route) = route {
+                                            if let Some(target) =
+                                                kamimusuhi_resident::status::route_target_label(
+                                                    route,
+                                                )
+                                            {
+                                                chip(
+                                                    ui,
+                                                    &target,
+                                                    if route["tier"].as_str() == Some("hai") {
+                                                        AMBER
+                                                    } else {
+                                                        GREEN
+                                                    },
+                                                );
+                                            }
+                                            if let Some(cost) =
+                                                kamimusuhi_resident::status::route_cost_label(route)
+                                            {
+                                                let color = match route["billing"].as_str() {
+                                                    Some("metered") => AMBER,
+                                                    _ => GREEN,
+                                                };
+                                                chip(ui, &cost, color);
+                                            }
+                                            if let Some(cached) =
+                                                route["cached_tokens"].as_u64().filter(|c| *c > 0)
+                                            {
+                                                chip(ui, &format!("cache {cached}"), MUTED);
+                                            }
+                                        } else if let Some(tier) = tier {
                                             chip(
                                                 ui,
-                                                &target,
-                                                if route["tier"].as_str() == Some("hai") {
-                                                    AMBER
-                                                } else {
-                                                    GREEN
-                                                },
+                                                &format!("via {tier}"),
+                                                if tier == "hai" { AMBER } else { GREEN },
                                             );
                                         }
-                                        if let Some(cost) =
-                                            kamimusuhi_resident::status::route_cost_label(route)
-                                        {
-                                            let color = match route["billing"].as_str() {
-                                                Some("metered") => AMBER,
-                                                _ => GREEN,
+                                        if let Some(ms) = latency {
+                                            chip(ui, &format!("{:.1}s", ms as f64 / 1000.0), MUTED);
+                                        }
+                                        if lookups > 0 {
+                                            chip(ui, &format!("参照 {lookups}"), BLUE);
+                                        }
+                                        let mut counts: Vec<(String, usize, bool)> = Vec::new();
+                                        for t in &tools {
+                                            let name = t["name"]
+                                                .as_str()
+                                                .unwrap_or("?")
+                                                .trim_start_matches("mcp__")
+                                                .replace("__", "/");
+                                            let ok = t["ok"].as_bool().unwrap_or(true);
+                                            if let Some(entry) =
+                                                counts.iter_mut().find(|(n, _, _)| *n == name)
+                                            {
+                                                entry.1 += 1;
+                                                entry.2 &= ok;
+                                            } else {
+                                                counts.push((name, 1, ok));
+                                            }
+                                        }
+                                        for (name, n, ok) in counts {
+                                            let label = if n > 1 {
+                                                format!("🔧 {name} ×{n}")
+                                            } else {
+                                                format!("🔧 {name}")
                                             };
-                                            chip(ui, &cost, color);
+                                            chip(ui, &label, if ok { VIOLET } else { RED });
                                         }
-                                        if let Some(cached) =
-                                            route["cached_tokens"].as_u64().filter(|c| *c > 0)
-                                        {
-                                            chip(ui, &format!("cache {cached}"), MUTED);
-                                        }
-                                    } else if let Some(tier) = tier {
-                                        chip(
-                                            ui,
-                                            &format!("via {tier}"),
-                                            if tier == "hai" { AMBER } else { GREEN },
-                                        );
-                                    }
-                                    if let Some(ms) = latency {
-                                        chip(ui, &format!("{:.1}s", ms as f64 / 1000.0), MUTED);
-                                    }
-                                    if lookups > 0 {
-                                        chip(ui, &format!("参照 {lookups}"), BLUE);
-                                    }
-                                    let mut counts: Vec<(String, usize, bool)> = Vec::new();
-                                    for t in &tools {
-                                        let name = t["name"]
-                                            .as_str()
-                                            .unwrap_or("?")
-                                            .trim_start_matches("mcp__")
-                                            .replace("__", "/");
-                                        let ok = t["ok"].as_bool().unwrap_or(true);
-                                        if let Some(entry) =
-                                            counts.iter_mut().find(|(n, _, _)| *n == name)
-                                        {
-                                            entry.1 += 1;
-                                            entry.2 &= ok;
-                                        } else {
-                                            counts.push((name, 1, ok));
-                                        }
-                                    }
-                                    for (name, n, ok) in counts {
-                                        let label = if n > 1 {
-                                            format!("🔧 {name} ×{n}")
-                                        } else {
-                                            format!("🔧 {name}")
-                                        };
-                                        chip(ui, &label, if ok { VIOLET } else { RED });
-                                    }
-                                });
-                            }
-                            if !tools.is_empty() {
-                                ui.add_space(4.0);
-                                egui::CollapsingHeader::new(
-                                    RichText::new(format!("詳細 ({}件のツール呼出)", tools.len()))
-                                        .small()
-                                        .color(MUTED),
-                                )
-                                .id_salt(("tool-details", idx))
-                                .show(ui, |ui| {
-                                    for t in &tools {
-                                        let name = t["name"]
-                                            .as_str()
-                                            .unwrap_or("?")
-                                            .trim_start_matches("mcp__")
-                                            .replace("__", "/");
-                                        let ok = t["ok"].as_bool().unwrap_or(true);
-                                        let ms = t["latency_ms"]
-                                            .as_u64()
-                                            .map(|m| format!(" {m}ms"))
-                                            .unwrap_or_default();
-                                        let ev = t["evidence_id"]
-                                            .as_str()
-                                            .map(|e| format!(" · {e}"))
-                                            .unwrap_or_default();
-                                        let task_info = t["task"]["id"]
-                                            .as_str()
-                                            .map(|tid| format!(" → task {tid}"))
-                                            .unwrap_or_default();
-                                        ui.label(
+                                    });
+                                    if !tools.is_empty() {
+                                        ui.add_space(4.0);
+                                        egui::CollapsingHeader::new(
                                             RichText::new(format!(
-                                                "{} {name}{ms}{task_info}{ev}",
-                                                if ok { "✔" } else { "✘" }
+                                                "詳細 ({}件のツール呼出)",
+                                                tools.len()
                                             ))
                                             .small()
-                                            .monospace()
-                                            .color(if ok { TEXT } else { RED }),
-                                        );
+                                            .color(MUTED),
+                                        )
+                                        .id_salt(("tool-details", idx))
+                                        .show(ui, |ui| {
+                                            for t in &tools {
+                                                let name = t["name"]
+                                                    .as_str()
+                                                    .unwrap_or("?")
+                                                    .trim_start_matches("mcp__")
+                                                    .replace("__", "/");
+                                                let ok = t["ok"].as_bool().unwrap_or(true);
+                                                let ms = t["latency_ms"]
+                                                    .as_u64()
+                                                    .map(|m| format!(" {m}ms"))
+                                                    .unwrap_or_default();
+                                                let ev = t["evidence_id"]
+                                                    .as_str()
+                                                    .map(|e| format!(" · {e}"))
+                                                    .unwrap_or_default();
+                                                let task_info = t["task"]["id"]
+                                                    .as_str()
+                                                    .map(|tid| format!(" → task {tid}"))
+                                                    .unwrap_or_default();
+                                                ui.label(
+                                                    RichText::new(format!(
+                                                        "{} {name}{ms}{task_info}{ev}",
+                                                        if ok { "✔" } else { "✘" }
+                                                    ))
+                                                    .small()
+                                                    .monospace()
+                                                    .color(if ok { TEXT } else { RED }),
+                                                );
+                                            }
+                                        });
                                     }
-                                });
+                                };
+                                if compact_meta {
+                                    let summary = format!(
+                                        "メタ情報{}{}",
+                                        latency.map_or(String::new(), |ms| {
+                                            format!(" · {:.1}s", ms as f64 / 1000.0)
+                                        }),
+                                        if tools.is_empty() {
+                                            String::new()
+                                        } else {
+                                            format!(" · ツール{}件", tools.len())
+                                        }
+                                    );
+                                    egui::CollapsingHeader::new(
+                                        RichText::new(summary).small().color(MUTED),
+                                    )
+                                    .id_salt(("meta-compact", idx))
+                                    .show(ui, render_meta);
+                                } else {
+                                    render_meta(ui);
+                                }
                             }
                         }
                     });
                 });
         },
     );
+    copied
 }
 
 /// What a reply left running after the turn, as the chat shows it.
@@ -2670,9 +3264,17 @@ fn approval_title(a: &Value) -> String {
     )
 }
 
-/// Returns `Some(true)` for approve, `Some(false)` for reject.
-fn approval_card(ui: &mut egui::Ui, a: &Value, deciding: bool, compact: bool) -> Option<bool> {
-    let mut decision = None;
+struct ApprovalCardOut {
+    decision: Option<bool>,
+    toast: Option<String>,
+}
+
+/// Returns decision (`Some(true)` for approve, `Some(false)` for reject) and copy toast.
+fn approval_card(ui: &mut egui::Ui, a: &Value, deciding: bool, compact: bool) -> ApprovalCardOut {
+    let mut out = ApprovalCardOut {
+        decision: None,
+        toast: None,
+    };
     egui::Frame::new()
         .fill(Color32::from_rgb(40, 34, 18))
         .stroke(Stroke::new(1.0, AMBER))
@@ -2680,11 +3282,11 @@ fn approval_card(ui: &mut egui::Ui, a: &Value, deciding: bool, compact: bool) ->
         .inner_margin(10.0)
         .show(ui, |ui| {
             ui.set_max_width(ui.available_width().min(820.0));
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("✋ 承認待ち").strong().color(AMBER));
                 ui.label(RichText::new(approval_title(a)).strong().color(TEXT));
                 ui.label(
-                    RichText::new(a["created"].as_str().unwrap_or(""))
+                    RichText::new(fmt_ts_compact(a["created"].as_str().unwrap_or("")))
                         .small()
                         .color(MUTED),
                 );
@@ -2711,7 +3313,7 @@ fn approval_card(ui: &mut egui::Ui, a: &Value, deciding: bool, compact: bool) ->
                             .color(MUTED),
                     );
                 });
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if deciding {
                     ui.spinner();
                     ui.label(RichText::new("実行中…").small().color(MUTED));
@@ -2725,7 +3327,7 @@ fn approval_card(ui: &mut egui::Ui, a: &Value, deciding: bool, compact: bool) ->
                         )
                         .clicked()
                     {
-                        decision = Some(true);
+                        out.decision = Some(true);
                     }
                     if ui
                         .add(
@@ -2733,8 +3335,17 @@ fn approval_card(ui: &mut egui::Ui, a: &Value, deciding: bool, compact: bool) ->
                         )
                         .clicked()
                     {
-                        decision = Some(false);
+                        out.decision = Some(false);
                     }
+                }
+                if ui
+                    .small_button("📋 引数コピー")
+                    .on_hover_text("承認内容の引数 JSON をコピー")
+                    .clicked()
+                {
+                    let pretty = serde_json::to_string_pretty(args).unwrap_or_default();
+                    ui.ctx().copy_text(pretty);
+                    out.toast = Some("引数をコピーしました".to_owned());
                 }
                 ui.label(
                     RichText::new(format!("ID {}", a["id"].as_str().unwrap_or("")))
@@ -2743,25 +3354,27 @@ fn approval_card(ui: &mut egui::Ui, a: &Value, deciding: bool, compact: bool) ->
                 );
             });
         });
-    decision
+    out
 }
 
 // ── task board ──────────────────────────────────────────────────────────────
 
-const LANES: [(&str, &str, Color32); 5] = [
+const LANES: [(&str, &str, Color32); 6] = [
     ("in_progress", "進行中", BLUE),
     ("awaiting_operator", "あなたの判断待ち", AMBER),
     ("waiting", "待機", VIOLET),
     ("on_hold", "保留", MUTED),
-    ("done", "完了", GREEN),
+    ("failed", "失敗", RED),
+    ("done", "完了・取消", GREEN),
 ];
 
-const CARD_W: f32 = 236.0;
-const CARD_H: f32 = 92.0;
+const CARD_W: f32 = 286.0;
+const CARD_H: f32 = 104.0;
 
 fn lane_of(task: &Value) -> &str {
     match task["status"].as_str().unwrap_or("") {
-        "failed" | "cancelled" => "done",
+        "failed" => "failed",
+        "cancelled" => "done",
         other => other,
     }
 }
@@ -2777,8 +3390,87 @@ fn kind_tile(kind: &str) -> (&'static str, Color32) {
         "commitment" => ("目", AMBER),
         "promise" => ("約", AMBER),
         "delegated" => ("委", GREEN),
+        "agent" => ("自", Color32::from_rgb(90, 200, 165)),
         _ => ("澪", Color32::from_rgb(230, 120, 170)),
     }
+}
+
+fn kind_label_ja(kind: &str) -> &'static str {
+    match kind {
+        "dialogue" => "対話",
+        "tool" => "ツール",
+        "approval" => "承認",
+        "commit" => "反映",
+        "job" => "定期",
+        "manual" => "手動",
+        "commitment" => "目標",
+        "promise" => "約束",
+        "delegated" => "委譲",
+        "agent" => "自律",
+        _ => "その他",
+    }
+}
+
+fn is_work_task(t: &Value) -> bool {
+    !matches!(t["kind"].as_str(), Some("dialogue" | "tool"))
+}
+
+fn task_display_title(t: &Value) -> String {
+    let raw = t["title"].as_str().unwrap_or("").trim_start();
+    let stripped = ["対話: ", "目標: ", "定期ジョブ: ", "承認: ", "約束: "]
+        .iter()
+        .find_map(|prefix| raw.strip_prefix(prefix))
+        .unwrap_or(raw);
+    stripped.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn task_latest_note(t: &Value) -> Option<&str> {
+    t["notes"]
+        .as_array()?
+        .iter()
+        .rev()
+        .filter_map(|n| n["text"].as_str().map(str::trim))
+        .find(|s| !s.is_empty())
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+fn fmt_relative_age_at(ts_unix: u64, now_unix: u64, fallback_iso: Option<&str>) -> String {
+    if ts_unix > 0 && now_unix >= ts_unix {
+        let diff = now_unix - ts_unix;
+        if diff < 60 {
+            "たった今".to_owned()
+        } else if diff < 3600 {
+            format!("{}分前", diff / 60)
+        } else if diff < 86_400 {
+            format!("{}時間前", diff / 3600)
+        } else if diff < 7 * 86_400 {
+            format!("{}日前", diff / 86_400)
+        } else {
+            fallback_iso
+                .map(fmt_ts_compact)
+                .unwrap_or_else(|| format!("{}日前", diff / 86_400))
+        }
+    } else {
+        fallback_iso.map(fmt_ts_compact).unwrap_or_default()
+    }
+}
+
+fn task_sort_key(t: &Value) -> u64 {
+    t["updated_at"]
+        .as_u64()
+        .or_else(|| t["created_at"].as_u64())
+        .unwrap_or(0)
+}
+
+fn task_age_label(t: &Value, now_unix: u64) -> String {
+    let ts = task_sort_key(t);
+    let iso = t["updated"].as_str().or_else(|| t["created"].as_str());
+    fmt_relative_age_at(ts, now_unix, iso)
 }
 
 fn node_color(node: &str) -> Color32 {
@@ -2805,9 +3497,29 @@ impl RemoteApp {
             .collect()
     }
 
-    fn task_matches(&self, t: &Value) -> bool {
+    fn is_linked_to_selection(&self, t: &Value) -> bool {
+        let id = t["id"].as_str().unwrap_or("");
+        self.selected_task.as_deref().is_some_and(|sel| {
+            t["depends_on"]
+                .as_array()
+                .is_some_and(|d| d.iter().any(|x| x.as_str() == Some(sel)))
+                || self.task(sel).is_some_and(|s| {
+                    s["depends_on"]
+                        .as_array()
+                        .is_some_and(|d| d.iter().any(|x| x.as_str() == Some(id)))
+                })
+        })
+    }
+
+    fn task_in_scope(&self, t: &Value) -> bool {
         if self.task_kind_filter != "all"
             && t["kind"].as_str() != Some(self.task_kind_filter.as_str())
+        {
+            return false;
+        }
+        if self.task_hide_logs
+            && !matches!(self.task_kind_filter.as_str(), "dialogue" | "tool")
+            && !is_work_task(t)
         {
             return false;
         }
@@ -2815,95 +3527,219 @@ impl RemoteApp {
         if needle.is_empty() {
             return true;
         }
+        let kind = t["kind"].as_str().unwrap_or("");
         let hay = format!(
-            "{} {} {} {} {}",
+            "{} {} {} {} {} {} {}",
             t["id"].as_str().unwrap_or(""),
             t["title"].as_str().unwrap_or(""),
-            t["kind"].as_str().unwrap_or(""),
+            kind,
+            kind_label_ja(kind),
             t["node"].as_str().unwrap_or(""),
             t["owner"].as_str().unwrap_or(""),
+            task_latest_note(t).unwrap_or(""),
         )
         .to_lowercase();
         hay.contains(&needle)
     }
 
+    fn task_matches(&self, t: &Value) -> bool {
+        if !self.task_in_scope(t) {
+            return false;
+        }
+        match self.task_status_filter {
+            TaskStatusFilter::All => true,
+            TaskStatusFilter::Active => t["status"] == "in_progress",
+            TaskStatusFilter::Attention => t["status"] == "awaiting_operator",
+            TaskStatusFilter::Waiting => {
+                matches!(t["status"].as_str(), Some("waiting" | "on_hold"))
+            }
+            TaskStatusFilter::Failed => t["status"] == "failed",
+            TaskStatusFilter::Done => matches!(t["status"].as_str(), Some("done" | "cancelled")),
+        }
+    }
+
     fn tasks_view(&mut self, ui: &mut egui::Ui) {
+        let mut scope_total = 0usize;
+        let mut cnt_active = 0usize;
+        let mut cnt_attention = 0usize;
+        let mut cnt_waiting = 0usize;
+        let mut cnt_failed = 0usize;
+        let mut cnt_done = 0usize;
+        for t in &self.tasks {
+            if !self.task_in_scope(t) {
+                continue;
+            }
+            scope_total += 1;
+            match t["status"].as_str().unwrap_or("") {
+                "in_progress" => cnt_active += 1,
+                "awaiting_operator" => cnt_attention += 1,
+                "waiting" | "on_hold" => cnt_waiting += 1,
+                "failed" => cnt_failed += 1,
+                "done" | "cancelled" => cnt_done += 1,
+                _ => {}
+            }
+        }
+        let hidden_logs = self.tasks.iter().filter(|t| !is_work_task(t)).count();
+        let visible_total = self
+            .tasks
+            .iter()
+            .filter(|t| {
+                let show_terminal = self.show_done
+                    || matches!(
+                        self.task_status_filter,
+                        TaskStatusFilter::Done | TaskStatusFilter::Failed
+                    );
+                (show_terminal || !matches!(t["status"].as_str(), Some("done" | "cancelled")))
+                    && self.task_matches(t)
+            })
+            .count();
+
         ui.horizontal(|ui| {
             ui.heading(RichText::new("タスク").color(TEXT));
-            let running = self
-                .tasks
-                .iter()
-                .filter(|t| t["status"] == "in_progress")
-                .count();
             ui.label(
                 RichText::new(format!(
-                    "並列で進行中 {running} 件 · 全 {} 件",
+                    "進行中 {cnt_active} · 表示 {visible_total} / 全 {} 件",
                     self.tasks.len()
                 ))
                 .small()
                 .color(MUTED),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.checkbox(
-                    &mut self.show_done,
-                    RichText::new("完了を表示").small().color(MUTED),
+                let show_done_enabled = self.task_status_filter != TaskStatusFilter::Done;
+                ui.add_enabled(
+                    show_done_enabled,
+                    egui::Checkbox::new(
+                        &mut self.show_done,
+                        RichText::new("完了を表示").small().color(MUTED),
+                    ),
                 );
-                ui.add_space(10.0);
-                ui.selectable_value(&mut self.map_mode, true, "マップ (⌘M)");
-                ui.selectable_value(&mut self.map_mode, false, "ボード (⌘M)");
+                ui.add_space(8.0);
+                ui.selectable_value(&mut self.task_view, TaskViewMode::Map, "マップ (⌘M)");
+                ui.selectable_value(&mut self.task_view, TaskViewMode::Board, "ボード");
+                ui.selectable_value(&mut self.task_view, TaskViewMode::List, "リスト");
             });
         });
-        ui.label(
-            RichText::new("対話・ツール呼び出し（llm_master 転送含む）・承認・反映・定期ジョブが自動で載ります。ボードはカードを選ぶと前後がつながり、マップは全体の前提条件 → 後続と承認待ち（琥珀色）を表示します。")
-                .small()
-                .color(MUTED),
-        );
-        ui.separator();
-        // Filter + New task composer.
+        ui.add_space(4.0);
+
+        // Status & Scope summary strip.
+        egui::Frame::new()
+            .fill(PANEL)
+            .stroke(Stroke::new(1.0, BORDER))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    let status_pills = [
+                        (TaskStatusFilter::All, format!("すべて {scope_total}"), TEXT),
+                        (
+                            TaskStatusFilter::Active,
+                            format!("● 進行中 {cnt_active}"),
+                            BLUE,
+                        ),
+                        (
+                            TaskStatusFilter::Attention,
+                            format!("● 判断待ち {cnt_attention}"),
+                            AMBER,
+                        ),
+                        (
+                            TaskStatusFilter::Waiting,
+                            format!("● 待機・保留 {cnt_waiting}"),
+                            VIOLET,
+                        ),
+                        (
+                            TaskStatusFilter::Failed,
+                            format!("● 失敗 {cnt_failed}"),
+                            RED,
+                        ),
+                        (TaskStatusFilter::Done, format!("● 完了 {cnt_done}"), GREEN),
+                    ];
+                    for (mode, label, color) in status_pills {
+                        let selected = self.task_status_filter == mode;
+                        let text = RichText::new(label).small().color(if selected {
+                            Color32::WHITE
+                        } else {
+                            color
+                        });
+                        if ui
+                            .add(
+                                egui::Button::new(text)
+                                    .fill(if selected { BLUE } else { PANEL_RAISED })
+                                    .stroke(Stroke::new(1.0, if selected { BLUE } else { BORDER }))
+                                    .corner_radius(egui::CornerRadius::same(12)),
+                            )
+                            .clicked()
+                        {
+                            self.task_status_filter = if selected && mode != TaskStatusFilter::All {
+                                TaskStatusFilter::All
+                            } else {
+                                mode
+                            };
+                        }
+                    }
+                    ui.separator();
+                    ui.selectable_value(&mut self.task_hide_logs, true, "作業のみ");
+                    let logs_label = if hidden_logs > 0 {
+                        format!("対話・ツール含む (+{hidden_logs})")
+                    } else {
+                        "対話・ツール含む".to_owned()
+                    };
+                    ui.selectable_value(&mut self.task_hide_logs, false, logs_label);
+                });
+            });
+        ui.add_space(6.0);
+
+        let focus_search = std::mem::take(&mut self.focus_search);
+        // Search + kind + new task composer.
         ui.horizontal_wrapped(|ui| {
-            ui.add(
+            let search_resp = ui.add(
                 egui::TextEdit::singleline(&mut self.task_filter)
-                    .hint_text("🔍 タスクを検索…")
-                    .desired_width(190.0),
+                    .hint_text("🔍 タスク・経過を検索… (⌘K / /)")
+                    .desired_width(210.0),
             );
+            if focus_search {
+                search_resp.request_focus();
+            }
             if !self.task_filter.is_empty() && ui.small_button("✕").clicked() {
                 self.task_filter.clear();
             }
             let kind_label = match self.task_kind_filter.as_str() {
                 "all" => "すべての種類",
-                "dialogue" => "対話 (dialogue)",
-                "tool" => "ツール (tool)",
-                "approval" => "承認 (approval)",
-                "commit" => "反映 (commit)",
-                "job" => "定期 (job)",
-                "manual" => "手動 (manual)",
-                "promise" => "約束 (promise)",
-                "delegated" => "委譲 (delegated)",
-                other => other,
+                other => kind_label_ja(other),
             };
             egui::ComboBox::from_id_salt("task-kind-filter")
-                .width(130.0)
+                .width(140.0)
                 .selected_text(kind_label)
                 .show_ui(ui, |ui| {
                     for (k, lbl) in [
                         ("all", "すべての種類"),
-                        ("dialogue", "対話 (dialogue)"),
-                        ("tool", "ツール (tool)"),
-                        ("approval", "承認 (approval)"),
-                        ("commit", "反映 (commit)"),
-                        ("job", "定期 (job)"),
-                        ("manual", "手動 (manual)"),
+                        ("commitment", "目標 (commitment)"),
+                        ("agent", "自律 (agent)"),
                         ("promise", "約束 (promise)"),
                         ("delegated", "委譲 (delegated)"),
+                        ("approval", "承認 (approval)"),
+                        ("job", "定期 (job)"),
+                        ("manual", "手動 (manual)"),
+                        ("commit", "反映 (commit)"),
+                        ("dialogue", "対話 (dialogue)"),
+                        ("tool", "ツール (tool)"),
                     ] {
                         ui.selectable_value(&mut self.task_kind_filter, k.to_owned(), lbl);
                     }
                 });
+            if (!self.task_filter.is_empty()
+                || self.task_kind_filter != "all"
+                || self.task_status_filter != TaskStatusFilter::All)
+                && ui.small_button("フィルタ解除").clicked()
+            {
+                self.task_filter.clear();
+                self.task_kind_filter = "all".to_owned();
+                self.task_status_filter = TaskStatusFilter::All;
+            }
             ui.separator();
             let title_resp = ui.add(
                 egui::TextEdit::singleline(&mut self.new_task_title)
-                    .hint_text("新しいタスク（澪にも見えます・Enterで追加）")
-                    .desired_width(270.0),
+                    .hint_text("新しいタスクを追加… (Enter)")
+                    .desired_width(230.0),
             );
             if self.selected_task.is_some() {
                 ui.checkbox(
@@ -2913,10 +3749,7 @@ impl RemoteApp {
             }
             let enter = title_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             if (ui
-                .add(
-                    egui::Button::new(RichText::new("＋ タスク追加").color(Color32::WHITE))
-                        .fill(BLUE),
-                )
+                .add(egui::Button::new(RichText::new("＋ 追加").color(Color32::WHITE)).fill(BLUE))
                 .clicked()
                 || enter)
                 && !self.new_task_title.trim().is_empty()
@@ -2930,176 +3763,36 @@ impl RemoteApp {
                     "action": "create", "title": self.new_task_title.trim(),
                     "status": "waiting", "depends_on": depends})));
                 self.new_task_title.clear();
+                self.toast = Some(Toast::info("タスクを追加しました"));
             }
         });
         ui.add_space(6.0);
 
-        let detail_w = if self.selected_task.is_some() {
-            340.0
-        } else {
-            0.0
-        };
-        let board_w = (ui.available_width() - detail_w - 12.0).max(300.0);
-        let mut clicked: Option<String> = None;
-        let top_down = egui::Layout::top_down(egui::Align::Min);
-        ui.horizontal_top(|ui| {
-            // Explicit top-down: the row layout must not leak into the board.
-            ui.allocate_ui_with_layout(
-                egui::vec2(board_w, ui.available_height()),
-                top_down,
-                |ui| {
-                    if self.map_mode {
-                        self.task_map(ui, &mut clicked);
-                        return;
-                    }
+        if let Some(id) = self.selected_task.clone() {
+            egui::SidePanel::right("task-detail-side")
+                .resizable(true)
+                .default_width(360.0)
+                .min_width(280.0)
+                .max_width(560.0)
+                .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin {
+                    left: 10,
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                }))
+                .show_inside(ui, |ui| {
                     egui::ScrollArea::vertical()
-                        .id_salt("task-board")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            let mut rects: std::collections::HashMap<String, egui::Rect> =
-                                std::collections::HashMap::new();
-                            let mut numbers: std::collections::HashMap<String, usize> =
-                                std::collections::HashMap::new();
-                            for (key, label, color) in LANES {
-                                if key == "done" && !self.show_done {
-                                    continue;
-                                }
-                                let mut lane: Vec<&Value> = self
-                                    .tasks
-                                    .iter()
-                                    .filter(|t| lane_of(t) == key && self.task_matches(t))
-                                    .collect();
-                                lane.sort_by(|a, b| {
-                                    a["created_at"].as_u64().cmp(&b["created_at"].as_u64())
-                                });
-                                if key == "done" {
-                                    lane.reverse();
-                                    lane.truncate(40);
-                                }
-                                egui::Frame::new()
-                                    .fill(PANEL)
-                                    .stroke(Stroke::new(1.0, BORDER))
-                                    .corner_radius(egui::CornerRadius::same(12))
-                                    .inner_margin(10.0)
-                                    .show(ui, |ui| {
-                                        ui.set_width(ui.available_width());
-                                        ui.horizontal(|ui| {
-                                            let (r, _) = ui.allocate_exact_size(
-                                                egui::vec2(5.0, 20.0),
-                                                egui::Sense::hover(),
-                                            );
-                                            ui.painter().rect_filled(r, 2.0, color);
-                                            ui.label(
-                                                RichText::new(label)
-                                                    .strong()
-                                                    .size(16.0)
-                                                    .color(TEXT),
-                                            );
-                                            ui.with_layout(
-                                                egui::Layout::right_to_left(egui::Align::Center),
-                                                |ui| {
-                                                    chip(ui, &format!("{}件", lane.len()), color);
-                                                },
-                                            );
-                                        });
-                                        ui.add_space(6.0);
-                                        if lane.is_empty() {
-                                            ui.label(RichText::new("なし").small().color(MUTED));
-                                        }
-                                        ui.horizontal_wrapped(|ui| {
-                                            ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
-                                            for (i, t) in lane.iter().enumerate() {
-                                                let id = t["id"].as_str().unwrap_or("").to_owned();
-                                                numbers.insert(id.clone(), i + 1);
-                                                let (rect, response) = self.task_card(ui, t, i + 1);
-                                                if response.clicked() {
-                                                    clicked = Some(id.clone());
-                                                }
-                                                rects.insert(id, rect);
-                                            }
-                                        });
-                                    });
-                                ui.add_space(10.0);
-                            }
-                            // Dependency links: faint for visible pairs, bright around the selection.
-                            let painter = ui.painter();
-                            let selected = self.selected_task.clone().unwrap_or_default();
-                            for hot_pass in [false, true] {
-                                for t in &self.tasks {
-                                    let Some(to) = t["id"].as_str().and_then(|id| rects.get(id))
-                                    else {
-                                        continue;
-                                    };
-                                    for dep in t["depends_on"]
-                                        .as_array()
-                                        .into_iter()
-                                        .flatten()
-                                        .filter_map(Value::as_str)
-                                    {
-                                        let Some(from) = rects.get(dep) else { continue };
-                                        let hot = !selected.is_empty()
-                                            && (dep == selected
-                                                || t["id"].as_str() == Some(selected.as_str()));
-                                        if hot != hot_pass {
-                                            continue;
-                                        }
-                                        let a = egui::pos2(from.right(), from.center().y);
-                                        let b = egui::pos2(to.left(), to.center().y);
-                                        let (a, b) = if b.x > a.x + 20.0 {
-                                            (a, b)
-                                        } else {
-                                            (
-                                                egui::pos2(from.center().x, from.bottom()),
-                                                egui::pos2(to.center().x, to.top()),
-                                            )
-                                        };
-                                        let dx = ((b.x - a.x).abs() * 0.5).max(40.0);
-                                        let (c1, c2) = if (a.y - from.bottom()).abs() < 1.0 {
-                                            (egui::pos2(a.x, a.y + dx), egui::pos2(b.x, b.y - dx))
-                                        } else {
-                                            (egui::pos2(a.x + dx, a.y), egui::pos2(b.x - dx, b.y))
-                                        };
-                                        let stroke = if hot {
-                                            Stroke::new(2.4, AMBER)
-                                        } else {
-                                            Stroke::new(
-                                                1.0,
-                                                Color32::from_rgba_unmultiplied(140, 160, 190, 55),
-                                            )
-                                        };
-                                        painter.add(
-                                            egui::epaint::CubicBezierShape::from_points_stroke(
-                                                [a, c1, c2, b],
-                                                false,
-                                                Color32::TRANSPARENT,
-                                                stroke,
-                                            ),
-                                        );
-                                        draw_arrowhead(
-                                            painter,
-                                            b,
-                                            c2,
-                                            stroke.color,
-                                            if hot { 6.5 } else { 4.5 },
-                                        );
-                                    }
-                                }
-                            }
-                        });
-                },
-            );
-            if let Some(id) = self.selected_task.clone() {
-                ui.allocate_ui_with_layout(
-                    egui::vec2(detail_w, ui.available_height()),
-                    top_down,
-                    |ui| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("task-detail")
-                            .show(ui, |ui| self.task_detail(ui, &id));
-                    },
-                );
-            }
-        });
+                        .id_salt("task-detail")
+                        .show(ui, |ui| self.task_detail(ui, &id));
+                });
+        }
+
+        let mut clicked: Option<String> = None;
+        match self.task_view {
+            TaskViewMode::List => self.task_list_view(ui, &mut clicked),
+            TaskViewMode::Board => self.task_board_view(ui, &mut clicked),
+            TaskViewMode::Map => self.task_map(ui, &mut clicked),
+        }
         if let Some(id) = clicked {
             self.selected_task = if self.selected_task.as_deref() == Some(id.as_str()) {
                 None
@@ -3110,25 +3803,436 @@ impl RemoteApp {
         }
     }
 
+    fn task_list_view(&mut self, ui: &mut egui::Ui, clicked: &mut Option<String>) {
+        let now = now_unix_secs();
+        let hidden_logs = self.tasks.iter().filter(|t| !is_work_task(t)).count();
+        let show_done_lane = self.show_done || self.task_status_filter == TaskStatusFilter::Done;
+        let show_failed_lane = self.show_done
+            || matches!(
+                self.task_status_filter,
+                TaskStatusFilter::All | TaskStatusFilter::Failed
+            );
+
+        egui::ScrollArea::vertical()
+            .id_salt("task-list")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let mut total_rows = 0usize;
+                let mut empty_lanes: Vec<&str> = Vec::new();
+                for (key, label, color) in LANES {
+                    if key == "done" && !show_done_lane {
+                        continue;
+                    }
+                    if key == "failed" && !show_failed_lane {
+                        continue;
+                    }
+                    let mut lane: Vec<&Value> = self
+                        .tasks
+                        .iter()
+                        .filter(|t| lane_of(t) == key && self.task_matches(t))
+                        .collect();
+                    if lane.is_empty() {
+                        empty_lanes.push(label);
+                        continue;
+                    }
+                    lane.sort_by_key(|t| std::cmp::Reverse(task_sort_key(t)));
+                    total_rows += lane.len();
+
+                    let collapsed = self.collapsed_lanes.contains(key);
+                    ui.horizontal(|ui| {
+                        let (bar, _) =
+                            ui.allocate_exact_size(egui::vec2(4.0, 18.0), egui::Sense::hover());
+                        ui.painter().rect_filled(bar, 2.0, color);
+                        let arrow = if collapsed { "▸" } else { "▾" };
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new(format!("{arrow}  {label}"))
+                                        .strong()
+                                        .size(14.5)
+                                        .color(TEXT),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(Stroke::NONE),
+                            )
+                            .clicked()
+                        {
+                            if collapsed {
+                                self.collapsed_lanes.remove(key);
+                            } else {
+                                self.collapsed_lanes.insert(key.to_owned());
+                            }
+                        }
+                        chip(ui, &format!("{}件", lane.len()), color);
+                    });
+
+                    if !collapsed {
+                        ui.add_space(4.0);
+                        let limit = if matches!(key, "done" | "failed")
+                            && self.task_status_filter == TaskStatusFilter::All
+                            && !self.expanded_done_lane
+                        {
+                            10
+                        } else {
+                            lane.len()
+                        };
+                        for t in lane.iter().take(limit) {
+                            if self.task_row(ui, t, now) {
+                                *clicked = Some(t["id"].as_str().unwrap_or("").to_owned());
+                            }
+                            ui.add_space(5.0);
+                        }
+                        if lane.len() > 10
+                            && matches!(key, "done" | "failed")
+                            && self.task_status_filter == TaskStatusFilter::All
+                        {
+                            let hidden = lane.len() - limit;
+                            let btn_label = if self.expanded_done_lane {
+                                "件数を折りたたむ".to_owned()
+                            } else {
+                                format!("さらに {hidden} 件を表示")
+                            };
+                            if ui.small_button(btn_label).clicked() {
+                                self.expanded_done_lane = !self.expanded_done_lane;
+                            }
+                            ui.add_space(4.0);
+                        }
+                    }
+                    ui.add_space(8.0);
+                }
+
+                if total_rows == 0 {
+                    ui.add_space(28.0);
+                    ui.vertical_centered(|ui| {
+                        if self.task_hide_logs && hidden_logs > 0 {
+                            ui.label(
+                                RichText::new(format!(
+                                    "該当する作業タスクはありません（対話・ツールログ {hidden_logs} 件は非表示）"
+                                ))
+                                .color(MUTED),
+                            );
+                            ui.add_space(8.0);
+                            if ui.button("対話・ツールログも表示").clicked() {
+                                self.task_hide_logs = false;
+                            }
+                        } else {
+                            ui.label(
+                                RichText::new("条件に一致するタスクはありません。").color(MUTED),
+                            );
+                            if !self.task_filter.is_empty()
+                                || self.task_kind_filter != "all"
+                                || self.task_status_filter != TaskStatusFilter::All
+                            {
+                                ui.add_space(8.0);
+                                if ui.button("フィルタ解除").clicked() {
+                                    self.task_filter.clear();
+                                    self.task_kind_filter = "all".to_owned();
+                                    self.task_status_filter = TaskStatusFilter::All;
+                                }
+                            }
+                        }
+                    });
+                } else if !empty_lanes.is_empty() && self.task_status_filter == TaskStatusFilter::All {
+                    ui.label(
+                        RichText::new(format!("該当なし: {}", empty_lanes.join(" · ")))
+                            .small()
+                            .color(MUTED),
+                    );
+                }
+            });
+    }
+
+    fn task_row(&self, ui: &mut egui::Ui, t: &Value, now: u64) -> bool {
+        let id = t["id"].as_str().unwrap_or("");
+        let status = t["status"].as_str().unwrap_or("");
+        let kind = t["kind"].as_str().unwrap_or("");
+        let selected = self.selected_task.as_deref() == Some(id);
+        let linked = self.is_linked_to_selection(t);
+        let failed = status == "failed";
+        let st_color = status_color(status);
+        let (_, kind_col) = kind_tile(kind);
+        let kind_ja = kind_label_ja(kind);
+        let title = task_display_title(t);
+        let latest_note = task_latest_note(t);
+
+        let owner = match t["owner"].as_str().unwrap_or("") {
+            "operator" => "あなた",
+            "mio" => "澪",
+            _ => "system",
+        };
+        let age = task_age_label(t, now);
+        let deps_n = t["depends_on"].as_array().map_or(0, Vec::len);
+        let notes_n = t["notes"].as_array().map_or(0, Vec::len);
+
+        let border = if selected {
+            Stroke::new(2.0, BLUE)
+        } else if linked {
+            Stroke::new(1.5, AMBER)
+        } else if failed {
+            Stroke::new(1.0, RED.gamma_multiply(0.75))
+        } else {
+            Stroke::new(1.0, BORDER)
+        };
+
+        let frame_resp = egui::Frame::new()
+            .fill(if selected {
+                Color32::from_rgb(20, 44, 74)
+            } else {
+                PANEL_RAISED
+            })
+            .stroke(border)
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::symmetric(12, 8))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    let (bar, _) =
+                        ui.allocate_exact_size(egui::vec2(4.0, 22.0), egui::Sense::hover());
+                    ui.painter().rect_filled(bar, 2.0, st_color);
+                    chip(ui, kind_ja, kind_col);
+                    if status == "on_hold" {
+                        chip(ui, "保留", MUTED);
+                    } else if status == "cancelled" {
+                        chip(ui, "取消", MUTED);
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let mut meta_parts = Vec::new();
+                        if deps_n > 0 {
+                            meta_parts.push(format!("⛓{deps_n}"));
+                        }
+                        if notes_n > 0 {
+                            meta_parts.push(format!("💬{notes_n}"));
+                        }
+                        if let Some(d) = t["duration_secs"].as_u64() {
+                            meta_parts.push(format!("{d}s"));
+                        }
+                        meta_parts.push(owner.to_owned());
+                        if !age.is_empty() {
+                            meta_parts.push(age.clone());
+                        }
+                        ui.label(RichText::new(meta_parts.join(" · ")).small().color(MUTED));
+                    });
+                });
+                ui.add_space(3.0);
+                ui.add(
+                    egui::Label::new(RichText::new(&title).strong().size(13.5).color(if failed {
+                        Color32::from_rgb(255, 198, 204)
+                    } else {
+                        TEXT
+                    }))
+                    .wrap(),
+                );
+                if let Some(note) = latest_note {
+                    ui.add_space(2.0);
+                    ui.label(
+                        RichText::new(format!("↳ {}", clip_line(note, 110)))
+                            .small()
+                            .color(if failed { RED } else { MUTED }),
+                    );
+                }
+            })
+            .response;
+
+        let resp = ui.interact(
+            frame_resp.rect,
+            ui.make_persistent_id(("task-row", id)),
+            egui::Sense::click(),
+        );
+        if resp.hovered() && !selected {
+            ui.painter().rect_stroke(
+                frame_resp.rect,
+                8.0,
+                Stroke::new(1.2, Color32::from_rgb(90, 140, 200)),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let full_hover = t["updated"]
+            .as_str()
+            .or_else(|| t["created"].as_str())
+            .map(|ts| format!("{title}\nID: {id} · 更新: {}", fmt_ts(ts)))
+            .unwrap_or_else(|| format!("{title}\nID: {id}"));
+        resp.on_hover_text(full_hover).clicked()
+    }
+
+    fn task_board_view(&mut self, ui: &mut egui::Ui, clicked: &mut Option<String>) {
+        let now = now_unix_secs();
+        let show_done_lane = self.show_done || self.task_status_filter == TaskStatusFilter::Done;
+        let show_failed_lane = self.show_done
+            || matches!(
+                self.task_status_filter,
+                TaskStatusFilter::All | TaskStatusFilter::Failed
+            );
+        egui::ScrollArea::vertical()
+            .id_salt("task-board")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let mut rects: std::collections::HashMap<String, egui::Rect> =
+                    std::collections::HashMap::new();
+                for (key, label, color) in LANES {
+                    if key == "done" && !show_done_lane {
+                        continue;
+                    }
+                    if key == "failed" && !show_failed_lane {
+                        continue;
+                    }
+                    let mut lane: Vec<&Value> = self
+                        .tasks
+                        .iter()
+                        .filter(|t| lane_of(t) == key && self.task_matches(t))
+                        .collect();
+                    lane.sort_by_key(|t| std::cmp::Reverse(task_sort_key(t)));
+                    if matches!(key, "done" | "failed")
+                        && self.task_status_filter == TaskStatusFilter::All
+                        && !self.expanded_done_lane
+                    {
+                        lane.truncate(24);
+                    }
+                    let is_empty = lane.is_empty();
+                    let collapsed = self.collapsed_lanes.contains(key);
+                    let mut toggle_collapse = false;
+                    egui::Frame::new()
+                        .fill(PANEL)
+                        .stroke(Stroke::new(1.0, BORDER))
+                        .corner_radius(egui::CornerRadius::same(12))
+                        .inner_margin(if is_empty || collapsed {
+                            egui::Margin::symmetric(10, 6)
+                        } else {
+                            egui::Margin::same(10)
+                        })
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                let (r, _) = ui.allocate_exact_size(
+                                    egui::vec2(5.0, 20.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().rect_filled(r, 2.0, color);
+                                let arrow = if collapsed { "▸" } else { "▾" };
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new(if is_empty {
+                                                label.to_owned()
+                                            } else {
+                                                format!("{arrow} {label}")
+                                            })
+                                            .strong()
+                                            .size(if is_empty { 14.0 } else { 15.5 })
+                                            .color(if is_empty { MUTED } else { TEXT }),
+                                        )
+                                        .fill(Color32::TRANSPARENT)
+                                        .stroke(Stroke::NONE),
+                                    )
+                                    .clicked()
+                                    && !is_empty
+                                {
+                                    toggle_collapse = true;
+                                }
+                                if is_empty {
+                                    ui.label(RichText::new("— なし").small().color(MUTED));
+                                }
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        chip(ui, &format!("{}件", lane.len()), color);
+                                    },
+                                );
+                            });
+                            if !is_empty && !collapsed {
+                                ui.add_space(6.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
+                                    for (i, t) in lane.iter().enumerate() {
+                                        let id = t["id"].as_str().unwrap_or("").to_owned();
+                                        let (rect, response) = self.task_card(ui, t, i + 1, now);
+                                        if response.clicked() {
+                                            *clicked = Some(id.clone());
+                                        }
+                                        rects.insert(id, rect);
+                                    }
+                                });
+                            }
+                        });
+                    if toggle_collapse {
+                        if collapsed {
+                            self.collapsed_lanes.remove(key);
+                        } else {
+                            self.collapsed_lanes.insert(key.to_owned());
+                        }
+                    }
+                    ui.add_space(10.0);
+                }
+                // Dependency links: faint for visible pairs, bright around the selection.
+                let painter = ui.painter();
+                let selected = self.selected_task.clone().unwrap_or_default();
+                for hot_pass in [false, true] {
+                    for t in &self.tasks {
+                        let Some(to) = t["id"].as_str().and_then(|id| rects.get(id)) else {
+                            continue;
+                        };
+                        for dep in t["depends_on"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_str)
+                        {
+                            let Some(from) = rects.get(dep) else { continue };
+                            let hot = !selected.is_empty()
+                                && (dep == selected || t["id"].as_str() == Some(selected.as_str()));
+                            if hot != hot_pass {
+                                continue;
+                            }
+                            let a = egui::pos2(from.right(), from.center().y);
+                            let b = egui::pos2(to.left(), to.center().y);
+                            let (a, b) = if b.x > a.x + 20.0 {
+                                (a, b)
+                            } else {
+                                (
+                                    egui::pos2(from.center().x, from.bottom()),
+                                    egui::pos2(to.center().x, to.top()),
+                                )
+                            };
+                            let dx = ((b.x - a.x).abs() * 0.5).max(40.0);
+                            let (c1, c2) = if (a.y - from.bottom()).abs() < 1.0 {
+                                (egui::pos2(a.x, a.y + dx), egui::pos2(b.x, b.y - dx))
+                            } else {
+                                (egui::pos2(a.x + dx, a.y), egui::pos2(b.x - dx, b.y))
+                            };
+                            let stroke = if hot {
+                                Stroke::new(2.4, AMBER)
+                            } else {
+                                Stroke::new(1.0, Color32::from_rgba_unmultiplied(140, 160, 190, 55))
+                            };
+                            painter.add(egui::epaint::CubicBezierShape::from_points_stroke(
+                                [a, c1, c2, b],
+                                false,
+                                Color32::TRANSPARENT,
+                                stroke,
+                            ));
+                            draw_arrowhead(
+                                painter,
+                                b,
+                                c2,
+                                stroke.color,
+                                if hot { 6.5 } else { 4.5 },
+                            );
+                        }
+                    }
+                }
+            });
+    }
+
     fn task_card(
         &self,
         ui: &mut egui::Ui,
         t: &Value,
         number: usize,
+        now: u64,
     ) -> (egui::Rect, egui::Response) {
         let id = t["id"].as_str().unwrap_or("");
         let status = t["status"].as_str().unwrap_or("");
         let selected = self.selected_task.as_deref() == Some(id);
-        let linked = self.selected_task.as_deref().is_some_and(|sel| {
-            t["depends_on"]
-                .as_array()
-                .is_some_and(|d| d.iter().any(|x| x.as_str() == Some(sel)))
-                || self.task(sel).is_some_and(|s| {
-                    s["depends_on"]
-                        .as_array()
-                        .is_some_and(|d| d.iter().any(|x| x.as_str() == Some(id)))
-                })
-        });
+        let linked = self.is_linked_to_selection(t);
         let failed = status == "failed";
         let (rect, response) =
             ui.allocate_exact_size(egui::vec2(CARD_W, CARD_H), egui::Sense::click());
@@ -3156,32 +4260,33 @@ impl RemoteApp {
             },
             status_color(status),
         );
-        let (glyph, tile_color) = kind_tile(t["kind"].as_str().unwrap_or(""));
+        let kind = t["kind"].as_str().unwrap_or("");
+        let (glyph, tile_color) = kind_tile(kind);
         let tile =
-            egui::Rect::from_min_size(rect.min + egui::vec2(12.0, 12.0), egui::vec2(36.0, 36.0));
+            egui::Rect::from_min_size(rect.min + egui::vec2(12.0, 12.0), egui::vec2(34.0, 34.0));
         painter.rect_filled(tile, 8.0, tile_color.gamma_multiply(0.25));
         painter.text(
             tile.center(),
             egui::Align2::CENTER_CENTER,
             glyph,
-            egui::FontId::proportional(17.0),
+            egui::FontId::proportional(16.0),
             tile_color,
         );
-        // Title (wrapped, up to three lines).
-        let title = t["title"].as_str().unwrap_or("");
+        // Title (clean prefix, wrapped up to three lines).
+        let title = task_display_title(t);
         let galley = ui.painter().layout(
-            title.to_owned(),
+            title.clone(),
             egui::FontId::proportional(13.0),
             if failed {
                 Color32::from_rgb(255, 190, 196)
             } else {
                 TEXT
             },
-            CARD_W - 90.0,
+            CARD_W - 88.0,
         );
         let clip = egui::Rect::from_min_size(
-            rect.min + egui::vec2(56.0, 10.0),
-            egui::vec2(CARD_W - 90.0, 52.0),
+            rect.min + egui::vec2(54.0, 10.0),
+            egui::vec2(CARD_W - 88.0, 62.0),
         );
         ui.painter_at(clip).galley(clip.min, galley, TEXT);
         // Number badge.
@@ -3192,14 +4297,14 @@ impl RemoteApp {
             egui::FontId::proportional(11.0),
             MUTED,
         );
-        // Footer: node, badges, owner, age.
+        // Footer: node, kind, badges, owner, relative age.
         let node = t["node"].as_str().unwrap_or("?");
         let footer_y = rect.bottom() - 15.0;
         painter.text(
             egui::pos2(rect.left() + 12.0, footer_y),
             egui::Align2::LEFT_CENTER,
-            format!("● {node}"),
-            egui::FontId::proportional(11.0),
+            format!("● {node} · {}", kind_label_ja(kind)),
+            egui::FontId::proportional(10.5),
             node_color(node),
         );
         let notes_n = t["notes"].as_array().map_or(0, Vec::len);
@@ -3213,7 +4318,7 @@ impl RemoteApp {
         }
         if !badges.is_empty() {
             painter.text(
-                egui::pos2(rect.left() + 82.0, footer_y),
+                egui::pos2(rect.left() + 106.0, footer_y),
                 egui::Align2::LEFT_CENTER,
                 badges.trim_end(),
                 egui::FontId::proportional(10.5),
@@ -3225,21 +4330,9 @@ impl RemoteApp {
             "mio" => "澪",
             _ => "system",
         };
-        let when = t["duration_secs"].as_u64().map_or_else(
-            || {
-                t["updated"]
-                    .as_str()
-                    .map(|u| {
-                        if u.is_ascii() && u.len() >= 16 {
-                            u[11..16].to_owned()
-                        } else {
-                            u.chars().take(16).collect()
-                        }
-                    })
-                    .unwrap_or_default()
-            },
-            |d| format!("{d}s"),
-        );
+        let when = t["duration_secs"]
+            .as_u64()
+            .map_or_else(|| task_age_label(t, now), |d| format!("{d}s"));
         painter.text(
             egui::pos2(rect.right() - 10.0, footer_y),
             egui::Align2::RIGHT_CENTER,
@@ -3264,46 +4357,19 @@ impl RemoteApp {
             ui.label(RichText::new("タスクが見つかりません").color(MUTED));
             return;
         };
+        let now = now_unix_secs();
         let mut goto: Option<String> = None;
         let mut close = false;
+        let mut copied_id = false;
         egui::Frame::new()
             .fill(PANEL)
             .stroke(Stroke::new(1.0, BORDER))
             .corner_radius(egui::CornerRadius::same(12))
             .inner_margin(12.0)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let (glyph, color) = kind_tile(t["kind"].as_str().unwrap_or(""));
-                    ui.label(RichText::new(glyph).size(22.0).color(color));
-                    ui.add(
-                        egui::Label::new(RichText::new(id).small().monospace().color(MUTED))
-                            .selectable(true),
-                    );
-                    if ui
-                        .small_button("📋")
-                        .on_hover_text("タスク ID をコピー")
-                        .clicked()
-                    {
-                        ui.ctx().copy_text(id.to_owned());
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                        if ui.small_button("閉じる (Esc)").clicked() {
-                            close = true;
-                        }
-                    });
-                });
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(t["title"].as_str().unwrap_or(""))
-                            .strong()
-                            .size(16.0)
-                            .color(TEXT),
-                    )
-                    .wrap()
-                    .selectable(true),
-                );
-                ui.add_space(6.0);
-                let status_label = match t["status"].as_str().unwrap_or("") {
+                let kind = t["kind"].as_str().unwrap_or("");
+                let status = t["status"].as_str().unwrap_or("");
+                let status_label = match status {
                     "in_progress" => "進行中",
                     "awaiting_operator" => "あなたの判断待ち",
                     "waiting" => "待機",
@@ -3313,23 +4379,67 @@ impl RemoteApp {
                     "cancelled" => "取消",
                     other => other,
                 };
+                ui.horizontal(|ui| {
+                    let (glyph, color) = kind_tile(kind);
+                    ui.label(RichText::new(glyph).size(20.0).color(color));
+                    chip(ui, status_label, status_color(status));
+                    chip(ui, kind_label_ja(kind), color);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        if ui.small_button("閉じる (Esc)").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(id).small().monospace().color(MUTED))
+                            .selectable(true),
+                    );
+                    if ui
+                        .small_button("📋 ID")
+                        .on_hover_text("タスク ID をコピー")
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(id.to_owned());
+                        copied_id = true;
+                    }
+                });
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(task_display_title(&t))
+                            .strong()
+                            .size(15.5)
+                            .color(TEXT),
+                    )
+                    .wrap()
+                    .selectable(true),
+                );
+                ui.add_space(6.0);
+                let created_s = t["created"]
+                    .as_str()
+                    .map(fmt_ts_compact)
+                    .unwrap_or_default();
+                let updated_s = t["updated"]
+                    .as_str()
+                    .map(|u| format!("{} ({})", fmt_ts_compact(u), task_age_label(&t, now)))
+                    .unwrap_or_default();
                 egui::Grid::new(("task-kv", id))
                     .num_columns(2)
                     .spacing([10.0, 4.0])
                     .show(ui, |ui| {
                         for (k, v) in [
-                            ("状態", status_label.to_owned()),
-                            ("種類", t["kind"].as_str().unwrap_or("").to_owned()),
                             ("ノード", t["node"].as_str().unwrap_or("").to_owned()),
-                            ("担当", t["owner"].as_str().unwrap_or("").to_owned()),
                             (
-                                "作成",
-                                t["created"].as_str().unwrap_or("").replace('T', " "),
+                                "担当",
+                                match t["owner"].as_str().unwrap_or("") {
+                                    "operator" => "あなた".to_owned(),
+                                    "mio" => "澪".to_owned(),
+                                    other => other.to_owned(),
+                                },
                             ),
-                            (
-                                "更新",
-                                t["updated"].as_str().unwrap_or("").replace('T', " "),
-                            ),
+                            ("作成", created_s),
+                            ("更新", updated_s),
                         ] {
                             ui.label(RichText::new(k).small().color(MUTED));
                             ui.label(RichText::new(v).small().color(TEXT));
@@ -3369,9 +4479,8 @@ impl RemoteApp {
                 for dep in deps {
                     let label = self
                         .task(&dep)
-                        .and_then(|d| d["title"].as_str())
-                        .unwrap_or(&dep)
-                        .to_owned();
+                        .map(task_display_title)
+                        .unwrap_or_else(|| dep.clone());
                     if ui
                         .link(RichText::new(format!("← {label}")).small())
                         .clicked()
@@ -3387,7 +4496,7 @@ impl RemoteApp {
                     .map(|s| {
                         (
                             s["id"].as_str().unwrap_or("").to_owned(),
-                            s["title"].as_str().unwrap_or("").to_owned(),
+                            task_display_title(s),
                         )
                     })
                     .collect();
@@ -3431,12 +4540,39 @@ impl RemoteApp {
                     });
                 }
                 ui.add_space(8.0);
-                ui.label(RichText::new("メモ・経過").small().strong().color(MUTED));
-                for n in t["notes"].as_array().into_iter().flatten().rev() {
+                let notes = t["notes"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+                let all_notes = self.expanded_notes_task.as_deref() == Some(id);
+                let note_limit = if all_notes { notes.len() } else { 6 };
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("メモ・経過 ({}件)", notes.len()))
+                            .small()
+                            .strong()
+                            .color(MUTED),
+                    );
+                    if notes.len() > 6 {
+                        let lbl = if all_notes {
+                            "直近6件のみ".to_owned()
+                        } else {
+                            format!("すべて表示 (+{}件)", notes.len() - 6)
+                        };
+                        if ui.small_button(lbl).clicked() {
+                            self.expanded_notes_task =
+                                if all_notes { None } else { Some(id.to_owned()) };
+                        }
+                    }
+                });
+                for n in notes.iter().rev().take(note_limit) {
+                    let when = n["at"]
+                        .as_u64()
+                        .map(|ts| fmt_relative_age_at(ts, now, None))
+                        .filter(|s| !s.is_empty())
+                        .map(|s| format!("{s} "))
+                        .unwrap_or_default();
                     ui.add(
                         egui::Label::new(
                             RichText::new(format!(
-                                "[{}] {}",
+                                "{when}[{}] {}",
                                 n["by"].as_str().unwrap_or(""),
                                 n["text"].as_str().unwrap_or("")
                             ))
@@ -3509,6 +4645,9 @@ impl RemoteApp {
                     );
                 }
             });
+        if copied_id {
+            self.toast = Some(Toast::info(format!("タスク ID をコピーしました: {id}")));
+        }
         if close {
             self.selected_task = None;
         }
@@ -3713,12 +4852,17 @@ fn map_cluster_bounds(
 }
 
 impl RemoteApp {
-    fn task_map(&self, ui: &mut egui::Ui, clicked: &mut Option<String>) {
+    fn task_map(&mut self, ui: &mut egui::Ui, clicked: &mut Option<String>) {
+        let show_terminal = self.show_done
+            || matches!(
+                self.task_status_filter,
+                TaskStatusFilter::Done | TaskStatusFilter::Failed
+            );
         let visible: Vec<&Value> = self
             .tasks
             .iter()
             .filter(|t| {
-                (self.show_done
+                (show_terminal
                     || !matches!(t["status"].as_str(), Some("done" | "failed" | "cancelled")))
                     && self.task_matches(t)
             })
@@ -3727,13 +4871,14 @@ impl RemoteApp {
             ui.label(RichText::new("表示するタスクはありません").color(MUTED));
             return;
         }
+        let z = self.map_zoom.clamp(0.75, 1.25);
         let (positions, size) = map_layout(&visible);
         let by_id: std::collections::HashMap<&str, &Value> = visible
             .iter()
             .filter_map(|t| t["id"].as_str().map(|id| (id, *t)))
             .collect();
-        // Legend strip above map canvas.
-        ui.horizontal_wrapped(|ui| {
+        // Legend strip + zoom controls above map canvas.
+        ui.horizontal(|ui| {
             ui.label(
                 RichText::new(format!("表示 {} 件", visible.len()))
                     .small()
@@ -3749,20 +4894,41 @@ impl RemoteApp {
             ] {
                 ui.label(RichText::new(format!("● {lbl}")).small().color(col));
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(RichText::new("ドラッグで移動").small().color(MUTED));
+                ui.separator();
+                for (pct, val) in [("125%", 1.25_f32), ("100%", 1.0_f32), ("75%", 0.75_f32)] {
+                    if ui
+                        .selectable_label((self.map_zoom - val).abs() < 0.01, pct)
+                        .clicked()
+                    {
+                        self.map_zoom = val;
+                    }
+                }
+                ui.label(RichText::new("ズーム").small().color(MUTED));
+            });
         });
         ui.add_space(4.0);
         egui::ScrollArea::both()
             .id_salt("task-map")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let (canvas, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                let (canvas, canvas_resp) = ui.allocate_exact_size(size * z, egui::Sense::drag());
+                if canvas_resp.dragged() {
+                    ui.scroll_with_delta(canvas_resp.drag_delta());
+                }
                 let origin = canvas.min.to_vec2();
+                let node_w = NODE_W * z;
+                let node_h = NODE_H * z;
                 let rect_of: std::collections::HashMap<&str, egui::Rect> = positions
                     .iter()
                     .map(|(id, p)| {
                         (
                             id.as_str(),
-                            egui::Rect::from_min_size(*p + origin, egui::vec2(NODE_W, NODE_H)),
+                            egui::Rect::from_min_size(
+                                egui::pos2(p.x * z, p.y * z) + origin,
+                                egui::vec2(node_w, node_h),
+                            ),
                         )
                     })
                     .collect();
@@ -3772,7 +4938,7 @@ impl RemoteApp {
                 for cluster in map_cluster_bounds(&visible, &rect_of) {
                     painter.rect(
                         cluster,
-                        12.0,
+                        12.0 * z,
                         PANEL.gamma_multiply(0.85),
                         Stroke::new(1.0, BORDER.gamma_multiply(0.8)),
                         egui::StrokeKind::Inside,
@@ -3797,7 +4963,7 @@ impl RemoteApp {
                             }
                             let a = egui::pos2(from.right(), from.center().y);
                             let b = egui::pos2(to.left(), to.center().y);
-                            let dx = ((b.x - a.x) * 0.5).max(30.0);
+                            let dx = ((b.x - a.x) * 0.5).max(30.0 * z);
                             let c2 = egui::pos2(b.x - dx, b.y);
                             let color = if hot {
                                 AMBER
@@ -3826,7 +4992,7 @@ impl RemoteApp {
                     );
                     if status == "awaiting_operator" {
                         // Where work is blocked on you: glow around the node.
-                        painter.rect_filled(rect.expand(6.0), 14.0, AMBER.gamma_multiply(0.28));
+                        painter.rect_filled(rect.expand(6.0), 14.0 * z, AMBER.gamma_multiply(0.28));
                     }
                     let stroke = if *id == selected {
                         Stroke::new(2.2, Color32::WHITE)
@@ -3835,13 +5001,19 @@ impl RemoteApp {
                     } else {
                         Stroke::new(1.0, color.gamma_multiply(0.7))
                     };
-                    painter.rect(*rect, 10.0, PANEL_RAISED, stroke, egui::StrokeKind::Inside);
-                    let bar = egui::Rect::from_min_size(rect.min, egui::vec2(5.0, NODE_H));
+                    painter.rect(
+                        *rect,
+                        10.0 * z,
+                        PANEL_RAISED,
+                        stroke,
+                        egui::StrokeKind::Inside,
+                    );
+                    let bar = egui::Rect::from_min_size(rect.min, egui::vec2(5.0 * z, node_h));
                     painter.rect_filled(
                         bar,
                         egui::CornerRadius {
-                            nw: 10,
-                            sw: 10,
+                            nw: (10.0 * z).round() as u8,
+                            sw: (10.0 * z).round() as u8,
                             ne: 0,
                             se: 0,
                         },
@@ -3849,21 +5021,21 @@ impl RemoteApp {
                     );
                     let (glyph, tile) = kind_tile(t["kind"].as_str().unwrap_or(""));
                     painter.text(
-                        rect.min + egui::vec2(20.0, NODE_H / 2.0),
+                        rect.min + egui::vec2(20.0 * z, node_h / 2.0),
                         egui::Align2::CENTER_CENTER,
                         glyph,
-                        egui::FontId::proportional(16.0),
+                        egui::FontId::proportional(16.0 * z),
                         tile,
                     );
                     let galley = painter.layout(
                         t["title"].as_str().unwrap_or("").to_owned(),
-                        egui::FontId::proportional(12.0),
+                        egui::FontId::proportional(12.0 * z),
                         TEXT,
-                        NODE_W - 44.0,
+                        (node_w - 44.0 * z).max(24.0),
                     );
                     let clip = egui::Rect::from_min_size(
-                        rect.min + egui::vec2(34.0, 6.0),
-                        egui::vec2(NODE_W - 42.0, 32.0),
+                        rect.min + egui::vec2(34.0 * z, 6.0 * z),
+                        egui::vec2((node_w - 42.0 * z).max(24.0), 32.0 * z),
                     );
                     ui.painter_at(clip).galley(clip.min, galley, TEXT);
                     let status_ja = match status {
@@ -3876,10 +5048,10 @@ impl RemoteApp {
                         _ => "完了",
                     };
                     painter.text(
-                        egui::pos2(rect.left() + 34.0, rect.bottom() - 11.0),
+                        egui::pos2(rect.left() + 34.0 * z, rect.bottom() - 11.0 * z),
                         egui::Align2::LEFT_CENTER,
                         format!("{status_ja} · {}", t["node"].as_str().unwrap_or("")),
-                        egui::FontId::proportional(10.5),
+                        egui::FontId::proportional(10.5 * z),
                         color,
                     );
                     if response.clicked() {
@@ -3978,5 +5150,44 @@ mod map_tests {
         let b = json!({"id": "b", "depends_on": ["a"]});
         let (pos, _) = map_layout(&[&a, &b]);
         assert_eq!(pos.len(), 2);
+    }
+
+    #[test]
+    fn task_display_title_strips_redundant_prefix_and_collapses_spaces() {
+        let t1 = json!({"title": "対話:   起きてる？\n確認テスト"});
+        assert_eq!(task_display_title(&t1), "起きてる？ 確認テスト");
+        let t2 = json!({"title": "目標: ターン別の応答時間を記録する"});
+        assert_eq!(task_display_title(&t2), "ターン別の応答時間を記録する");
+        let t3 = json!({"title": "定期ジョブ: obsidian-pull"});
+        assert_eq!(task_display_title(&t3), "obsidian-pull");
+    }
+
+    #[test]
+    fn lane_of_separates_failed_from_done() {
+        assert_eq!(lane_of(&json!({"status": "failed"})), "failed");
+        assert_eq!(lane_of(&json!({"status": "cancelled"})), "done");
+        assert_eq!(lane_of(&json!({"status": "in_progress"})), "in_progress");
+    }
+
+    #[test]
+    fn is_work_task_filters_routine_dialogue_and_tool_logs() {
+        assert!(!is_work_task(&json!({"kind": "dialogue"})));
+        assert!(!is_work_task(&json!({"kind": "tool"})));
+        assert!(is_work_task(&json!({"kind": "commitment"})));
+        assert!(is_work_task(&json!({"kind": "agent"})));
+        assert!(is_work_task(&json!({"kind": "job"})));
+    }
+
+    #[test]
+    fn fmt_relative_age_at_formats_buckets_and_fallback() {
+        let now = 2_000_000;
+        assert_eq!(fmt_relative_age_at(now - 30, now, None), "たった今");
+        assert_eq!(fmt_relative_age_at(now - 180, now, None), "3分前");
+        assert_eq!(fmt_relative_age_at(now - 7_200, now, None), "2時間前");
+        assert_eq!(fmt_relative_age_at(now - 172_800, now, None), "2日前");
+        assert_eq!(
+            fmt_relative_age_at(now - 900_000, now, Some("2026-11-06T06:26:53Z")),
+            "11/06 06:26"
+        );
     }
 }

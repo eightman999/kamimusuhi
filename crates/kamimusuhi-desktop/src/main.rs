@@ -1,6 +1,7 @@
 mod app;
 mod remote_app;
 mod task_panel;
+mod ui_helpers;
 mod worker;
 
 use kamimusuhi_resident::remote;
@@ -28,7 +29,13 @@ fn run() -> Result<(), String> {
             url: options.url.clone(),
             subject: subject.clone(),
         });
-        return remote_app::run(commands, events, subject, options.view.as_deref());
+        return remote_app::run(
+            commands,
+            events,
+            subject,
+            options.url,
+            options.view.as_deref(),
+        );
     }
     let (commands, events) = worker::spawn(worker::WorkerConfig {
         runtime_dir: options.runtime_dir,

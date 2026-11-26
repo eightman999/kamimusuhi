@@ -30,6 +30,8 @@ pub struct Config {
     pub guild: u64,
     pub users: HashSet<u64>,
     pub channels: HashSet<u64>,
+    pub public_channels: HashSet<u64>,
+    pub initiative_channels: HashSet<u64>,
     pub operator_subject: Option<String>,
     // Who is mentioned, and where, when a task needs the operator's decision.
     // Both None disables those notices.
@@ -111,11 +113,37 @@ impl Config {
                     )?,
                 ),
             };
+        let public_raw = get("DISCORD_PUBLIC_CHANNEL_IDS");
+        let public_channels = if public_raw.trim().is_empty() {
+            HashSet::new()
+        } else {
+            let ids = snowflakes(&public_raw)?;
+            if !ids.is_subset(&channels) {
+                return Err(
+                    "DISCORD_PUBLIC_CHANNEL_IDS must be a subset of DISCORD_ALLOWED_CHANNEL_IDS",
+                );
+            }
+            ids
+        };
+        let initiative_raw = get("DISCORD_INITIATIVE_CHANNEL_IDS");
+        let initiative_channels = if initiative_raw.trim().is_empty() {
+            HashSet::new()
+        } else {
+            let ids = snowflakes(&initiative_raw)?;
+            if !ids.is_subset(&channels) {
+                return Err(
+                    "DISCORD_INITIATIVE_CHANNEL_IDS must be a subset of DISCORD_ALLOWED_CHANNEL_IDS",
+                );
+            }
+            ids
+        };
         Ok(Self {
             token,
             guild: *guilds.iter().next().unwrap(),
             users,
             channels,
+            public_channels,
+            initiative_channels,
             operator_subject,
             notify_user,
             notify_channel,
@@ -124,6 +152,16 @@ impl Config {
     /// Task notices only run when both targets resolve.
     pub fn notifies(&self) -> bool {
         self.notify_user.is_some() && self.notify_channel.is_some()
+    }
+    pub fn channel_visibility(&self, channel: u64) -> &'static str {
+        if self.public_channels.contains(&channel) {
+            "public"
+        } else {
+            "private"
+        }
+    }
+    pub fn is_operator(&self, user: u64) -> bool {
+        self.notify_user == Some(user) || (self.users.len() == 1 && self.users.contains(&user))
     }
     fn allows(&self, m: &Event) -> bool {
         m.guild == Some(self.guild)
@@ -139,12 +177,12 @@ impl Config {
     }
 }
 /// The message a reply points at: its author and text.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reference {
     pub author: u64,
     pub content: String,
 }
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Event {
     pub id: u64,
     pub guild: Option<u64>,
@@ -223,10 +261,33 @@ pub fn response_reply(response: String, note: &str) -> Reply {
         }
     }
 }
+fn digest_text(text: &str) -> String {
+    let hex: String = Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("sha256:{hex}")
+}
 /// The resident's answer: the reply plus what it left running.
 pub struct Talk {
     pub response: String,
     pub background: Option<Value>,
+}
+/// An authorized social utterance candidate awaiting Discord delivery verification.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SocialProposal {
+    pub proposal_id: String,
+    pub turn_id: Option<String>,
+    pub response: String,
+    pub response_digest: String,
+    pub background: Option<Value>,
+}
+/// Outcome from `POST /v1/social` (`action: "propose"`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProposeOutcome {
+    Authorized(SocialProposal),
+    Rejected { reason_code: String, error: String },
+    Unsupported,
 }
 #[async_trait]
 pub trait Backend: Send + Sync + 'static {
@@ -234,9 +295,15 @@ pub trait Backend: Send + Sync + 'static {
     async fn reply(&self, event: &Event, reply: Reply, mention: Option<u64>) -> Option<u64>;
     /// Post `text` in the notice channel, mentioning only the operator.
     async fn notice(&self, text: &str) -> Option<u64>;
+    /// Post a proactive social message in `channel`; returns sent message's ID when known.
+    async fn social_post(&self, channel: u64, reply: Reply, mention: Option<u64>) -> Option<u64>;
     /// The message `message_id` that `event` replies to, when reachable.
     async fn resolve(&self, event: &Event, message_id: u64) -> Option<Reference>;
     async fn talk(&self, text: &str, subject: &str) -> Result<Talk, ResidentError>;
+    async fn social_propose(&self, body: &Value) -> Result<ProposeOutcome, ResidentError>;
+    async fn social_verify(&self, body: &Value) -> Result<(), ResidentError>;
+    async fn social_outbox(&self) -> Result<Vec<Value>, ResidentError>;
+    async fn social_delete(&self, body: &Value) -> Result<(u16, Value), ResidentError>;
     async fn tasks(&self) -> Result<Vec<Value>, ResidentError>;
     /// Delegated tasks from the task plane (this node's or a peer's).
     async fn delegated(&self) -> Result<Vec<Value>, ResidentError>;
@@ -297,6 +364,31 @@ fn parse_command(text: &str) -> Option<Command> {
         id,
         executor,
     })
+}
+/// `@澪 削除 [<message_id>]` / `delete` / `forget`.
+#[derive(Debug, PartialEq, Eq)]
+struct DeleteCommand {
+    message_id: Option<u64>,
+}
+fn parse_delete_command(text: &str) -> Option<DeleteCommand> {
+    let mut tokens = text.split_whitespace();
+    match tokens.next()?.to_ascii_lowercase().as_str() {
+        "削除" | "delete" | "forget" => {}
+        _ => return None,
+    }
+    let message_id = if let Some(tok) = tokens.next() {
+        if !tok.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        let id = tok.parse::<u64>().ok().filter(|&n| n > 0)?;
+        Some(id)
+    } else {
+        None
+    };
+    if tokens.next().is_some() {
+        return None;
+    }
+    Some(DeleteCommand { message_id })
 }
 /// Which tasks were already announced, kept across restarts when a state
 /// directory is available (systemd `StateDirectory=`).
@@ -421,6 +513,231 @@ impl NoticeState {
         }
     }
 }
+/// Inbound mention/reply accepted before resident generation completed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PersistedInbound {
+    pub event: Event,
+    pub text: String,
+    pub subject: String,
+}
+impl PersistedInbound {
+    fn to_value(&self) -> Value {
+        json!({
+            "event": {
+                "id": self.event.id,
+                "guild": self.event.guild,
+                "channel": self.event.channel,
+                "user": self.event.user,
+                "bot": self.event.bot,
+                "webhook": self.event.webhook,
+                "content": self.event.content,
+                "reference": self.event.reference,
+                "resolved": self.event.resolved.as_ref().map(|r| json!({
+                    "author": r.author,
+                    "content": r.content,
+                })),
+            },
+            "text": self.text,
+            "subject": self.subject,
+        })
+    }
+    fn from_value(v: &Value) -> Option<Self> {
+        let ev = &v["event"];
+        let resolved = ev.get("resolved").and_then(|r| {
+            Some(Reference {
+                author: r.get("author")?.as_u64()?,
+                content: r.get("content")?.as_str()?.to_owned(),
+            })
+        });
+        let event = Event {
+            id: ev.get("id")?.as_u64()?,
+            guild: ev.get("guild").and_then(Value::as_u64),
+            channel: ev.get("channel")?.as_u64()?,
+            user: ev.get("user")?.as_u64()?,
+            bot: ev.get("bot").and_then(Value::as_bool).unwrap_or(false),
+            webhook: ev.get("webhook").and_then(Value::as_bool).unwrap_or(false),
+            content: ev.get("content")?.as_str()?.to_owned(),
+            reference: ev.get("reference").and_then(Value::as_u64),
+            resolved,
+        };
+        Some(Self {
+            event,
+            text: v.get("text")?.as_str()?.to_owned(),
+            subject: v.get("subject")?.as_str()?.to_owned(),
+        })
+    }
+}
+/// Pending resident delivery confirmation queued until `/v1/social/verify` returns 200.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SocialVerification {
+    pub proposal_id: String,
+    pub turn_id: Option<String>,
+    pub discord_message_id: u64,
+    pub channel_id: u64,
+    pub guild_id: Option<u64>,
+    pub reply_to_message_id: Option<u64>,
+    pub delivered_text_digest: String,
+    pub verified: bool,
+    pub error: Option<String>,
+}
+impl SocialVerification {
+    fn to_value(&self) -> Value {
+        json!({
+            "action": "verify",
+            "proposal_id": self.proposal_id,
+            "turn_id": self.turn_id,
+            "discord_message_id": (self.discord_message_id > 0).then_some(self.discord_message_id),
+            "channel_id": self.channel_id,
+            "guild_id": self.guild_id,
+            "reply_to_message_id": self.reply_to_message_id,
+            "delivered_text_digest": self.delivered_text_digest,
+            "verified": self.verified,
+            "error": self.error,
+        })
+    }
+    fn from_value(v: &Value) -> Option<Self> {
+        Some(Self {
+            proposal_id: v.get("proposal_id")?.as_str()?.to_owned(),
+            turn_id: v.get("turn_id").and_then(Value::as_str).map(str::to_owned),
+            discord_message_id: v
+                .get("discord_message_id")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            channel_id: v.get("channel_id")?.as_u64()?,
+            guild_id: v.get("guild_id").and_then(Value::as_u64),
+            reply_to_message_id: v.get("reply_to_message_id").and_then(Value::as_u64),
+            delivered_text_digest: v
+                .get("delivered_text_digest")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+            verified: v.get("verified").and_then(Value::as_bool).unwrap_or(false),
+            error: v.get("error").and_then(Value::as_str).map(str::to_owned),
+        })
+    }
+}
+/// Durable Discord gateway queue/verification state (`StateDirectory/social_gateway.json`).
+#[derive(Default)]
+pub struct SocialGatewayState {
+    path: Option<PathBuf>,
+    seen: VecDeque<u64>,
+    pending_inbound: Vec<PersistedInbound>,
+    pending_verifications: Vec<SocialVerification>,
+}
+impl SocialGatewayState {
+    const KEEP_SEEN: usize = 4096;
+    const KEEP_INBOUND: usize = 64;
+    const KEEP_VERIFICATIONS: usize = 128;
+    pub fn load(path: Option<PathBuf>) -> Self {
+        let mut state = Self {
+            path,
+            ..Self::default()
+        };
+        let Some(path) = &state.path else {
+            return state;
+        };
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return state;
+        };
+        let Ok(saved) = serde_json::from_str::<Value>(&text) else {
+            return state;
+        };
+        if let Some(arr) = saved["seen"].as_array() {
+            for item in arr {
+                if let Some(id) = item.as_u64() {
+                    state.remember_seen(id);
+                }
+            }
+        }
+        if let Some(arr) = saved["pending_inbound"].as_array() {
+            for item in arr {
+                if let Some(parsed) = PersistedInbound::from_value(item) {
+                    state.pending_inbound.push(parsed);
+                }
+            }
+        }
+        if let Some(arr) = saved["pending_verifications"].as_array() {
+            for item in arr {
+                if let Some(parsed) = SocialVerification::from_value(item) {
+                    state.pending_verifications.push(parsed);
+                }
+            }
+        }
+        state.trim();
+        state
+    }
+    fn remember_seen(&mut self, id: u64) {
+        if !self.seen.contains(&id) {
+            self.seen.push_back(id);
+            while self.seen.len() > Self::KEEP_SEEN {
+                self.seen.pop_front();
+            }
+        }
+    }
+    fn push_inbound(&mut self, item: PersistedInbound) {
+        if !self
+            .pending_inbound
+            .iter()
+            .any(|p| p.event.id == item.event.id)
+        {
+            self.pending_inbound.push(item);
+            self.trim();
+        }
+    }
+    fn remove_inbound(&mut self, event_id: u64) {
+        self.pending_inbound.retain(|p| p.event.id != event_id);
+    }
+    fn push_verification(&mut self, v: SocialVerification) {
+        if !self.pending_verifications.iter().any(|existing| {
+            existing.proposal_id == v.proposal_id
+                && existing.discord_message_id == v.discord_message_id
+                && existing.verified == v.verified
+        }) {
+            self.pending_verifications.push(v);
+            self.trim();
+        }
+    }
+    fn remove_verification(&mut self, proposal_id: &str, discord_message_id: u64, verified: bool) {
+        self.pending_verifications.retain(|v| {
+            !(v.proposal_id == proposal_id
+                && v.discord_message_id == discord_message_id
+                && v.verified == verified)
+        });
+    }
+    fn has_verification(&self, proposal_id: &str) -> bool {
+        self.pending_verifications
+            .iter()
+            .any(|v| v.proposal_id == proposal_id)
+    }
+    fn trim(&mut self) {
+        while self.seen.len() > Self::KEEP_SEEN {
+            self.seen.pop_front();
+        }
+        while self.pending_inbound.len() > Self::KEEP_INBOUND {
+            self.pending_inbound.remove(0);
+        }
+        while self.pending_verifications.len() > Self::KEEP_VERIFICATIONS {
+            self.pending_verifications.remove(0);
+        }
+    }
+    fn save(&self) {
+        let Some(path) = &self.path else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let payload = json!({
+            "seen": self.seen.iter().copied().collect::<Vec<_>>(),
+            "pending_inbound": self.pending_inbound.iter().map(PersistedInbound::to_value).collect::<Vec<_>>(),
+            "pending_verifications": self.pending_verifications.iter().map(SocialVerification::to_value).collect::<Vec<_>>(),
+        });
+        let tmp = PathBuf::from(format!("{}.tmp", path.display()));
+        if std::fs::write(&tmp, payload.to_string()).is_ok() {
+            let _ = std::fs::rename(&tmp, path);
+        }
+    }
+}
 fn commitment_actions(task_id: &str) -> String {
     format!(
         "`@澪 開始 {task_id}` で外部エージェントに委譲（`@澪 開始 {task_id} devin` のように実行者も指定可）／ `@澪 取消 {task_id}`"
@@ -527,6 +844,7 @@ pub struct Bridge<B: Backend> {
     backend: Arc<B>,
     state: Mutex<State>,
     notices: Mutex<NoticeState>,
+    social: Mutex<SocialGatewayState>,
     notify: Notify,
     capacity: usize,
 }
@@ -540,11 +858,41 @@ impl<B: Backend> Bridge<B> {
         capacity: usize,
         notices: NoticeState,
     ) -> Arc<Self> {
+        Self::with_state(
+            config,
+            backend,
+            capacity,
+            notices,
+            SocialGatewayState::default(),
+        )
+    }
+    pub fn with_state(
+        config: Config,
+        backend: Arc<B>,
+        capacity: usize,
+        notices: NoticeState,
+        social: SocialGatewayState,
+    ) -> Arc<Self> {
+        let mut state = State::default();
+        for id in &social.seen {
+            Self::remember_locked(&mut state, *id);
+        }
+        for item in &social.pending_inbound {
+            let (tx, rx) = oneshot::channel();
+            let _ = tx.send(true);
+            state.pending.push_back(Item {
+                event: item.event.clone(),
+                text: item.text.clone(),
+                subject: item.subject.clone(),
+                ack: rx,
+            });
+        }
         Arc::new(Self {
             config,
             backend,
-            state: Mutex::new(State::default()),
+            state: Mutex::new(state),
             notices: Mutex::new(notices),
+            social: Mutex::new(social),
             notify: Notify::new(),
             capacity,
         })
@@ -560,8 +908,13 @@ impl<B: Backend> Bridge<B> {
         }
     }
     async fn remember(&self, event: &Event) {
-        let mut state = self.state.lock().await;
-        Self::remember_locked(&mut state, event.id);
+        {
+            let mut state = self.state.lock().await;
+            Self::remember_locked(&mut state, event.id);
+        }
+        let mut social = self.social.lock().await;
+        social.remember_seen(event.id);
+        social.save();
     }
     pub async fn handle(&self, event: Event, bot_id: u64) {
         if !self.config.allows(&event) {
@@ -626,6 +979,11 @@ impl<B: Backend> Bridge<B> {
             self.command(&event, command).await;
             return;
         }
+        if let Some(delete_cmd) = parse_delete_command(&text) {
+            self.remember(&event).await;
+            self.delete_command(&event, delete_cmd).await;
+            return;
+        }
         let mut state = self.state.lock().await;
         if !claimed && state.seen.contains(&event.id) {
             return;
@@ -644,15 +1002,28 @@ impl<B: Backend> Bridge<B> {
             return;
         }
         let (tx, rx) = oneshot::channel();
-        state.pending.push_back(Item {
-            subject: self.config.subject(&event),
+        let full_text = hint + &text;
+        let subject = self.config.subject(&event);
+        let inbound_record = PersistedInbound {
             event: event.clone(),
-            text: hint + &text,
+            text: full_text.clone(),
+            subject: subject.clone(),
+        };
+        state.pending.push_back(Item {
+            subject,
+            event: event.clone(),
+            text: full_text,
             ack: rx,
         });
         Self::remember_locked(&mut state, event.id);
         let waiting = state.pending.len();
         drop(state);
+        {
+            let mut social = self.social.lock().await;
+            social.remember_seen(event.id);
+            social.push_inbound(inbound_record);
+            social.save();
+        }
         self.notify.notify_one();
         let accepted = self
             .backend
@@ -666,6 +1037,76 @@ impl<B: Backend> Bridge<B> {
             .await
             .is_some();
         let _ = tx.send(accepted);
+    }
+    /// Forward `@澪 削除` requests to the resident social redaction endpoint.
+    async fn delete_command(&self, event: &Event, command: DeleteCommand) {
+        let Some(message_id) = command.message_id.or(event.reference) else {
+            self.backend
+                .reply(
+                    event,
+                    Reply::Text(
+                        "削除するメッセージに返信するか、`@澪 削除 <message_id>` のようにIDを指定してください。"
+                            .into(),
+                    ),
+                    None,
+                )
+                .await;
+            return;
+        };
+        let body = json!({
+            "action": "delete",
+            "discord_message_id": message_id,
+            "guild_id": event.guild,
+            "channel_id": event.channel,
+            "user_id": event.user,
+            "is_operator": self.config.is_operator(event.user),
+            "subject": self.config.subject(event),
+            "reason": "discord_delete_command",
+        });
+        let reply_text = match self.backend.social_delete(&body).await {
+            Ok((200, payload)) => {
+                let count = payload["redacted"].as_array().map_or(0, Vec::len);
+                if count > 0 {
+                    format!(
+                        "メッセージ {message_id} に関連する記録（{count}件）を削除（匿名化）しました。"
+                    )
+                } else {
+                    format!("メッセージ {message_id} について、削除対象の記録はありませんでした。")
+                }
+            }
+            Ok((_, payload)) => {
+                let err = payload["error"].as_str().unwrap_or("request rejected");
+                format!("削除処理を実行できませんでした（{err}）。")
+            }
+            Err(ResidentError) => "削除処理の実行中にresidentへ接続できませんでした。".into(),
+        };
+        self.backend
+            .reply(event, Reply::Text(reply_text), None)
+            .await;
+    }
+    /// Propagate Discord `MESSAGE_DELETE` gateway events into resident redaction.
+    pub async fn handle_message_delete(&self, guild: Option<u64>, channel: u64, message_id: u64) {
+        if guild.is_some_and(|g| g != self.config.guild)
+            || !self.config.channels.contains(&channel)
+            || message_id == 0
+        {
+            return;
+        }
+        let subject = self
+            .config
+            .operator_subject
+            .clone()
+            .unwrap_or_else(|| "operator".to_owned());
+        let body = json!({
+            "action": "delete",
+            "discord_message_id": message_id,
+            "guild_id": guild.unwrap_or(self.config.guild),
+            "channel_id": channel,
+            "is_operator": true,
+            "subject": subject,
+            "reason": "discord_message_delete_event",
+        });
+        let _ = self.backend.social_delete(&body).await;
     }
     /// Start or cancel a commitment the operator was told about.
     async fn command(&self, event: &Event, command: Command) {
@@ -821,25 +1262,116 @@ impl<B: Backend> Bridge<B> {
             _ => (String::new(), None),
         }
     }
+    async fn record_and_verify(&self, ver: SocialVerification) {
+        {
+            let mut social = self.social.lock().await;
+            social.remove_inbound(ver.reply_to_message_id.unwrap_or(0));
+            social.push_verification(ver.clone());
+            social.save();
+        }
+        if self.backend.social_verify(&ver.to_value()).await.is_ok() {
+            let mut social = self.social.lock().await;
+            social.remove_verification(&ver.proposal_id, ver.discord_message_id, ver.verified);
+            social.save();
+        }
+    }
+    async fn remove_pending_inbound(&self, event_id: u64) {
+        let mut social = self.social.lock().await;
+        social.remove_inbound(event_id);
+        social.save();
+    }
     async fn answer(&self, item: Item) {
         if !item.ack.await.unwrap_or(false) {
+            self.remove_pending_inbound(item.event.id).await;
             return;
         }
-        match self.backend.talk(&item.text, &item.subject).await {
-            Ok(talk) => {
-                let (note, commitment) = self.background_note(&talk.background);
+        let propose_body = json!({
+            "action": "propose",
+            "guild_id": item.event.guild,
+            "channel_id": item.event.channel,
+            "user_id": item.event.user,
+            "message_id": item.event.id,
+            "message": item.text,
+            "subject": item.subject,
+            "visibility": self.config.channel_visibility(item.event.channel),
+            "is_operator": self.config.is_operator(item.event.user),
+        });
+        match self.backend.social_propose(&propose_body).await {
+            Ok(ProposeOutcome::Authorized(prop)) => {
+                let (note, commitment) = self.background_note(&prop.background);
                 let mention = commitment.as_ref().and(self.config.notify_user);
-                let reply = response_reply(talk.response, &note);
-                if let (Some(commitment), Some(sent)) = (
-                    commitment,
-                    self.backend.reply(&item.event, reply, mention).await,
-                ) {
-                    let mut notices = self.notices.lock().await;
-                    notices.claim(&commitment, sent, Some("promise".to_owned()));
-                    notices.save();
+                let reply = response_reply(prop.response, &note);
+                let ver = if let Some(sent) = self.backend.reply(&item.event, reply, mention).await
+                {
+                    if let Some(commitment) = commitment {
+                        let mut notices = self.notices.lock().await;
+                        notices.claim(&commitment, sent, Some("promise".to_owned()));
+                        notices.save();
+                    }
+                    SocialVerification {
+                        proposal_id: prop.proposal_id,
+                        turn_id: prop.turn_id,
+                        discord_message_id: sent,
+                        channel_id: item.event.channel,
+                        guild_id: item.event.guild,
+                        reply_to_message_id: Some(item.event.id),
+                        delivered_text_digest: prop.response_digest,
+                        verified: true,
+                        error: None,
+                    }
+                } else {
+                    SocialVerification {
+                        proposal_id: prop.proposal_id,
+                        turn_id: prop.turn_id,
+                        discord_message_id: 0,
+                        channel_id: item.event.channel,
+                        guild_id: item.event.guild,
+                        reply_to_message_id: Some(item.event.id),
+                        delivered_text_digest: prop.response_digest,
+                        verified: false,
+                        error: Some("discord_send_failed".to_owned()),
+                    }
+                };
+                self.record_and_verify(ver).await;
+            }
+            Ok(ProposeOutcome::Rejected { reason_code, .. }) => {
+                self.remove_pending_inbound(item.event.id).await;
+                self.backend
+                    .reply(
+                        &item.event,
+                        Reply::Text(format!(
+                            "ポリシー制限（{reason_code}）により、この宛先・内容では送信できません。"
+                        )),
+                        None,
+                    )
+                    .await;
+            }
+            Ok(ProposeOutcome::Unsupported) => {
+                let res = self.backend.talk(&item.text, &item.subject).await;
+                self.remove_pending_inbound(item.event.id).await;
+                match res {
+                    Ok(talk) => {
+                        let (note, commitment) = self.background_note(&talk.background);
+                        let mention = commitment.as_ref().and(self.config.notify_user);
+                        let reply = response_reply(talk.response, &note);
+                        if let (Some(commitment), Some(sent)) = (
+                            commitment,
+                            self.backend.reply(&item.event, reply, mention).await,
+                        ) {
+                            let mut notices = self.notices.lock().await;
+                            notices.claim(&commitment, sent, Some("promise".to_owned()));
+                            notices.save();
+                        }
+                    }
+                    Err(ResidentError) => {
+                        self.backend
+                            .reply(&item.event, Reply::Text(FAILURE.into()), None)
+                            .await;
+                    }
                 }
             }
             Err(ResidentError) => {
+                self.remove_pending_inbound(item.event.id).await;
                 self.backend
                     .reply(&item.event, Reply::Text(FAILURE.into()), None)
                     .await;
@@ -888,7 +1420,114 @@ impl<B: Backend> Bridge<B> {
             tokio::time::sleep(EVERY).await;
         }
     }
+    async fn flush_verifications(&self) {
+        let pending = {
+            let social = self.social.lock().await;
+            social.pending_verifications.clone()
+        };
+        for ver in pending {
+            if self.backend.social_verify(&ver.to_value()).await.is_ok() {
+                let mut social = self.social.lock().await;
+                social.remove_verification(&ver.proposal_id, ver.discord_message_id, ver.verified);
+                social.save();
+            }
+        }
+    }
+    async fn poll_initiative_outbox(&self) -> Result<(), ResidentError> {
+        if self.config.initiative_channels.is_empty() {
+            return Ok(());
+        }
+        let items = self.backend.social_outbox().await?;
+        for item in items {
+            if item["kind"].as_str() != Some("initiative")
+                || item["state"].as_str() != Some("authorized")
+            {
+                continue;
+            }
+            let Some(proposal_id) = item["proposal_id"].as_str().filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            if self.social.lock().await.has_verification(proposal_id) {
+                continue;
+            }
+            let turn_id = item["turn_id"].as_str().map(str::to_owned);
+            let Some(channel_id) = item["channel_id"].as_u64() else {
+                continue;
+            };
+            let guild_id = item["guild_id"].as_u64();
+            let response = item["response"].as_str().unwrap_or("").to_owned();
+            let response_digest = item["response_digest"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| digest_text(&response));
+            let mention_user = item["mention_user_id"].as_u64();
+            let mention_ok = mention_user.is_none_or(|uid| {
+                self.config.users.contains(&uid) || self.config.notify_user == Some(uid)
+            });
+            if guild_id != Some(self.config.guild)
+                || !self.config.initiative_channels.contains(&channel_id)
+                || !mention_ok
+                || response.trim().is_empty()
+            {
+                self.record_and_verify(SocialVerification {
+                    proposal_id: proposal_id.to_owned(),
+                    turn_id,
+                    discord_message_id: 0,
+                    channel_id,
+                    guild_id,
+                    reply_to_message_id: None,
+                    delivered_text_digest: response_digest,
+                    verified: false,
+                    error: Some("gateway_initiative_policy_mismatch".to_owned()),
+                })
+                .await;
+                continue;
+            }
+            let bg = item.get("background").filter(|b| b.is_object()).cloned();
+            let (note, commitment) = self.background_note(&bg);
+            let mention = mention_user.or(commitment.as_ref().and(self.config.notify_user));
+            let reply = response_reply(response, &note);
+            let ver = if let Some(sent) = self.backend.social_post(channel_id, reply, mention).await
+            {
+                if let Some(commitment) = commitment {
+                    let mut notices = self.notices.lock().await;
+                    notices.claim(&commitment, sent, Some("promise".to_owned()));
+                    notices.save();
+                }
+                SocialVerification {
+                    proposal_id: proposal_id.to_owned(),
+                    turn_id,
+                    discord_message_id: sent,
+                    channel_id,
+                    guild_id,
+                    reply_to_message_id: None,
+                    delivered_text_digest: response_digest,
+                    verified: true,
+                    error: None,
+                }
+            } else {
+                SocialVerification {
+                    proposal_id: proposal_id.to_owned(),
+                    turn_id,
+                    discord_message_id: 0,
+                    channel_id,
+                    guild_id,
+                    reply_to_message_id: None,
+                    delivered_text_digest: response_digest,
+                    verified: false,
+                    error: Some("discord_initiative_send_failed".to_owned()),
+                }
+            };
+            self.record_and_verify(ver).await;
+        }
+        Ok(())
+    }
     async fn poll_notices(&self) -> Result<(), ResidentError> {
+        self.flush_verifications().await;
+        if self.poll_initiative_outbox().await.is_err() {
+            eprintln!("initiative outbox poll failed");
+        }
         // A promise made in a Discord turn is announced in that turn's reply.
         const GRACE: f64 = 90.0;
         // How long a finished delegated task waits for the individual's review.
@@ -1089,19 +1728,94 @@ impl Resident {
             background,
         })
     }
+    pub async fn social_propose(&self, body: &Value) -> Result<ProposeOutcome, ResidentError> {
+        let (status, payload) = self
+            .json(reqwest::Method::POST, "/v1/social", Some(body), 660)
+            .await?;
+        match status {
+            200 => {
+                let proposal_id = payload
+                    .get("proposal_id")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .map(str::to_owned)
+                    .ok_or(ResidentError)?;
+                let response = payload
+                    .get("response")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .map(str::to_owned)
+                    .ok_or(ResidentError)?;
+                let response_digest = payload
+                    .get("response_digest")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| digest_text(&response));
+                let turn_id = payload
+                    .get("turn_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let background = payload.get("background").filter(|b| b.is_object()).cloned();
+                Ok(ProposeOutcome::Authorized(SocialProposal {
+                    proposal_id,
+                    turn_id,
+                    response,
+                    response_digest,
+                    background,
+                }))
+            }
+            403 => Ok(ProposeOutcome::Rejected {
+                reason_code: payload
+                    .get("reason_code")
+                    .and_then(Value::as_str)
+                    .unwrap_or("SOCIAL_POLICY_REJECTED")
+                    .to_owned(),
+                error: payload
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("policy rejected")
+                    .to_owned(),
+            }),
+            404 => Ok(ProposeOutcome::Unsupported),
+            _ => Err(ResidentError),
+        }
+    }
+    pub async fn social_verify(&self, body: &Value) -> Result<(), ResidentError> {
+        let (status, _) = self
+            .json(reqwest::Method::POST, "/v1/social/verify", Some(body), 60)
+            .await?;
+        if status == 200 {
+            Ok(())
+        } else {
+            Err(ResidentError)
+        }
+    }
+    pub async fn social_outbox(&self) -> Result<Vec<Value>, ResidentError> {
+        let (status, payload) = self
+            .json(reqwest::Method::GET, "/v1/social/outbox", None, 30)
+            .await?;
+        if status == 404 {
+            return Ok(Vec::new());
+        }
+        if status != 200 {
+            return Err(ResidentError);
+        }
+        Ok(payload["items"]
+            .as_array()
+            .ok_or(ResidentError)?
+            .iter()
+            .filter(|i| i.is_object())
+            .cloned()
+            .collect())
+    }
+    pub async fn social_delete(&self, body: &Value) -> Result<(u16, Value), ResidentError> {
+        self.json(reqwest::Method::POST, "/v1/social/delete", Some(body), 60)
+            .await
+    }
 }
-/// Explicit empty mention parsing applies to acknowledgments, errors and files alike.
-pub fn message_builder(
-    reply: &Reply,
-    event: &Event,
-    mention: Option<u64>,
-) -> CreateMessage<'static> {
-    let mut builder = CreateMessage::default();
+fn apply_reply(builder: &mut CreateMessage<'static>, reply: &Reply, mention: Option<u64>) {
     builder
-        .reference_message((
-            ChannelId(event.channel),
-            serenity::model::id::MessageId(event.id),
-        ))
         .allowed_mentions(|m| {
             let m = m.empty_parse().replied_user(false);
             match mention {
@@ -1123,6 +1837,19 @@ pub fn message_builder(
                 });
         }
     }
+}
+/// Explicit empty mention parsing applies to acknowledgments, errors and files alike.
+pub fn message_builder(
+    reply: &Reply,
+    event: &Event,
+    mention: Option<u64>,
+) -> CreateMessage<'static> {
+    let mut builder = CreateMessage::default();
+    builder.reference_message((
+        ChannelId(event.channel),
+        serenity::model::id::MessageId(event.id),
+    ));
+    apply_reply(&mut builder, reply, mention);
     builder
 }
 pub struct LiveBackend {
@@ -1160,6 +1887,18 @@ impl Backend for LiveBackend {
         }
         result.ok().map(|m| m.id.0)
     }
+    async fn social_post(&self, channel: u64, reply: Reply, mention: Option<u64>) -> Option<u64> {
+        let result = ChannelId(channel)
+            .send_message(&self.http, |m| {
+                apply_reply(m, &reply, mention);
+                m
+            })
+            .await;
+        if result.is_err() {
+            eprintln!("Discord initiative post failed");
+        }
+        result.ok().map(|m| m.id.0)
+    }
     async fn resolve(&self, event: &Event, message_id: u64) -> Option<Reference> {
         match ChannelId(event.channel)
             .message(&self.http, MessageId(message_id))
@@ -1177,6 +1916,18 @@ impl Backend for LiveBackend {
     }
     async fn talk(&self, text: &str, subject: &str) -> Result<Talk, ResidentError> {
         self.resident.talk(text, subject).await
+    }
+    async fn social_propose(&self, body: &Value) -> Result<ProposeOutcome, ResidentError> {
+        self.resident.social_propose(body).await
+    }
+    async fn social_verify(&self, body: &Value) -> Result<(), ResidentError> {
+        self.resident.social_verify(body).await
+    }
+    async fn social_outbox(&self) -> Result<Vec<Value>, ResidentError> {
+        self.resident.social_outbox().await
+    }
+    async fn social_delete(&self, body: &Value) -> Result<(u16, Value), ResidentError> {
+        self.resident.social_delete(body).await
     }
     async fn tasks(&self) -> Result<Vec<Value>, ResidentError> {
         self.resident.tasks().await
@@ -1244,7 +1995,18 @@ mod tests {
         replies: Mutex<Vec<(u64, Reply, Option<u64>)>>,
         sent: AtomicU64,
         notices: Mutex<Vec<String>>,
+        social_posts: Mutex<Vec<(u64, Reply, Option<u64>)>>,
+        social_post_fail: AtomicBool,
         calls: Mutex<Vec<(String, String)>>,
+        social_proposals: Mutex<Vec<Value>>,
+        social_reject: Mutex<Option<(String, String)>>,
+        social_unsupported: AtomicBool,
+        social_verifies: Mutex<Vec<Value>>,
+        social_verify_fail: AtomicBool,
+        social_outbox_items: Mutex<Vec<Value>>,
+        social_deletes: Mutex<Vec<Value>>,
+        social_delete_result: Mutex<Option<(u16, Value)>>,
+        social_seq: AtomicU64,
         resolves: AtomicUsize,
         resolve_wait: AtomicBool,
         resolve_gate: Notify,
@@ -1284,6 +2046,22 @@ mod tests {
             self.notices.lock().await.push(text.into());
             Some(self.sent.fetch_add(1, Ordering::SeqCst) + 600)
         }
+        async fn social_post(
+            &self,
+            channel: u64,
+            reply: Reply,
+            mention: Option<u64>,
+        ) -> Option<u64> {
+            self.social_posts
+                .lock()
+                .await
+                .push((channel, reply, mention));
+            if self.social_post_fail.load(Ordering::SeqCst) {
+                None
+            } else {
+                Some(self.sent.fetch_add(1, Ordering::SeqCst) + 600)
+            }
+        }
         async fn resolve(&self, _: &Event, _: u64) -> Option<Reference> {
             self.resolves.fetch_add(1, Ordering::SeqCst);
             if self.resolve_wait.load(Ordering::SeqCst) {
@@ -1307,6 +2085,47 @@ mod tests {
                     background: self.talk_background.lock().await.clone(),
                 })
             }
+        }
+        async fn social_propose(&self, body: &Value) -> Result<ProposeOutcome, ResidentError> {
+            self.social_proposals.lock().await.push(body.clone());
+            if self.social_unsupported.load(Ordering::SeqCst) {
+                return Ok(ProposeOutcome::Unsupported);
+            }
+            if let Some((reason_code, error)) = self.social_reject.lock().await.clone() {
+                return Ok(ProposeOutcome::Rejected { reason_code, error });
+            }
+            let text = body["message"].as_str().unwrap_or("");
+            let subject = body["subject"].as_str().unwrap_or("operator");
+            let talk = self.talk(text, subject).await?;
+            let seq = self.social_seq.fetch_add(1, Ordering::SeqCst) + 1;
+            let digest = digest_text(&talk.response);
+            Ok(ProposeOutcome::Authorized(SocialProposal {
+                proposal_id: format!("sp-{seq}"),
+                turn_id: Some(format!("t-{seq}")),
+                response: talk.response,
+                response_digest: digest,
+                background: talk.background,
+            }))
+        }
+        async fn social_verify(&self, body: &Value) -> Result<(), ResidentError> {
+            self.social_verifies.lock().await.push(body.clone());
+            if self.social_verify_fail.load(Ordering::SeqCst) {
+                Err(ResidentError)
+            } else {
+                Ok(())
+            }
+        }
+        async fn social_outbox(&self) -> Result<Vec<Value>, ResidentError> {
+            Ok(self.social_outbox_items.lock().await.clone())
+        }
+        async fn social_delete(&self, body: &Value) -> Result<(u16, Value), ResidentError> {
+            self.social_deletes.lock().await.push(body.clone());
+            Ok(self
+                .social_delete_result
+                .lock()
+                .await
+                .clone()
+                .unwrap_or((200, json!({"ok": true, "redacted": ["ev-1"]}))))
         }
         async fn tasks(&self) -> Result<Vec<Value>, ResidentError> {
             if self.listed_fail.load(Ordering::SeqCst) {
@@ -2046,5 +2865,371 @@ mod tests {
         assert!(reloaded.finished_seen("t4d"));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(NoticeState::load(None).attention.is_empty());
+    }
+    fn social_config() -> Config {
+        Config::parse(|key| {
+            match key {
+                "DISCORD_BOT_TOKEN" => "fake",
+                "DISCORD_GUILD_ID" => "10",
+                "DISCORD_ALLOWED_USER_IDS" => "20",
+                "DISCORD_ALLOWED_CHANNEL_IDS" => "30,31",
+                "DISCORD_PUBLIC_CHANNEL_IDS" => "30",
+                "DISCORD_INITIATIVE_CHANNEL_IDS" => "31",
+                _ => "",
+            }
+            .into()
+        })
+        .unwrap()
+    }
+    #[test]
+    fn social_config_channels_and_operator() {
+        let cfg = social_config();
+        assert_eq!(cfg.channel_visibility(30), "public");
+        assert_eq!(cfg.channel_visibility(31), "private");
+        assert!(cfg.is_operator(20));
+        assert!(!cfg.is_operator(99));
+        assert!(!config().is_operator(21));
+
+        for bad_key in [
+            "DISCORD_PUBLIC_CHANNEL_IDS",
+            "DISCORD_INITIATIVE_CHANNEL_IDS",
+        ] {
+            assert!(
+                Config::parse(|key| match key {
+                    "DISCORD_BOT_TOKEN" => "fake".into(),
+                    "DISCORD_GUILD_ID" => "10".into(),
+                    "DISCORD_ALLOWED_USER_IDS" => "20".into(),
+                    "DISCORD_ALLOWED_CHANNEL_IDS" => "30".into(),
+                    k if k == bad_key => "99".into(),
+                    _ => "".into(),
+                })
+                .is_err()
+            );
+        }
+    }
+    #[tokio::test]
+    async fn two_phase_propose_send_verify_true_and_false() {
+        let mock = Arc::new(Mock::default());
+        let bridge = Bridge::new(social_config(), mock.clone(), 16);
+        let worker = tokio::spawn(bridge.clone().run());
+
+        bridge.handle(event(1, 20, "<@99> 進捗どう？"), 99).await;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while mock.social_verifies.lock().await.is_empty() {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .unwrap();
+        {
+            let props = mock.social_proposals.lock().await;
+            assert_eq!(props.len(), 1);
+            assert_eq!(props[0]["visibility"], json!("public"));
+            assert_eq!(props[0]["is_operator"], json!(true));
+            let verifies = mock.social_verifies.lock().await;
+            assert_eq!(verifies[0]["verified"], json!(true));
+            assert_eq!(verifies[0]["discord_message_id"], json!(601));
+        }
+
+        // Send failure aborts proposal via verified=false with zero Discord retries.
+        mock.reply_fail.store(true, Ordering::SeqCst);
+        bridge
+            .handle(event(2, 20, "<@99> 送信失敗テスト"), 99)
+            .await;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while mock.social_verifies.lock().await.len() < 2 {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .unwrap();
+        {
+            let verifies = mock.social_verifies.lock().await;
+            assert_eq!(verifies[1]["verified"], json!(false));
+            assert_eq!(verifies[1]["error"], json!("discord_send_failed"));
+            assert_eq!(mock.replies.lock().await.len(), 4);
+        }
+
+        // Policy rejection replies safely without calling social_verify.
+        mock.reply_fail.store(false, Ordering::SeqCst);
+        *mock.social_reject.lock().await = Some((
+            "SOCIAL_POLICY_SECRET_LEAK_BLOCKED".into(),
+            "secret leak blocked".into(),
+        ));
+        bridge.handle(event(3, 20, "<@99> secret?"), 99).await;
+        wait_replies(&mock, 6).await;
+        assert_eq!(mock.social_verifies.lock().await.len(), 2);
+        assert!(
+            matches!(&mock.replies.lock().await[5].1, Reply::Text(t) if t.contains("SOCIAL_POLICY_SECRET_LEAK_BLOCKED"))
+        );
+
+        worker.abort();
+    }
+    #[tokio::test]
+    async fn social_gateway_state_restart_replays_inbound_and_flushes_verifications() {
+        let dir =
+            std::env::temp_dir().join(format!("kamimusuhi-discord-restart-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let state_path = dir.join("social_gateway.json");
+
+        // Run 1: send succeeds, verify fails so verification remains durable on disk.
+        let mock1 = Arc::new(Mock::default());
+        mock1.social_verify_fail.store(true, Ordering::SeqCst);
+        let bridge1 = Bridge::with_state(
+            notifying(),
+            mock1.clone(),
+            16,
+            NoticeState::default(),
+            SocialGatewayState::load(Some(state_path.clone())),
+        );
+        let worker1 = tokio::spawn(bridge1.clone().run());
+        bridge1
+            .handle(event(10, 20, "<@99> 永続化テスト"), 99)
+            .await;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while mock1.social_verifies.lock().await.is_empty() {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .unwrap();
+        worker1.abort();
+
+        // Inject a crashed pre-response inbound item directly into saved gateway state.
+        let mut saved: Value =
+            serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+        assert_eq!(saved["pending_verifications"].as_array().unwrap().len(), 1);
+        saved["pending_inbound"] = json!([PersistedInbound {
+            event: event(11, 20, "<@99> 再起動後の続き"),
+            text: "再起動後の続き".into(),
+            subject: "discord-test".into(),
+        }
+        .to_value()]);
+        std::fs::write(&state_path, saved.to_string()).unwrap();
+
+        // Run 2: reload state, dedupe seen event 10, flush pending verification, and replay 11.
+        let mock2 = Arc::new(Mock::default());
+        let bridge2 = Bridge::with_state(
+            notifying(),
+            mock2.clone(),
+            16,
+            NoticeState::default(),
+            SocialGatewayState::load(Some(state_path.clone())),
+        );
+        bridge2.handle(event(10, 20, "<@99> duplicate"), 99).await;
+        assert!(mock2.replies.lock().await.is_empty());
+
+        bridge2.poll_notices().await.unwrap();
+        assert_eq!(mock2.social_verifies.lock().await.len(), 1);
+        assert_eq!(
+            mock2.social_verifies.lock().await[0]["verified"],
+            json!(true)
+        );
+
+        let worker2 = tokio::spawn(bridge2.clone().run());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while mock2.social_verifies.lock().await.len() < 2 {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(mock2.calls.lock().await.len(), 1);
+        assert_eq!(mock2.calls.lock().await[0].0, "再起動後の続き");
+        worker2.abort();
+
+        let reloaded = SocialGatewayState::load(Some(state_path));
+        assert!(reloaded.pending_inbound.is_empty());
+        assert!(reloaded.pending_verifications.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[tokio::test]
+    async fn initiative_outbox_posts_to_allowed_channel_and_verifies() {
+        let mock = Arc::new(Mock::default());
+        let bridge = Bridge::new(social_config(), mock.clone(), 16);
+        *mock.social_outbox_items.lock().await = vec![
+            json!({
+                "proposal_id": "sp-init-1",
+                "kind": "initiative",
+                "state": "authorized",
+                "turn_id": "t-init-1",
+                "guild_id": 10,
+                "channel_id": 31,
+                "response": "研究目標のマイルストーンを達成しました。",
+                "response_digest": "sha256:init1",
+            }),
+            json!({
+                "proposal_id": "sp-init-bad",
+                "kind": "initiative",
+                "state": "authorized",
+                "turn_id": "t-init-bad",
+                "guild_id": 10,
+                "channel_id": 30,
+                "response": "不正なチャンネル",
+                "response_digest": "sha256:bad",
+            }),
+        ];
+        bridge.poll_notices().await.unwrap();
+        let posts = mock.social_posts.lock().await;
+        assert_eq!(posts.len(), 1);
+        assert_eq!(posts[0].0, 31);
+        drop(posts);
+        let verifies = mock.social_verifies.lock().await;
+        assert_eq!(verifies.len(), 2);
+        assert_eq!(verifies[0]["proposal_id"], json!("sp-init-1"));
+        assert_eq!(verifies[0]["verified"], json!(true));
+        assert_eq!(verifies[1]["proposal_id"], json!("sp-init-bad"));
+        assert_eq!(verifies[1]["verified"], json!(false));
+        assert_eq!(
+            verifies[1]["error"],
+            json!("gateway_initiative_policy_mismatch")
+        );
+        drop(verifies);
+
+        // Send failure during initiative post triggers verified=false.
+        mock.social_post_fail.store(true, Ordering::SeqCst);
+        *mock.social_outbox_items.lock().await = vec![json!({
+            "proposal_id": "sp-init-fail",
+            "kind": "initiative",
+            "state": "authorized",
+            "turn_id": "t-init-fail",
+            "guild_id": 10,
+            "channel_id": 31,
+            "response": "送信失敗予定",
+            "response_digest": "sha256:fail",
+        })];
+        bridge.poll_notices().await.unwrap();
+        let verifies = mock.social_verifies.lock().await;
+        assert_eq!(verifies.len(), 3);
+        assert_eq!(verifies[2]["proposal_id"], json!("sp-init-fail"));
+        assert_eq!(verifies[2]["verified"], json!(false));
+        assert_eq!(
+            verifies[2]["error"],
+            json!("discord_initiative_send_failed")
+        );
+    }
+    #[tokio::test]
+    async fn delete_command_and_gateway_message_delete() {
+        let mock = Arc::new(Mock::default());
+        let bridge = Bridge::new(social_config(), mock.clone(), 16);
+
+        let mut reply_del = event(1, 20, "<@99> 削除");
+        reply_del.reference = Some(555);
+        bridge.handle(reply_del, 99).await;
+        assert_eq!(mock.social_deletes.lock().await.len(), 1);
+        assert_eq!(
+            mock.social_deletes.lock().await[0]["discord_message_id"],
+            json!(555)
+        );
+        assert!(
+            matches!(&mock.replies.lock().await[0].1, Reply::Text(t) if t.contains("削除（匿名化）しました"))
+        );
+
+        bridge.handle(event(2, 20, "<@99> 削除 777"), 99).await;
+        assert_eq!(mock.social_deletes.lock().await.len(), 2);
+        assert_eq!(
+            mock.social_deletes.lock().await[1]["discord_message_id"],
+            json!(777)
+        );
+
+        bridge.handle(event(3, 20, "<@99> delete"), 99).await;
+        assert_eq!(mock.social_deletes.lock().await.len(), 2);
+
+        // Gateway MESSAGE_DELETE forwards valid channel/guild deletes and ignores out-of-scope.
+        bridge.handle_message_delete(Some(99), 30, 888).await;
+        bridge.handle_message_delete(Some(10), 99, 889).await;
+        bridge.handle_message_delete(Some(10), 30, 890).await;
+        assert_eq!(mock.social_deletes.lock().await.len(), 3);
+        assert_eq!(
+            mock.social_deletes.lock().await[2]["discord_message_id"],
+            json!(890)
+        );
+        assert_eq!(
+            mock.social_deletes.lock().await[2]["is_operator"],
+            json!(true)
+        );
+    }
+    #[tokio::test]
+    async fn resident_social_http_contract() {
+        let (url, server) = http_fixture(
+            "200 OK",
+            json!({
+                "authorized": true,
+                "proposal_id": "sp-1",
+                "turn_id": "turn-1",
+                "response": "承知しました。",
+                "response_digest": "sha256:ok",
+                "background": {"warmed_memories": 0}
+            })
+            .to_string(),
+        )
+        .await;
+        let out = Resident::new(&url)
+            .unwrap()
+            .social_propose(&json!({"action": "propose"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            out,
+            ProposeOutcome::Authorized(SocialProposal {
+                proposal_id: "sp-1".into(),
+                turn_id: Some("turn-1".into()),
+                response: "承知しました。".into(),
+                response_digest: "sha256:ok".into(),
+                background: Some(json!({"warmed_memories": 0})),
+            })
+        );
+        let _ = server.await;
+
+        let (url, server) = http_fixture(
+            "403 Forbidden",
+            json!({"reason_code": "SOCIAL_POLICY_DM_FORBIDDEN", "error": "no dm"}).to_string(),
+        )
+        .await;
+        assert_eq!(
+            Resident::new(&url)
+                .unwrap()
+                .social_propose(&json!({"action": "propose"}))
+                .await
+                .unwrap(),
+            ProposeOutcome::Rejected {
+                reason_code: "SOCIAL_POLICY_DM_FORBIDDEN".into(),
+                error: "no dm".into(),
+            }
+        );
+        let _ = server.await;
+
+        let (url, server) =
+            http_fixture("404 Not Found", json!({"error": "disabled"}).to_string()).await;
+        assert_eq!(
+            Resident::new(&url)
+                .unwrap()
+                .social_propose(&json!({"action": "propose"}))
+                .await
+                .unwrap(),
+            ProposeOutcome::Unsupported
+        );
+        let _ = server.await;
+
+        let (url, server) = http_fixture("404 Not Found", "{}".into()).await;
+        assert!(
+            Resident::new(&url)
+                .unwrap()
+                .social_outbox()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let _ = server.await;
+
+        let (url, server) = http_fixture("200 OK", json!({"ok": true}).to_string()).await;
+        Resident::new(&url)
+            .unwrap()
+            .social_verify(&json!({"proposal_id": "sp-1", "verified": true}))
+            .await
+            .unwrap();
+        let req = server.await.unwrap();
+        assert!(req.starts_with("POST /v1/social/verify "));
     }
 }

@@ -57,6 +57,14 @@ commands:
                     requires --turn-id and --reason, returns a review token
   writeback-abort   record audited abandonment without deleting evidence;
                     requires the same --turn-id/--reason and --review-token
+  social-verify     verify and persist a pending social utterance proposal
+                    (--turn-id <hex> --value <delivery-json>)
+  social-abort      abort a pending social utterance proposal without persisting
+                    (--turn-id <hex> --reason <text>)
+  social-redact     scrub a Discord utterance and invalidate derived state
+                    (--value <redact-json> [--reason <text>])
+  social-retention  enforce retention TTL/count bounds on ephemeral utterances
+                    ([--value <retention-json>])
   demo-continuity   run one phase of the deterministic restart scenario
   talk              answer --message once; JSON on stdout
   chat              interactive text conversation; /quit or EOF to stop,
@@ -158,9 +166,17 @@ fn run() -> Result<String, RuntimeError> {
         .ok_or_else(|| RuntimeError::Usage(format!("no command given\n\n{USAGE}")))?;
     let options = Options::parse(args)?;
     let writeback_command = matches!(command.as_str(), "writeback-review" | "writeback-abort");
-    if options.turn_id.is_some() && !writeback_command {
+    let social_command = matches!(
+        command.as_str(),
+        "social-verify" | "social-abort" | "social-redact" | "social-retention"
+    );
+    if options.turn_id.is_some()
+        && !writeback_command
+        && !matches!(command.as_str(), "social-verify" | "social-abort")
+    {
         return Err(RuntimeError::Usage(
-            "--turn-id requires writeback-review or writeback-abort".to_owned(),
+            "--turn-id requires writeback-review, writeback-abort, social-verify or social-abort"
+                .to_owned(),
         ));
     }
     if writeback_command {
@@ -255,9 +271,11 @@ fn run() -> Result<String, RuntimeError> {
     }
     if (options.param.is_some() || options.value.is_some() || options.reason.is_some())
         && command != "propose"
+        && !social_command
     {
         return Err(RuntimeError::Usage(
-            "--param, --value and --reason are only supported by propose".to_owned(),
+            "--param, --value and --reason are only supported by propose or social commands"
+                .to_owned(),
         ));
     }
     if !matches!(
@@ -350,6 +368,9 @@ fn run() -> Result<String, RuntimeError> {
         "talk" | "chat" => run_dialogue(&command, &options),
         "reflect" | "rollback" | "activate" | "propose" => run_c0_command(&command, &options),
         "cogitate" => run_idle_cognition(&options),
+        "social-verify" | "social-abort" | "social-redact" | "social-retention" => {
+            run_social_command(&command, &options)
+        }
         "--help" | "-h" | "help" => Ok(USAGE.to_owned()),
         other => Err(RuntimeError::Usage(format!(
             "unknown command {other:?}\n\n{USAGE}"
@@ -498,6 +519,99 @@ fn run_idle_cognition(options: &Options) -> Result<String, RuntimeError> {
         subject,
         options.privacy.unwrap_or(PrivacyConstraint::LocalOnly),
     )?;
+    runtime.stopping();
+    encode(&report)
+}
+
+fn run_social_command(command: &str, options: &Options) -> Result<String, RuntimeError> {
+    let mut runtime = Runtime::open(options.dir()?, options.runtime_options())?;
+    let report = match command {
+        "social-verify" => {
+            let turn_id: TurnId = options
+                .turn_id
+                .as_deref()
+                .ok_or_else(|| RuntimeError::Usage("social-verify requires --turn-id".to_owned()))?
+                .parse()
+                .map_err(|_| RuntimeError::Usage("--turn-id must be a valid turn ID".to_owned()))?;
+            let raw = options
+                .value
+                .as_deref()
+                .ok_or_else(|| RuntimeError::Usage("social-verify requires --value".to_owned()))?;
+            let delivery: kamimusuhi_runtime::social::DeliveryVerification =
+                serde_json::from_str(raw).map_err(|e| {
+                    RuntimeError::Usage(format!("--value must be valid delivery JSON: {e}"))
+                })?;
+            let mut writer = None;
+            kamimusuhi_runtime::social::verify_delivery(
+                &mut runtime,
+                turn_id,
+                &delivery,
+                &mut writer,
+            )?
+        }
+        "social-abort" => {
+            let turn_id: TurnId = options
+                .turn_id
+                .as_deref()
+                .ok_or_else(|| RuntimeError::Usage("social-abort requires --turn-id".to_owned()))?
+                .parse()
+                .map_err(|_| RuntimeError::Usage("--turn-id must be a valid turn ID".to_owned()))?;
+            let reason = options
+                .reason
+                .as_deref()
+                .filter(|r| !r.trim().is_empty())
+                .ok_or_else(|| RuntimeError::Usage("social-abort requires --reason".to_owned()))?;
+            kamimusuhi_runtime::social::abort_proposal(&mut runtime, turn_id, reason)?
+        }
+        "social-redact" => {
+            let raw = options
+                .value
+                .as_deref()
+                .ok_or_else(|| RuntimeError::Usage("social-redact requires --value".to_owned()))?;
+            let req: serde_json::Value = serde_json::from_str(raw)
+                .map_err(|e| RuntimeError::Usage(format!("--value must be valid JSON: {e}")))?;
+            let discord_message_id = req["discord_message_id"].as_u64();
+            let evidence_id = req["evidence_id"]
+                .as_str()
+                .map(|s| {
+                    s.parse::<kamimusuhi_core::ids::EvidenceId>()
+                        .map_err(|_| RuntimeError::Usage("invalid evidence_id".to_owned()))
+                })
+                .transpose()?;
+            let user_id = req["user_id"].as_u64();
+            let reason = options
+                .reason
+                .as_deref()
+                .or_else(|| req["reason"].as_str())
+                .unwrap_or("user_request");
+            let ids = runtime.store().redact_discord_utterance(
+                runtime.individual_id(),
+                discord_message_id,
+                evidence_id,
+                user_id,
+                reason,
+            )?;
+            serde_json::json!({"redacted_evidence_ids": ids})
+        }
+        "social-retention" => {
+            let req: serde_json::Value = match options.value.as_deref() {
+                Some(raw) => serde_json::from_str(raw)
+                    .map_err(|e| RuntimeError::Usage(format!("--value must be valid JSON: {e}")))?,
+                None => serde_json::json!({}),
+            };
+            let max_age_secs = req["max_age_secs"].as_u64().unwrap_or(7 * 24 * 3600);
+            let max_utterances =
+                usize::try_from(req["max_utterances_per_source"].as_u64().unwrap_or(64))
+                    .unwrap_or(64);
+            let ids = runtime.store().enforce_social_retention(
+                runtime.individual_id(),
+                max_age_secs.saturating_mul(1000),
+                max_utterances,
+            )?;
+            serde_json::json!({"redacted_evidence_ids": ids})
+        }
+        _ => unreachable!(),
+    };
     runtime.stopping();
     encode(&report)
 }

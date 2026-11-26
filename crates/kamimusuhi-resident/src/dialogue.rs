@@ -112,6 +112,82 @@ pub(crate) fn valid_subject(subject: &str) -> bool {
 
 /// Returns (HTTP status, body).
 pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, Value) {
+    talk_inner(shared, config, request, None)
+}
+
+/// Run a deferred-delivery social turn (`defer_delivery: true`) on `subject`'s warm host.
+pub fn run_social_turn(
+    shared: &Shared,
+    config: &DialogueConfig,
+    subject: &str,
+    message: &str,
+    social_context: &Value,
+    initiative: Option<&Value>,
+) -> (u16, Value) {
+    let request = json!({
+        "message": message,
+        "subject": subject,
+    });
+    talk_inner(shared, config, &request, Some((social_context, initiative)))
+}
+
+/// Run a non-turn social maintenance/verification command (`verify_delivery`,
+/// `abort_proposal`, `social_redact`, `social_retention`) on `subject`'s host.
+pub fn run_social_host_action(
+    shared: &Shared,
+    config: &DialogueConfig,
+    subject: &str,
+    request: Value,
+) -> Result<Value, (u16, Value)> {
+    if !valid_subject(subject) {
+        return Err((
+            400,
+            json!({"error": "subject must be 1-64 chars of [A-Za-z0-9._-]"}),
+        ));
+    }
+    if !config.dir.join("kamimusuhi.sqlite").is_file() {
+        return Err((
+            503,
+            json!({"error": "individual is not initialized on this node"}),
+        ));
+    }
+    let identity_context =
+        crate::identity::context(shared).map_err(|reason| (409, json!({"error": reason})))?;
+    let _slot = GATE.admit(subject, config.max_concurrent);
+    let spec = crate::dialogue_host::HostSpec {
+        runtime_binary: config.runtime_binary.clone(),
+        dir: config.dir.clone(),
+        subject: subject.to_owned(),
+        privacy: config.privacy.clone(),
+        env: vec![(
+            crate::identity::CONTEXT_ENV.to_owned(),
+            identity_context.to_string(),
+        )],
+    };
+    match shared.dialogue_hosts.command_with_identity(
+        &spec,
+        request,
+        Duration::from_secs(config.timeout_secs),
+        Some(&identity_context),
+    ) {
+        Ok(outcome) => Ok(outcome.reply),
+        Err(crate::dialogue_host::HostError::Timeout)
+        | Err(crate::dialogue_host::HostError::Spawn(_))
+        | Err(crate::dialogue_host::HostError::Io(_)) => Err((
+            504,
+            json!({"error": "social host timed out or unavailable"}),
+        )),
+        Err(crate::dialogue_host::HostError::Dead(err, _))
+        | Err(crate::dialogue_host::HostError::Child(err, _)) => Err((502, json!({"error": err}))),
+    }
+}
+
+fn talk_inner(
+    shared: &Shared,
+    config: &DialogueConfig,
+    request: &Value,
+    social: Option<(&Value, Option<&Value>)>,
+) -> (u16, Value) {
     let message = request.get("message").and_then(Value::as_str).unwrap_or("");
     let subject = request
         .get("subject")
@@ -177,22 +253,42 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
     // one process keeps the DialogueSession warm across turns, so the
     // individual's relationship memory and session continuity carry over
     // instead of being born and dying per turn.
-    let outcome = shared.dialogue_hosts.turn_with_identity(
-        &crate::dialogue_host::HostSpec {
-            runtime_binary: config.runtime_binary.clone(),
-            dir: config.dir.clone(),
-            subject: subject.to_owned(),
-            privacy: config.privacy.clone(),
-            env: vec![(
-                crate::identity::CONTEXT_ENV.to_owned(),
-                identity_context.to_string(),
-            )],
-        },
-        message,
-        &task_id,
-        Duration::from_secs(config.timeout_secs),
-        Some(&identity_context),
-    );
+    let spec = crate::dialogue_host::HostSpec {
+        runtime_binary: config.runtime_binary.clone(),
+        dir: config.dir.clone(),
+        subject: subject.to_owned(),
+        privacy: config.privacy.clone(),
+        env: vec![(
+            crate::identity::CONTEXT_ENV.to_owned(),
+            identity_context.to_string(),
+        )],
+    };
+    let outcome = match social {
+        Some((social_context, initiative)) => {
+            let mut host_req = json!({
+                "message": message,
+                "turn": task_id,
+                "defer_delivery": true,
+                "social_context": social_context,
+            });
+            if let Some(init) = initiative {
+                host_req["initiative"] = init.clone();
+            }
+            shared.dialogue_hosts.command_with_identity(
+                &spec,
+                host_req,
+                Duration::from_secs(config.timeout_secs),
+                Some(&identity_context),
+            )
+        }
+        None => shared.dialogue_hosts.turn_with_identity(
+            &spec,
+            message,
+            &task_id,
+            Duration::from_secs(config.timeout_secs),
+            Some(&identity_context),
+        ),
+    };
     // This turn's own routing event, not whichever turn routed last.
     let turn_route = shared.end_turn(&task_id);
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -252,7 +348,8 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
             // Whether anything keeps running after this reply: delegated
             // tasks, or a promise that only the operator can now start.
             // A host-run review turn judges finished work; it takes nothing on.
-            let background = if request["purpose"] == crate::task_review::PURPOSE {
+            let is_initiative = social.is_some_and(|(_, init)| init.is_some());
+            let background = if request["purpose"] == crate::task_review::PURPOSE || is_initiative {
                 Value::Null
             } else {
                 crate::background::background(
@@ -282,10 +379,15 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
                     "cost_kind": r.cost_kind,
                 })
             });
+            let journal_kind = if social.is_some() {
+                "proposed"
+            } else {
+                "answered"
+            };
             let _ = shared.spool.append_sync(
                 "conversations/dialogue",
                 json!({
-                    "kind": "answered",
+                    "kind": journal_kind,
                     "subject": subject,
                     "task_id": task_id,
                     "latency_ms": latency_ms,
@@ -303,6 +405,9 @@ pub fn talk(shared: &Shared, config: &DialogueConfig, request: &Value) -> (u16, 
                 200,
                 json!({
                     "response": reply.get("response"),
+                    "response_digest": reply.get("response_digest"),
+                    "delivery_state": reply.get("delivery_state"),
+                    "social_memory": reply.get("social_memory"),
                     "individual_id": reply.get("individual_id"),
                     "turn_id": reply.get("turn_id"),
                     "subject": subject,

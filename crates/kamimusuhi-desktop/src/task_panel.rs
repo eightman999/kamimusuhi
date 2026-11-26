@@ -17,6 +17,7 @@ use kamimusuhi_resident::remote::RemoteCommand;
 const DASH: &str = "—";
 const UNKNOWN: &str = "不明";
 const DETAIL_W: f32 = 440.0;
+const BG_TRANSPARENT: Color32 = Color32::TRANSPARENT;
 
 /// Detail keys shown first, in this order; any other key follows.
 const DETAIL_KEYS: [(&str, &str); 13] = [
@@ -43,6 +44,7 @@ pub(crate) struct AgentsPanel {
     selected: Option<String>,
     filter: String,
     status_filter: &'static str,
+    show_executors: bool,
     instruction: String,
     reply: Option<String>,
 }
@@ -55,6 +57,7 @@ impl Default for AgentsPanel {
             selected: None,
             filter: String::new(),
             status_filter: "all",
+            show_executors: true,
             instruction: String::new(),
             reply: None,
         }
@@ -104,10 +107,30 @@ impl AgentsPanel {
             .unwrap_or_default()
     }
 
-    pub(crate) fn show(&mut self, ui: &mut egui::Ui, commands: &Sender<RemoteCommand>) {
+    pub(crate) fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        commands: &Sender<RemoteCommand>,
+        focus_search: bool,
+    ) -> Option<String> {
+        let mut toast: Option<String> = None;
         let send = |body: Value| {
             let _ = commands.send(RemoteCommand::Agents(body));
         };
+        let all_tasks: Vec<&Value> = self
+            .panel
+            .as_ref()
+            .and_then(|p| p["tasks"].as_array())
+            .map(|a| a.iter().collect())
+            .unwrap_or_default();
+        let count_all = all_tasks.len();
+        let count_active = all_tasks.iter().filter(|t| is_active(t)).count();
+        let count_done = all_tasks.iter().filter(|t| t["status"] == "done").count();
+        let count_failed = all_tasks
+            .iter()
+            .filter(|t| matches!(t["status"].as_str(), Some("failed" | "cancelled")))
+            .count();
+
         ui.horizontal(|ui| {
             ui.heading(RichText::new("外部エージェント").color(TEXT));
             if let Some(p) = &self.panel {
@@ -130,10 +153,10 @@ impl AgentsPanel {
                 }
                 ui.add_space(8.0);
                 for (key, label) in [
-                    ("failed", "失敗"),
-                    ("done", "完了"),
-                    ("active", "実行中"),
-                    ("all", "すべて"),
+                    ("failed", format!("失敗 ({count_failed})")),
+                    ("done", format!("完了 ({count_done})")),
+                    ("active", format!("実行中 ({count_active})")),
+                    ("all", format!("すべて ({count_all})")),
                 ] {
                     ui.selectable_value(&mut self.status_filter, key, label);
                 }
@@ -141,11 +164,14 @@ impl AgentsPanel {
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.add(
+            let search_resp = ui.add(
                 egui::TextEdit::singleline(&mut self.filter)
-                    .hint_text("🔍 タスク・実行者・モデルで検索…")
-                    .desired_width(280.0),
+                    .hint_text("🔍 タスク・実行者・モデルで検索… (⌘K / /)")
+                    .desired_width(300.0),
             );
+            if focus_search {
+                search_resp.request_focus();
+            }
             if !self.filter.is_empty() && ui.small_button("✕").clicked() {
                 self.filter.clear();
             }
@@ -154,11 +180,11 @@ impl AgentsPanel {
         if self.absent {
             ui.add_space(20.0);
             ui.label(RichText::new("この node には Task Plane がありません").color(MUTED));
-            return;
+            return toast;
         }
         let Some(panel) = self.panel.clone() else {
             ui.label(RichText::new("読み込み中…").color(MUTED));
-            return;
+            return toast;
         };
         if let Some(e) = panel["health"]["config_error"]
             .as_str()
@@ -166,13 +192,43 @@ impl AgentsPanel {
         {
             ui.label(RichText::new(format!("設定エラー: {e}")).small().color(RED));
         }
-        executor_strip(ui, &panel["health"]["executors"]);
-        if let Some(r) = &self.reply {
-            ui.label(
-                RichText::new(format!("直近の操作: {r}"))
+
+        // Collapsible executor strip so task list can use full height.
+        let exec_list = panel["health"]["executors"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let exec_ok = exec_list
+            .iter()
+            .filter(|e| executor_state(e).0 == "OK")
+            .count();
+        let exec_running: u64 = exec_list.iter().filter_map(|e| e["running"].as_u64()).sum();
+        ui.horizontal(|ui| {
+            let arrow = if self.show_executors { "▾" } else { "▸" };
+            if ui
+                .small_button(
+                    RichText::new(format!(
+                        "{arrow} 実行者 ({exec_ok}/{} OK · 実行中 {exec_running})",
+                        exec_list.len()
+                    ))
                     .small()
                     .color(MUTED),
-            );
+                )
+                .clicked()
+            {
+                self.show_executors = !self.show_executors;
+            }
+            if let Some(r) = &self.reply {
+                ui.label(
+                    RichText::new(format!("直近の操作: {r}"))
+                        .small()
+                        .color(MUTED),
+                );
+            }
+        });
+        if self.show_executors {
+            ui.add_space(4.0);
+            executor_strip(ui, &panel["health"]["executors"]);
         }
         ui.add_space(6.0);
 
@@ -211,62 +267,74 @@ impl AgentsPanel {
         {
             self.selected = None;
         }
-        let detail_w = if self.selected.is_some() {
-            DETAIL_W
-        } else {
-            0.0
-        };
-        let list_w = (ui.available_width() - detail_w - 12.0).max(300.0);
-        let top_down = egui::Layout::top_down(egui::Align::Min);
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(egui::vec2(list_w, ui.available_height()), top_down, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("agents-list")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if tasks.is_empty() {
-                            ui.label(RichText::new("表示するタスクはありません").color(MUTED));
-                        }
-                        for t in &tasks {
-                            if task_row(ui, t, self.selected.as_deref()) {
-                                let id = t["id"].as_str().map(str::to_owned);
-                                self.selected = if self.selected == id { None } else { id };
-                                self.instruction.clear();
+
+        if let Some(id) = self.selected.clone()
+            && let Some(t) = tasks.iter().find(|t| t["id"] == id.as_str())
+        {
+            egui::SidePanel::right("agents-detail-side")
+                .frame(
+                    egui::Frame::new()
+                        .fill(BG_TRANSPARENT)
+                        .inner_margin(egui::Margin {
+                            left: 10,
+                            right: 0,
+                            top: 0,
+                            bottom: 0,
+                        }),
+                )
+                .resizable(true)
+                .default_width(DETAIL_W)
+                .min_width(300.0)
+                .max_width(680.0)
+                .show_inside(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("agents-detail")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            let (close, copied) = self.detail(ui, t, &send);
+                            if copied.is_some() {
+                                toast = copied;
                             }
-                        }
-                        ui.add_space(10.0);
-                        ledger_card(ui, &panel["ledger"]);
-                        ui.add_space(10.0);
-                        stats_card(ui, &panel["stats"]);
-                    });
+                            if close {
+                                self.selected = None;
+                            }
+                        });
+                });
+        }
+
+        egui::ScrollArea::vertical()
+            .id_salt("agents-list")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if tasks.is_empty() {
+                    ui.label(RichText::new("表示するタスクはありません").color(MUTED));
+                }
+                for t in &tasks {
+                    if task_row(ui, t, self.selected.as_deref()) {
+                        let id = t["id"].as_str().map(str::to_owned);
+                        self.selected = if self.selected == id { None } else { id };
+                        self.instruction.clear();
+                    }
+                }
+                ui.add_space(10.0);
+                ledger_card(ui, &panel["ledger"]);
+                ui.add_space(10.0);
+                stats_card(ui, &panel["stats"]);
             });
-            if let Some(id) = self.selected.clone()
-                && let Some(t) = tasks.iter().find(|t| t["id"] == id.as_str())
-            {
-                ui.add_space(12.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(DETAIL_W, ui.available_height()),
-                    top_down,
-                    |ui| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("agents-detail")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                if self.detail(ui, t, &send) {
-                                    self.selected = None;
-                                }
-                            });
-                    },
-                );
-            }
-        });
+        toast
     }
 
-    /// Returns true when the detail asks to be closed.
-    fn detail(&mut self, ui: &mut egui::Ui, t: &Value, send: &dyn Fn(Value)) -> bool {
+    /// Returns `(close_requested, toast_message)`.
+    fn detail(
+        &mut self,
+        ui: &mut egui::Ui,
+        t: &Value,
+        send: &dyn Fn(Value),
+    ) -> (bool, Option<String>) {
         let id = t["id"].as_str().unwrap_or("");
         let status = t["status"].as_str().unwrap_or("");
         let mut close = false;
+        let mut toast = None;
         egui::Frame::new()
             .fill(PANEL)
             .stroke(Stroke::new(1.0, BORDER))
@@ -285,6 +353,7 @@ impl AgentsPanel {
                         .clicked()
                     {
                         ui.ctx().copy_text(id.to_owned());
+                        toast = Some("タスク ID をコピーしました".to_owned());
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                         if ui.small_button("閉じる (Esc)").clicked() {
@@ -419,9 +488,11 @@ impl AgentsPanel {
 
                 ui.add_space(8.0);
                 section(ui, "結果");
-                result_block(ui, id, &t["result"]);
+                if let Some(msg) = result_block(ui, id, &t["result"]) {
+                    toast = Some(msg);
+                }
             });
-        close
+        (close, toast)
     }
 }
 
@@ -630,10 +701,11 @@ fn task_row(ui: &mut egui::Ui, t: &Value, selected: Option<&str>) -> bool {
     .clicked()
 }
 
-fn result_block(ui: &mut egui::Ui, id: &str, result: &Value) {
+fn result_block(ui: &mut egui::Ui, id: &str, result: &Value) -> Option<String> {
+    let mut toast = None;
     if !result.is_object() {
         ui.label(RichText::new("結果はまだありません").small().color(MUTED));
-        return;
+        return toast;
     }
     if result["read_only_violation"].as_bool() == Some(true) {
         ui.label(
@@ -661,6 +733,7 @@ fn result_block(ui: &mut egui::Ui, id: &str, result: &Value) {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("📋 要約をコピー").clicked() {
                             ui.ctx().copy_text(summary.to_owned());
+                            toast = Some("要約をコピーしました".to_owned());
                         }
                     });
                 });
@@ -712,6 +785,7 @@ fn result_block(ui: &mut egui::Ui, id: &str, result: &Value) {
         ),
     ];
     kv_grid(ui, ("agent-result", id), &rows);
+    toast
 }
 
 fn ledger_card(ui: &mut egui::Ui, ledger: &Value) {

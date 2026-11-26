@@ -15,36 +15,58 @@ URLs listed in `~/.config/kamimusuhi/nodes`, tried in order) with the node token
 memory, reference material and tool calling; the GUI holds no state of its own.
 
 - **対話**: recent turns for the subject are loaded from the resident journal;
-  each reply shows its route (llm_master / HAI), latency, reference lookups
-  and the tools it called (with expandable call details), plus inline search,
-  text selection and copy buttons. Pending approvals appear inline with
-  承認して実行 / 却下 buttons.
-- **タスク**: the resident task board as lanes (進行中 / あなたの判断待ち /
-  待機 / 保留 / 完了) with search and kind filtering. Cards show kind, node,
-  owner and age; curves with arrowheads connect predecessor → successor
-  (`depends_on`). Selecting a card highlights its neighbours and opens a detail
-  panel with 前タスク / 次タスク links, notes, status changes (manual/agent
-  tasks) and approve/reject for approval tasks. The **マップ** toggle (`⌘/Ctrl+M`)
-  draws the whole graph mind-map style: prerequisites to the left, successors
-  to the right, clustered per connected group, approval waits glowing amber.
-  `--view tasks|map` opens the window on that view.
-- **外部エージェント**: Task Plane executors, filterable delegated tasks, review
-  verdicts, operator accept/reject feedback, session continuation, usage ledger
-  and model×harness stats (`--view agents`).
-- **承認**: the approval queue (`/v1/approvals`) with the full requested
-  content and arguments, plus recent decisions and their commit/push result.
-- **記憶・自己改善**: episodic/relationship memory records with domain/keyword
+  each reply renders lightweight Markdown (headings, lists, horizontal-scroll
+  fenced code blocks with copy buttons, and clickable URLs), compact timestamps
+  with full-timestamp hover, route/latency/cost/tool metadata (with a `メタ: 詳細/簡潔`
+  toggle), inline search, and toast notifications on copy. Empty conversations
+  offer starter prompt chips, the multiline composer stays editable while
+  awaiting a reply, supports toggling `⌘/Ctrl+Enter` vs `Enter` to send, recalls
+  sent prompts via `↑`/`↓` when empty, and offers retry/restore/reconnect controls
+  on dismissible error banners. Pending approvals appear inline with
+  承認して実行 / 却下 / 引数コピー buttons.
+- **タスク**: opens in a scannable **リスト** view by default (with **ボード**
+  and **マップ** `⌘/Ctrl+M` switches) grouped into 6 status sections (`進行中` /
+  `あなたの判断待ち` / `待機` / `保留` / `失敗` / `完了・取消`), sorted newest-first
+  with relative timestamps, latest note preview, and collapsible sections. A top
+  summary strip lets you filter by status or switch between **作業のみ** (hiding
+  routine `dialogue`/`tool` logs by default) and **対話・ツール含む**, alongside
+  keyword search and kind filters. Selecting a task highlights its neighbours and
+  opens a resizable right-hand detail panel (`前タスク` / `次タスク` links,
+  timestamped notes with collapse for long logs, status changes for manual/agent
+  tasks, approve/reject for approval tasks, and ID copy toast). The **マップ**
+  view draws the dependency graph mind-map style with `75%`/`100%`/`125%` zoom
+  and drag-to-pan (`--view tasks|map`).
+- **外部エージェント**: Task Plane executors (collapsible header strip), filterable
+  delegated tasks with per-status counts, resizable detail panel, review verdicts,
+  operator accept/reject feedback, session continuation, usage ledger and
+  model×harness stats (`--view agents`).
+- **承認**: the approval queue (`/v1/approvals`) with full requested content,
+  argument JSON inspection and one-click copy, plus recent decisions and their
+  commit/push result.
+- **記憶・自己改善**: scrollable KPI summary and Cognition panel above responsive
+  1/2-column cards: episodic/relationship memory records with domain/keyword
   filtering, `self_model` fields, `pending_proposals`, `self_notes`, writeback
   status and Idle/API Cognition state (`--view memory`).
-- **状態**: KPI summary, nodes, peers, routing tiers, cost guard, delegations,
-  cognition, K-CORE, commitments, intercom, NAS, HAI, MCP servers, jobs and
-  snapshots (`/status`), with one-click status report copy.
+- **状態**: scrollable KPI summary and responsive 1/2-column layout covering
+  nodes, peers, routing tiers, cost guard, delegations, cognition, K-CORE,
+  commitments, intercom, NAS, HAI, MCP servers, jobs and snapshots (`/status`),
+  with one-click status report copy and toast confirmation.
 - **ツール**: libraries, MCP servers on both nodes and a filterable tool list.
 
 The subject defaults to `$USER`; `--subject` or the top-bar subject switcher
 selects another history (`*` inspects turns across Slack, Discord and operator
-subjects). Shortcuts: `⌘/Ctrl+1..7` or `F1..F7` switch views, `⌘/Ctrl+R`
-refreshes, `⌘/Ctrl+M` toggles task board/map, and `Esc` closes detail panels.
+subjects). A top-bar `⚙` modal (`設定・ショートカット`) lets you switch Resident
+URL/custom subject, reconnect on demand, configure `Enter`-to-send and compact
+metadata options, adjust UI scale, and inspect shortcuts:
+- `⌘/Ctrl+1..7` or `F1..F7`: switch views
+- `⌘/Ctrl+L` or `i` (when not typing): focus the chat composer
+- `⌘/Ctrl+K` or `/` (when not typing): focus the active view's search box
+- `⌘/Ctrl+B` or top-bar `☰`/`▶`: toggle compact icon-only navigation rail
+- `⌘/Ctrl+M`: toggle task board/map
+- `⌘/Ctrl+R`: refresh data (or reconnect if disconnected)
+- `⌘/Ctrl++`, `-`, `0`: scale UI (`80%`–`140%`)
+- `⌘/Ctrl+,` or `?` (when not typing): open settings & shortcuts modal
+- `Esc`: close modal, clear detail selection, or clear active search filter
 
 ## Local mode (`--local`): the Jev test surface
 
@@ -83,11 +105,13 @@ unchanged auto-presets are removed to avoid surprise paid fan-out; customized
 entries are preserved.
 
 The window has a left navigation rail, central conversation, state/trace
-inspector, and provider summary. The worker owns one Runtime and one
-DialogueSession; the UI thread never touches SQLite or provider calls. Turns
-are serialized and duplicate request IDs are refused. The trace view shows
-normalized Jev decisions and public timing/transition data only, not model
-reasoning or unselected response text.
+inspector, and provider summary, sharing the Markdown/code-block renderer,
+non-locking composer with `Enter`-to-send toggle, dismissible error banner,
+toast feedback, and UI zoom shortcuts (`⌘/Ctrl++`/`-`/`0`) with Resident mode.
+The worker owns one Runtime and one DialogueSession; the UI thread never touches
+SQLite or provider calls. Turns are serialized and duplicate request IDs are
+refused. The trace view shows normalized Jev decisions and public
+timing/transition data only, not model reasoning or unselected response text.
 
 The `Extra LLM API` panel registers additional OpenAI-compatible language
 organs with an ID, base URL, model, and authentication environment-variable

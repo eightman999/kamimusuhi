@@ -5,6 +5,7 @@
 Botは受付を返信し、FIFOキューから（subjectごとに順番を守って最大2件並行で）Piの
 `POST http://127.0.0.1:7860/v1/kamimusuhi/talk` へ渡す。
 返事は元メッセージへの返信になる。既存のPi上の個体・Persona・記憶を使い、別個体は作らない。
+閉ループ・`SocialPolicyGate`・`InitiativeEngine`・記憶保持/削除境界の仕様は [Social Embodiment 基本仕様](../../docs/social-embodiment.md) を参照。
 
 実装は `crates/kamimusuhi-discord` のRustバイナリ。Python/venvは不要です。旧`discord_bot.py`とそのテストは移植比較用に保持しています。
 
@@ -101,7 +102,11 @@ test -e /srv/kamimusuhi/config/discord.env || install -m 600 deploy/resident/dis
 | `DISCORD_ALLOWED_USER_IDS` | 操作者のユーザーID |
 | `DISCORD_ALLOWED_CHANNEL_IDS` | 専用チャンネルID／スレッドID |
 | `DISCORD_OPERATOR_SUBJECT` | 任意。デスクトップと同じsubject（例：`eightman`）。ペルソナ・記憶を揃える |
+| `DISCORD_PUBLIC_CHANNEL_IDS` | 任意。公開チャンネル扱いとするチャンネルID一覧（`DISCORD_ALLOWED_CHANNEL_IDS` の部分集合）。`Relationship` 記憶・私的発言を隔離する |
+| `DISCORD_INITIATIVE_CHANNEL_IDS` | 任意。`InitiativeEngine` による自発発話を許可するチャンネルID一覧（`DISCORD_ALLOWED_CHANNEL_IDS` の部分集合） |
 | `DISCORD_NOTIFY` / `DISCORD_NOTIFY_USER_ID` / `DISCORD_NOTIFY_CHANNEL_ID` | 任意。判断待ち通知の有効化・宛先（上記「判断待ちの通知」） |
+
+また、許可チャンネルで `@澪 削除 [<message_id>]`（または通知・発言への返信で `削除` / `forget`）、および Discord 上のメッセージ削除イベントにより、該当他者発言の原文を SQLite 上で消去（redact）し想起対象から除外する。
 
 residentの`secrets.env`はBotに読み込ませない。ローカルAPI接続にはnode token不要。
 配置前の設定ファイルをMacで用意する場合はGit対象外の`deploy/resident/local/`に保存する。

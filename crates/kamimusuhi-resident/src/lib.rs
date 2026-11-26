@@ -39,6 +39,7 @@ pub mod self_notes;
 pub mod selfmon;
 pub mod server;
 pub mod service_control;
+pub mod social;
 pub mod spool;
 pub mod state;
 pub mod status;

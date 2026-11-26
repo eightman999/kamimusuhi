@@ -169,12 +169,11 @@ fn spawn(binary: &Path, args: &[String], env: &[(String, String)]) -> Result<Hos
     })
 }
 
-/// Run one turn on `host`. Any error leaves the host's protocol state
-/// unknown — the caller must drop it, never reuse it.
-fn run_turn(
+/// Run one turn or structured social action on `host`. Any error leaves the
+/// host's protocol state unknown — the caller must drop it, never reuse it.
+fn run_request(
     host: &mut Host,
-    message: &str,
-    turn: &str,
+    mut request: Value,
     timeout: Duration,
     identity_context: Option<&Value>,
 ) -> Result<Value, HostError> {
@@ -184,7 +183,6 @@ fn run_turn(
             host.stderr_tail(),
         ));
     }
-    let mut request = serde_json::json!({"message": message, "turn": turn});
     if let Some(context) = identity_context {
         request["identity_context"] = context.clone();
     }
@@ -360,12 +358,28 @@ impl HostPool {
         timeout: Duration,
         identity_context: Option<&Value>,
     ) -> Result<TurnOutcome, HostError> {
+        self.command_with_identity(
+            spec,
+            serde_json::json!({"message": message, "turn": turn_id}),
+            timeout,
+            identity_context,
+        )
+    }
+
+    /// Run a structured JSON request on `spec.subject`'s warm host.
+    pub fn command_with_identity(
+        &self,
+        spec: &HostSpec,
+        request: Value,
+        timeout: Duration,
+        identity_context: Option<&Value>,
+    ) -> Result<TurnOutcome, HostError> {
         // Up to two attempts: the second only after a provably-unanswered
         // first, and always on a fresh process.
         for attempt in 0..2 {
             let mut host = self.checkout(spec)?;
             let reused = host.turns > 0;
-            match run_turn(&mut host, message, turn_id, timeout, identity_context) {
+            match run_request(&mut host, request.clone(), timeout, identity_context) {
                 Ok(reply) => {
                     host.turns += 1;
                     host.last_used = Instant::now();

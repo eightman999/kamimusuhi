@@ -8,6 +8,9 @@ use kamimusuhi_runtime::llm_jev::{
     ConversationCoreState, ConversationTrace, GeneratedLanguageCandidate,
 };
 
+use crate::ui_helpers::{
+    Toast, apply_theme_base, handle_zoom_shortcuts, nav_item, render_markdown, show_toast,
+};
 use crate::worker::{ConnectionSummary, ReadyState, WorkerCommand, WorkerEvent};
 
 pub(crate) const BG: Color32 = Color32::from_rgb(8, 15, 24);
@@ -62,6 +65,10 @@ struct NativeApp {
     input: String,
     view: View,
     busy: bool,
+    send_on_enter: bool,
+    ui_zoom: f32,
+    focus_input: bool,
+    toast: Option<Toast>,
     next_request_id: u64,
     last_error: Option<String>,
     session_id: String,
@@ -99,6 +106,10 @@ impl NativeApp {
             input: String::new(),
             view: View::Chat,
             busy: false,
+            send_on_enter: false,
+            ui_zoom: 1.0,
+            focus_input: true,
+            toast: None,
             next_request_id: 1,
             last_error: None,
             session_id: "起動中…".to_owned(),
@@ -232,6 +243,9 @@ impl NativeApp {
         if self.busy || self.connection.is_none() {
             return;
         }
+        if self.busy {
+            return;
+        }
         let text = self.input.trim().to_owned();
         if text.is_empty() {
             return;
@@ -252,6 +266,7 @@ impl NativeApp {
         self.input.clear();
         self.last_error = None;
         self.busy = true;
+        self.focus_input = true;
         if self
             .commands
             .send(WorkerCommand::Send { request_id, text })
@@ -290,10 +305,19 @@ impl NativeApp {
         ui.label(RichText::new("KAMIMUSUHI").small().strong().color(MUTED));
         ui.label(RichText::new("対話と状態の観測面").small().color(MUTED));
         ui.add_space(20.0);
-        self.nav_button(ui, "▣  チャット", View::Chat);
-        self.nav_button(ui, "◌  状態", View::Status);
-        self.nav_button(ui, "⌁  内部トレース", View::Trace);
-        self.nav_button(ui, "⚙  接続設定", View::Connections);
+        for (icon, label, shortcut, view) in [
+            ("▣", "チャット", "⌘1", View::Chat),
+            ("◌", "状態", "⌘2", View::Status),
+            ("⌁", "内部トレース", "⌘3", View::Trace),
+            ("⚙", "接続設定", "⌘4", View::Connections),
+        ] {
+            if nav_item(ui, icon, label, None, shortcut, self.view == view, false) {
+                self.view = view;
+                if view == View::Chat {
+                    self.focus_input = true;
+                }
+            }
+        }
         ui.add_space(12.0);
         ui.separator();
         ui.add_space(10.0);
@@ -324,27 +348,6 @@ impl NativeApp {
         });
     }
 
-    fn nav_button(&mut self, ui: &mut egui::Ui, label: &str, view: View) {
-        let selected = self.view == view;
-        let response = ui.add_sized(
-            [ui.available_width(), 34.0],
-            egui::Button::new(RichText::new(label).color(if selected { TEXT } else { MUTED }))
-                .fill(if selected {
-                    Color32::from_rgb(24, 62, 111)
-                } else {
-                    Color32::TRANSPARENT
-                })
-                .stroke(if selected {
-                    Stroke::new(1.0, Color32::from_rgb(46, 108, 185))
-                } else {
-                    Stroke::NONE
-                }),
-        );
-        if response.clicked() {
-            self.view = view;
-        }
-    }
-
     fn chat_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("対話").heading().color(TEXT));
@@ -355,119 +358,181 @@ impl NativeApp {
             );
         });
         ui.separator();
-        // A bare ScrollArea can consume all remaining height, which pushes the
-        // composer below the central panel and makes it appear to be missing.
-        // Reserve the composer area first so the input is always visible.
-        let composer_height = 118.0 + if self.last_error.is_some() { 42.0 } else { 0.0 };
-        let history_height = (ui.available_height() - composer_height).max(120.0);
-        let history_width = ui.available_width();
-        ui.allocate_ui(egui::vec2(history_width, history_height), |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("chat-scroll")
-                .stick_to_bottom(true)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    if self.messages.is_empty() {
-                        ui.add_space(90.0);
-                        ui.vertical_centered(|ui| {
-                            ui.label(RichText::new("まだ会話はありません").size(20.0).color(TEXT));
-                            ui.label(
-                                RichText::new("下の入力欄から日本語で話しかけてください")
-                                    .color(MUTED),
-                            );
+        // Reserve the bottom composer before the scroll viewport so multiline
+        // input and dismissible error banners never clip messages or overflow.
+        let mut do_send = false;
+        egui::TopBottomPanel::bottom("local-chat-composer")
+            .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin {
+                left: 0,
+                right: 0,
+                top: 8,
+                bottom: 0,
+            }))
+            .show_inside(ui, |ui| {
+                if let Some(error) = self.last_error.clone() {
+                    let mut clear_err = false;
+                    egui::Frame::new()
+                        .fill(Color32::from_rgb(66, 28, 37))
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(145, 53, 69)))
+                        .corner_radius(egui::CornerRadius::same(6))
+                        .inner_margin(8.0)
+                        .show(ui, |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(
+                                    RichText::new(&error).color(Color32::from_rgb(255, 191, 196)),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button("✕").clicked() {
+                                            clear_err = true;
+                                        }
+                                    },
+                                );
+                            });
                         });
+                    if clear_err {
+                        self.last_error = None;
                     }
-                    for message in &self.messages {
-                        message_bubble(ui, message);
-                        ui.add_space(10.0);
-                    }
-                    if self.busy {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.label(
-                                RichText::new(
-                                    "発話・記憶・不足情報の判定 → 言語器官race → 匿名候補の品質判定",
-                                )
-                                    .small()
-                                    .color(MUTED),
-                            );
-                        });
-                    }
-                });
-        });
+                    ui.add_space(6.0);
+                }
 
-        if let Some(error) = &self.last_error {
-            egui::Frame::new()
-                .fill(Color32::from_rgb(66, 28, 37))
-                .stroke(Stroke::new(1.0, Color32::from_rgb(145, 53, 69)))
-                .corner_radius(egui::CornerRadius::same(6))
-                .inner_margin(8.0)
-                .show(ui, |ui| {
-                    ui.label(RichText::new(error).color(Color32::from_rgb(255, 191, 196)));
-                });
-            ui.add_space(6.0);
+                egui::Frame::new()
+                    .fill(PANEL_RAISED)
+                    .stroke(Stroke::new(1.0, BORDER))
+                    .corner_radius(egui::CornerRadius::same(8))
+                    .inner_margin(8.0)
+                    .show(ui, |ui| {
+                        let limit = kamimusuhi_runtime::dialogue::MAX_INPUT_BYTES;
+                        let bytes = self.input.trim().len();
+                        let over = bytes > limit;
+                        let can_send = !self.busy && !self.input.trim().is_empty() && !over;
+                        let hint = if self.busy {
+                            "応答待ち中… 次のメッセージを下書きできます"
+                        } else if self.send_on_enter {
+                            "メッセージを入力…  (Enter で送信 / Shift+Enter で改行)"
+                        } else {
+                            "メッセージを入力…  (Ctrl / Cmd + Enter で送信)"
+                        };
+
+                        let input_id = ui.make_persistent_id("local-chat-input");
+                        let focused = ctx.memory(|m| m.focused() == Some(input_id));
+                        if focused {
+                            ctx.input_mut(|i| {
+                                let cmd = i.modifiers.ctrl || i.modifiers.command;
+                                if i.key_pressed(egui::Key::Enter) && cmd {
+                                    i.consume_key(i.modifiers, egui::Key::Enter);
+                                    if can_send {
+                                        do_send = true;
+                                    }
+                                } else if self.send_on_enter
+                                    && !i.modifiers.shift
+                                    && !i.modifiers.alt
+                                    && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                                    && can_send
+                                {
+                                    do_send = true;
+                                }
+                            });
+                        }
+
+                        let text_edit = egui::TextEdit::multiline(&mut self.input)
+                            .id(input_id)
+                            .hint_text(hint)
+                            .desired_rows(3)
+                            .desired_width(f32::INFINITY);
+                        let response = ui.add(text_edit);
+                        if std::mem::take(&mut self.focus_input) {
+                            response.request_focus();
+                        }
+                        ui.horizontal(|ui| {
+                            let mode_label = if self.send_on_enter {
+                                "Enter: 送信 / Shift+Enter: 改行"
+                            } else {
+                                "⌘/Ctrl+Enter: 送信 / Enter: 改行"
+                            };
+                            if ui
+                                .small_button(RichText::new(mode_label).small().color(MUTED))
+                                .on_hover_text("クリックで送信キーを切り替え")
+                                .clicked()
+                            {
+                                self.send_on_enter = !self.send_on_enter;
+                            }
+                            ui.add_space(6.0);
+                            ui.label(RichText::new(format!("{bytes} / {limit} B")).small().color(
+                                if over {
+                                    Color32::from_rgb(235, 96, 110)
+                                } else {
+                                    MUTED
+                                },
+                            ));
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui
+                                        .add_enabled(
+                                            can_send,
+                                            egui::Button::new(
+                                                RichText::new("送信  ➤")
+                                                    .strong()
+                                                    .color(Color32::WHITE),
+                                            )
+                                            .fill(BLUE),
+                                        )
+                                        .clicked()
+                                    {
+                                        do_send = true;
+                                    }
+                                    if !self.input.is_empty() && ui.button("クリア").clicked() {
+                                        self.input.clear();
+                                    }
+                                },
+                            );
+                        });
+                    });
+            });
+
+        if do_send {
+            self.send_current();
         }
 
-        let frame = egui::Frame::new()
-            .fill(PANEL_RAISED)
-            .stroke(Stroke::new(1.0, BORDER))
-            .corner_radius(egui::CornerRadius::same(8))
-            .inner_margin(8.0);
-        frame.show(ui, |ui| {
-            let available = ui.available_width();
-            let text_edit = egui::TextEdit::multiline(&mut self.input)
-                .hint_text("メッセージを入力…  (Ctrl / Cmd + Enter で送信)")
-                .desired_rows(3)
-                .desired_width((available - 92.0).max(240.0));
-            let response = ui.add_enabled(!self.busy, text_edit);
-            let shortcut = response.has_focus()
-                && ctx.input(|input| {
-                    input.key_pressed(egui::Key::Enter)
-                        && (input.modifiers.ctrl || input.modifiers.command)
-                });
-            ui.horizontal(|ui| {
-                let bytes = self.input.trim().len();
-                let limit = kamimusuhi_runtime::dialogue::MAX_INPUT_BYTES;
-                let over = bytes > limit;
-                ui.label(
-                    RichText::new("Enter: 改行  /  ⌘/Ctrl+Enter: 送信")
-                        .small()
-                        .color(MUTED),
-                );
-                ui.add_space(8.0);
-                ui.label(
-                    RichText::new(format!("{bytes} / {limit} B"))
-                        .small()
-                        .color(if over {
-                            Color32::from_rgb(235, 96, 110)
-                        } else {
-                            MUTED
-                        }),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add_enabled(
-                            !self.busy,
-                            egui::Button::new(
-                                RichText::new("送信  ➤").strong().color(Color32::WHITE),
+        let mut copied_msg: Option<String> = None;
+        egui::ScrollArea::vertical()
+            .id_salt("chat-scroll")
+            .stick_to_bottom(true)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if self.messages.is_empty() {
+                    ui.add_space(90.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(RichText::new("まだ会話はありません").size(20.0).color(TEXT));
+                        ui.label(
+                            RichText::new("下の入力欄から日本語で話しかけてください").color(MUTED),
+                        );
+                    });
+                }
+                for (idx, message) in self.messages.iter().enumerate() {
+                    if let Some(msg) = message_bubble(ui, idx, message) {
+                        copied_msg = Some(msg);
+                    }
+                    ui.add_space(10.0);
+                }
+                if self.busy {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(
+                            RichText::new(
+                                "発話・記憶・不足情報の判定 → 言語器官race → 匿名候補の品質判定",
                             )
-                            .fill(BLUE),
-                        )
-                        .clicked()
-                        || shortcut
-                    {
-                        self.send_current();
-                    }
-                    if !self.input.is_empty()
-                        && ui
-                            .add_enabled(!self.busy, egui::Button::new("クリア"))
-                            .clicked()
-                    {
-                        self.input.clear();
-                    }
-                });
+                            .small()
+                            .color(MUTED),
+                        );
+                    });
+                }
             });
-        });
+        if let Some(msg) = copied_msg {
+            self.toast = Some(Toast::info(msg));
+        }
     }
 
     fn status_view(&self, ui: &mut egui::Ui) {
@@ -731,10 +796,14 @@ impl NativeApp {
 impl App for NativeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
         self.poll_events(ctx);
+        if let Some(msg) = handle_zoom_shortcuts(ctx, &mut self.ui_zoom) {
+            self.toast = Some(Toast::info(msg));
+        }
         ctx.input(|i| {
             let cmd = i.modifiers.ctrl || i.modifiers.command;
             if (cmd && i.key_pressed(egui::Key::Num1)) || i.key_pressed(egui::Key::F1) {
                 self.view = View::Chat;
+                self.focus_input = true;
             } else if (cmd && i.key_pressed(egui::Key::Num2)) || i.key_pressed(egui::Key::F2) {
                 self.view = View::Status;
             } else if (cmd && i.key_pressed(egui::Key::Num3)) || i.key_pressed(egui::Key::F3) {
@@ -749,7 +818,7 @@ impl App for NativeApp {
         egui::SidePanel::left("navigation")
             .frame(egui::Frame::new().fill(BG).inner_margin(12.0))
             .resizable(false)
-            .default_width(196.0)
+            .exact_width(214.0)
             .show(ctx, |ui| self.nav(ui));
         egui::SidePanel::right("inspector")
             .frame(egui::Frame::new().fill(BG).inner_margin(10.0))
@@ -776,6 +845,7 @@ impl App for NativeApp {
                         .show(ui, |ui| self.connections_view(ui));
                 }
             });
+        show_toast(ctx, &mut self.toast);
     }
 }
 
@@ -788,34 +858,7 @@ impl Drop for NativeApp {
 }
 
 pub(crate) fn configure_theme(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = PANEL;
-    visuals.window_fill = PANEL;
-    visuals.faint_bg_color = BG;
-    visuals.extreme_bg_color = BG;
-    let radius = egui::CornerRadius::same(6);
-    visuals.widgets.noninteractive.bg_fill = PANEL;
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
-    visuals.widgets.noninteractive.fg_stroke.color = TEXT;
-    visuals.widgets.noninteractive.corner_radius = radius;
-    visuals.widgets.inactive.bg_fill = PANEL_RAISED;
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
-    visuals.widgets.inactive.fg_stroke.color = MUTED;
-    visuals.widgets.inactive.corner_radius = radius;
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(26, 51, 79);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(70, 118, 178));
-    visuals.widgets.hovered.fg_stroke.color = TEXT;
-    visuals.widgets.hovered.corner_radius = radius;
-    visuals.widgets.active.bg_fill = Color32::from_rgb(29, 79, 138);
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, BLUE);
-    visuals.widgets.active.fg_stroke.color = TEXT;
-    visuals.widgets.active.corner_radius = radius;
-    visuals.widgets.open.bg_fill = PANEL_RAISED;
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0, BORDER);
-    visuals.widgets.open.corner_radius = radius;
-    visuals.selection.bg_fill = BLUE;
-    visuals.selection.stroke.color = Color32::WHITE;
-    ctx.set_visuals(visuals);
+    apply_theme_base(ctx);
 
     let mut fonts = FontDefinitions::default();
     for (name, path) in [
@@ -1035,7 +1078,8 @@ impl NativeApp {
     }
 }
 
-fn message_bubble(ui: &mut egui::Ui, message: &UiMessage) {
+fn message_bubble(ui: &mut egui::Ui, idx: usize, message: &UiMessage) -> Option<String> {
+    let mut copied = None;
     let user = message.role == ConversationRole::User;
     let fill = if user {
         Color32::from_rgb(22, 66, 126)
@@ -1079,18 +1123,26 @@ fn message_bubble(ui: &mut egui::Ui, message: &UiMessage) {
                                 .clicked()
                             {
                                 ui.ctx().copy_text(message.text.clone());
+                                copied = Some("メッセージをコピーしました".to_owned());
                             }
                         });
                         ui.add_space(4.0);
-                        ui.add(
-                            egui::Label::new(RichText::new(&message.text).color(TEXT))
-                                .wrap()
-                                .selectable(true),
-                        );
+                        if user {
+                            ui.add(
+                                egui::Label::new(RichText::new(&message.text).color(TEXT))
+                                    .wrap()
+                                    .selectable(true),
+                            );
+                        } else if let Some(msg) =
+                            render_markdown(ui, ("local-md", idx), &message.text)
+                        {
+                            copied = Some(msg);
+                        }
                     });
                 });
         },
     );
+    copied
 }
 
 fn stat_card(ui: &mut egui::Ui, label: &str, value: &str, note: &str, color: Color32) {

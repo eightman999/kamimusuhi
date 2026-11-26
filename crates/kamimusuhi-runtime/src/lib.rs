@@ -52,6 +52,7 @@ pub mod scenario;
 pub mod selection;
 pub mod self_context;
 pub mod self_notes;
+pub mod social;
 pub mod trace;
 
 pub use config::{

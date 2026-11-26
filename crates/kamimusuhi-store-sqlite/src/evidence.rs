@@ -779,3 +779,550 @@ impl EvidenceStore for SqliteStore {
         links_in(&conn, "to_evidence_id", evidence_id)
     }
 }
+
+fn redact_record_in(
+    tx: &Connection,
+    record: &EvidenceRecord,
+    discord_message_id: Option<u64>,
+    reason: &str,
+    now: UtcTimestamp,
+) -> Result<bool, EvidenceError> {
+    if record
+        .payload
+        .get("redacted")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        return Ok(false);
+    }
+    let digest = kamimusuhi_core::digest::content_digest(
+        format!("social-redact:{}:{reason}", record.evidence_id).as_bytes(),
+    );
+    let hex = digest.strip_prefix("sha256:").unwrap_or(&digest);
+    let mut correction_id: EvidenceId = hex[..32]
+        .parse()
+        .unwrap_or_else(|_| EvidenceId::from_u128(1));
+    if correction_id.is_nil() || correction_id == record.evidence_id {
+        correction_id = EvidenceId::from_u128(
+            record
+                .evidence_id
+                .runtime_id()
+                .as_u128()
+                .wrapping_add(1)
+                .max(1),
+        );
+    }
+    let resolved_msg_id = discord_message_id.or_else(|| {
+        record
+            .payload
+            .get("discord")
+            .and_then(|d| d.get("message_id"))
+            .and_then(serde_json::Value::as_u64)
+    });
+    let correction_payload = serde_json::json!({
+        "event": "social_utterance_redacted",
+        "target_evidence_id": record.evidence_id,
+        "discord_message_id": resolved_msg_id,
+        "reason": reason,
+    });
+    append_in(
+        tx,
+        NewEvidence {
+            evidence_id: correction_id,
+            individual_id: record.individual_id,
+            session_id: record.session_id,
+            turn_id: record.turn_id,
+            kind: EvidenceKind::Correction,
+            origin_class: OriginClass::Observed,
+            payload: correction_payload,
+            source: record.source.clone(),
+            retention_class: RetentionClass::Standard,
+        },
+        now,
+    )?;
+    link_in(
+        tx,
+        &NewEvidenceLink {
+            from_evidence_id: correction_id,
+            to_evidence_id: record.evidence_id,
+            relation: EvidenceRelation::Corrects,
+        },
+        now,
+    )?;
+    let scrubbed_discord = record
+        .payload
+        .get("discord")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let scrubbed_payload = serde_json::json!({
+        "redacted": true,
+        "reason": reason,
+        "discord": scrubbed_discord,
+        "redacted_at": now.unix_millis(),
+    });
+    tx.execute(
+        "UPDATE evidence_records
+            SET payload_json = ?1, content_digest = NULL, retention_class = 'ephemeral'
+          WHERE evidence_id = ?2 AND individual_id = ?3",
+        params![
+            scrubbed_payload.to_string(),
+            record.evidence_id.to_string(),
+            record.individual_id.to_string(),
+        ],
+    )
+    .map_err(map_sqlite)?;
+    tx.execute(
+        "UPDATE state_records
+            SET lifecycle_state = 'invalidated'
+          WHERE individual_id = ?1
+            AND lifecycle_state = 'active'
+            AND state_record_id IN (
+                SELECT state_record_id FROM state_record_evidence WHERE evidence_id = ?2
+            )",
+        params![
+            record.individual_id.to_string(),
+            record.evidence_id.to_string(),
+        ],
+    )
+    .map_err(map_sqlite)?;
+    Ok(true)
+}
+
+impl SqliteStore {
+    /// Scrub the text of a Discord `UserUtterance` (on deletion or explicit user request),
+    /// record a `Correction` evidence item with `Corrects` lineage, and invalidate any
+    /// active `state_records` backed by the scrubbed record.
+    pub fn redact_discord_utterance(
+        &self,
+        individual_id: IndividualId,
+        discord_message_id: Option<u64>,
+        target_evidence_id: Option<EvidenceId>,
+        requester_user_id: Option<u64>,
+        reason: &str,
+    ) -> Result<Vec<EvidenceId>, EvidenceError> {
+        let reason = reason.trim();
+        if reason.is_empty() || reason.len() > 512 {
+            return Err(invalid("redaction reason must be 1..=512 bytes"));
+        }
+        if discord_message_id.is_none() && target_evidence_id.is_none() {
+            return Err(invalid(
+                "discord_message_id or target_evidence_id is required",
+            ));
+        }
+        let now = self.clock().now_utc();
+        let mut conn = self.conn().map_err(|e| EvidenceError::Backend {
+            message: e.to_string(),
+        })?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite)?;
+        if !individual_exists(&tx, individual_id)? {
+            return Err(EvidenceError::IndividualNotFound(individual_id));
+        }
+        let records = {
+            let mut stmt = tx
+                .prepare(&format!(
+                    "SELECT {EVIDENCE_COLUMNS} FROM evidence_records
+                     WHERE individual_id = ?1 AND kind = 'user_utterance'
+                     ORDER BY rowid DESC"
+                ))
+                .map_err(map_sqlite)?;
+            stmt.query_map(params![individual_id.to_string()], read_evidence_row)
+                .map_err(map_sqlite)?
+                .map(|row| build_evidence(row.map_err(map_sqlite)?))
+                .collect::<Result<Vec<_>, EvidenceError>>()?
+        };
+        let mut redacted = Vec::new();
+        for record in records {
+            let matches_id = target_evidence_id.is_some_and(|id| id == record.evidence_id);
+            let matches_discord = discord_message_id.is_some_and(|mid| {
+                record
+                    .payload
+                    .get("discord")
+                    .and_then(|d| d.get("message_id"))
+                    .and_then(serde_json::Value::as_u64)
+                    == Some(mid)
+            });
+            if !matches_id && !matches_discord {
+                continue;
+            }
+            if let Some(requester) = requester_user_id {
+                let owner = record
+                    .payload
+                    .get("discord")
+                    .and_then(|d| d.get("user_id"))
+                    .and_then(serde_json::Value::as_u64);
+                if owner != Some(requester) {
+                    return Err(invalid("requester does not own the target utterance"));
+                }
+            }
+            if redact_record_in(&tx, &record, discord_message_id, reason, now)? {
+                redacted.push(record.evidence_id);
+            }
+        }
+        tx.commit().map_err(map_sqlite)?;
+        Ok(redacted)
+    }
+
+    /// Redact Discord non-operator / ephemeral `UserUtterance` records that exceed
+    /// `max_age_millis` or `max_utterances_per_source`.
+    pub fn enforce_social_retention(
+        &self,
+        individual_id: IndividualId,
+        max_age_millis: u64,
+        max_utterances_per_source: usize,
+    ) -> Result<Vec<EvidenceId>, EvidenceError> {
+        let now = self.clock().now_utc();
+        let max_age_i64 = i64::try_from(max_age_millis).unwrap_or(i64::MAX);
+        let mut conn = self.conn().map_err(|e| EvidenceError::Backend {
+            message: e.to_string(),
+        })?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite)?;
+        if !individual_exists(&tx, individual_id)? {
+            return Err(EvidenceError::IndividualNotFound(individual_id));
+        }
+        let records = {
+            let mut stmt = tx
+                .prepare(&format!(
+                    "SELECT {EVIDENCE_COLUMNS} FROM evidence_records
+                     WHERE individual_id = ?1 AND kind = 'user_utterance'
+                     ORDER BY rowid DESC"
+                ))
+                .map_err(map_sqlite)?;
+            stmt.query_map(params![individual_id.to_string()], read_evidence_row)
+                .map_err(map_sqlite)?
+                .map(|row| build_evidence(row.map_err(map_sqlite)?))
+                .collect::<Result<Vec<_>, EvidenceError>>()?
+        };
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        let mut redacted = Vec::new();
+        for record in records {
+            if record
+                .payload
+                .get("redacted")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+                || record.payload.get("text").is_none()
+            {
+                continue;
+            }
+            let is_other_discord = record
+                .payload
+                .get("discord")
+                .and_then(|d| d.get("is_operator"))
+                .and_then(serde_json::Value::as_bool)
+                == Some(false);
+            if record.retention_class != RetentionClass::Ephemeral && !is_other_discord {
+                continue;
+            }
+            let age = now
+                .unix_millis()
+                .saturating_sub(record.created_at.unix_millis());
+            let expired = age > max_age_i64;
+            let source_key = record.source.source_id.clone().unwrap_or_default();
+            let over_limit = if !expired {
+                let count = counts.entry(source_key).or_insert(0);
+                *count += 1;
+                *count > max_utterances_per_source
+            } else {
+                false
+            };
+            if (expired || over_limit)
+                && redact_record_in(&tx, &record, None, "retention_limit_expired", now)?
+            {
+                redacted.push(record.evidence_id);
+            }
+        }
+        tx.commit().map_err(map_sqlite)?;
+        Ok(redacted)
+    }
+}
+
+#[cfg(test)]
+mod social_retention_tests {
+    use super::*;
+    use crate::store::StoreConfig;
+    use kamimusuhi_core::continuity::{ContinuityKernel, ContinuityStore, NewIndividual};
+    use kamimusuhi_core::ids::{BootId, CommitId, NodeId, ProposalId};
+    use kamimusuhi_core::mutation::{
+        MutationDomain, MutationOperation, MutationPolicyV0, MutationProposal,
+    };
+    use kamimusuhi_testkit::{FixedClock, FixedIdGenerator};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn setup() -> (
+        tempfile::TempDir,
+        Arc<FixedClock>,
+        SqliteStore,
+        IndividualId,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kamimusuhi.sqlite");
+        let clock = Arc::new(FixedClock::baseline());
+        let store = SqliteStore::open(
+            &path,
+            &StoreConfig::default(),
+            clock.clone(),
+            Arc::new(FixedIdGenerator::new(1)),
+        )
+        .unwrap();
+        let individual_id = IndividualId::from_u128(0xA1);
+        store
+            .create_individual(NewIndividual {
+                individual_id,
+                root_commit_id: CommitId::from_u128(0xC0),
+                node_id: NodeId::from_u128(0x0E),
+                boot_id: BootId::from_u128(0xB1),
+            })
+            .unwrap();
+        (dir, clock, store, individual_id)
+    }
+
+    #[test]
+    fn redacts_discord_utterance_marks_derived_and_invalidates_state_records() {
+        let (_dir, clock, store, individual_id) = setup();
+        let session_id = SessionId::from_u128(0x51);
+        let turn_id = TurnId::from_u128(0x71);
+        store
+            .open_session(NewSession {
+                session_id,
+                individual_id,
+            })
+            .unwrap();
+        store
+            .record_turn(NewTurn {
+                turn_id,
+                session_id,
+                individual_id,
+                sequence: 0,
+            })
+            .unwrap();
+        let user_ev = EvidenceId::from_u128(0xE1);
+        store
+            .append(NewEvidence {
+                evidence_id: user_ev,
+                individual_id,
+                session_id: Some(session_id),
+                turn_id: Some(turn_id),
+                kind: EvidenceKind::UserUtterance,
+                origin_class: OriginClass::Reported,
+                payload: serde_json::json!({
+                    "text": "秘密のメモを削除して",
+                    "discord": {"message_id": 9001_u64, "user_id": 20_u64, "is_operator": false}
+                }),
+                source: EvidenceSource {
+                    source_id: Some("text-chat:discord-user".to_owned()),
+                    source_sequence: Some(0),
+                    content_digest: Some("sha256:abc".to_owned()),
+                },
+                retention_class: RetentionClass::Ephemeral,
+            })
+            .unwrap();
+        let agent_ev = EvidenceId::from_u128(0xE2);
+        store
+            .append_with_links(
+                NewEvidence {
+                    evidence_id: agent_ev,
+                    individual_id,
+                    session_id: Some(session_id),
+                    turn_id: Some(turn_id),
+                    kind: EvidenceKind::AgentUtterance,
+                    origin_class: OriginClass::Observed,
+                    payload: serde_json::json!({"text": "承知しました"}),
+                    source: EvidenceSource {
+                        source_id: Some("text-chat:discord-user".to_owned()),
+                        source_sequence: Some(1),
+                        content_digest: None,
+                    },
+                    retention_class: RetentionClass::Standard,
+                },
+                &[NewEvidenceLink {
+                    from_evidence_id: agent_ev,
+                    to_evidence_id: user_ev,
+                    relation: EvidenceRelation::DerivedFrom,
+                }],
+            )
+            .unwrap();
+
+        // Activate a state record citing user_ev
+        let writer = store
+            .claim_writer_epoch(
+                individual_id,
+                NodeId::from_u128(0x0E),
+                BootId::from_u128(0xB1),
+            )
+            .unwrap();
+        let head = store.load_head(individual_id).unwrap();
+        let kernel = ContinuityKernel::new(store, MutationPolicyV0, clock);
+        kernel
+            .submit(&MutationProposal {
+                proposal_id: ProposalId::from_u128(0xF1),
+                individual_id,
+                domain: MutationDomain::Episodic,
+                operation: MutationOperation::Capture,
+                subject_key: Some("discord-user".to_owned()),
+                candidate: serde_json::json!({"note": "user note"}),
+                expected_head: head.expected(),
+                evidence_refs: vec![user_ev],
+                supersedes: None,
+                origin_class: OriginClass::Reported,
+                requested_by: writer,
+                policy_version: MutationPolicyV0::VERSION,
+                idempotency_key: "redact-test-1".to_owned(),
+                created_at: UtcTimestamp::from_unix_millis(1000),
+            })
+            .unwrap();
+        let store = kernel.store();
+
+        // Wrong requester is refused without modifying evidence.
+        assert!(
+            store
+                .redact_discord_utterance(individual_id, Some(9001), None, Some(99), "delete")
+                .is_err()
+        );
+        assert!(
+            store
+                .get(user_ev)
+                .unwrap()
+                .unwrap()
+                .payload
+                .get("text")
+                .is_some()
+        );
+
+        // Matching requester redacts text, marks derived AgentUtterance corrected, invalidates memory.
+        let redacted = store
+            .redact_discord_utterance(individual_id, Some(9001), None, Some(20), "user_request")
+            .unwrap();
+        assert_eq!(redacted, vec![user_ev]);
+        let scrubbed = store.get(user_ev).unwrap().unwrap();
+        assert!(scrubbed.payload.get("text").is_none());
+        assert_eq!(scrubbed.payload["redacted"], serde_json::json!(true));
+        let facts = store.facts(&[user_ev, agent_ev]).unwrap();
+        assert!(facts.get(user_ev).unwrap().is_corrected);
+        assert!(facts.get(agent_ev).unwrap().is_corrected);
+
+        let conn = store.conn().unwrap();
+        let lifecycle: String = conn
+            .query_row(
+                "SELECT lifecycle_state FROM state_records WHERE individual_id = ?1",
+                params![individual_id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        drop(conn);
+        assert_eq!(lifecycle, "invalidated");
+
+        // Second identical call is idempotent and returns empty.
+        assert!(
+            store
+                .redact_discord_utterance(individual_id, Some(9001), None, Some(20), "user_request")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn enforces_retention_ttl_and_per_source_cap_without_scrubbing_operator() {
+        let (_dir, clock, store, individual_id) = setup();
+        let op_ev = EvidenceId::from_u128(0x101);
+        store
+            .append(NewEvidence {
+                evidence_id: op_ev,
+                individual_id,
+                session_id: None,
+                turn_id: None,
+                kind: EvidenceKind::UserUtterance,
+                origin_class: OriginClass::Reported,
+                payload: serde_json::json!({
+                    "text": "operator message",
+                    "discord": {"message_id": 1_u64, "user_id": 10_u64, "is_operator": true}
+                }),
+                source: EvidenceSource {
+                    source_id: Some("text-chat:eightman".to_owned()),
+                    source_sequence: None,
+                    content_digest: None,
+                },
+                retention_class: RetentionClass::Standard,
+            })
+            .unwrap();
+
+        let other_1 = EvidenceId::from_u128(0x201);
+        let other_2 = EvidenceId::from_u128(0x202);
+        let other_3 = EvidenceId::from_u128(0x203);
+        for (i, id) in [other_1, other_2, other_3].into_iter().enumerate() {
+            if i == 1 {
+                clock.advance(Duration::from_secs(100));
+            } else if i == 2 {
+                clock.advance(Duration::from_secs(5));
+            }
+            store
+                .append(NewEvidence {
+                    evidence_id: id,
+                    individual_id,
+                    session_id: None,
+                    turn_id: None,
+                    kind: EvidenceKind::UserUtterance,
+                    origin_class: OriginClass::Reported,
+                    payload: serde_json::json!({
+                        "text": format!("msg {i}"),
+                        "discord": {"message_id": (100 + i) as u64, "user_id": 20_u64, "is_operator": false}
+                    }),
+                    source: EvidenceSource {
+                        source_id: Some("text-chat:discord-other".to_owned()),
+                        source_sequence: Some(i as u64),
+                        content_digest: None,
+                    },
+                    retention_class: RetentionClass::Ephemeral,
+                })
+                .unwrap();
+        }
+
+        // TTL=50s (other_1 is 105s old -> expired), max_utterances_per_source=1 (other_2 exceeds cap, other_3 stays)
+        let redacted = store
+            .enforce_social_retention(individual_id, 50_000, 1)
+            .unwrap();
+        assert_eq!(redacted.len(), 2);
+        assert!(redacted.contains(&other_1));
+        assert!(redacted.contains(&other_2));
+        assert!(
+            store
+                .get(other_1)
+                .unwrap()
+                .unwrap()
+                .payload
+                .get("text")
+                .is_none()
+        );
+        assert!(
+            store
+                .get(other_2)
+                .unwrap()
+                .unwrap()
+                .payload
+                .get("text")
+                .is_none()
+        );
+        assert!(
+            store
+                .get(other_3)
+                .unwrap()
+                .unwrap()
+                .payload
+                .get("text")
+                .is_some()
+        );
+        assert!(
+            store
+                .get(op_ev)
+                .unwrap()
+                .unwrap()
+                .payload
+                .get("text")
+                .is_some()
+        );
+    }
+}

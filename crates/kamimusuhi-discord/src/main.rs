@@ -1,9 +1,15 @@
-use kamimusuhi_discord::{Bridge, Config, Event, INTENTS, LiveBackend, NoticeState, Resident};
+use kamimusuhi_discord::{
+    Bridge, Config, Event, INTENTS, LiveBackend, NoticeState, Resident, SocialGatewayState,
+};
 use serenity::{
     async_trait,
     client::{Client, Context, EventHandler},
     http::Http,
-    model::{channel::Message, gateway::Ready},
+    model::{
+        channel::Message,
+        gateway::Ready,
+        id::{ChannelId, GuildId, MessageId},
+    },
 };
 use std::path::PathBuf;
 use std::sync::{
@@ -24,6 +30,31 @@ impl EventHandler for Handler {
         let bot = self.bot.load(Ordering::Relaxed);
         if bot != 0 {
             self.bridge.handle(Event::from(message), bot).await;
+        }
+    }
+    async fn message_delete(
+        &self,
+        _: Context,
+        channel_id: ChannelId,
+        deleted_message_id: MessageId,
+        guild_id: Option<GuildId>,
+    ) {
+        self.bridge
+            .handle_message_delete(guild_id.map(|g| g.0), channel_id.0, deleted_message_id.0)
+            .await;
+    }
+    async fn message_delete_bulk(
+        &self,
+        _: Context,
+        channel_id: ChannelId,
+        multiple_deleted_messages_ids: Vec<MessageId>,
+        guild_id: Option<GuildId>,
+    ) {
+        let guild = guild_id.map(|g| g.0);
+        for message_id in multiple_deleted_messages_ids {
+            self.bridge
+                .handle_message_delete(guild, channel_id.0, message_id.0)
+                .await;
         }
     }
 }
@@ -53,9 +84,14 @@ async fn main() {
     let notices = NoticeState::load(if state_dir.is_empty() {
         None
     } else {
-        Some(PathBuf::from(state_dir).join("notices.json"))
+        Some(PathBuf::from(&state_dir).join("notices.json"))
     });
-    let bridge = Bridge::with_notices(
+    let social_state = SocialGatewayState::load(if state_dir.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(&state_dir).join("social_gateway.json"))
+    });
+    let bridge = Bridge::with_state(
         config,
         Arc::new(LiveBackend {
             http: Arc::new(Http::new(&token)),
@@ -64,6 +100,7 @@ async fn main() {
         }),
         16,
         notices,
+        social_state,
     );
     let mut client = Client::builder(&token, INTENTS)
         .event_handler(Handler {
@@ -76,13 +113,11 @@ async fn main() {
             std::process::exit(1);
         });
     let worker = tokio::spawn(bridge.clone().run());
-    let notifier = notify.map(|_| tokio::spawn(bridge.notice_loop()));
+    let notifier = tokio::spawn(bridge.notice_loop());
     tokio::select! {
-        result = client.start() => { if result.is_err() { eprintln!("Discord client stopped"); worker.abort(); if let Some(n) = &notifier { n.abort(); } std::process::exit(1); } },
+        result = client.start() => { if result.is_err() { eprintln!("Discord client stopped"); worker.abort(); notifier.abort(); std::process::exit(1); } },
         _ = tokio::signal::ctrl_c() => { client.shard_manager.lock().await.shutdown_all().await; }
     }
     worker.abort();
-    if let Some(n) = notifier {
-        n.abort();
-    }
+    notifier.abort();
 }

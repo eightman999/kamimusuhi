@@ -439,6 +439,37 @@ fn handle(shared: &Shared, stream: TcpStream) {
             let (status, reply) = crate::delegation::handle(shared, &body);
             json_response(stream, status, &reply, &[]);
         }
+        ("GET", "/v1/social") => {
+            let (status, reply) = crate::social::handle(shared, &json!({"action": "status"}));
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/social") => {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            let (status, reply) = crate::social::handle(shared, &body);
+            json_response(stream, status, &reply, &[]);
+        }
+        ("GET", "/v1/social/outbox") => {
+            let (status, reply) = crate::social::handle(shared, &json!({"action": "outbox"}));
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/social/verify") => {
+            let mut body =
+                serde_json::from_slice::<Value>(&request.body).unwrap_or_else(|_| json!({}));
+            if let Some(obj) = body.as_object_mut() {
+                obj.entry("action").or_insert_with(|| json!("verify"));
+            }
+            let (status, reply) = crate::social::handle(shared, &body);
+            json_response(stream, status, &reply, &[]);
+        }
+        ("POST", "/v1/social/delete") => {
+            let mut body =
+                serde_json::from_slice::<Value>(&request.body).unwrap_or_else(|_| json!({}));
+            if let Some(obj) = body.as_object_mut() {
+                obj.entry("action").or_insert_with(|| json!("delete"));
+            }
+            let (status, reply) = crate::social::handle(shared, &body);
+            json_response(stream, status, &reply, &[]);
+        }
         _ => json_response(stream, 404, &json!({"error": "not found"}), &[]),
     }
 }

@@ -233,10 +233,29 @@ pub fn run_repl(
             continue;
         }
         if quiet {
-            // Protocol mode: one JSON turn in, one JSON reply out — a message
-            // may itself contain newlines or start with '/', which raw-line
-            // framing could not carry.
+            // Protocol mode: one JSON turn (or social action) in, one JSON reply out.
             let request = serde_json::from_str::<serde_json::Value>(text);
+            if let Ok(req) = &request
+                && let Some(context) = req.get("identity_context")
+            {
+                runtime.set_identity_context(context.clone())?;
+            }
+            let action = request
+                .as_ref()
+                .ok()
+                .and_then(|v| v.get("action"))
+                .and_then(serde_json::Value::as_str);
+            if let (Ok(req), Some(action)) = (&request, action) {
+                let outcome = handle_quiet_social_action(runtime, session, action, req);
+                let doc = match outcome {
+                    Ok(value) => value,
+                    Err(err) => serde_json::json!({"error": err.to_string()}),
+                };
+                serde_json::to_writer(&mut *output, &doc).map_err(json_error)?;
+                writeln!(output).map_err(io_error)?;
+                output.flush().map_err(io_error)?;
+                continue;
+            }
             let message = request
                 .as_ref()
                 .ok()
@@ -259,18 +278,17 @@ pub fn run_repl(
                         // the turn below.
                         kamimusuhi_resource_http::http::set_turn(Some(turn));
                     }
-                    if let Some(context) = request
-                        .as_ref()
-                        .ok()
-                        .and_then(|v| v.get("identity_context"))
-                    {
-                        runtime.set_identity_context(context.clone())?;
-                    }
-                    let reply = session.turn(runtime, message, |reply| {
-                        serde_json::to_writer(&mut *output, reply)?;
-                        writeln!(output)?;
-                        output.flush()
-                    })?;
+                    let social_opts = match &request {
+                        Ok(req) => parse_social_options(req)?,
+                        Err(_) => crate::social::TurnSocialOptions::default(),
+                    };
+                    let defer_delivery = social_opts.defer_delivery;
+                    let reply =
+                        session.turn_with_social(runtime, message, social_opts, |reply| {
+                            serde_json::to_writer(&mut *output, reply)?;
+                            writeln!(output)?;
+                            output.flush()
+                        })?;
                     if debug_context && let Some(context) = session.last_context() {
                         serde_json::to_writer_pretty(std::io::stderr(), context)
                             .map_err(json_error)?;
@@ -280,9 +298,8 @@ pub fn run_repl(
                         let value = serde_json::to_value(trace).map_err(json_error)?;
                         emit_json(&mut std::io::stderr(), &value)?;
                     }
-                    // Reflection runs on cadence but never prints: one reply
-                    // line per turn keeps the protocol one-to-one.
-                    if reflection_due(runtime, session) {
+                    // Reflection runs on cadence (after persisted turns) and never prints.
+                    if !defer_delivery && reflection_due(runtime, session) {
                         let subject = session.subject().to_owned();
                         reflection::run(
                             runtime,
@@ -382,4 +399,117 @@ pub fn run_repl(
         }
     }
     Ok(())
+}
+
+fn parse_social_options(
+    req: &serde_json::Value,
+) -> Result<crate::social::TurnSocialOptions, RuntimeError> {
+    let defer_delivery = req
+        .get("defer_delivery")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let social_context = req
+        .get("social_context")
+        .filter(|v| !v.is_null())
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|e| RuntimeError::Usage(format!("invalid social_context: {e}")))?;
+    let initiative = req
+        .get("initiative")
+        .filter(|v| !v.is_null())
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|e| RuntimeError::Usage(format!("invalid initiative: {e}")))?;
+    Ok(crate::social::TurnSocialOptions {
+        defer_delivery,
+        social_context,
+        initiative,
+    })
+}
+
+fn handle_quiet_social_action(
+    runtime: &mut Runtime,
+    session: &mut DialogueSession,
+    action: &str,
+    req: &serde_json::Value,
+) -> Result<serde_json::Value, RuntimeError> {
+    match action {
+        "verify_delivery" => {
+            let turn_id: kamimusuhi_core::ids::TurnId = req
+                .get("turn_id")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| RuntimeError::Usage("verify_delivery requires turn_id".to_owned()))?
+                .parse()
+                .map_err(|_| RuntimeError::Usage("invalid turn_id".to_owned()))?;
+            let delivery: crate::social::DeliveryVerification = serde_json::from_value(
+                req.get("delivery")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            )
+            .map_err(|e| RuntimeError::Usage(format!("invalid delivery payload: {e}")))?;
+            crate::social::verify_delivery(runtime, turn_id, &delivery, session.writer_cache())
+        }
+        "abort_proposal" => {
+            let turn_id: kamimusuhi_core::ids::TurnId = req
+                .get("turn_id")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| RuntimeError::Usage("abort_proposal requires turn_id".to_owned()))?
+                .parse()
+                .map_err(|_| RuntimeError::Usage("invalid turn_id".to_owned()))?;
+            let reason = req
+                .get("reason")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("aborted");
+            crate::social::abort_proposal(runtime, turn_id, reason)
+        }
+        "social_redact" => {
+            let discord_message_id = req
+                .get("discord_message_id")
+                .and_then(serde_json::Value::as_u64);
+            let evidence_id = req
+                .get("evidence_id")
+                .and_then(serde_json::Value::as_str)
+                .map(|s| {
+                    s.parse::<kamimusuhi_core::ids::EvidenceId>()
+                        .map_err(|_| RuntimeError::Usage("invalid evidence_id".to_owned()))
+                })
+                .transpose()?;
+            let user_id = req.get("user_id").and_then(serde_json::Value::as_u64);
+            let reason = req
+                .get("reason")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("user_request");
+            let ids = runtime.store().redact_discord_utterance(
+                runtime.individual_id(),
+                discord_message_id,
+                evidence_id,
+                user_id,
+                reason,
+            )?;
+            Ok(serde_json::json!({"redacted_evidence_ids": ids}))
+        }
+        "social_retention" => {
+            let max_age_secs = req
+                .get("max_age_secs")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(7 * 24 * 3600);
+            let max_utterances = usize::try_from(
+                req.get("max_utterances_per_source")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(64),
+            )
+            .unwrap_or(64);
+            let ids = runtime.store().enforce_social_retention(
+                runtime.individual_id(),
+                max_age_secs.saturating_mul(1000),
+                max_utterances,
+            )?;
+            Ok(serde_json::json!({"redacted_evidence_ids": ids}))
+        }
+        other => Err(RuntimeError::Usage(format!(
+            "unknown quiet social action {other:?}"
+        ))),
+    }
 }

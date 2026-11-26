@@ -92,6 +92,143 @@ pub struct Config {
     /// hand to this node (see delegation.rs).
     #[serde(default)]
     pub delegation: DelegationConfig,
+    /// Social embodiment policy & initiative engine for external surfaces (Discord).
+    #[serde(default)]
+    pub social: Option<SocialConfig>,
+}
+
+/// Social embodiment policy, retention bounds, and initiative settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SocialConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub guild_id: Option<u64>,
+    #[serde(default)]
+    pub allowed_channel_ids: Vec<u64>,
+    #[serde(default)]
+    pub public_channel_ids: Vec<u64>,
+    #[serde(default)]
+    pub initiative_channel_ids: Vec<u64>,
+    #[serde(default)]
+    pub allowed_user_ids: Vec<u64>,
+    #[serde(default)]
+    pub operator_user_id: Option<u64>,
+    #[serde(default = "default_social_operator_subject")]
+    pub operator_subject: String,
+    #[serde(default = "default_reactive_min_interval_secs")]
+    pub reactive_min_interval_secs: u64,
+    #[serde(default = "default_reactive_max_per_hour")]
+    pub reactive_max_per_hour: u64,
+    #[serde(default = "default_initiative_min_interval_secs")]
+    pub initiative_min_interval_secs: u64,
+    #[serde(default = "default_initiative_max_per_day")]
+    pub initiative_max_per_day: u64,
+    #[serde(default = "default_social_poll_secs")]
+    pub poll_interval_secs: u64,
+    #[serde(default = "default_user_utterance_ttl_secs")]
+    pub user_utterance_ttl_secs: u64,
+    #[serde(default = "default_max_user_utterances_per_channel")]
+    pub max_user_utterances_per_channel: usize,
+    #[serde(default)]
+    pub findings_path: Option<PathBuf>,
+}
+
+fn default_social_operator_subject() -> String {
+    "operator".to_owned()
+}
+const fn default_reactive_min_interval_secs() -> u64 {
+    1
+}
+const fn default_reactive_max_per_hour() -> u64 {
+    60
+}
+const fn default_initiative_min_interval_secs() -> u64 {
+    600
+}
+const fn default_initiative_max_per_day() -> u64 {
+    8
+}
+const fn default_social_poll_secs() -> u64 {
+    60
+}
+const fn default_user_utterance_ttl_secs() -> u64 {
+    7 * 24 * 3600
+}
+const fn default_max_user_utterances_per_channel() -> usize {
+    64
+}
+
+impl Default for SocialConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            guild_id: None,
+            allowed_channel_ids: Vec::new(),
+            public_channel_ids: Vec::new(),
+            initiative_channel_ids: Vec::new(),
+            allowed_user_ids: Vec::new(),
+            operator_user_id: None,
+            operator_subject: default_social_operator_subject(),
+            reactive_min_interval_secs: default_reactive_min_interval_secs(),
+            reactive_max_per_hour: default_reactive_max_per_hour(),
+            initiative_min_interval_secs: default_initiative_min_interval_secs(),
+            initiative_max_per_day: default_initiative_max_per_day(),
+            poll_interval_secs: default_social_poll_secs(),
+            user_utterance_ttl_secs: default_user_utterance_ttl_secs(),
+            max_user_utterances_per_channel: default_max_user_utterances_per_channel(),
+            findings_path: None,
+        }
+    }
+}
+
+impl SocialConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.guild_id == Some(0)
+            || self.operator_user_id == Some(0)
+            || self.allowed_channel_ids.contains(&0)
+            || self.public_channel_ids.contains(&0)
+            || self.initiative_channel_ids.contains(&0)
+            || self.allowed_user_ids.contains(&0)
+        {
+            return Err("social Discord IDs must be positive integers".to_owned());
+        }
+        if !self.allowed_channel_ids.is_empty()
+            && (self
+                .public_channel_ids
+                .iter()
+                .any(|id| !self.allowed_channel_ids.contains(id))
+                || self
+                    .initiative_channel_ids
+                    .iter()
+                    .any(|id| !self.allowed_channel_ids.contains(id)))
+        {
+            return Err(
+                "social public_channel_ids and initiative_channel_ids must be subsets of allowed_channel_ids"
+                    .to_owned(),
+            );
+        }
+        if !crate::dialogue::valid_subject(&self.operator_subject) {
+            return Err("social.operator_subject is not a valid dialogue subject".to_owned());
+        }
+        if self.reactive_max_per_hour == 0
+            || self.initiative_max_per_day == 0
+            || self.poll_interval_secs == 0
+            || self.user_utterance_ttl_secs == 0
+            || self.max_user_utterances_per_channel == 0
+        {
+            return Err("social rate/retention/poll limits must be positive".to_owned());
+        }
+        if self
+            .findings_path
+            .as_ref()
+            .is_some_and(|p| !p.is_absolute())
+        {
+            return Err("social.findings_path must be absolute".to_owned());
+        }
+        Ok(())
+    }
 }
 
 /// Subjects to poll while no foreground turn is running. Absence of this
@@ -1132,6 +1269,9 @@ impl Config {
             if self.dialogue.is_none() {
                 return Err("cognition requires dialogue configuration".to_owned());
             }
+        }
+        if let Some(social) = &self.social {
+            social.validate()?;
         }
         let mut names = std::collections::HashSet::new();
         for tier in &self.tiers {

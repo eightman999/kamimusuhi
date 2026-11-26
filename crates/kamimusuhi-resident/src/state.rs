@@ -161,6 +161,8 @@ pub struct Shared {
     /// turns (see dialogue_host.rs). Sized from `dialogue` config; an
     /// unconfigured dialogue still gets an empty pool.
     pub dialogue_hosts: crate::dialogue_host::HostPool,
+    /// Social Embodiment coordinator (policy gate, outbox, supervisor, persistence).
+    pub social: crate::social::SocialEngine,
 }
 
 fn read<T: Clone>(lock: &RwLock<T>) -> T {
@@ -233,6 +235,10 @@ impl Shared {
                 config.paths.current_state().join("intercom.json"),
                 config.intercom.clone(),
                 config.node.id.clone(),
+            ),
+            social: crate::social::SocialEngine::load(
+                config.paths.current_state().join("social.json"),
+                config.social.clone(),
             ),
             dialogue_hosts: crate::dialogue_host::HostPool::new(
                 Duration::from_secs(
@@ -506,6 +512,7 @@ impl Shared {
             "task_plane": self.task_plane.as_ref().map(|p| p.status()),
             "commitments": self.commitments.summary(),
             "intercom": self.intercom.summary(),
+            "social": self.social.summary(),
             "approvals_pending": self.approvals.list(true).iter().map(|a| a.view()).collect::<Vec<_>>(),
             "generated_at": iso8601(unix_now()),
         })

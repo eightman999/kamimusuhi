@@ -233,6 +233,15 @@ pub struct DialogueReply {
     /// explore, the draw, and what it did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exploration: Option<ExplorationRecord>,
+    /// Present (`"proposed_pending_verification"`) when `defer_delivery` was used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_state: Option<String>,
+    /// SHA-256 content digest of `response`, present on social proposals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_digest: Option<String>,
+    /// Categorized social-memory summary (`conversation_context`, `self_history`, `public_knowledge`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub social_memory: Option<serde_json::Value>,
 }
 
 /// The exploration decision for one turn, as recorded in the reply and the
@@ -1196,6 +1205,26 @@ impl DialogueSession {
         text: &str,
         emit: impl FnOnce(&DialogueReply) -> std::io::Result<()>,
     ) -> Result<DialogueReply, RuntimeError> {
+        self.turn_with_social(
+            runtime,
+            text,
+            crate::social::TurnSocialOptions::default(),
+            emit,
+        )
+    }
+
+    /// Run one dialogue or social-embodiment turn.
+    ///
+    /// When `social.defer_delivery` is true, generation and evaluation complete
+    /// and a `PendingSocialProposal` is persisted without recording `AgentUtterance`,
+    /// warming memories, or submitting C0 drafts until `social::verify_delivery`.
+    pub fn turn_with_social(
+        &mut self,
+        runtime: &mut Runtime,
+        text: &str,
+        social: crate::social::TurnSocialOptions,
+        emit: impl FnOnce(&DialogueReply) -> std::io::Result<()>,
+    ) -> Result<DialogueReply, RuntimeError> {
         let _identity_lease = runtime.lock_identity()?;
         self.ensure_session_identity(runtime)?;
         let manifest = runtime.identity_manifest()?;
@@ -1243,6 +1272,16 @@ impl DialogueSession {
             .get(PRIMARY_LANGUAGE_PROVIDER_ID)
             .expect("primary language provider is always registered")
             .descriptor();
+        let is_public = social
+            .social_context
+            .as_ref()
+            .is_some_and(|ctx| ctx.visibility == crate::social::SocialVisibility::Public);
+        let effective_source_id = match social.social_context.as_ref() {
+            Some(ctx) if ctx.visibility == crate::social::SocialVisibility::Public => {
+                format!("text:{}:public:{}", self.subject, ctx.channel_id)
+            }
+            _ => self.source_id.clone(),
+        };
         // The operative view in force this turn: retrieval knobs, conversation
         // policy and the self model all come from the derived lane's head.
         let operative = c0::operative(runtime)?;
@@ -1253,9 +1292,17 @@ impl DialogueSession {
         let history_window = runtime
             .phenotype()
             .history_messages(operative.view.params.retrieval.history_messages);
-        let history = self.history(runtime, history_window)?;
+        let history = self.history_for_source(runtime, &effective_source_id, history_window)?;
         let turn_id = TurnId::generate(runtime.ids().as_ref());
-        let pending_writeback = crate::memory_writeback::begin(runtime, self.session_id, turn_id)?;
+        let pending_writeback = if social.defer_delivery {
+            None
+        } else {
+            Some(crate::memory_writeback::begin(
+                runtime,
+                self.session_id,
+                turn_id,
+            )?)
+        };
         runtime.store().record_turn(NewTurn {
             turn_id,
             session_id: self.session_id,
@@ -1273,13 +1320,44 @@ impl DialogueSession {
         runtime
             .trace()
             .record(TraceEventKind::TurnStarted, TraceCorrelation::default());
-        let input_evidence_id = self.append(
-            runtime,
-            turn_id,
-            EvidenceKind::UserUtterance,
-            OriginClass::Reported,
-            serde_json::json!({"text": text}),
-        )?;
+        let input_evidence_id = if let Some(initiative) = &social.initiative {
+            self.append_with_source(
+                runtime,
+                turn_id,
+                EvidenceKind::SystemEvent,
+                OriginClass::Observed,
+                serde_json::json!({
+                    "event": "social_initiative_observed",
+                    "initiative": initiative,
+                    "discord": social.social_context,
+                }),
+                &effective_source_id,
+                RetentionClass::Standard,
+                &BTreeSet::new(),
+            )?
+        } else {
+            let (payload, retention) = match &social.social_context {
+                Some(ctx) => (
+                    serde_json::json!({"text": text, "discord": ctx}),
+                    if ctx.is_operator {
+                        RetentionClass::Standard
+                    } else {
+                        RetentionClass::Ephemeral
+                    },
+                ),
+                None => (serde_json::json!({"text": text}), RetentionClass::Standard),
+            };
+            self.append_with_source(
+                runtime,
+                turn_id,
+                EvidenceKind::UserUtterance,
+                OriginClass::Reported,
+                payload,
+                &effective_source_id,
+                retention,
+                &BTreeSet::new(),
+            )?
+        };
         let current_input = CurrentInput {
             evidence_id: input_evidence_id,
             text: text.to_owned(),
@@ -1297,13 +1375,16 @@ impl DialogueSession {
             runtime.store(),
             self.individual_id,
             &self.subject,
-            &self.source_id,
+            &effective_source_id,
             text,
             &recall_params,
             &exclude,
             runtime.now(),
         )?;
         let (mut memories, mut recalled_evidence) = recall_pool.baseline();
+        if is_public {
+            filter_public_memory_scope(runtime.store(), &mut memories, &mut recalled_evidence)?;
+        }
         let head = runtime.head()?;
         // The individual's own working notes: the newest `self_notes_max`
         // from the bounded file beside the store, staged under their own
@@ -1516,6 +1597,9 @@ impl DialogueSession {
             &mut preparation.recall,
         );
         (memories, recalled_evidence) = recall_pool.apply(&preparation.recall)?;
+        if is_public {
+            filter_public_memory_scope(runtime.store(), &mut memories, &mut recalled_evidence)?;
+        }
         let recall_stats = recall_pool.stats();
         runtime.trace().record_with(
             TraceEventKind::MemoryRetrieved,
@@ -1955,32 +2039,69 @@ impl DialogueSession {
         }
         let used = used_ids(&haystack, &surfaced_ids);
         let used_marked = used.len();
-        runtime.store().mark_used(&used, runtime.now());
-        workspace_context["recall"]["used_marked"] = serde_json::json!(used_marked);
+        let social_memory = serde_json::json!({
+            "visibility": social.social_context.as_ref().map_or("private", |c| c.visibility.as_str()),
+            "source_id": effective_source_id,
+            "conversation_context": {
+                "history_messages": history.len(),
+                "recalled_utterances": recalled_evidence.len(),
+            },
+            "self_history": {
+                "durable_self_fields": self_context.snapshot.fields.len(),
+                "episodic_memories": memories
+                    .iter()
+                    .filter(|m| m.record.domain == kamimusuhi_core::mutation::MutationDomain::Episodic)
+                    .count(),
+                "relationship_memories": memories
+                    .iter()
+                    .filter(|m| m.record.domain == kamimusuhi_core::mutation::MutationDomain::Relationship)
+                    .count(),
+            },
+            "public_knowledge": {
+                "research_findings": recalled,
+                "reference_lookups": reference_context
+                    .as_ref()
+                    .and_then(|m| m["lookups"].as_array())
+                    .map_or(0, Vec::len),
+            },
+        });
+        workspace_context["social_memory"] = social_memory.clone();
+        if !social.defer_delivery {
+            runtime.store().mark_used(&used, runtime.now());
+            workspace_context["recall"]["used_marked"] = serde_json::json!(used_marked);
+        }
         self.last_context = Some(workspace_context.clone());
         // Tool use is recorded as external results, one record per call, so
         // what was consulted stays auditable next to what was said.
         let mut tool_evidence_ids = Vec::new();
         for call in &result.tool_calls {
-            tool_evidence_ids.push(self.append(
+            tool_evidence_ids.push(self.append_with_source(
                 runtime,
                 turn_id,
                 EvidenceKind::ResourceResult,
                 OriginClass::Reported,
                 serde_json::json!({"event": "tool_called", "call": call}),
+                &effective_source_id,
+                RetentionClass::Standard,
+                &BTreeSet::new(),
             )?);
         }
         // Persona drafts are proposals, not state: submit each through the
         // canonical kernel so the mutation policy decides. The writer epoch
         // is claimed lazily here — a turn with no drafts never takes it.
-        let draft_outcomes = c0::submit_drafts(
-            runtime,
-            Some(self.session_id),
-            Some(turn_id),
-            &mut self.writer,
-            result.proposals.clone(),
-        )?;
-        let drafts_activated = draft_outcomes.iter().filter(|o| o.activated).count();
+        let (draft_outcomes, drafts_activated) = if social.defer_delivery {
+            (Vec::new(), 0)
+        } else {
+            let outcomes = c0::submit_drafts(
+                runtime,
+                Some(self.session_id),
+                Some(turn_id),
+                &mut self.writer,
+                result.proposals.clone(),
+            )?;
+            let activated = outcomes.iter().filter(|o| o.activated).count();
+            (outcomes, activated)
+        };
         runtime.trace().record_with(
             TraceEventKind::PersonaCompleted,
             TraceCorrelation {
@@ -1988,9 +2109,9 @@ impl DialogueSession {
                 ..TraceCorrelation::default()
             },
             serde_json::json!({
-                "draft_count": draft_outcomes.len(),
+                "draft_count": if social.defer_delivery { result.proposals.len() } else { draft_outcomes.len() },
                 "drafts_activated": drafts_activated,
-                "used_marked": used_marked,
+                "used_marked": if social.defer_delivery { 0 } else { used_marked },
                 "invocation_gate": invocation_gate,
                 "provider_selection": provider_selection_trace,
                 "provider_candidates": conversation_trace.provider_candidates.clone(),
@@ -2009,7 +2130,12 @@ impl DialogueSession {
                 "core_state_after": self.core_state,
             }),
         );
-        let generated_evidence_id = self.append(
+        let generated_delivery_label = if social.defer_delivery {
+            "proposed_pending_verification"
+        } else {
+            "not_yet_emitted"
+        };
+        let generated_evidence_id = self.append_with_source(
             runtime,
             turn_id,
             EvidenceKind::SystemEvent,
@@ -2025,9 +2151,15 @@ impl DialogueSession {
                     serde_json::json!({"name": c.name, "ok": c.ok, "evidence_id": id})
                 }).collect::<Vec<_>>(),
                 "conversation_trace": conversation_trace.clone(),
-                "delivery": "not_yet_emitted"
+                "delivery": generated_delivery_label,
             }),
+            &effective_source_id,
+            RetentionClass::Standard,
+            &BTreeSet::new(),
         )?;
+        let response_digest = content_digest(result.response_intent.as_bytes());
+        let include_social_fields =
+            social.defer_delivery || social.social_context.is_some() || social.initiative.is_some();
         let reply = DialogueReply {
             individual_id: self.individual_id,
             session_id: self.session_id,
@@ -2077,9 +2209,12 @@ impl DialogueSession {
                 .count(),
             evidence_recalled: recalled_evidence.len(),
             exploration: Some(exploration),
+            delivery_state: social
+                .defer_delivery
+                .then(|| "proposed_pending_verification".to_owned()),
+            response_digest: include_social_fields.then_some(response_digest.clone()),
+            social_memory: include_social_fields.then_some(social_memory),
         };
-        emit(&reply)
-            .map_err(|error| RuntimeError::Usage(format!("response output failed: {error}")))?;
         // Conservatively connect new utterances to the retained material the
         // model was shown. Later source corrections must also retire echoes.
         let mut roots = BTreeSet::from([input_evidence_id]);
@@ -2106,7 +2241,46 @@ impl DialogueSession {
             roots.extend(memory.record.evidence_refs.iter().copied());
         }
         roots.extend(recalled_evidence.iter().map(|r| r.evidence_id));
-        let emitted_evidence_id = self.append_with_sources(
+        let metrics = eval::measure_turn(
+            text,
+            &reply.response,
+            &history,
+            &workspace,
+            operative.view.params.conversation.max_response_chars,
+        );
+        if social.defer_delivery {
+            let pending = crate::social::PendingSocialProposal {
+                individual_id: self.individual_id,
+                session_id: self.session_id,
+                turn_id,
+                subject: self.subject.clone(),
+                source_id: effective_source_id,
+                is_initiative: social.initiative.is_some(),
+                input_evidence_id,
+                generated_evidence_id,
+                response: reply.response.clone(),
+                response_digest,
+                persona_backend: reply.persona_backend.clone(),
+                roots,
+                surfaced_memory_ids: surfaced_ids,
+                used_memory_ids: used,
+                proposals: result.proposals,
+                metrics,
+                social_context: social.social_context,
+                initiative: social.initiative,
+                created_at: runtime.now(),
+            };
+            crate::social::save_pending_proposal(runtime, &pending)?;
+            emit(&reply)
+                .map_err(|error| RuntimeError::Usage(format!("response output failed: {error}")))?;
+            return Ok(DialogueReply {
+                debug_context: self.debug_context.then_some(workspace_context),
+                ..reply
+            });
+        }
+        emit(&reply)
+            .map_err(|error| RuntimeError::Usage(format!("response output failed: {error}")))?;
+        let emitted_evidence_id = self.append_with_source(
             runtime,
             turn_id,
             EvidenceKind::AgentUtterance,
@@ -2116,6 +2290,8 @@ impl DialogueSession {
                 "backend": reply.persona_backend, "delivery": "output_surface_accepted",
                 "human_acknowledgement": false
             }),
+            &effective_source_id,
+            RetentionClass::Standard,
             &roots,
         )?;
         runtime.trace().record_with(
@@ -2131,13 +2307,6 @@ impl DialogueSession {
             .record(TraceEventKind::ResponseEmitted, TraceCorrelation::default());
         // Deterministic per-turn metrics, recorded in the lane — the
         // reflection cycle reads them, and they are the before/after record.
-        let metrics = eval::measure_turn(
-            text,
-            &reply.response,
-            &history,
-            &workspace,
-            operative.view.params.conversation.max_response_chars,
-        );
         runtime
             .store()
             .c0_record_evaluation(&kamimusuhi_store_sqlite::c0::C0Evaluation {
@@ -2153,6 +2322,8 @@ impl DialogueSession {
                 evaluator: kamimusuhi_core::c0::EVALUATOR_KIND.to_owned(),
                 created_at: runtime.now(),
             })?;
+        let pending_writeback =
+            pending_writeback.expect("immediate delivery always opens writeback marker");
         let writeback = crate::memory_writeback::finish(
             runtime,
             pending_writeback,
@@ -2214,9 +2385,18 @@ impl DialogueSession {
         runtime: &Runtime,
         limit: usize,
     ) -> Result<Vec<ConversationMessage>, RuntimeError> {
+        self.history_for_source(runtime, &self.source_id, limit)
+    }
+
+    fn history_for_source(
+        &self,
+        runtime: &Runtime,
+        source_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ConversationMessage>, RuntimeError> {
         let records = runtime.store().recent_conversation(
             self.individual_id,
-            &self.source_id,
+            source_id,
             limit.clamp(1, 128),
         )?;
         let facts = runtime
@@ -2279,6 +2459,30 @@ impl DialogueSession {
         payload: serde_json::Value,
         roots: &BTreeSet<EvidenceId>,
     ) -> Result<EvidenceId, RuntimeError> {
+        self.append_with_source(
+            runtime,
+            turn_id,
+            kind,
+            origin_class,
+            payload,
+            &self.source_id,
+            RetentionClass::Standard,
+            roots,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn append_with_source(
+        &self,
+        runtime: &Runtime,
+        turn_id: TurnId,
+        kind: EvidenceKind,
+        origin_class: OriginClass,
+        payload: serde_json::Value,
+        source_id: &str,
+        retention_class: RetentionClass,
+        roots: &BTreeSet<EvidenceId>,
+    ) -> Result<EvidenceId, RuntimeError> {
         let evidence_id = EvidenceId::generate(runtime.ids().as_ref());
         let digest = json_digest(&payload);
         let links = roots
@@ -2299,11 +2503,11 @@ impl DialogueSession {
                 origin_class,
                 payload,
                 source: EvidenceSource {
-                    source_id: Some(self.source_id.clone()),
+                    source_id: Some(source_id.to_owned()),
                     source_sequence: None,
                     content_digest: Some(digest.clone()),
                 },
-                retention_class: RetentionClass::Standard,
+                retention_class,
             },
             &links,
         )?;
@@ -2317,6 +2521,43 @@ impl DialogueSession {
         );
         Ok(evidence_id)
     }
+}
+
+fn filter_public_memory_scope(
+    store: &kamimusuhi_store_sqlite::SqliteStore,
+    memories: &mut Vec<kamimusuhi_core::memory::AttributedMemory>,
+    recalled_evidence: &mut Vec<kamimusuhi_core::evidence::EvidenceRecord>,
+) -> Result<(), RuntimeError> {
+    let mut kept = Vec::with_capacity(memories.len());
+    for memory in memories.drain(..) {
+        if memory.record.domain == kamimusuhi_core::mutation::MutationDomain::Relationship {
+            continue;
+        }
+        let mut has_private_source = false;
+        for ev_id in &memory.record.evidence_refs {
+            if let Some(ev) = store.get(*ev_id)?
+                && ev
+                    .payload
+                    .pointer("/discord/visibility")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("private")
+            {
+                has_private_source = true;
+                break;
+            }
+        }
+        if !has_private_source {
+            kept.push(memory);
+        }
+    }
+    *memories = kept;
+    recalled_evidence.retain(|ev| {
+        ev.payload
+            .pointer("/discord/visibility")
+            .and_then(serde_json::Value::as_str)
+            != Some("private")
+    });
+    Ok(())
 }
 
 #[cfg(test)]
