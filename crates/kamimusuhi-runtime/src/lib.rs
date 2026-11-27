@@ -36,6 +36,7 @@ pub mod idle_cognition;
 pub mod inspect;
 pub mod kcore;
 pub mod llm_jev;
+pub mod memory_stall;
 pub mod memory_writeback;
 pub mod mio;
 pub mod organs;

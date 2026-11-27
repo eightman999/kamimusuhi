@@ -292,6 +292,57 @@ pub fn render(status: &Value) -> (String, bool) {
         );
         all_ok &= cognition["state"] != "failed";
     }
+    // Memory stall: conversation accumulating while canonical memory does
+    // not grow. A stall fails the overall status; a check that could not run
+    // is shown but is not itself a stall.
+    let stall = &status["memory_stall"];
+    if !stall.is_null() && stall["state"] != "disabled" {
+        let stalled = stall["state"] == "stalled";
+        all_ok &= !stalled;
+        let label = match stall["state"].as_str() {
+            Some("stalled") => "WARN",
+            Some("ok") => "OK  ",
+            _ => "----",
+        };
+        let thresholds = &stall["thresholds"];
+        let refused = ["reject", "quarantine"]
+            .iter()
+            .filter_map(|k| stall["memory_decisions"].get(*k).and_then(Value::as_u64))
+            .sum::<u64>()
+            + stall["reflection_drafts_rejected"].as_u64().unwrap_or(0);
+        let _ = writeln!(out);
+        if stall["state"] == "ok" || stalled {
+            let _ = writeln!(
+                out,
+                "MEMORY  [{label}] state={} reason={} utterances_since_memory={}/{} quiet={}s/{}s last_memory={}",
+                s(stall.get("state")),
+                s(stall.get("reason")),
+                s(stall.get("user_utterances_since_memory")),
+                s(thresholds.get("min_user_utterances")),
+                s(stall.get("quiet_secs")),
+                s(thresholds.get("min_quiet_secs")),
+                s(stall.get("last_memory_at")),
+            );
+            let _ = writeln!(
+                out,
+                "  since then: reflections={} memory_proposals={} refused={} ephemeral_utterances_not_counted={} checked={}",
+                s(stall.get("reflections_since_memory")),
+                s(stall.get("memory_proposals")),
+                refused,
+                s(stall.get("ephemeral_user_utterances_since_memory")),
+                s(stall.get("checked_at")),
+            );
+        } else {
+            let _ = writeln!(
+                out,
+                "MEMORY  [{label}] state={} reason={} last_verdict={} checked={}",
+                s(stall.get("state")),
+                s(stall.get("reason")),
+                s(stall["last_verdict"].get("state")),
+                s(stall.get("checked_at")),
+            );
+        }
+    }
     if let Some(servers) = status["mcp"].as_array().filter(|s| !s.is_empty()) {
         let _ = writeln!(out);
         let _ = writeln!(out, "MCP");

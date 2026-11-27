@@ -9,6 +9,7 @@
 //! power-loss durability; the tests here cover transaction atomicity, crash
 //! windows, retry idempotency and restart recovery.
 
+mod activity;
 pub mod c0;
 mod continuity;
 mod error;
@@ -20,4 +21,5 @@ pub mod migrations;
 mod resources;
 mod store;
 
+pub use activity::MemoryActivity;
 pub use store::{SqliteStore, StoreConfig};
