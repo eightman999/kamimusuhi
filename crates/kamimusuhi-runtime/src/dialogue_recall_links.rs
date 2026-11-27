@@ -93,6 +93,58 @@ pub(crate) struct DeclaredSelection {
     pub tag: Vec<DeclaredHit>,
 }
 
+/// Use count past which further use no longer stretches a hot seed's
+/// lifetime (heat model, `recall_hot_use_gain > 0`).
+pub(crate) const HOT_USE_CAP: u32 = 20;
+
+/// Heat below which a used record stops seeding (heat model). It is also
+/// the heat a once-used record reaches exactly at the hot window's edge.
+pub(crate) const HOT_HEAT_FLOOR: f64 = 0.05;
+
+/// Seed strength of a record last *used* `age_ms` ago, `None` when it does
+/// not seed.
+///
+/// `gain == 0` (the default) is the original linear window: strength falls
+/// from 1.0 to 0.5 across `window_ms` and is gone past it; `use_count` is
+/// ignored. `gain > 0` switches to FIO's heat model,
+/// `heat = exp(-age / S)` with a stability `S` that grows with use:
+/// `S = window * m / ln(1 / HOT_HEAT_FLOOR)`,
+/// `m = 1 + gain * ln(min(use_count, HOT_USE_CAP))`. Written as
+/// `heat = HOT_HEAT_FLOOR ^ (age / (window * m))`, a once-used record
+/// (`ln 1 = 0`, `m = 1`) hits the floor exactly at the window edge, so the
+/// heat model never seeds *fewer* records than the linear one did.
+///
+/// The cap is the point of the design. In FIO, injection alone warmed a
+/// record, so a memory that surfaced once kept re-warming itself and froze
+/// in place. Here only an explicit *use* (`mark_used`) bumps `use_count`,
+/// the stretch is logarithmic, and it stops at `HOT_USE_CAP`: no record can
+/// stay hot longer than `window * (1 + gain * ln HOT_USE_CAP)` after its
+/// last use, however often it was used.
+///
+/// A negative age (clock stepped back) counts as used just now. A
+/// non-positive window disables hot seeds whatever the gain.
+pub(crate) fn hot_seed_strength(
+    age_ms: i64,
+    use_count: u32,
+    window_ms: i64,
+    gain: f64,
+) -> Option<f64> {
+    if window_ms <= 0 {
+        return None;
+    }
+    let age_ms = age_ms.max(0);
+    if gain <= 0.0 {
+        return (age_ms <= window_ms).then(|| 1.0 - 0.5 * age_ms as f64 / window_ms as f64);
+    }
+    let uses = use_count.clamp(1, HOT_USE_CAP);
+    let stretch = 1.0 + gain * f64::from(uses).ln();
+    let span_ms = window_ms as f64 * stretch;
+    // `heat >= HOT_HEAT_FLOOR` <=> `age <= span`; comparing ages keeps the
+    // boundary exact instead of trusting `powf` rounding.
+    let age = age_ms as f64;
+    (age <= span_ms).then(|| HOT_HEAT_FLOOR.powf(age / span_ms))
+}
+
 /// Expand `pool` through declared metadata.
 ///
 /// `admit` applies the same individual/subject/lifecycle/validity gates the
@@ -114,8 +166,10 @@ pub(crate) fn select_declared(
     }
 
     // Seeds anchor both frames. Lexical seeds are exactly the records the
-    // lexical path would pick (strength 1.0). Hot seeds are records served
-    // inside the hot window, freshness-scaled linearly from 1.0 down to 0.5.
+    // lexical path would pick (strength 1.0). Hot seeds are records used
+    // recently, strength from `hot_seed_strength`: linear 1.0 -> 0.5 inside
+    // the hot window by default, or a use-stretched heat when
+    // `recall_hot_use_gain > 0`.
     let mut seeds: BTreeMap<MemoryId, f64> =
         c0::rank_episodic(pool.to_vec(), query, params.min_score)
             .into_iter()
@@ -131,9 +185,13 @@ pub(crate) fn select_declared(
             .map(|memory| memory.record.state_record_id)
             .collect();
         for (id, record_usage) in usage.usages(&ids) {
-            let age_ms = (now.unix_millis() - record_usage.last_used_at.unix_millis()).max(0);
-            if age_ms <= window_ms {
-                let freshness = 1.0 - 0.5 * age_ms as f64 / window_ms as f64;
+            let age_ms = now.unix_millis() - record_usage.last_used_at.unix_millis();
+            if let Some(freshness) = hot_seed_strength(
+                age_ms,
+                record_usage.use_count,
+                window_ms,
+                params.recall_hot_use_gain,
+            ) {
                 seeds
                     .entry(id)
                     .and_modify(|strength| *strength = strength.max(freshness))
@@ -597,6 +655,121 @@ mod tests {
             .map(|hit| hit.record.record.state_record_id)
             .collect();
         assert_eq!(ids, &[MemoryId::from_u128(8)]);
+    }
+
+    const HOUR_MS: i64 = 3_600_000;
+    const WINDOW_MS: i64 = 72 * HOUR_MS;
+
+    fn close(actual: Option<f64>, expected: f64) -> bool {
+        actual.is_some_and(|value| (value - expected).abs() < 1e-12)
+    }
+
+    #[test]
+    fn zero_gain_hot_strength_is_the_linear_window() {
+        for use_count in [0, 1, 3, 20, 1_000] {
+            for age_ms in [0, 1, HOUR_MS, WINDOW_MS / 2, WINDOW_MS - 1, WINDOW_MS] {
+                let linear = 1.0 - 0.5 * age_ms as f64 / WINDOW_MS as f64;
+                assert!(
+                    close(hot_seed_strength(age_ms, use_count, WINDOW_MS, 0.0), linear),
+                    "age {age_ms} uses {use_count}"
+                );
+            }
+            assert_eq!(
+                hot_seed_strength(WINDOW_MS + 1, use_count, WINDOW_MS, 0.0),
+                None
+            );
+            assert_eq!(
+                hot_seed_strength(10 * WINDOW_MS, use_count, WINDOW_MS, 0.0),
+                None
+            );
+            assert!(close(
+                hot_seed_strength(-HOUR_MS, use_count, WINDOW_MS, 0.0),
+                1.0
+            ));
+        }
+        // A zero window disables hot seeds whatever the gain.
+        assert_eq!(hot_seed_strength(0, 5, 0, 0.0), None);
+        assert_eq!(hot_seed_strength(0, 5, 0, 1.0), None);
+    }
+
+    #[test]
+    fn heat_model_stretches_with_use_up_to_the_cap() {
+        let gain = 1.0;
+        // One use: the floor exactly at the window edge (inclusive), out one
+        // millisecond later — the same horizon as the linear window.
+        assert!(close(
+            hot_seed_strength(WINDOW_MS, 1, WINDOW_MS, gain),
+            HOT_HEAT_FLOOR
+        ));
+        assert_eq!(hot_seed_strength(WINDOW_MS + 1, 1, WINDOW_MS, gain), None);
+        // A use count of 0 is treated as one use.
+        assert_eq!(
+            hot_seed_strength(WINDOW_MS / 3, 0, WINDOW_MS, gain),
+            hot_seed_strength(WINDOW_MS / 3, 1, WINDOW_MS, gain)
+        );
+        // Just used is full heat; a clock stepped back counts as just used.
+        assert!(close(hot_seed_strength(0, 7, WINDOW_MS, gain), 1.0));
+        assert!(close(hot_seed_strength(-HOUR_MS, 7, WINDOW_MS, gain), 1.0));
+        // More use, more heat at the same age.
+        let age = WINDOW_MS / 2;
+        let heats: Vec<f64> = [1, 2, 5, 10, 20]
+            .into_iter()
+            .map(|uses| hot_seed_strength(age, uses, WINDOW_MS, gain).expect("hot"))
+            .collect();
+        assert!(heats.windows(2).all(|pair| pair[0] < pair[1]), "{heats:?}");
+        // A bigger gain stretches further.
+        assert!(
+            hot_seed_strength(age, 10, WINDOW_MS, 2.0).unwrap()
+                > hot_seed_strength(age, 10, WINDOW_MS, 0.5).unwrap()
+        );
+        // Counts past the cap are the cap.
+        for uses in [HOT_USE_CAP + 1, 500, u32::MAX] {
+            assert_eq!(
+                hot_seed_strength(age, uses, WINDOW_MS, gain),
+                hot_seed_strength(age, HOT_USE_CAP, WINDOW_MS, gain)
+            );
+        }
+        // Past `window * (1 + gain * ln cap)` nothing seeds, however used.
+        let horizon = WINDOW_MS as f64 * (1.0 + gain * f64::from(HOT_USE_CAP).ln());
+        let past = horizon.ceil() as i64 + 1;
+        for uses in [1, 20, u32::MAX] {
+            assert_eq!(hot_seed_strength(past, uses, WINDOW_MS, gain), None);
+        }
+        assert!(
+            hot_seed_strength(horizon.floor() as i64, HOT_USE_CAP, WINDOW_MS, gain)
+                .is_some_and(|heat| heat >= HOT_HEAT_FLOOR)
+        );
+    }
+
+    #[test]
+    fn heat_model_keeps_a_much_used_record_hot_past_the_window() {
+        let seed = memory(1, json!({"text": "通勤手段は毎朝ロードバイクです"}));
+        let used = memory(7, json!({"text": "much used", "links": [state_link(8)]}));
+        let via_used = record(8, json!({"text": "reached through much used"}));
+        let mut fixture = Fixture::with(vec![via_used]);
+        // Last used 1.5 windows ago, 12 times.
+        fixture.usages.insert(
+            MemoryId::from_u128(7),
+            RecordUsage {
+                last_used_at: UtcTimestamp::from_unix_millis(NOW - WINDOW_MS * 3 / 2),
+                use_count: 12,
+            },
+        );
+        let pool = [seed, used];
+        let linear = select(&fixture, &pool, &RetrievalParams::default());
+        assert!(linear.link.is_empty(), "{:?}", linear.link);
+
+        let params = RetrievalParams {
+            recall_hot_use_gain: 1.0,
+            ..RetrievalParams::default()
+        };
+        let heated = select(&fixture, &pool, &params);
+        let picks: Vec<(MemoryId, &str)> = heated
+            .link
+            .iter()
+            .map(|hit| (hit.record.record.state_record_id, hit.via.as_str()))
+            .collect();
+        assert_eq!(picks, &[(MemoryId::from_u128(8), "link_hop_1")]);
     }
 
     #[test]
