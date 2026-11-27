@@ -46,6 +46,7 @@ Docs are expected to evolve aggressively. Architecture files remain the normativ
 - [`implementation/anatomical-fly-core-v0.md`](./implementation/anatomical-fly-core-v0.md) — **anatomical fly core v0**。fly connectome 由来の低次制御核を runtime へ接続する実装記録。
 - [`implementation/neuron-activity-v0.md`](./implementation/neuron-activity-v0.md) — **neuron activity v0**。神経活動の観測・注入面の実装記録。
 - [`implementation/persona-seed-v0.md`](./implementation/persona-seed-v0.md) — **persona seed v0**。operator 作成の傾向（口調・距離・エピステミクス）の構造・digest・不変境界。
+- [`verification/write-fault-shapes-2026-11-27.md`](./verification/write-fault-shapes-2026-11-27.md) — **書き込み経路の壊れ方3形と障害注入テスト**。FIO で見つけた (a) 処理前の冪等鍵 (b) 投影先行・台帳失敗の未読戻し (c) 主保存を見ないミラー、をかみむすびの該当箇所・守る仕組み・テストに対応付ける。intercom 受信と C0 narration の欠陥の再現を含む。
 - [`light-heavy-node-architecture.md`](./light-heavy-node-architecture.md) — **Light/Heavy ノード分離**。`POST /task` typed task 委譲、LOCAL/DELEGATE/QUEUE/REJECT 分類、delegations.sqlite(WAL) キュー、capability discovery。
 - [`implementation/2026-09-10-spec-implementation-audit.md`](./implementation/2026-09-10-spec-implementation-audit.md) — **仕様対実装の監査と修正結果**。Persona privacy、HTTP framing/size、safe diagnostics、完全な input provenance、logical-call deadline の修正。実行した CI と mutation test、実モデル未検証、残る制約を区別する。
 
