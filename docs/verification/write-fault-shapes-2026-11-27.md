@@ -57,6 +57,8 @@ FI1（ターン・トランザクション）の disposition「既存 Rust kerne
 
 ### 欠陥1: intercom の受信 envelope がターン中のクラッシュで失われ、再送も捨てられる（形 a）
 
+**修正済み（2026-11-27）。** 以下の「再現」「影響」「直し方の案」は修正前の記録。修正の内容と残る制約はこの節の末尾。
+
 - 再現: `env -u HAI_API_KEY cargo test -p kamimusuhi-resident --test intercom_inbound_crash -- --ignored`。
   台本の runtime がターン内に入ったことを marker で確かめ、その時点の `intercom.json` をクラッシュ時のディスク像として別の resident に読ませる。
   結果は `inbound=[]`、`seen=["m-crash-1"]`、再送は `{"accepted":false,"dedup":true}`。
@@ -66,6 +68,18 @@ FI1（ターン・トランザクション）の disposition「既存 Rust kerne
   runtime が入力証拠を書いた後のクラッシュなら入力は記憶側に残るが（marker は unresolved）、返答も返信の転送も起きない。
 - 直し方の案: pop を処理完了まで遅らせる（`inbound` の先頭に `in_flight` を付けて保存し、`answered`/`turn_failed` 時に取り除く。起動時は `in_flight` を再処理する）。
   処理側の重複に備え、ターン要求へ envelope id を渡して runtime 側で冪等にする。
+- 修正（`resident/src/intercom.rs` `drain_inbound`）: envelope は処理中も `inbound` の先頭に残り、ターン開始前に `in_flight: {id, starts}` を保存する。
+  `inbound` から外すのは決着（answered・5xx の1回再キュー・`turn_failed`）の書き込みで、answered では自動返信の転送の enqueue と同じ atomic write になる。
+  再起動後は先頭の envelope をもう一度処理する（at-least-once）。`starts` が `MAX_TURN_STARTS`（3）を超えた envelope はターンを始めず、
+  envelope 全体を載せた `{"kind":"dead","direction":"inbound",…}` をジャーナルに書いてから除去する。
+  2回目以降の開始は `redelivered` をジャーナルに書き、個体への本文に中断後の再配達である旨（と既存の返信 id）を添える。
+  `intercom.json` の新項目 `in_flight` は serde の default で、処理中でなければ書かれない。
+- 確認: 上の再現テストは `#[ignore]` を外して通る（クラッシュ像の `inbound` に手紙が残る）。
+  同じファイルの `an_envelope_in_flight_at_a_crash_is_answered_once_after_the_restart` で、クラッシュ像から起動した resident が手紙を処理し、自動返信が1通だけ積まれ、再送は `dedup` のままであることを確かめた。
+  上限超過の dead-letter、正常系の保存形、古い形式の読み込みは `intercom::tests` の単体テストで確かめた。
+- 残る制約: runtime 側は冪等ではない。1回目のターンが入力証拠を書いた後で落ちると、同じ手紙の入力が2回記録される（2回目には再配達の注記が付く）。
+  ターン中に `peer_say` で返信した後で落ちると、再処理のターンで返信が重なりうる（注記で既存の返信 id を知らせるが、機械的には防がない）。
+  自動返信の転送は決着と同時にしか積まれないので重ならない。詳細は [intercom 実装文書](../implementation/intercom.md) の「受信処理と再起動」。
 
 ### 欠陥2: C0 レーンの遷移と canonical narration が食い違ったまま残る（形 b）
 
