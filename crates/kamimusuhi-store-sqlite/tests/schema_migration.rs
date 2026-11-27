@@ -47,6 +47,16 @@ const EXPECTED_TABLES: &[&str] = &[
     "state_record_usage",
     "state_records",
     "turns",
+    // Schema v7: the derived utterance index. `utterance_index` and
+    // `utterance_index_vocab` are FTS5 virtual tables; `_config`, `_data`,
+    // `_docsize` and `_idx` are FTS5's own shadow tables.
+    "utterance_index",
+    "utterance_index_config",
+    "utterance_index_data",
+    "utterance_index_docsize",
+    "utterance_index_idx",
+    "utterance_index_map",
+    "utterance_index_vocab",
     "writer_epochs",
 ];
 

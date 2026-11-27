@@ -77,6 +77,9 @@ fn provider_worker_command() -> Result<ProcessCommand, ConversationError> {
 }
 
 pub const MAX_INPUT_BYTES: usize = 8_192;
+/// Utterances one turn may add to the derived full-text index. A long-lived
+/// individual's backlog drains over successive turns instead of stalling one.
+const UTTERANCE_INDEX_SYNC_ROWS: usize = 2_000;
 const HISTORY_BYTES: usize = 16_384;
 
 /// Only the already selected, attributed turn context is exposed to the
@@ -183,6 +186,9 @@ pub struct TurnC0 {
     /// Link-frame hits at least two distinct records point at (the "knot").
     pub recall_knot_hits: usize,
     pub recall_tag_hits: usize,
+    /// Raw utterances the derived full-text index offered the judge beyond
+    /// the bounded recent pool.
+    pub recall_index_hits: usize,
     /// Surfaced records the reply actually referenced (`mark_used` count).
     pub used_marked: usize,
     /// Turn metrics recorded by the deterministic evaluator.
@@ -1371,6 +1377,18 @@ impl DialogueSession {
         // many episodic / evidence candidates this turn recalls. The C0 lane's
         // params are not rewritten; only this turn's retrieval view is scaled.
         let recall_params = scale_recall_params(&operative.view.params, &runtime.phenotype());
+        // Catch the derived utterance index up with evidence appended since
+        // the last turn, so recall can reach past the bounded recent pool.
+        // Bounded per turn; a backlog drains over the following turns. This
+        // writes only the derived index tables, and a failure here leaves
+        // recall on its other lanes rather than failing the turn.
+        let index_sync = (recall_params.retrieval.utterance_index_top_k > 0
+            && recall_params.retrieval.evidence_top_k > 0)
+            .then(|| {
+                runtime
+                    .store()
+                    .utterance_index_sync(UTTERANCE_INDEX_SYNC_ROWS)
+            });
         let recall_pool = RecallPool::load(
             runtime.store(),
             self.individual_id,
@@ -1669,6 +1687,14 @@ impl DialogueSession {
                 "link_hits": recall_stats.link_hits,
                 "knot_hits": recall_stats.knot_hits,
                 "tag_hits": recall_stats.tag_hits,
+                "index_hits": recall_stats.index_hits,
+                "utterance_index": {
+                    "offered": recall_stats.index_hits,
+                    "unavailable": recall_stats.index_unavailable,
+                    "synced": index_sync.as_ref().and_then(|sync| sync.as_ref().ok()).map(|sync| sync.indexed),
+                    "sync_pending": index_sync.as_ref().and_then(|sync| sync.as_ref().ok()).map(|sync| sync.pending),
+                    "sync_failed": index_sync.as_ref().is_some_and(Result::is_err),
+                },
                 "used_marked": 0,
             },
             "exploration": exploration,
@@ -2345,6 +2371,7 @@ impl DialogueSession {
                 recall_link_hits: recall_stats.link_hits,
                 recall_knot_hits: recall_stats.knot_hits,
                 recall_tag_hits: recall_stats.tag_hits,
+                recall_index_hits: recall_stats.index_hits,
                 used_marked,
                 metrics,
             }),

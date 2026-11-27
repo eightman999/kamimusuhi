@@ -208,6 +208,97 @@ pub fn recall_evidence(
 }
 
 // ---------------------------------------------------------------------------
+// Full-text utterance index (derived)
+// ---------------------------------------------------------------------------
+
+/// How much a fresh utterance outranks an old one at equal match strength,
+/// and how fast that edge fades (FIO: weight 0.35, 30-day half-life).
+const INDEX_FRESHNESS_WEIGHT: f64 = 0.35;
+const INDEX_FRESHNESS_HALF_LIFE_DAYS: f64 = 30.0;
+/// A hit scoring below this share of the best hit is dropped (FIO: 0.25).
+const INDEX_RELATIVE_FLOOR: f64 = 0.25;
+/// Rows fetched per kept slot before freshness re-ranks them (FIO: 8×, ≥40).
+const INDEX_FETCH_PER_SLOT: usize = 8;
+const INDEX_FETCH_MIN: usize = 40;
+
+/// Freshness-weighted match strength of one index hit. SQLite's `bm25()` is
+/// negative and more negative for a better match, so its sign is flipped;
+/// the freshness factor runs from `1 + weight` (just said) down to 1 (old).
+pub fn utterance_index_score(bm25: f64, age_millis: i64) -> f64 {
+    let days = age_millis.max(0) as f64 / 86_400_000.0;
+    -bm25 * (1.0 + INDEX_FRESHNESS_WEIGHT * 0.5_f64.powf(days / INDEX_FRESHNESS_HALF_LIFE_DAYS))
+}
+
+/// Raw canonical utterances the derived full-text index matches for this
+/// input — the lane that reaches past `evidence_pool`. Read-only: it uses
+/// whatever is indexed and never syncs, so write-free callers stay
+/// write-free.
+///
+/// The same admission rules as [`recall_evidence`] apply (uncorrected,
+/// rooted, this source, not already presented this turn). Results are only
+/// ever *candidates* for the relevance judge.
+pub fn search_utterance_index(
+    store: &SqliteStore,
+    individual_id: IndividualId,
+    source_id: &str,
+    query_text: &str,
+    params: &kamimusuhi_core::c0::OperativeParams,
+    exclude: &BTreeSet<EvidenceId>,
+    now: kamimusuhi_core::time::UtcTimestamp,
+) -> Result<Vec<EvidenceRecord>, RuntimeError> {
+    let top_k = params.retrieval.utterance_index_top_k;
+    if top_k == 0 || params.retrieval.evidence_top_k == 0 {
+        return Ok(Vec::new());
+    }
+    // Ids already on screen this turn can occupy the best ranks; fetch past
+    // them so they do not starve the lane.
+    let fetch = (top_k * INDEX_FETCH_PER_SLOT).max(INDEX_FETCH_MIN) + exclude.len().min(64);
+    let hits = store.utterance_index_search(individual_id, source_id, query_text, fetch)?;
+    let facts = store.facts(
+        &hits
+            .iter()
+            .map(|hit| hit.record.evidence_id)
+            .collect::<Vec<_>>(),
+    )?;
+    let mut scored: Vec<(f64, EvidenceRecord)> = hits
+        .into_iter()
+        .filter(|hit| {
+            let record = &hit.record;
+            facts
+                .get(record.evidence_id)
+                .is_some_and(|f| !f.is_corrected && !f.root_evidence.is_empty())
+                && matches!(
+                    record.kind,
+                    EvidenceKind::UserUtterance | EvidenceKind::AgentUtterance
+                )
+                && record.source.source_id.as_deref() == Some(source_id)
+                && !exclude.contains(&record.evidence_id)
+                && record.payload.get("text").is_some_and(|t| t.is_string())
+        })
+        .map(|hit| {
+            let age = now.unix_millis() - hit.record.created_at.unix_millis();
+            (utterance_index_score(hit.bm25, age), hit.record)
+        })
+        .filter(|(score, _)| *score > 0.0)
+        .collect();
+    scored.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(b.1.created_at.cmp(&a.1.created_at))
+            .then(b.1.evidence_id.cmp(&a.1.evidence_id))
+    });
+    let floor = scored
+        .first()
+        .map_or(0.0, |(best, _)| best * INDEX_RELATIVE_FLOOR);
+    Ok(scored
+        .into_iter()
+        .filter(|(score, _)| *score >= floor)
+        .take(top_k)
+        .map(|(_, record)| record)
+        .collect())
+}
+
+// ---------------------------------------------------------------------------
 // Canonical draft submission (lazy writer claim)
 // ---------------------------------------------------------------------------
 
@@ -601,4 +692,29 @@ pub fn rollback(
         &[],
     )?;
     Ok(outcome)
+}
+
+#[cfg(test)]
+mod utterance_index_tests {
+    use super::utterance_index_score;
+
+    const DAY: i64 = 86_400_000;
+
+    #[test]
+    fn score_flips_bm25_and_fades_freshness_with_a_thirty_day_half_life() {
+        // Just said: the full freshness edge.
+        assert!((utterance_index_score(-2.0, 0) - 2.0 * 1.35).abs() < 1e-9);
+        // One half-life later the edge is halved; far in the past it is gone.
+        assert!((utterance_index_score(-2.0, 30 * DAY) - 2.0 * 1.175).abs() < 1e-9);
+        assert!((utterance_index_score(-2.0, 3_650 * DAY) - 2.0).abs() < 1e-6);
+        // A better (more negative) bm25 always scores higher at equal age,
+        // and a clock running backwards is treated as "just said".
+        assert!(utterance_index_score(-3.0, DAY) > utterance_index_score(-2.0, DAY));
+        assert_eq!(
+            utterance_index_score(-2.0, -5 * DAY),
+            utterance_index_score(-2.0, 0)
+        );
+        // A non-match (bm25 >= 0) can never pass the positive-score filter.
+        assert!(utterance_index_score(0.0, 0) <= 0.0);
+    }
 }

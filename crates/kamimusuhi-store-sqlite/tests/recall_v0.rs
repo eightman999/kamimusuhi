@@ -61,9 +61,10 @@ fn schema_v6_creates_the_usage_side_table_on_an_existing_database() {
         bootstrap(&store, BOOT_A);
     }
 
-    // Reopening an existing database applies 0006 cleanly and reports v6.
+    // Reopening an existing database applies 0006 cleanly and reports v6 or
+    // whatever later schema this build migrates to.
     let store = open(&db.path, 2);
-    assert_eq!(store.schema_version(), SchemaVersion(6));
+    assert!(store.schema_version() >= SchemaVersion(6));
     assert!(
         store
             .table_names()
