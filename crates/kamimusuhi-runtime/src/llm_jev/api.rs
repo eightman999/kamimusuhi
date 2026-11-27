@@ -336,6 +336,7 @@ mod tests {
             },
             evidence: preparation().evidence,
             attempts: BTreeMap::from([("primary".to_owned(), 0)]),
+            usage_candidates: Vec::new(),
         }
     }
 

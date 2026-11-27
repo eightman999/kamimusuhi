@@ -16,15 +16,16 @@ use kamimusuhi_core::memory::{MemoryLink, MemoryQuery, MemoryRepository, MemoryU
 use kamimusuhi_core::mutation::{
     MutationDomain, MutationOperation, MutationPolicyV0, MutationProposal, OriginClass,
 };
-use kamimusuhi_core::persona::{PersonaBackendDescriptor, PersonaTurnInput};
+use kamimusuhi_core::persona::{PersonaBackendDescriptor, PersonaTurnInput, ToolCallRecord};
 use kamimusuhi_core::routing::PrivacyConstraint;
 use kamimusuhi_core::workspace::SourceRef;
 use kamimusuhi_runtime::c0::{reflection, replay};
 use kamimusuhi_runtime::dialogue::DialogueSession;
 use kamimusuhi_runtime::llm_jev::{
     ConversationError, DecisionProvider, DecisionRequest, DecisionResult, LanguageProvider,
-    LanguageRequest, LanguageResult, MockLanguageProvider, RecallRelevance, ResponseAssessment,
-    ResponseAssessmentRequest, RuleBasedDecisionProvider, TurnPreparation, TurnPreparationRequest,
+    LanguageRequest, LanguageResult, MockLanguageProvider, RecallRelevance, RecallUsage,
+    ResponseAssessment, ResponseAssessmentRequest, RuleBasedDecisionProvider, TurnPreparation,
+    TurnPreparationRequest,
 };
 use kamimusuhi_runtime::{ResourceImplementation, Runtime, RuntimeOptions};
 use kamimusuhi_testkit::FakeReflector;
@@ -306,6 +307,192 @@ fn a_linked_record_reaches_the_judge_and_only_a_real_reference_warms_it() {
     let reply = session.turn(&mut runtime, QUERY, |_| Ok(())).unwrap();
     assert_eq!(reply.c0.as_ref().unwrap().used_marked, 0);
     assert_eq!(runtime.store().usage(&linked).unwrap().use_count, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Structured usage: the self-declaration tool and the response judge
+// ---------------------------------------------------------------------------
+
+/// A judge that also attributes usage: one scripted verdict per turn for the
+/// `target` record, `NOT_USED` for every other surfaced record.
+struct UsageJudge {
+    target: String,
+    verdicts: Mutex<VecDeque<RecallUsage>>,
+    offered: Arc<Mutex<Vec<Vec<String>>>>,
+}
+
+impl DecisionProvider for UsageJudge {
+    fn decide(&self, request: &DecisionRequest) -> Result<DecisionResult, ConversationError> {
+        RuleBasedDecisionProvider.decide(request)
+    }
+
+    fn prepare_turn(
+        &self,
+        request: &TurnPreparationRequest,
+    ) -> Result<TurnPreparation, ConversationError> {
+        let mut preparation = RuleBasedDecisionProvider.prepare_turn(request)?;
+        for candidate in &request.recall_candidates {
+            if candidate.content["via"].is_string() {
+                preparation
+                    .recall
+                    .insert(candidate.id.clone(), RecallRelevance::Relevant);
+            }
+        }
+        Ok(preparation)
+    }
+
+    fn assess_responses(
+        &self,
+        request: &ResponseAssessmentRequest,
+    ) -> Result<ResponseAssessment, ConversationError> {
+        self.offered
+            .lock()
+            .unwrap()
+            .push(request.usage_candidates.clone());
+        let verdict = self
+            .verdicts
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(RecallUsage::NotUsed);
+        let mut assessment = RuleBasedDecisionProvider.assess_responses(request)?;
+        for id in &request.usage_candidates {
+            let usage = if *id == self.target {
+                verdict
+            } else {
+                RecallUsage::NotUsed
+            };
+            assessment.usage.insert(id.clone(), usage);
+        }
+        Ok(assessment)
+    }
+}
+
+/// Language organ whose reply never names an id, but may carry scripted tool
+/// calls — the structured channel a self-declaration travels on.
+struct ToolLanguage {
+    calls: Mutex<VecDeque<Vec<ToolCallRecord>>>,
+}
+
+impl LanguageProvider for ToolLanguage {
+    fn generate(&self, request: &LanguageRequest) -> Result<LanguageResult, ConversationError> {
+        let mut result = MockLanguageProvider.generate(request)?;
+        result.persona.response_intent = "ロードバイクで通っていますね".to_owned();
+        result.persona.tool_calls = self.calls.lock().unwrap().pop_front().unwrap_or_default();
+        Ok(result)
+    }
+
+    fn descriptor(&self) -> PersonaBackendDescriptor {
+        MockLanguageProvider.descriptor()
+    }
+}
+
+fn memory_used_call(ids: &[String]) -> ToolCallRecord {
+    ToolCallRecord {
+        call_id: None,
+        name: "memory_used".to_owned(),
+        arguments: json!({"ids": ids}),
+        ok: true,
+        result: json!({"ok": true}),
+        latency_ms: 0,
+    }
+}
+
+#[test]
+fn a_self_declaration_or_a_judge_verdict_warms_a_record_the_reply_never_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut runtime = Runtime::init(
+        dir.path(),
+        RuntimeOptions::deterministic(73),
+        ResourceImplementation::FakeA,
+    )
+    .unwrap();
+    let evidence = append_utterance(&runtime, "通勤手段について話した");
+    let linked = activate(
+        &runtime,
+        MutationDomain::Relationship,
+        MutationOperation::Fact,
+        json!({"preference": "ロードバイク通勤", "marker": "linked"}),
+        vec![evidence],
+    );
+    let seed = activate(
+        &runtime,
+        MutationDomain::Episodic,
+        MutationOperation::Capture,
+        json!({
+            "text": "通勤手段はロードバイクです",
+            "links": [format!("state:{linked}")],
+            "marker": "seed",
+        }),
+        vec![evidence],
+    );
+    let unsurfaced = MemoryId::from_u128(0xDEAD);
+
+    let offered = Arc::new(Mutex::new(Vec::new()));
+    let mut session = DialogueSession::start_with_providers(
+        &mut runtime,
+        "alice",
+        PrivacyConstraint::LocalOnly,
+        Box::new(UsageJudge {
+            target: linked.to_string(),
+            // Turn 1: the judge alone says USED. Turn 2: it says NOT_USED and
+            // the self-declaration carries the turn. Turn 3: UNCERTAIN.
+            verdicts: Mutex::new(VecDeque::from(vec![
+                RecallUsage::Used,
+                RecallUsage::NotUsed,
+                RecallUsage::Uncertain,
+            ])),
+            offered: Arc::clone(&offered),
+        }),
+        Some(Box::new(ToolLanguage {
+            calls: Mutex::new(VecDeque::from(vec![
+                Vec::new(),
+                // An id the host never surfaced rides along: refused, counted.
+                vec![memory_used_call(&[
+                    linked.to_string(),
+                    unsurfaced.to_string(),
+                ])],
+                Vec::new(),
+            ])),
+        })),
+    )
+    .unwrap();
+    let sources = |session: &DialogueSession| {
+        session.last_context().unwrap()["recall"]["usage_sources"].clone()
+    };
+
+    // Turn 1 — judge attribution only. The reply names no id, so the legacy
+    // verbatim rule alone would have left the record cold.
+    let reply = session.turn(&mut runtime, QUERY, |_| Ok(())).unwrap();
+    assert_eq!(reply.c0.as_ref().unwrap().used_marked, 1);
+    assert_eq!(runtime.store().usage(&linked).unwrap().use_count, 1);
+    assert!(runtime.store().usage(&seed).is_none());
+    let trace = sources(&session);
+    assert_eq!(trace["referenced"], 0);
+    assert_eq!(trace["declared"], 0);
+    assert_eq!(trace["judged"], 1);
+    // The judge was offered exactly the surfaced record ids, once each.
+    let first = offered.lock().unwrap()[0].clone();
+    assert!(first.contains(&linked.to_string()), "{first:?}");
+    assert_eq!(trace["judge_candidates"], first.len());
+
+    // Turn 2 — self-declaration only. The unsurfaced id is refused.
+    let reply = session.turn(&mut runtime, QUERY, |_| Ok(())).unwrap();
+    assert_eq!(reply.c0.as_ref().unwrap().used_marked, 1);
+    assert_eq!(runtime.store().usage(&linked).unwrap().use_count, 2);
+    assert!(runtime.store().usage(&unsurfaced).is_none());
+    let trace = sources(&session);
+    assert_eq!(trace["declared"], 1);
+    assert_eq!(trace["declared_rejected"], 1);
+    assert_eq!(trace["judged"], 0);
+    assert_eq!(trace["agreed"], 0);
+
+    // Turn 3 — no declaration and an UNCERTAIN verdict: nothing is marked,
+    // and nothing already marked is taken back.
+    let reply = session.turn(&mut runtime, QUERY, |_| Ok(())).unwrap();
+    assert_eq!(reply.c0.as_ref().unwrap().used_marked, 0);
+    assert_eq!(runtime.store().usage(&linked).unwrap().use_count, 2);
+    assert!(runtime.store().usage(&seed).is_none());
 }
 
 // ---------------------------------------------------------------------------

@@ -27,6 +27,7 @@ episodic pool (subject 単位・上限)
 - **温めは「注入された」ではなく「使った」分だけ**: 応答本文・tool 引数/結果に
   記録 id（32-hex）が明示的に現れた分だけ `mark_used`。FIO の実測で確認された
   凍結アトラクタ（注入自体が温めて一度載った記憶が冷えない）をこの規則で避ける。
+  （「使った」の情報源は後に 3 本へ拡張 — 下の「追補（使用の構造化）」。）
 - link frame は relationship 記録にも到達しうる（`state:` link 経由・source_type は
   `durable_memory`）。SelfModel は fail-closed のまま対象外。
 
@@ -43,6 +44,9 @@ episodic pool (subject 単位・上限)
 | runtime | `dialogue_recall.rs` | `now` の通し・`admits_memory` の `is_valid_at` 門・`RecallStats`（expired_skipped/link_hits/tag_hits）・`RecallGroup::extend_offered` |
 | runtime | `dialogue.rs` | 応答確定後の used-marking（FIO ルールのコメント付き）・`TurnC0` 新規4フィールド・`workspace_context["recall"]`・`MemoryRetrieved` trace |
 | runtime | `c0/chat.rs` | `/memory` で tags/links/use_count/valid_to を表示 |
+| runtime | `dialogue_recall_links.rs` | `usage_sources`（verbatim 参照・自己申告・審査帰属の 3 源を surfaced 集合へ clamp）、`UsageSources::{used,agreed}` |
+| runtime | `llm_jev/assessment.rs` | `ResponseAssessmentRequest::usage_candidates`・`ResponseAssessment::usage`・`RecallUsage`・設問 `usage_<i>_<candidate>`・`MAX_USAGE_CANDIDATES`(8) |
+| resident | `tools.rs` | 組み込み tool `memory_used`（宣言の受領のみ・状態変更なし） |
 
 ## パラメータ（`retrieval.*`）
 
@@ -67,8 +71,9 @@ episodic pool (subject 単位・上限)
   （FIO でも解決精度 ~78% が壁だった点）。
 - BFS は outbound のみ（被リンク側の逆評価・「結び目の浮上」加点は未実装）。
 - ベクトル/embedding の起点は未追加（FIO 実測で寄与ほぼゼロだったため後回し）。
-- `used_ids` は 32-hex の部分文字列一致 — 応答が id を名指さない限り温まらない
-  （意図的な厳しさ。緩める場合は structured `used_refs` を wire に足す検討が先）。
+- `used_ids`（verbatim 参照）は 32-hex の部分文字列一致のまま — これ単独では応答が
+  id を名指さない限り温まらない。構造化した 2 源（自己申告 tool と審査帰属）を
+  併走させて補う（下の「追補（使用の構造化）」）。
 - replay（`c0/replay.rs`）は同じ lexical seed から `select_declared` で拡張し、
   judge がいない代わりに declared-path を未判定 extras として注入する
   （`via` は staged payload に同梱）。`mark_used` は呼ばない —— replay は
@@ -91,6 +96,61 @@ episodic pool (subject 単位・上限)
 - 追加パラメータ: `recall_knot_bonus`=0.1（0.0–1.0, f64）・`recall_reverse_decay`=0.20（0.0–1.0, f64）。
 - 残る未実装: embedding 起点（FIO 実測で寄与ほぼゼロのため後回しのまま）・
   宣言精度の実測評価（FIO でも ~78% が壁だった領域）・sleep/dream consolidation。
+
+## 追補（使用の構造化 — 自己申告＋審査帰属の冗長化）
+
+Persona の応答は自由文だけで、使った記録を構造化して返す経路が無かった。verbatim 参照
+（32-hex の部分文字列一致）だけでは実質ほぼ温まらないため、「使った」の情報源を 3 本にした。
+どれも「注入された」ではなく「使った」という主張で、surfaced 集合（そのターンに言語器官へ
+提示した記録）へ clamp してから和集合を `mark_used` する。
+
+| 源 | 経路 | 追加コスト |
+|---|---|---|
+| referenced | 従来どおり。応答本文か、宣言 tool 以外の tool 引数・結果に id が現れる | なし |
+| declared（自己申告） | 言語器官が組み込み tool `memory_used({"ids":[…]})` を呼ぶ。`state:<id>` 形・大文字も受ける | tool を呼んだターンはモデル往復 +1 |
+| judged（審査帰属） | 応答審査（Jev / OpenAI 互換 decision）の同じ batch に、候補ごと・記録ごとの選択式設問 `USED / NOT_USED / UNCERTAIN` を足す。読むのは配達する候補の分だけ | LLM 呼び出しの追加なし。設問が「候補数 × 記録数（≤8）」増える |
+
+規則:
+
+- **clamp**: declared は surfaced に無い id を棄却し、件数だけ trace に数える（`declared_rejected`）。
+  judged も surfaced に無い id の判定は無視する。宣言は host が提示したものを追認できるだけで、
+  発明された id・古い id は何も温めない。
+- **省略は「使っていない」ではない**: 宣言が無い・判定が `UNCERTAIN` / `NOT_USED`・審査が
+  fallback（ルールベース）のいずれでも、何も冷やさず何も取り消さない。FIO は申告欄の省略で
+  注入分が全部冷える作りだったが、ここでは採らない。
+- **審査不在時**: ルールベース gate は帰属を返さない（空）。その場合は referenced と declared だけで動く。
+- **trace**: `workspace_context["recall"]["usage_sources"]` に
+  `judge_candidates / referenced / declared / declared_rejected / judged / agreed` を件数で残す
+  （id は残さない）。`agreed` は declared と judged の重なりで、2 つの構造化源の一致を後から測れる。
+- **権限**: 使用の印は側表 `state_record_usage` の bookkeeping で、正典の記録内容ではない。
+  Continuity Kernel を通らず、真偽・durable belief・mutation 権限のいずれも与えない。
+
+有効化と配備:
+
+- `memory_used` は組み込み tool だが、言語器官に見えるのは個体の `runtime.json` の
+  `tools.allowed`（毎ターン提示するなら `tools.core`）に入れたときだけ
+  （例: `deploy/resident/runtime-reference.example.json`）。入れなければ declared は常に 0 件。
+- 審査帰属は設定なしで有効（surfaced 記録があるターンだけ設問が増える。0 件のターンは batch 不変）。
+- `llm_jev/assessment.rs`・`llm_jev.rs`・`llm_jev/api.rs` は同一性 manifest の対象なので、
+  この版を常駐へ入れると identity gate が `AcceptRequired` になる（明示承認が必要）。
+
+検証:
+
+- `llm_jev/assessment.rs` unit 4 件（設問の増え方・選択候補だけ読む・候補 0 件で batch と wire が不変・
+  上限と一意性・ローカル gate は帰属なし）
+- `dialogue_recall_links.rs` unit 3 件（3 源の clamp と和集合・省略と UNCERTAIN は無印・宣言 tool を
+  verbatim に二重計上しない）
+- resident `tools.rs` unit 1 件（`memory_used` は受領のみで何も書かない・不正引数の拒否）
+- E2E `tests/recall_declared.rs`: 応答が id を名指さないまま、ターン 1 は審査帰属だけ、ターン 2 は
+  自己申告だけで `use_count` が進み、surfaced に無い id は棄却、ターン 3（宣言なし・UNCERTAIN）は据え置き
+
+未実装・未検証:
+
+- 実モデルでの挙動は未測定 — 言語器官が実際に `memory_used` を呼ぶ頻度、審査の `USED` 判定の精度、
+  2 源の一致率（`agreed`）、設問増による審査レイテンシ。いずれも fixture による検証まで。
+- 源ごとの内訳は trace のみ。`state_record_usage` に源の列は足していない。
+- replay（`c0/replay.rs`）は従来どおり `mark_used` を呼ばない。
+- R0 本番化関門 (2) の入力定義（`use_count` を「後で照会された」信号として使う案）は未着手。
 
 ## 関連
 

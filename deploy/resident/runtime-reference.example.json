@@ -14,7 +14,8 @@
       "library_search",
       "library_read",
       "json_get",
-      "json_find"
+      "json_find",
+      "memory_used"
     ],
     "allowed": [
       "task_delegate",
@@ -31,6 +32,7 @@
       "library_read",
       "json_get",
       "json_find",
+      "memory_used",
       "mcp__context7__*",
       "mcp__chrome_web__google_search",
       "mcp__chrome_web__fetch_url",

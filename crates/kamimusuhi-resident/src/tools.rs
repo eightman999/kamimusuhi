@@ -178,6 +178,14 @@ pub fn definitions() -> Vec<Value> {
                 "reason": {"type": "string", "maxLength": 600}},
                 "required": ["param", "value"]}),
         ),
+        function(
+            "memory_used",
+            "Declare which recalled memory records you actually relied on in this reply. ids are state_record_ids exactly as shown in this turn's memory context. Call at most once, and only for a record that contributed something you say — do not list records that merely appeared. This is usage bookkeeping for future recall only: it never creates, changes or confirms memory.",
+            json!({"type": "object", "properties": {
+                "ids": {"type": "array", "minItems": 1, "maxItems": 16,
+                        "items": {"type": "string", "maxLength": 64}}},
+                "required": ["ids"]}),
+        ),
     ];
     tools.extend(crate::git_tool::definitions());
     tools.extend(crate::service_control::definitions());
@@ -590,6 +598,14 @@ fn call_inner(shared: &Shared, request: &Value, turn: Option<&str>) -> (u16, Val
         };
         return http_request_tool(shared, &arguments, HTTP_REQUEST_TIMEOUT);
     }
+    if name == "memory_used" {
+        // OpenAI tool calls carry arguments as a JSON string; accept both.
+        let arguments = match &request["arguments"] {
+            Value::String(text) => serde_json::from_str(text).unwrap_or_else(|_| json!({})),
+            other => other.clone(),
+        };
+        return memory_used_tool(&arguments);
+    }
     if name == "self_note" || name == "improve" {
         // OpenAI tool calls carry arguments as a JSON string; accept both.
         let arguments = match &request["arguments"] {
@@ -901,6 +917,43 @@ pub(crate) fn http_request_tool_with_limit(
         }
         Err(error) => fail(http_error_kind(&error), http_error_detail(&error)),
     }
+}
+
+/// Most ids one `memory_used` declaration may carry.
+const MEMORY_USED_MAX_IDS: usize = 16;
+
+/// `memory_used`: acknowledge a usage declaration. This call changes nothing
+/// here — the dialogue host reads the declaration from the turn's tool-call
+/// record and accepts only ids it surfaced that turn. The reply reports how
+/// many entries are well-formed record ids so a malformed call is visible to
+/// the model, without claiming anything was marked.
+fn memory_used_tool(arguments: &Value) -> (u16, Value) {
+    let fail = |detail: String| (200, json!({"ok": false, "error": detail}));
+    let Some(ids) = arguments.get("ids").and_then(Value::as_array) else {
+        return fail("ids must be an array of state_record_id strings".to_owned());
+    };
+    if ids.is_empty() {
+        return fail("ids is empty; omit the call when no record was used".to_owned());
+    }
+    if ids.len() > MEMORY_USED_MAX_IDS {
+        return fail(format!(
+            "memory_used takes at most {MEMORY_USED_MAX_IDS} ids"
+        ));
+    }
+    let well_formed = ids
+        .iter()
+        .filter_map(Value::as_str)
+        .map(|id| id.trim().strip_prefix("state:").unwrap_or(id.trim()).trim())
+        .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+        .count();
+    (
+        200,
+        json!({"ok": true, "result": {
+            "declared": well_formed,
+            "ignored": ids.len() - well_formed,
+            "note": "Recorded as this turn's usage declaration. Only records surfaced this turn count.",
+        }}),
+    )
 }
 
 /// Self-improvement budget: how many `self_note`/`improve` calls one
@@ -1241,6 +1294,7 @@ mod tests {
                             | "curl"
                             | "self_note"
                             | "improve"
+                            | "memory_used"
                             | "browser"
                             | "git"
                             | "service_control"
@@ -1807,6 +1861,45 @@ mod tests {
         .expect("config");
         let spool = crate::spool::Spool::new(dir.path().join("spool"), "test").expect("spool");
         (Shared::new(config, spool, 1, None), dir, rt)
+    }
+
+    #[test]
+    fn memory_used_acknowledges_a_declaration_without_changing_anything() {
+        let (shared, _dir, rt) = self_improve_fixture("exit 0");
+        let id = "0123456789abcdef0123456789ABCDEF";
+        let (status, reply) = call(
+            &shared,
+            // OpenAI-style string arguments; a `state:` ref and junk mixed in.
+            &json!({"name": "memory_used", "arguments":
+                json!({"ids": [id, format!("state:{id}"), "not-an-id", 7]}).to_string()}),
+            Some("turn-1"),
+        );
+        assert_eq!(status, 200);
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(reply["result"]["declared"], 2);
+        assert_eq!(reply["result"]["ignored"], 2);
+        // An acknowledgement only: no note, no file, no memory write.
+        assert!(
+            kamimusuhi_runtime::self_notes::load(&rt)
+                .unwrap()
+                .is_empty()
+        );
+
+        for bad in [json!({}), json!({"ids": []}), json!({"ids": "x"})] {
+            let (_, reply) = call(
+                &shared,
+                &json!({"name": "memory_used", "arguments": bad}),
+                None,
+            );
+            assert_eq!(reply["ok"], false, "{reply}");
+        }
+        let too_many: Vec<String> = (0..=MEMORY_USED_MAX_IDS).map(|_| id.to_owned()).collect();
+        let (_, reply) = call(
+            &shared,
+            &json!({"name": "memory_used", "arguments": {"ids": too_many}}),
+            None,
+        );
+        assert_eq!(reply["ok"], false, "{reply}");
     }
 
     fn self_note_call(shared: &Shared, args: Value, turn: Option<&str>) -> (u16, Value) {

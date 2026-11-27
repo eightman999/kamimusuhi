@@ -353,6 +353,7 @@ fn scripted_assessment(
             RepairReason::None
         },
         latency_ms: 0,
+        usage: std::collections::BTreeMap::new(),
     })
 }
 
