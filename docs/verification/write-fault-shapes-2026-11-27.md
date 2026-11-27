@@ -69,15 +69,25 @@ FI1（ターン・トランザクション）の disposition「既存 Rust kerne
 
 ### 欠陥2: C0 レーンの遷移と canonical narration が食い違ったまま残る（形 b）
 
-- 再現: `env -u HAI_API_KEY cargo test -p kamimusuhi-runtime --test write_fault_shapes -- --ignored`。
-  `c0_activation_applied` の追記だけを SQLite trigger で失敗させる。
+**修正済み（`activate`・`rollback`・`propose_param`）。reflection / replay の narration は範囲外として残る。**
+
+- 再現（修正前）: `c0_activation_applied` の追記だけを SQLite trigger で失敗させる。
   結果は、レーンは移動済み、narration は0件。初回は `Err(Evidence(Backend…))`、trigger を外した再試行は `Usage("… is not pending")`。
-- 影響: 自己モデル・運用パラメータの変更（C0 head の移動）が canonical evidence に記録されない。
-  呼び出し側は失敗と受け取るが、状態は変わっている。同じ順序の `rollback`・`propose_param`・reflection/replay の narration も同じ形をとる（静的確認のみ、再現は activate だけ）。
-  現実の発生要因は、2つのコミットの間のプロセス停止、SQLite の busy timeout、ディスク満杯など。
-- 直し方の案: narration を `c0_apply_activation` と同じ SQLite トランザクションに入れる（同じ DB ファイルなので可能）。
-  あるいは、activation 行と narration を照合し、欠けた narration を補う冪等な reconcile を起動時に走らせる。
-  後者なら、再試行が `ProposalNotPending` ではなく「適用済み・narration 補完」を返すようにする。
+- 影響（修正前）: 自己モデル・運用パラメータの変更（C0 head の移動）が canonical evidence に記録されない。
+  呼び出し側は失敗と受け取るが、状態は変わっている。現実の発生要因は、2つのコミットの間のプロセス停止、SQLite の busy timeout、ディスク満杯など。
+- 直し方: narration の追記をレーンの書き込みと同じ SQLite トランザクションに入れた（案 A）。
+  store に `c0_apply_activation_narrated`・`c0_rollback_narrated`・`c0_insert_proposal_narrated` を足し、レーンの書き込みの後、同じトランザクションで通常の証拠追記と同じ検査（nil id、個体の存在、同一 id の再追記、読み戻し）を通して narration を追記してからコミットする。
+  これらは canonical evidence の追記を含む書き込みなので、証拠の追記と同じく `BEGIN IMMEDIATE` で始め、別の書き手がいれば busy timeout の範囲で待つ。
+  narration が失敗すれば何もコミットされない。proposal は pending のまま head も動かないので、再試行はそのまま通り、両方がそろう。
+  narration の内容（kind、origin class、`source_id`、payload のキー）と trace の記録は従来と同じ。schema・migration は変えていない。
+- 照合して補う案（案 B）は採らなかった。原子的にできる以上、食い違いの状態そのものが生じない方が単純で、照合の読み手・起動時の走査・二重書き防止の鍵が要らない。
+- 確認: `env -u HAI_API_KEY cargo test -p kamimusuhi-runtime --test write_fault_shapes`。
+  `c0_lane_and_its_canonical_narration_agree_after_a_failed_narration`（`#[ignore]` を外した）に加え、失敗した初回が何もコミットしないこと、`rollback`・`propose_param` に同じ注入をしても食い違わないこと、正常系で各遷移の narration がちょうど1件で形が従来どおりであること、別接続が書き込みロックを持っていても待ってから遷移と narration をそろえてコミットすることを確かめる。
+- 範囲外: `c0/reflection.rs` の `narrate`（reflection 記録と、reflection 由来の proposal の intake narration）は同じ順序のまま残る。
+  このファイルは identity manifest の対象で、直すと常駐への配備に明示承認が要るため、今回は触れていない。
+  `c0/replay.rs` の `narrate` 呼び出しはテスト内の fixture だけで、本体の経路には無い（replay の proposal は修正済みの `propose_param` を通る）。
+  残るリスクは、reflection 由来の proposal が `improvement_proposal` の narration 無しに pending で残りうること。そこから先の `activate` は上記の修正で narration とそろう。
+  `narrate` の links（`DerivedFrom` など）が証拠本体と別の書き込みである点も同じく残る。
 
 ## 観察（欠陥とは判定していない）
 
