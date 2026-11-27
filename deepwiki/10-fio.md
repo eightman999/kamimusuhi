@@ -48,4 +48,9 @@ Kamimusuhi は門を型で強制する。
 
 詳細な実測値・ラダー・実験案は `docs/fio-memory-architecture-measurements-2026-11-03.md`。
 
+実コードとの照合（2026-11-27・静的読解のみ）は
+`docs/research/fio-source-reading-2026-11-27.md`。上表のうち
+「意識層の温め」は FIO では意識層（`experience_events`）に限られ、エピソード記憶は
+想起されても強化されず id も付かないことを確認した。
+
 [← index](./README.md)

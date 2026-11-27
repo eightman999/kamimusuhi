@@ -50,3 +50,6 @@ __pycache__/
 
 # Site-specific resident configuration (hosts, NAS, private repos): local only
 /deploy/resident/local/
+
+# Local-only research notes (not for publication)
+/docs/research/fio-code-verified-comparison-2026-11-27.md
