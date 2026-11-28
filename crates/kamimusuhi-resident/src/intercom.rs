@@ -51,6 +51,15 @@ const MAX_BODY: usize = 32 * 1024;
 /// Envelope ids / conversation ids are `m-`/`cv-` + node + ms + seq.
 const MAX_ID_CHARS: usize = 128;
 const RELAY_TIMEOUT: Duration = Duration::from_secs(30);
+/// How many times the inbound worker may *start* the dialogue turn for the
+/// same envelope without that turn settling. A start that never settles
+/// means the process died mid-turn; the envelope stays queued and is tried
+/// again after the restart (at-least-once). An envelope that keeps killing
+/// the process would otherwise turn every restart into another crash, so
+/// past this bound it is dead-lettered to the journal instead. Three starts
+/// tolerate an unrelated crash or two (power loss, an operator restart)
+/// while bounding a poison message to a few restarts.
+const MAX_TURN_STARTS: u32 = 3;
 
 pub const TOOL_NAMES: &[&str] = &["peer_say", "peer_list"];
 
@@ -220,6 +229,22 @@ struct State {
     /// Relay mailbox high-water mark already acknowledged.
     #[serde(default)]
     relay_cursor: u64,
+    /// The inbound envelope whose dialogue turn has started but not yet
+    /// settled. The envelope itself stays at the head of `inbound` until
+    /// the turn settles, so a crash mid-turn leaves it queued; this record
+    /// counts the starts so a poison envelope cannot loop forever. Absent
+    /// (and not written) whenever no turn is in flight, which keeps the
+    /// file identical to the pre-`in_flight` format in the idle state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    in_flight: Option<InFlight>,
+}
+
+/// Bookkeeping for the envelope at the head of `inbound` while its turn runs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct InFlight {
+    id: String,
+    /// Turn starts so far, this one included.
+    starts: u32,
 }
 
 pub struct Intercom {
@@ -572,7 +597,10 @@ impl Intercom {
             .clone();
         json!({
             "enabled": self.cfg.enabled,
+            // Includes the envelope whose turn is running, if any.
             "inbound_queued": s.inbound.len(),
+            "inbound_in_flight": s.in_flight.as_ref()
+                .map(|f| json!({"id": f.id, "starts": f.starts})),
             "outbox": {"queued": queued, "dead": dead, "kept": s.outbox.len()},
             "conversations": s.conversations.iter().rev().take(20)
                 .map(Conversation::view).collect::<Vec<_>>(),
@@ -628,28 +656,106 @@ impl Intercom {
         )
     }
 
-    /// Pop and process every waiting inbound envelope. Factored out of the
-    /// blocking loop so tests can drain the queue directly.
+    /// Take a settled envelope off the durable queue: drop it from
+    /// `inbound` and clear `in_flight` if it names it. Callers persist
+    /// under the same lock, so whatever settling the turn produced (an
+    /// auto-forward in the outbox, a closed conversation, a requeue) lands
+    /// in the same atomic write as the removal.
+    fn settle_locked(s: &mut State, id: &str) {
+        if let Some(i) = s.inbound.iter().position(|e| e.id == id) {
+            s.inbound.remove(i);
+        }
+        if s.in_flight.as_ref().is_some_and(|f| f.id == id) {
+            s.in_flight = None;
+        }
+    }
+
+    /// Told to the individual when an envelope is handed over again after a
+    /// turn that never settled: the earlier attempt may already have reached
+    /// her memory, and a `peer_say` reply from it may already be queued.
+    fn redelivery_note(s: &State, env: &Envelope, starts: u32) -> String {
+        let mut note = format!(
+            "[intercom] この手紙は前回の処理が途中で中断したため、もう一度届けています（{starts}回目）。\
+             前回のやりとりがすでに記録に残っている場合があります。"
+        );
+        let replies: Vec<&str> = s
+            .outbox
+            .iter()
+            .filter(|o| o.envelope.in_reply_to.as_deref() == Some(env.id.as_str()))
+            .map(|o| o.envelope.id.as_str())
+            .collect();
+        if !replies.is_empty() {
+            note.push_str(&format!(
+                "\nこの手紙への返信（{}）はすでに送信待ちまたは送信済みです。同じ返信を重ねて送らないでください。",
+                replies.join(", ")
+            ));
+        }
+        note
+    }
+
+    /// Process every waiting inbound envelope, oldest first. Factored out
+    /// of the blocking loop so tests can drain the queue directly.
+    ///
+    /// The envelope stays at the head of the durable `inbound` queue for
+    /// the whole turn and is removed only when the turn settles (answered,
+    /// requeued once after a 5xx, or `turn_failed`). A crash mid-turn
+    /// therefore leaves it queued and the next start runs it again; the
+    /// start count in `in_flight` bounds that to `MAX_TURN_STARTS`.
     fn drain_inbound(&self, shared: &Shared) {
         let Some(dialogue) = shared.config.dialogue.clone() else {
             return;
         };
         loop {
-            let env = {
+            let (env, starts, framed) = {
                 let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                match s.inbound.pop_front() {
-                    Some(env) => {
-                        self.persist(&mut s);
-                        env
-                    }
-                    None => break,
+                let Some(env) = s.inbound.front().cloned() else {
+                    break;
+                };
+                let starts = match &s.in_flight {
+                    Some(f) if f.id == env.id => f.starts.saturating_add(1),
+                    _ => 1,
+                };
+                if starts > MAX_TURN_STARTS {
+                    drop(s);
+                    // Journal first: if the process dies between the two
+                    // writes, the next start dead-letters it again (a
+                    // duplicate `dead` line) rather than dropping it unseen.
+                    // The whole envelope goes into the record — after this
+                    // the journal is the only place the letter survives.
+                    let _ = shared.spool.append_sync(
+                        JOURNAL,
+                        json!({"kind": "dead", "direction": "inbound", "id": env.id,
+                               "from": env.from, "conversation": env.conversation,
+                               "attempts": starts - 1,
+                               "error": format!(
+                                   "dialogue turn started {} times without settling",
+                                   starts - 1),
+                               "envelope": env}),
+                    );
+                    let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
+                    Self::settle_locked(&mut s, &env.id);
+                    self.persist(&mut s);
+                    continue;
                 }
+                s.in_flight = Some(InFlight {
+                    id: env.id.clone(),
+                    starts,
+                });
+                self.persist(&mut s);
+                let mut framed = self.frame_incoming(&s, &env);
+                if starts > 1 {
+                    framed = format!("{}\n{framed}", Self::redelivery_note(&s, &env, starts));
+                }
+                (env, starts, framed)
             };
+            if starts > 1 {
+                let _ = shared.spool.append_sync(
+                    JOURNAL,
+                    json!({"kind": "redelivered", "id": env.id, "from": env.from,
+                           "conversation": env.conversation, "starts": starts}),
+                );
+            }
             let subject = format!("sister-{}", env.from);
-            let framed = {
-                let s = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                self.frame_incoming(&s, &env)
-            };
             let (status, reply) = crate::dialogue::talk(
                 shared,
                 &dialogue,
@@ -697,6 +803,10 @@ impl Intercom {
                     {
                         s.conversations[i].closed = true;
                     }
+                    // The forward and the removal share one atomic write:
+                    // no on-disk state has the reply queued while the
+                    // envelope still waits to be answered again.
+                    Self::settle_locked(&mut s, &env.id);
                     self.persist(&mut s);
                     drop(s);
                     let _ = shared.spool.append_sync(
@@ -715,10 +825,15 @@ impl Intercom {
                     let mut env = env;
                     env.retried = true;
                     let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
+                    Self::settle_locked(&mut s, &env.id);
                     s.inbound.push_back(env);
                     self.persist(&mut s);
                 }
                 _ => {
+                    let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
+                    Self::settle_locked(&mut s, &env.id);
+                    self.persist(&mut s);
+                    drop(s);
                     let _ = shared.spool.append_sync(
                         JOURNAL,
                         json!({"kind": "turn_failed", "id": env.id, "from": env.from,
@@ -1711,6 +1826,255 @@ mod tests {
         assert_eq!(s.outbox.len(), 1);
         assert!(s.seen.iter().any(|id| id == "m-1"));
         assert!(!s.conversations.is_empty());
+    }
+
+    fn intercom_journal(shared: &Shared) -> Vec<Value> {
+        let path = shared
+            .spool
+            .root()
+            .join("conversations/intercom/pi")
+            .join(format!("{}.jsonl", utc_date(unix_now())));
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect()
+    }
+
+    fn state_json(dir: &std::path::Path) -> Value {
+        let bytes = std::fs::read(dir.join("current_state/intercom.json")).expect("state file");
+        serde_json::from_slice(&bytes).expect("state json")
+    }
+
+    /// Write the on-disk image a crash leaves after `starts` turn starts
+    /// for the queued envelope `id` (the turn never settled).
+    fn crash_after_starts(shared: &Shared, id: &str, starts: u32) {
+        let mut s = shared.intercom.state.lock().expect("state");
+        assert_eq!(s.inbound.front().map(|e| e.id.as_str()), Some(id));
+        s.in_flight = Some(InFlight {
+            id: id.to_owned(),
+            starts,
+        });
+        shared.intercom.persist(&mut s);
+    }
+
+    #[test]
+    fn a_settled_turn_leaves_the_pre_in_flight_file_shape() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (shared, _) = shared_with(
+            dir.path(),
+            "printf '%s\\n' '{\"response\":\"うん\",\"turn_id\":\"t1\"}'",
+            json!({}),
+        );
+        shared.intercom.accept(&shared, envelope("m-1", "hi"));
+        shared.intercom.drain_inbound(&shared);
+        let state = state_json(dir.path());
+        let mut keys: Vec<&str> = state
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "conversations",
+                "daily",
+                "inbound",
+                "outbox",
+                "relay_cursor",
+                "seen"
+            ],
+            "{state}"
+        );
+        assert_eq!(state["inbound"], json!([]));
+        assert_eq!(state["seen"], json!(["m-1"]));
+        let kinds: Vec<Value> = intercom_journal(&shared)
+            .into_iter()
+            .map(|r| r["kind"].clone())
+            .collect();
+        assert_eq!(kinds, [json!("received"), json!("answered")]);
+        assert!(shared.intercom.summary()["inbound_in_flight"].is_null());
+    }
+
+    #[test]
+    fn a_failed_turn_settles_the_envelope_and_clears_in_flight() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (shared, _) = shared_with(dir.path(), "exit 1", json!({}));
+        shared.intercom.accept(&shared, envelope("m-1", "hi"));
+        shared.intercom.drain_inbound(&shared);
+        let state = state_json(dir.path());
+        assert_eq!(state["inbound"], json!([]), "{state}");
+        assert!(state.get("in_flight").is_none(), "{state}");
+        assert!(
+            intercom_journal(&shared)
+                .iter()
+                .any(|r| r["kind"] == json!("turn_failed") && r["id"] == json!("m-1"))
+        );
+    }
+
+    #[test]
+    fn an_envelope_that_keeps_interrupting_its_turn_is_dead_lettered() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ran = dir.path().join("runtime-ran");
+        let (shared, _) = shared_with(
+            dir.path(),
+            &format!(
+                "touch '{}'\nprintf '%s\\n' '{{\"response\":\"x\",\"turn_id\":\"t1\"}}'",
+                ran.display()
+            ),
+            json!({}),
+        );
+        shared
+            .intercom
+            .accept(&shared, envelope("m-poison", "毒になる手紙"));
+        shared
+            .intercom
+            .accept(&shared, envelope("m-next", "次の手紙"));
+        crash_after_starts(&shared, "m-poison", MAX_TURN_STARTS);
+        drop(shared);
+        // Restart from the crash image.
+        let (shared, _) = shared_with(
+            dir.path(),
+            &format!(
+                "touch '{}'\nprintf '%s\\n' '{{\"response\":\"x\",\"turn_id\":\"t1\"}}'",
+                ran.display()
+            ),
+            json!({}),
+        );
+        shared.intercom.drain_inbound(&shared);
+        let journal = intercom_journal(&shared);
+        let dead = journal
+            .iter()
+            .find(|r| r["kind"] == json!("dead") && r["id"] == json!("m-poison"))
+            .unwrap_or_else(|| panic!("no dead-letter record: {journal:?}"));
+        assert_eq!(dead["direction"], json!("inbound"));
+        assert_eq!(dead["from"], json!("mac"));
+        assert_eq!(dead["attempts"], json!(MAX_TURN_STARTS));
+        // The journal keeps the letter itself: it is no longer anywhere else.
+        assert_eq!(dead["envelope"]["body"], json!("毒になる手紙"));
+        assert!(
+            !journal
+                .iter()
+                .any(|r| r["kind"] == json!("answered") && r["id"] == json!("m-poison"))
+        );
+        // The queue moves on: the next envelope is answered normally.
+        assert!(
+            journal
+                .iter()
+                .any(|r| r["kind"] == json!("answered") && r["id"] == json!("m-next"))
+        );
+        let state = state_json(dir.path());
+        assert_eq!(state["inbound"], json!([]), "{state}");
+        assert!(state.get("in_flight").is_none(), "{state}");
+        // Still deduplicated: a resend does not restart the loop.
+        let (_, resend) = shared
+            .intercom
+            .accept(&shared, envelope("m-poison", "毒になる手紙"));
+        assert_eq!(resend["dedup"], json!(true));
+    }
+
+    #[test]
+    fn the_last_allowed_start_still_runs_the_turn_and_tells_her_about_prior_replies() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = "printf '%s\\n' '{\"response\":\"うん\",\"turn_id\":\"t1\"}'";
+        let (shared, _) = shared_with(dir.path(), script, json!({}));
+        let mut env = envelope("m-1", "質問です");
+        env.conversation = Some("cv-mac-3".to_owned());
+        shared.intercom.accept(&shared, env);
+        // The interrupted turn had already replied with peer_say before
+        // the crash (in_reply_to defaults to the conversation's last_in).
+        let queued = shared
+            .intercom
+            .queue_send(
+                &shared,
+                "mio",
+                "mac",
+                "前の返事",
+                Some("cv-mac-3".to_owned()),
+                None,
+                Kind::Message,
+            )
+            .expect("queued");
+        crash_after_starts(&shared, "m-1", MAX_TURN_STARTS - 1);
+        drop(shared);
+        let (shared, _) = shared_with(dir.path(), script, json!({}));
+        shared.intercom.drain_inbound(&shared);
+        let journal = intercom_journal(&shared);
+        assert!(
+            journal.iter().any(|r| r["kind"] == json!("redelivered")
+                && r["starts"] == json!(MAX_TURN_STARTS)),
+            "{journal:?}"
+        );
+        assert!(
+            journal
+                .iter()
+                .any(|r| r["kind"] == json!("answered") && r["id"] == json!("m-1"))
+        );
+        let dialogue = std::fs::read_to_string(
+            shared
+                .spool
+                .root()
+                .join("conversations/dialogue/pi")
+                .join(format!("{}.jsonl", utc_date(unix_now()))),
+        )
+        .expect("dialogue journal");
+        let received: Value = dialogue
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .find(|r| r["kind"] == json!("received"))
+            .expect("received");
+        let message = received["message"].as_str().expect("message");
+        assert!(message.contains("もう一度届けています"), "{message}");
+        assert!(
+            message.contains(queued["queued"].as_str().expect("id")),
+            "{message}"
+        );
+        assert!(message.contains("質問です"), "{message}");
+    }
+
+    #[test]
+    fn a_pre_in_flight_state_file_still_loads_and_drains() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // The shape written before `in_flight` existed, envelope waiting.
+        std::fs::create_dir_all(dir.path().join("current_state")).expect("dir");
+        std::fs::write(
+            dir.path().join("current_state/intercom.json"),
+            serde_json::to_vec_pretty(&json!({
+                "inbound": [{"id": "m-old", "from": "mac", "to": "pi",
+                             "conversation": null, "in_reply_to": null, "hop": 0,
+                             "kind": "message", "body": "古い形式", "sent_at": 1,
+                             "auto_left": 0, "auto": false, "retried": false}],
+                "outbox": [],
+                "seen": ["m-old"],
+                "conversations": [],
+                "daily": {},
+                "relay_cursor": 7,
+            }))
+            .expect("json"),
+        )
+        .expect("write");
+        let (shared, _) = shared_with(
+            dir.path(),
+            "printf '%s\\n' '{\"response\":\"読めた\",\"turn_id\":\"t1\"}'",
+            json!({}),
+        );
+        {
+            let s = shared.intercom.state.lock().expect("state");
+            assert_eq!(s.inbound.len(), 1);
+            assert!(s.in_flight.is_none());
+            assert_eq!(s.relay_cursor, 7);
+        }
+        shared.intercom.drain_inbound(&shared);
+        assert!(
+            intercom_journal(&shared)
+                .iter()
+                .any(|r| r["kind"] == json!("answered") && r["id"] == json!("m-old"))
+        );
+        let state = state_json(dir.path());
+        assert_eq!(state["inbound"], json!([]));
+        assert_eq!(state["relay_cursor"], json!(7));
     }
 
     #[test]
