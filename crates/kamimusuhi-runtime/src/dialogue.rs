@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::c0::{self, eval};
 use crate::config::validate_language_provider_id;
 use crate::dialogue_recall::RecallPool;
-use crate::dialogue_recall_links::used_ids;
+use crate::dialogue_recall_links::usage_sources;
 use crate::dialogue_setup::{
     language_provider_auth_available, language_provider_kind, public_endpoint_origin,
 };
@@ -1064,6 +1064,7 @@ impl DialogueSession {
         request: &crate::llm_jev::LanguageRequest,
         results: &[LanguageResult],
         evidence: &DecisionEvidence,
+        usage_candidates: &[String],
         fallback: &mut DecisionFallback,
     ) -> Result<(ResponseAssessment, usize), RuntimeError> {
         let telemetry = self.language_provider_telemetry();
@@ -1126,6 +1127,7 @@ impl DialogueSession {
             },
             evidence: evidence.clone(),
             attempts: attempts.clone(),
+            usage_candidates: usage_candidates.to_vec(),
         };
         let assessment = match fallback.code.clone() {
             Some(code) => {
@@ -1643,6 +1645,18 @@ impl DialogueSession {
             recalled > 0,
         );
         let assessment_evidence = decision_evidence(&input)?;
+        // Surfaced durable records the response judge attributes usage for.
+        // Their content is already in the evidence snapshot; only the ids are
+        // named here, once each and bounded, so the batch stays small.
+        let mut usage_candidates: Vec<String> = Vec::new();
+        for memory in &memories {
+            let id = memory.record.state_record_id.to_string();
+            if usage_candidates.len() < crate::llm_jev::MAX_USAGE_CANDIDATES
+                && !usage_candidates.contains(&id)
+            {
+                usage_candidates.push(id);
+            }
+        }
         let mut context_digest = json_digest(&serde_json::json!(input));
         let history_messages = input.envelope.conversation_history.len();
         // The inspectable context: what the model was actually shown, in the
@@ -1788,6 +1802,7 @@ impl DialogueSession {
                 &language_request,
                 &ready_results,
                 &assessment_evidence,
+                &usage_candidates,
                 &mut decision_fallback,
             )?;
             let base_index = language_results.len();
@@ -1908,6 +1923,7 @@ impl DialogueSession {
                     &language_request,
                     &language_results,
                     &assessment_evidence,
+                    &usage_candidates,
                     &mut decision_fallback,
                 )?;
             }
@@ -2021,23 +2037,27 @@ impl DialogueSession {
             &mut result.proposals,
             &language_request.persona_input,
         );
-        // FIO rule: a record warms only when the reply actually referenced
-        // it — its 32-hex id must appear in the response text or in a tool
-        // call's serialized arguments/result. Injected-but-unreferenced
-        // items are never warmed, matching FIO's measured frozen-attractor
-        // failure where prompt injection itself re-warmed memories. The mark
-        // is usage bookkeeping on a side table, never canonical record
-        // content, so it does not go through the Continuity Kernel.
+        // FIO rule: a record warms only when the reply actually used it.
+        // Injected-but-unused items are never warmed, matching FIO's measured
+        // frozen-attractor failure where prompt injection itself re-warmed
+        // memories. Three redundant sources say "used", each clamped to the
+        // records surfaced this turn: the id appearing verbatim in the reply
+        // or a tool call, the language organ's own `memory_used` declaration,
+        // and the response judge's attribution for the delivered candidate.
+        // A missing declaration or verdict marks nothing and cools nothing.
+        // The mark is usage bookkeeping on a side table, never canonical
+        // record content, so it does not go through the Continuity Kernel.
         let surfaced_ids: Vec<MemoryId> = memories
             .iter()
             .map(|memory| memory.record.state_record_id)
             .collect();
-        let mut haystack = result.response_intent.clone();
-        for call in &result.tool_calls {
-            haystack.push_str(&call.arguments.to_string());
-            haystack.push_str(&call.result.to_string());
-        }
-        let used = used_ids(&haystack, &surfaced_ids);
+        let usage = usage_sources(
+            &result.response_intent,
+            &result.tool_calls,
+            &assessment.usage,
+            &surfaced_ids,
+        );
+        let used = usage.used(&surfaced_ids);
         let used_marked = used.len();
         let social_memory = serde_json::json!({
             "visibility": social.social_context.as_ref().map_or("private", |c| c.visibility.as_str()),
@@ -2066,6 +2086,16 @@ impl DialogueSession {
             },
         });
         workspace_context["social_memory"] = social_memory.clone();
+        // What each redundant source named, kept apart so a trace shows where
+        // the self-declaration and the judge agree. Counts only, never ids.
+        workspace_context["recall"]["usage_sources"] = serde_json::json!({
+            "judge_candidates": usage_candidates.len(),
+            "referenced": usage.referenced.len(),
+            "declared": usage.declared.len(),
+            "declared_rejected": usage.declared_rejected,
+            "judged": usage.judged.len(),
+            "agreed": usage.agreed(),
+        });
         if !social.defer_delivery {
             runtime.store().mark_used(&used, runtime.now());
             workspace_context["recall"]["used_marked"] = serde_json::json!(used_marked);

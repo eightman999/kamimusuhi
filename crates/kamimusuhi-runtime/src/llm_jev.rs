@@ -29,9 +29,10 @@ pub use api::OpenAiDecisionProvider;
 pub mod testing;
 
 pub use assessment::{
-    AttributionAssessment, DecisionEvidence, GroundingAssessment, ObservationNeed, RecallCandidate,
-    RecallRelevance, RepairReason, ResponseAssessment, ResponseAssessmentRequest,
-    TaskFitAssessment, TurnPreparation, TurnPreparationRequest,
+    AttributionAssessment, DecisionEvidence, GroundingAssessment, MAX_USAGE_CANDIDATES,
+    ObservationNeed, RecallCandidate, RecallRelevance, RecallUsage, RepairReason,
+    ResponseAssessment, ResponseAssessmentRequest, TaskFitAssessment, TurnPreparation,
+    TurnPreparationRequest,
 };
 
 pub const TYPESAFE_BASE_URL_ENV: &str = "TYPESAFE_BASE_URL";

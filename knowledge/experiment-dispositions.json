@@ -359,13 +359,20 @@
       "production_approved": false,
       "runtime_key": "r0-memory-gate",
       "runtime_mode": "shadow",
-      "reason": "合成memory gate strong PASS。実メモリ対応未定義・元checkpoint不在。CX0 SlotMemoryは別物。",
-      "next_gate": "元checkpointをhash固定し、実入力対応・強heuristic・ON/OFF/lesionを事前規定して測定。",
+      "reason": "合成memory gate strong PASS。実メモリ対応未定義。元checkpointは不在確定（2026-11-27）のため、同日に再学習した再現版を固定artifactとして採用（元のstrong PASSを数値一致で再現）。CX0 SlotMemoryは別物。",
+      "next_gate": "固定artifactは再現版checkpoint（hash台帳: Mac ~/r0-recreate-2026-11-27/checkpoint-hashes.txt、公開先: HF eightman999/kamimusuhi-r0-memory-gate）。次は実入力対応の定義と、強heuristic・ON/OFF/lesionの事前規定測定。",
       "evidence": [
         {
           "path": "experiments/r0/reports/R0_RESULTS.md",
           "kind": "report",
           "sha256": "sha256:851da317ea827ffb14f6134d718a2793a1dec01b1e64a8ef152e50e40022d51f",
+          "required_in_checkout": true
+        },
+        {
+          "path": "experiments/r0/reports/R0_RESULTS_RECREATED_2026-11-27.md",
+          "kind": "report",
+          "sha256": "sha256:0eb358ddcd9fc1217be384eaf9501a7f9b520e0c82213c4e7e57ba1c20bbc481",
+          "note": "再現版レポート。元の結果表との照合済み（学習モデル数値は一致、baseline reservoir のみ小変動）",
           "required_in_checkout": true
         },
         {

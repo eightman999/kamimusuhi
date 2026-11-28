@@ -23,9 +23,11 @@ use kamimusuhi_core::memory::{
     AttributedMemory, MemoryLink, MemoryRepository, MemoryUsage, StateRecord,
 };
 use kamimusuhi_core::mutation::MutationDomain;
+use kamimusuhi_core::persona::ToolCallRecord;
 use kamimusuhi_core::time::UtcTimestamp;
 
 use crate::c0;
+use crate::llm_jev::RecallUsage;
 
 /// Out-of-pool state records one hop may pull in while traversing.
 const MAX_LINK_FETCH: usize = 64;
@@ -358,6 +360,151 @@ pub(crate) fn used_ids(haystack: &str, ids: &[MemoryId]) -> Vec<MemoryId> {
         .filter(|id| haystack.contains(&id.to_string()) && seen.insert(**id))
         .copied()
         .collect()
+}
+
+/// Built-in tool through which the language organ declares the surfaced
+/// records it relied on. The tool server only acknowledges the call; the
+/// declaration itself is read here, from the turn's tool-call record.
+pub(crate) const MEMORY_USED_TOOL: &str = "memory_used";
+
+/// What each usage source named in one turn, each list already clamped to the
+/// records surfaced this turn and deduplicated in surfaced order.
+///
+/// Three redundant sources feed the same bookkeeping, and none of them is
+/// injection: a record still warms only when something says the reply *used*
+/// it. Keeping the sources apart lets a trace show where they agree.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct UsageSources {
+    /// Ids that appear verbatim in the reply or in another tool call.
+    pub referenced: Vec<MemoryId>,
+    /// Ids the language organ declared through [`MEMORY_USED_TOOL`].
+    pub declared: Vec<MemoryId>,
+    /// Distinct declared ids that were not surfaced this turn. A declaration
+    /// can only confirm what the host offered, so these are refused and only
+    /// counted — an invented or stale id never warms anything.
+    pub declared_rejected: usize,
+    /// Ids the response judge attributed as used by the delivered reply.
+    pub judged: Vec<MemoryId>,
+}
+
+impl UsageSources {
+    /// Every surfaced record at least one source named, in surfaced order.
+    pub(crate) fn used(&self, surfaced: &[MemoryId]) -> Vec<MemoryId> {
+        let named: BTreeSet<MemoryId> = self
+            .referenced
+            .iter()
+            .chain(&self.declared)
+            .chain(&self.judged)
+            .copied()
+            .collect();
+        let mut seen = BTreeSet::new();
+        surfaced
+            .iter()
+            .filter(|id| named.contains(id) && seen.insert(**id))
+            .copied()
+            .collect()
+    }
+
+    /// Records the self-declaration and the judge both named: the overlap of
+    /// the two redundant structured sources.
+    pub(crate) fn agreed(&self) -> usize {
+        self.declared
+            .iter()
+            .filter(|id| self.judged.contains(id))
+            .count()
+    }
+}
+
+/// Read one turn's usage from its three sources.
+///
+/// - **referenced**: the legacy rule — the id appears in the reply text or in
+///   the serialized arguments/result of a tool call other than the
+///   declaration tool.
+/// - **declared**: ids passed to [`MEMORY_USED_TOOL`]. An omitted call means
+///   "nothing declared", never "nothing used": it must not cool or unmark
+///   anything.
+/// - **judged**: surfaced ids the response judge answered `USED` for.
+pub(crate) fn usage_sources(
+    response: &str,
+    tool_calls: &[ToolCallRecord],
+    judged: &BTreeMap<String, RecallUsage>,
+    surfaced: &[MemoryId],
+) -> UsageSources {
+    let mut order = Vec::new();
+    let mut seen = BTreeSet::new();
+    for id in surfaced {
+        if seen.insert(*id) {
+            order.push(*id);
+        }
+    }
+    let by_text: BTreeMap<String, MemoryId> =
+        order.iter().map(|id| (id.to_string(), *id)).collect();
+
+    let mut haystack = response.to_owned();
+    let mut declared_set = BTreeSet::new();
+    let mut rejected = BTreeSet::new();
+    for call in tool_calls {
+        if call.name != MEMORY_USED_TOOL {
+            haystack.push_str(&call.arguments.to_string());
+            haystack.push_str(&call.result.to_string());
+            continue;
+        }
+        for raw in declared_strings(&call.arguments) {
+            let text = raw.trim();
+            let text = text.strip_prefix("state:").unwrap_or(text).trim();
+            if text.is_empty() {
+                continue;
+            }
+            match by_text.get(&text.to_ascii_lowercase()) {
+                Some(id) => {
+                    declared_set.insert(*id);
+                }
+                None => {
+                    rejected.insert(text.to_ascii_lowercase());
+                }
+            }
+        }
+    }
+    let judged_set: BTreeSet<MemoryId> = judged
+        .iter()
+        .filter(|(_, usage)| **usage == RecallUsage::Used)
+        .filter_map(|(id, _)| by_text.get(id).copied())
+        .collect();
+    let in_order = |set: &BTreeSet<MemoryId>| -> Vec<MemoryId> {
+        order
+            .iter()
+            .filter(|id| set.contains(id))
+            .copied()
+            .collect()
+    };
+    UsageSources {
+        referenced: used_ids(&haystack, &order),
+        declared: in_order(&declared_set),
+        declared_rejected: rejected.len(),
+        judged: in_order(&judged_set),
+    }
+}
+
+/// The `ids` a declaration call carried. Tool arguments arrive either as a
+/// parsed object or, from OpenAI-style backends, as a JSON string.
+fn declared_strings(arguments: &serde_json::Value) -> Vec<String> {
+    let parsed;
+    let object = match arguments {
+        serde_json::Value::String(text) => {
+            parsed = serde_json::from_str::<serde_json::Value>(text).unwrap_or_default();
+            &parsed
+        }
+        other => other,
+    };
+    object["ids"]
+        .as_array()
+        .map(|ids| {
+            ids.iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -895,5 +1042,85 @@ mod tests {
         let injected = json!({"memory": {"record": {"state_record_id": id.to_string()}}});
         assert!(used_ids("そうですね", &[id, other]).is_empty());
         assert!(used_ids(&format!("{injected}"), &[other]).is_empty());
+    }
+
+    fn tool_call(name: &str, arguments: Value) -> ToolCallRecord {
+        ToolCallRecord {
+            call_id: None,
+            name: name.to_owned(),
+            arguments,
+            ok: true,
+            result: json!({"ok": true}),
+            latency_ms: 0,
+        }
+    }
+
+    #[test]
+    fn usage_sources_are_redundant_and_clamped_to_what_was_surfaced() {
+        let a = MemoryId::from_u128(0xA);
+        let b = MemoryId::from_u128(0xB);
+        let c = MemoryId::from_u128(0xC);
+        let unsurfaced = MemoryId::from_u128(0xDEAD);
+        // `a` surfaced through two lanes: still one entry per source.
+        let surfaced = [a, b, a, c];
+        let calls = [
+            // Parsed-object arguments, with a `state:` ref, an unsurfaced id
+            // (twice) and junk — only the surfaced id is accepted.
+            tool_call(
+                MEMORY_USED_TOOL,
+                json!({"ids": [
+                    format!("state:{b}"),
+                    unsurfaced.to_string(),
+                    unsurfaced.to_string(),
+                    "not-an-id",
+                    "",
+                    7,
+                ]}),
+            ),
+            // OpenAI-style string arguments, upper-cased by the model.
+            tool_call(
+                MEMORY_USED_TOOL,
+                Value::String(json!({"ids": [c.to_string().to_uppercase()]}).to_string()),
+            ),
+        ];
+        let judged = BTreeMap::from([
+            (a.to_string(), RecallUsage::Used),
+            (b.to_string(), RecallUsage::Used),
+            (c.to_string(), RecallUsage::NotUsed),
+            // A verdict for a record that was never surfaced is ignored.
+            (unsurfaced.to_string(), RecallUsage::Used),
+        ]);
+        let sources = usage_sources("そうですね", &calls, &judged, &surfaced);
+        assert!(sources.referenced.is_empty());
+        assert_eq!(sources.declared, vec![b, c]);
+        assert_eq!(sources.declared_rejected, 2);
+        assert_eq!(sources.judged, vec![a, b]);
+        assert_eq!(sources.agreed(), 1);
+        // The union, once each, in surfaced order.
+        assert_eq!(sources.used(&surfaced), vec![a, b, c]);
+    }
+
+    #[test]
+    fn an_omitted_declaration_and_an_uncertain_verdict_mark_nothing() {
+        let a = MemoryId::from_u128(0xA);
+        let judged = BTreeMap::from([(a.to_string(), RecallUsage::Uncertain)]);
+        let sources = usage_sources("今日も良い天気ですね", &[], &judged, &[a]);
+        assert_eq!(sources, UsageSources::default());
+        assert!(sources.used(&[a]).is_empty());
+    }
+
+    #[test]
+    fn a_declaration_call_is_not_double_counted_as_a_verbatim_reference() {
+        let a = MemoryId::from_u128(0xA);
+        let b = MemoryId::from_u128(0xB);
+        let calls = [
+            tool_call(MEMORY_USED_TOOL, json!({"ids": [a.to_string()]})),
+            // Another tool naming an id still counts as a verbatim reference.
+            tool_call("library_search", json!({"query": b.to_string()})),
+        ];
+        let sources = usage_sources("了解しました", &calls, &BTreeMap::new(), &[a, b]);
+        assert_eq!(sources.referenced, vec![b]);
+        assert_eq!(sources.declared, vec![a]);
+        assert_eq!(sources.used(&[a, b]), vec![a, b]);
     }
 }
