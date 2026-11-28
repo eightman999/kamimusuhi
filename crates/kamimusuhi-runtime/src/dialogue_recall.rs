@@ -55,6 +55,12 @@ pub struct RecallStats {
     pub knot_hits: usize,
     /// Declared-path candidates offered through shared tags.
     pub tag_hits: usize,
+    /// Raw utterances offered through the derived full-text index — ones the
+    /// bounded recent pool did not already offer.
+    pub index_hits: usize,
+    /// The index lane could not be read this turn. Recall proceeds without
+    /// it: a derived index failing must never block a turn.
+    pub index_unavailable: bool,
 }
 
 /// One turn's immutable retrieval snapshot. Provider answers refer only to
@@ -169,6 +175,21 @@ impl RecallPool {
             }
         }
         let episodic_pool = current_pool;
+        // The full-text index reaches utterances the bounded pool no longer
+        // holds. It is a derived projection, so a failure degrades to "no
+        // extra candidates" instead of failing the turn.
+        let (index_hits, index_unavailable) = match c0::search_utterance_index(
+            store,
+            individual_id,
+            source_id,
+            query,
+            params,
+            exclude,
+            now,
+        ) {
+            Ok(hits) => (hits, false),
+            Err(_) => (Vec::new(), true),
+        };
         let scope = RecallScope {
             individual_id,
             subject,
@@ -206,6 +227,8 @@ impl RecallPool {
             baseline_evidence,
             episodic_pool,
             evidence_pool,
+            index_hits,
+            index_unavailable,
             &scope,
             params,
             declared,
@@ -218,6 +241,8 @@ impl RecallPool {
         baseline_evidence: Vec<EvidenceRecord>,
         episodic_pool: Vec<AttributedMemory>,
         evidence_pool: Vec<EvidenceRecord>,
+        index_hits: Vec<EvidenceRecord>,
+        index_unavailable: bool,
         scope: &RecallScope<'_>,
         params: &OperativeParams,
         declared: DeclaredSelection,
@@ -319,32 +344,60 @@ impl RecallPool {
             .filter(|offered| knot_ids.contains(&offered.record.record.state_record_id))
             .count();
         let tag_hits = declared_offer(declared.tag, &mut episodic)?;
-        Ok(Self {
-            relationships,
-            episodic,
-            evidence: RecallGroup::build(
-                baseline_evidence,
-                evidence_pool,
-                params.retrieval.evidence_top_k,
+        let speaker = |record: &EvidenceRecord| match record.kind {
+            EvidenceKind::UserUtterance => "user",
+            EvidenceKind::AgentUtterance => "assistant",
+            _ => "unknown",
+        };
+        let mut evidence = RecallGroup::build(
+            baseline_evidence,
+            evidence_pool,
+            params.retrieval.evidence_top_k,
+            |record| format!("evidence_{}", record.evidence_id),
+            |record| {
+                Ok(json!({
+                    "source_type": "raw_utterance",
+                    "speaker": speaker(record),
+                    "is_durable_belief": false,
+                    "evidence": record,
+                }))
+            },
+        )?;
+        // Index hits are extra candidates beyond the regular offer set, like
+        // the declared path: they never displace a baseline or pool
+        // candidate, and the judge still decides what enters the workspace.
+        let index_hits = if params.retrieval.evidence_top_k == 0 {
+            0
+        } else {
+            evidence.extend_offered(
+                index_hits
+                    .into_iter()
+                    .filter(|record| scope.admits_evidence(record))
+                    .map(|record| (record, "utterance_index".to_owned()))
+                    .collect(),
                 |record| format!("evidence_{}", record.evidence_id),
-                |record| {
+                |record, via| {
                     Ok(json!({
                         "source_type": "raw_utterance",
-                        "speaker": match record.kind {
-                            EvidenceKind::UserUtterance => "user",
-                            EvidenceKind::AgentUtterance => "assistant",
-                            _ => "unknown",
-                        },
+                        "speaker": speaker(record),
                         "is_durable_belief": false,
+                        "via": via,
                         "evidence": record,
                     }))
                 },
-            )?,
+            )?
+        };
+        Ok(Self {
+            relationships,
+            episodic,
+            evidence,
             stats: RecallStats {
                 expired_skipped: expired.len(),
                 link_hits,
                 knot_hits,
                 tag_hits,
+                index_hits,
+                index_unavailable,
             },
         })
     }
@@ -665,6 +718,8 @@ mod tests {
             baseline_evidence,
             episodic,
             evidence,
+            Vec::new(),
+            false,
             &RecallScope {
                 individual_id: IndividualId::from_u128(1),
                 subject: "alice",
@@ -1078,5 +1133,107 @@ mod tests {
         // The baseline record is not offered twice; only the new one is.
         assert_eq!(pool.stats().link_hits, 1);
         assert_eq!(pool.candidates().len(), 2);
+    }
+
+    fn pool_with_index(
+        baseline_evidence: Vec<EvidenceRecord>,
+        evidence_pool: Vec<EvidenceRecord>,
+        index_hits: Vec<EvidenceRecord>,
+        params: &OperativeParams,
+    ) -> RecallPool {
+        RecallPool::from_records(
+            Vec::new(),
+            baseline_evidence,
+            Vec::new(),
+            evidence_pool,
+            index_hits,
+            false,
+            &RecallScope {
+                individual_id: IndividualId::from_u128(1),
+                subject: "alice",
+                source_id: "text-chat:alice",
+                exclude: &BTreeSet::from([EvidenceId::from_u128(99)]),
+                now: UtcTimestamp::from_unix_millis(0),
+            },
+            params,
+            DeclaredSelection::default(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn index_hits_are_extra_judged_candidates_that_never_bypass_the_judge() {
+        let params = OperativeParams::default();
+        let baseline = evidence(1, "baseline utterance");
+        let pooled = evidence(2, "utterance still in the recent pool");
+        let old = evidence(3, "an utterance only the index still reaches");
+        let mut foreign = evidence(4, "said in another source");
+        foreign.source.source_id = Some("text-chat:bob".to_owned());
+        let pool = pool_with_index(
+            vec![baseline.clone()],
+            vec![baseline.clone(), pooled.clone()],
+            vec![
+                // Already offered through the pool: not offered twice.
+                pooled.clone(),
+                // Another source, and an id already on screen: out of scope.
+                foreign,
+                evidence(99, "already presented this turn"),
+                old.clone(),
+            ],
+            &params,
+        );
+        assert_eq!(pool.stats().index_hits, 1);
+        assert!(!pool.stats().index_unavailable);
+        let candidates = pool.candidates();
+        let old_id = format!("evidence_{}", old.evidence_id);
+        let offered = candidates
+            .iter()
+            .find(|candidate| candidate.id == old_id)
+            .expect("the index hit must reach the judge");
+        assert_eq!(offered.content["via"], "utterance_index");
+        assert_eq!(offered.content["is_durable_belief"], false);
+        assert!(!offered.baseline);
+        // Pool candidates carry no via label, so the lanes stay tellable.
+        let pooled_id = format!("evidence_{}", pooled.evidence_id);
+        assert!(
+            candidates
+                .iter()
+                .find(|candidate| candidate.id == pooled_id)
+                .unwrap()
+                .content
+                .get("via")
+                .is_none()
+        );
+
+        // An undecided judge keeps only the baseline: an index hit is never
+        // injected on its own strength.
+        let (_, kept) = pool.apply(&uncertain(&pool)).unwrap();
+        assert_eq!(
+            kept.iter().map(|r| r.evidence_id).collect::<Vec<_>>(),
+            vec![baseline.evidence_id]
+        );
+        // Judged relevant, it is recalled with its provenance unchanged.
+        let mut relevance = uncertain(&pool);
+        relevance.insert(old_id, RecallRelevance::Relevant);
+        let (_, kept) = pool.apply(&relevance).unwrap();
+        let recalled = kept
+            .iter()
+            .find(|record| record.evidence_id == old.evidence_id)
+            .expect("a relevant index hit is recalled");
+        assert_eq!(recalled.source.content_digest, old.source.content_digest);
+    }
+
+    #[test]
+    fn a_disabled_evidence_lane_offers_no_index_hits() {
+        let mut params = OperativeParams::default();
+        params.retrieval.evidence_top_k = 0;
+        let pool = pool_with_index(
+            Vec::new(),
+            Vec::new(),
+            vec![evidence(3, "reachable only through the index")],
+            &params,
+        );
+        assert_eq!(pool.stats().index_hits, 0);
+        assert!(pool.candidates().is_empty());
     }
 }

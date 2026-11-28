@@ -48,10 +48,15 @@ const MIGRATIONS: &[Migration] = &[
         name: "recall_v0",
         sql: include_str!("../migrations/0006_recall_v0.sql"),
     },
+    Migration {
+        version: SchemaVersion(7),
+        name: "utterance_index",
+        sql: include_str!("../migrations/0007_utterance_index.sql"),
+    },
 ];
 
 /// Newest schema this build can read and write.
-pub const SUPPORTED_SCHEMA_VERSION: SchemaVersion = SchemaVersion(6);
+pub const SUPPORTED_SCHEMA_VERSION: SchemaVersion = SchemaVersion(7);
 
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 

@@ -19,5 +19,6 @@ mod memory;
 pub mod migrations;
 mod resources;
 mod store;
+pub mod utterance_index;
 
 pub use store::{SqliteStore, StoreConfig};

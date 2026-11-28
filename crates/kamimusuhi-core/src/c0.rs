@@ -382,6 +382,11 @@ pub struct RetrievalParams {
     /// Self-authored notes (`self_notes.jsonl`) surfaced into the workspace
     /// each turn. 0 disables the lane.
     pub self_notes_max: usize,
+    /// Extra raw-utterance candidates the derived full-text index may offer
+    /// the relevance judge each turn — utterances older than `evidence_pool`
+    /// reaches. They are judged like every other candidate and never
+    /// injected directly. 0 disables the index lane.
+    pub utterance_index_top_k: usize,
 }
 
 impl Default for RetrievalParams {
@@ -400,6 +405,7 @@ impl Default for RetrievalParams {
             recall_knot_bonus: 0.1,
             recall_reverse_decay: 0.20,
             self_notes_max: 5,
+            utterance_index_top_k: 2,
         }
     }
 }
@@ -440,6 +446,7 @@ const PARAM_BOUNDS: &[(&str, f64, f64)] = &[
     ("retrieval.recall_knot_bonus", 0.0, 1.0),
     ("retrieval.recall_reverse_decay", 0.0, 1.0),
     ("retrieval.self_notes_max", 0.0, 16.0),
+    ("retrieval.utterance_index_top_k", 0.0, 16.0),
     ("conversation.max_response_chars", 0.0, 32_000.0),
     ("reflection.interval_turns", 0.0, 10_000.0),
 ];
@@ -488,6 +495,7 @@ impl OperativeParams {
             "retrieval.recall_knot_bonus" => self.retrieval.recall_knot_bonus.into(),
             "retrieval.recall_reverse_decay" => self.retrieval.recall_reverse_decay.into(),
             "retrieval.self_notes_max" => self.retrieval.self_notes_max.into(),
+            "retrieval.utterance_index_top_k" => self.retrieval.utterance_index_top_k.into(),
             "conversation.max_response_chars" => self.conversation.max_response_chars.into(),
             "reflection.interval_turns" => self.reflection.interval_turns.into(),
             _ => return None,
@@ -524,6 +532,9 @@ impl OperativeParams {
             "retrieval.recall_knot_bonus" => self.retrieval.recall_knot_bonus = number,
             "retrieval.recall_reverse_decay" => self.retrieval.recall_reverse_decay = number,
             "retrieval.self_notes_max" => self.retrieval.self_notes_max = number as usize,
+            "retrieval.utterance_index_top_k" => {
+                self.retrieval.utterance_index_top_k = number as usize;
+            }
             "conversation.max_response_chars" => {
                 self.conversation.max_response_chars = number as usize;
             }
