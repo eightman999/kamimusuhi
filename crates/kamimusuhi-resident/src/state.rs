@@ -129,6 +129,8 @@ pub struct Shared {
     pub gpu: RwLock<Option<ProbeResult>>,
     pub kcore: RwLock<Value>,
     pub cognition: RwLock<Value>,
+    /// Latest read-only memory stall signal (see memory_stall.rs).
+    pub memory_stall: RwLock<Value>,
     pub snapshot: RwLock<Value>,
     pub last_route: RwLock<Option<RouteEvent>>,
     /// Bounded local usage history, independent of the NAS delivery spool.
@@ -266,6 +268,7 @@ impl Shared {
             gpu: RwLock::new(None),
             kcore: RwLock::new(json!({"state": "disabled"})),
             cognition: RwLock::new(json!({"state": "disabled"})),
+            memory_stall: RwLock::new(json!({"state": "disabled"})),
             snapshot: RwLock::new(Value::Null),
             last_route: RwLock::new(None),
             route_health: Mutex::new(ProviderStateBook::default()),
@@ -506,6 +509,7 @@ impl Shared {
             "hai_account": read(&self.account).map(|a| a.view()),
             "kcore": read(&self.kcore),
             "cognition": read(&self.cognition),
+            "memory_stall": read(&self.memory_stall),
             "snapshot": read(&self.snapshot),
             "mcp": self.mcp.iter().map(|m| m.status()).collect::<Vec<_>>(),
             "jobs": read(&*self.jobs),

@@ -95,6 +95,13 @@
     "timeout_secs": 600,
     "max_concurrent": 2
   },
+  "memory_stall": {
+    "enabled": true,
+    "check_interval_secs": 900,
+    "min_user_utterances": 40,
+    "min_quiet_secs": 172800,
+    "timeout_secs": 45
+  },
   "intercom": {
     "enabled": true,
     "sisters": {

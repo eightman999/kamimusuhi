@@ -54,6 +54,11 @@ pub struct Config {
     /// runtime's c0.idle policy owns eligibility, persistence and API budgets.
     #[serde(default)]
     pub cognition: Option<CognitionConfig>,
+    /// Read-only check that canonical memory keeps growing while
+    /// conversation accumulates (see memory_stall.rs). On by default on a
+    /// node with `dialogue`; it only observes and reports.
+    #[serde(default)]
+    pub memory_stall: MemoryStallConfig,
     #[serde(default)]
     pub libraries: Vec<LibraryConfig>,
     /// MCP servers this node runs (stdio). Their tools join `/v1/tools`.
@@ -267,6 +272,78 @@ impl CognitionConfig {
         if !(1..=3600).contains(&self.poll_interval_secs) || !(1..=600).contains(&self.timeout_secs)
         {
             return Err("cognition poll/timeout limits are invalid".to_owned());
+        }
+        Ok(())
+    }
+}
+
+/// Memory stall check: how often the resident asks the runtime for the
+/// read-only `memory-stall` signal, and the thresholds it passes. Both
+/// thresholds must be reached before `/status` reports a stall; the
+/// defaults (40 user utterances *and* 48 hours since memory last grew) are
+/// chosen to rarely fire on a healthy individual.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryStallConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_memory_stall_interval")]
+    pub check_interval_secs: u64,
+    #[serde(default = "default_memory_stall_utterances")]
+    pub min_user_utterances: u64,
+    #[serde(default = "default_memory_stall_quiet")]
+    pub min_quiet_secs: u64,
+    #[serde(default = "default_memory_stall_timeout")]
+    pub timeout_secs: u64,
+}
+
+const fn default_memory_stall_interval() -> u64 {
+    900
+}
+
+const fn default_memory_stall_utterances() -> u64 {
+    kamimusuhi_runtime::memory_stall::DEFAULT_MIN_USER_UTTERANCES
+}
+
+const fn default_memory_stall_quiet() -> u64 {
+    kamimusuhi_runtime::memory_stall::DEFAULT_MIN_QUIET_SECS
+}
+
+const fn default_memory_stall_timeout() -> u64 {
+    45
+}
+
+impl Default for MemoryStallConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            check_interval_secs: default_memory_stall_interval(),
+            min_user_utterances: default_memory_stall_utterances(),
+            min_quiet_secs: default_memory_stall_quiet(),
+            timeout_secs: default_memory_stall_timeout(),
+        }
+    }
+}
+
+impl MemoryStallConfig {
+    pub fn thresholds(&self) -> kamimusuhi_runtime::memory_stall::MemoryStallThresholds {
+        kamimusuhi_runtime::memory_stall::MemoryStallThresholds {
+            min_user_utterances: self.min_user_utterances,
+            min_quiet_secs: self.min_quiet_secs,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        self.thresholds()
+            .validate()
+            .map_err(|e| format!("memory_stall: {e}"))?;
+        if !(60..=86_400).contains(&self.check_interval_secs)
+            || !(1..=600).contains(&self.timeout_secs)
+        {
+            return Err(
+                "memory_stall: check_interval_secs must be 60-86400 and timeout_secs 1-600"
+                    .to_owned(),
+            );
         }
         Ok(())
     }
@@ -1270,6 +1347,7 @@ impl Config {
                 return Err("cognition requires dialogue configuration".to_owned());
             }
         }
+        self.memory_stall.validate()?;
         if let Some(social) = &self.social {
             social.validate()?;
         }

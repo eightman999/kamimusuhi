@@ -53,6 +53,9 @@ commands:
   memory            read-only JSON memory report: per-domain counts, newest
                     records, self model and pending proposals
                     (--subject <id> scopes records, --limit <n> per domain)
+  memory-stall      read-only JSON signal: user utterances and time since
+                    canonical memory last grew, reflection/proposal counts
+                    in between, and an ok/stalled verdict; never repairs
   writeback-review  inspect an incomplete turn for operator abandonment;
                     requires --turn-id and --reason, returns a review token
   writeback-abort   record audited abandonment without deleting evidence;
@@ -130,6 +133,10 @@ options:
   --limit <n>       recall-eval: evaluate at most the newest N link-declaring
                     episodic records; memory: newest N records per domain
   --json            recall-eval/memory: JSON report on stdout (the default)
+  --min-user-utterances <n>  memory-stall: utterances since the last memory
+                    before calling a stall (default 40)
+  --min-quiet-secs <n>  memory-stall: seconds since the last memory before
+                    calling a stall (default 172800); both must be reached
 ";
 
 fn main() -> ExitCode {
@@ -269,6 +276,14 @@ fn run() -> Result<String, RuntimeError> {
             "--limit and --json are only supported by recall-eval and memory".to_owned(),
         ));
     }
+    if (options.min_user_utterances.is_some() || options.min_quiet_secs.is_some())
+        && command != "memory-stall"
+    {
+        return Err(RuntimeError::Usage(
+            "--min-user-utterances and --min-quiet-secs are only supported by memory-stall"
+                .to_owned(),
+        ));
+    }
     if (options.param.is_some() || options.value.is_some() || options.reason.is_some())
         && command != "propose"
         && !social_command
@@ -330,6 +345,20 @@ fn run() -> Result<String, RuntimeError> {
                 options.subject.as_deref(),
                 options.limit.unwrap_or(24),
             )?;
+            runtime.stopping();
+            encode(&report)
+        }
+        "memory-stall" => {
+            // Read-only like inspect: no writer epoch, only SELECTs.
+            let runtime = Runtime::open(options.dir()?, options.runtime_options())?;
+            let defaults = kamimusuhi_runtime::memory_stall::MemoryStallThresholds::default();
+            let thresholds = kamimusuhi_runtime::memory_stall::MemoryStallThresholds {
+                min_user_utterances: options
+                    .min_user_utterances
+                    .unwrap_or(defaults.min_user_utterances),
+                min_quiet_secs: options.min_quiet_secs.unwrap_or(defaults.min_quiet_secs),
+            };
+            let report = kamimusuhi_runtime::memory_stall::report(&runtime, thresholds)?;
             runtime.stopping();
             encode(&report)
         }
@@ -746,6 +775,8 @@ struct Options {
     reason: Option<String>,
     limit: Option<usize>,
     json: bool,
+    min_user_utterances: Option<u64>,
+    min_quiet_secs: Option<u64>,
     review_token: Option<String>,
     turn_id: Option<String>,
     identity_context_file: Option<String>,
@@ -848,6 +879,20 @@ impl Options {
                     })?);
                 }
                 "--json" => options.json = true,
+                "--min-user-utterances" => {
+                    let raw = value()?;
+                    options.min_user_utterances = Some(raw.parse().map_err(|_| {
+                        RuntimeError::Usage(format!(
+                            "--min-user-utterances {raw:?} is not a number"
+                        ))
+                    })?);
+                }
+                "--min-quiet-secs" => {
+                    let raw = value()?;
+                    options.min_quiet_secs = Some(raw.parse().map_err(|_| {
+                        RuntimeError::Usage(format!("--min-quiet-secs {raw:?} is not a number"))
+                    })?);
+                }
                 "--privacy" => {
                     let raw = value()?;
                     // Hyphens on the command line, underscores on the wire.
@@ -906,6 +951,8 @@ impl Options {
             || self.value.is_some()
             || self.limit.is_some()
             || self.json
+            || self.min_user_utterances.is_some()
+            || self.min_quiet_secs.is_some()
             || self.identity_context_file.is_some()
     }
 
