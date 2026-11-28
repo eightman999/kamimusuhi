@@ -9,7 +9,7 @@ use kamimusuhi_runtime::config::validate_language_provider_id;
 use kamimusuhi_runtime::dialogue::DialogueSession;
 use kamimusuhi_runtime::dialogue_setup::{
     language_provider_auth_available, language_provider_kind, persona_backend_id_for,
-    persona_setting_from_environment, public_endpoint_origin, register_hai_language_providers,
+    persona_setting_from_environment, public_endpoint_origin,
 };
 use kamimusuhi_runtime::llm_jev::{
     ConversationCoreState, ConversationTrace, GeneratedLanguageCandidate, LLM_MODEL_ENV,
@@ -367,11 +367,6 @@ fn initialize(
     {
         let mut next = runtime.config().clone();
         next.persona = setting;
-        runtime.save_config(next).map_err(format_runtime_error)?;
-    }
-
-    let mut next = runtime.config().clone();
-    if register_hai_language_providers(&mut next).map_err(format_runtime_error)? {
         runtime.save_config(next).map_err(format_runtime_error)?;
     }
 

@@ -817,6 +817,9 @@ impl OpenAiCompatiblePersona {
                 format!(
                     "{instruction}\n\
                     必要なら提供されたツールを呼んで確認してから答えてください。\
+                    コード・設定・ログ・ファイル・状態・外部情報の調査や確認を求められたら、推測や一般論で即答せず、\
+                    まずあなた自身が提供ツール（登録リポジトリのgit list/files/read_file/log/diff、library_search/library_read、\
+                    検索・閲覧など）を複数ラウンド使って一次情報を確認してから根拠付きで答えてください。\
                     独立した呼び出しはまとめ、前の結果が必要な調査は結果を読んで次のツールを呼んでください。{discovery}\
                     ファイル・リポジトリ・Webの確認は、まずあなた自身が提供ツールで実行してください。\
                     登録リポジトリはgitのlistで選び、filesで未追跡を含む一覧、read_fileで本文を調べられます。\
@@ -831,7 +834,9 @@ impl OpenAiCompatiblePersona {
                     Webで確認した内容には取得結果にある出典URLを付け、検索の要約しか読めない場合はその旨を述べてください。\
                     検索結果0件は世の中に存在しない証明ではありません。ツールのsuccess=false、エラー、CAPTCHAは取得失敗です。\
                     ツールが未提供・失敗の場合は確認できなかったと述べ、検索や閲覧を実施したと創作しないでください。\
-                    最終的な返事は出典を添えた短い日本語にしてください。"
+                    プロンプト内のシステム用メタデータJSON（TURN_EVIDENCE_SCOPE、shown_conversation_records、source_kindなど）を\
+                    そのまま返答として出力しないでください。\
+                    最終的な返事は出典を添えた分かりやすい日本語にしてください（調査報告では確認したファイル・根拠・未確認範囲を簡潔にまとめてよい）。"
                 )
             }
         };
@@ -1179,6 +1184,8 @@ impl OpenAiCompatiblePersona {
                 // of times): call the tool properly, or answer without it.
                 let repair = if writes_tool_call(text, &offered_names(&body)) {
                     Some(PROSE_TOOL_CALL_NUDGE)
+                } else if looks_like_metadata_echo(text) {
+                    Some(METADATA_ECHO_NUDGE)
                 } else if tools::unrecovered_delegation_failure(&records) {
                     Some(FAILED_DELEGATION_NUDGE)
                 } else if can_delegate
@@ -1206,6 +1213,12 @@ impl OpenAiCompatiblePersona {
                         return Err(PersonaError::MalformedResponse {
                             backend_id: self.config.backend_id,
                             detail: "the model kept writing tool calls as prose".to_owned(),
+                        });
+                    }
+                    Some(METADATA_ECHO_NUDGE) => {
+                        return Err(PersonaError::MalformedResponse {
+                            backend_id: self.config.backend_id,
+                            detail: "the model kept echoing prompt metadata JSON".to_owned(),
                         });
                     }
                     _ => return Ok((self.content_of(&parsed)?, records)),
@@ -1279,6 +1292,11 @@ const PROSE_TOOL_CALL_NUDGE: &str = "（ホストより）今の返事はツー�
      説明や謝罪は要りません。ツールを使うなら、いまツール呼び出し（tool call）として呼んでください。\
      使わないなら、ツール名や引数を書かずに相手への返事だけを書いてください。";
 
+/// Host turn sent when a reply echoes internal prompt metadata JSON instead of
+/// answering the user.
+const METADATA_ECHO_NUDGE: &str = "（ホストより）今の返事はプロンプト内のシステム用メタデータJSONをそのまま出力しています。\
+     JSONを返さず、確認が必要なら提供されたツールを呼んで調査したうえで、相手への自然な日本語で答えてください。";
+
 /// Names of the tools currently offered in `body`.
 fn offered_names(body: &serde_json::Value) -> Vec<String> {
     body["tools"]
@@ -1314,6 +1332,36 @@ fn contains_tool_markup(text: &str) -> bool {
     ["<tool_call>", "<function=", "</tool_call>"]
         .iter()
         .any(|marker| text.contains(marker))
+}
+
+/// Whether `text` is just an echo of internal prompt metadata JSON (such as
+/// `[TURN_EVIDENCE_SCOPE]` or the quoted prior-assistant wrapper) rather than
+/// an actual reply to the user.
+fn looks_like_metadata_echo(text: &str) -> bool {
+    let trimmed = text.trim();
+    let candidate = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .and_then(|rest| rest.strip_suffix("```"))
+        .map_or(trimmed, str::trim);
+    if !(candidate.starts_with('{') && candidate.ends_with('}')) {
+        return false;
+    }
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(candidate)
+    else {
+        return false;
+    };
+    const MARKERS: [&str; 6] = [
+        "evidence_scope",
+        "shown_conversation_records",
+        "provided_retained_items",
+        "omitted_or_not_supplied",
+        "current_input_is_separate",
+        "factual_status",
+    ];
+    MARKERS.iter().any(|key| map.contains_key(*key))
+        || map.get("source_kind").and_then(serde_json::Value::as_str)
+            == Some("prior_generated_assistant_utterance")
 }
 
 fn push_message(body: &mut serde_json::Value, message: serde_json::Value) {
@@ -3559,5 +3607,47 @@ mod tests {
             .map(|r| r.path.clone())
             .collect();
         assert_eq!(paths, vec!["/v1/tools", "/v1/tools/call"]);
+    }
+
+    #[test]
+    fn metadata_echo_detection_catches_prompt_scope_and_envelope_json() {
+        assert!(looks_like_metadata_echo(
+            r#"{"evidence_id":"0559b94b27b7403382c8380be2869fbf","evidence_scope":"this_request_only","provided_retained_items":{"durable_self":0,"episodic":0,"recalled_evidence":0,"relationship":0},"shown_conversation_records":{"assistant":4,"total":12,"user":8}}"#
+        ));
+        assert!(looks_like_metadata_echo(
+            r#"{"source_kind":"prior_generated_assistant_utterance","evidence_id":"abc","text":"hi"}"#
+        ));
+        assert!(!looks_like_metadata_echo("コードを確認したよ。"));
+        assert!(!looks_like_metadata_echo(r#"{"status":"ok","count":3}"#));
+    }
+
+    #[test]
+    fn metadata_echo_triggers_repair_nudge_and_recovers() {
+        use kamimusuhi_testkit::{FixtureResponse, FixtureServer};
+        let tool_server = FixtureServer::start(vec![raw_json(&serde_json::json!({"tools": [
+            {"type": "function", "function": {"name": "git", "parameters": {}}}
+        ]}))])
+        .expect("tool server");
+        let model = FixtureServer::start(vec![
+            FixtureResponse::ok(
+                r#"{"evidence_id":"0559b94b27b7403382c8380be2869fbf","evidence_scope":"this_request_only","provided_retained_items":{"durable_self":0,"episodic":0,"recalled_evidence":0,"relationship":0},"shown_conversation_records":{"assistant":4,"total":12,"user":8}}"#,
+            ),
+            FixtureResponse::ok("コードを確認したけど、意図的な性能低下は見当たらないよ。"),
+        ])
+        .expect("model");
+        let config =
+            PersonaBackendConfig::new(BACKEND, model.base_url(), "test-model").with_tools(Some(
+                ToolServerConfig::new(tool_server.base_url().trim_end_matches("/v1").to_owned()),
+            ));
+        let result = OpenAiCompatiblePersona::new(config)
+            .turn(turn_input())
+            .expect("repaired turn");
+        assert_eq!(
+            result.response_intent,
+            "コードを確認したけど、意図的な性能低下は見当たらないよ。"
+        );
+        let requests = model.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].body.contains("メタデータJSON"));
     }
 }
