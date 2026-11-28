@@ -256,6 +256,9 @@ pub fn list_with(shared: &Shared, local_only: bool) -> Value {
     if shared.config.intercom.enabled {
         tools.extend(crate::intercom::definitions());
     }
+    if shared.config.tools.access_mode == crate::config::AccessMode::Full {
+        tools.extend(crate::self_inspect::definitions());
+    }
     tools.extend(local_mcp(shared));
     let mut seen: std::collections::HashSet<String> = tools
         .iter()
@@ -544,7 +547,7 @@ fn call_inner(shared: &Shared, request: &Value, turn: Option<&str>) -> (u16, Val
     let name = request["name"].as_str().unwrap_or("");
     if matches!(
         name,
-        "git" | "service_control" | "agenthub" | "agora" | "browser" | "self_improve"
+        "git" | "service_control" | "agenthub" | "agora" | "browser" | "self_improve" | "self_inspect"
     ) {
         let args = match &request["arguments"] {
             Value::String(text) => serde_json::from_str(text).unwrap_or(Value::Null),
@@ -556,6 +559,7 @@ fn call_inner(shared: &Shared, request: &Value, turn: Option<&str>) -> (u16, Val
             "agenthub" => crate::agenthub::call(shared, &args),
             "agora" => crate::agora::call(shared, &args),
             "browser" => crate::browser::call(shared, &args, request["local_only"] == true),
+            "self_inspect" => crate::self_inspect::call(shared, &args),
             _ => crate::self_improvement::call(shared, &args, turn),
         };
     }

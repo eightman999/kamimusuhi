@@ -488,6 +488,30 @@ pub enum JudgeUnavailable {
 
 /// Policy for the built-in `http_request` tool. Everything not listed here
 /// is refused: the default (no hosts) disables the tool entirely.
+/// Access boundary for self-inspection of this node's own runtime state,
+/// configuration, logs and individual directory.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessMode {
+    /// Only explicitly registered libraries, repositories and MCP servers.
+    #[default]
+    Standard,
+    /// Also exposes read-only `self_inspect` over this node's own root,
+    /// config, individual directory, current_state, logs and mounted NAS,
+    /// while still refusing secret/credential files and paths outside those
+    /// roots.
+    Full,
+}
+
+impl AccessMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Full => "full",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolsConfig {
@@ -511,6 +535,9 @@ pub struct ToolsConfig {
     /// Explicit service-manager targets exposed to the individual.
     #[serde(default)]
     pub services: Vec<crate::service_control::ServiceConfig>,
+    /// Self-inspection access mode (`standard` or `full`).
+    #[serde(default)]
+    pub access_mode: AccessMode,
 }
 
 fn default_http_allow_methods() -> Vec<String> {
@@ -525,6 +552,7 @@ impl Default for ToolsConfig {
             agenthub_token_file: None,
             git_repositories: Vec::new(),
             services: Vec::new(),
+            access_mode: AccessMode::Standard,
         }
     }
 }

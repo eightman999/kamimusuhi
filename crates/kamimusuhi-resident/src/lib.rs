@@ -36,6 +36,7 @@ pub mod probes;
 pub mod remote;
 pub mod router;
 pub mod self_improvement;
+pub mod self_inspect;
 pub mod self_notes;
 pub mod selfmon;
 pub mod server;
