@@ -69,6 +69,23 @@
   .tab-btn.active { color: var(--fg); background: #183e6f; border-color: #2e6cb9; font-weight: 600; }
   .tab-btn .kbd { font-size: 10px; color: var(--dim); margin-left: 5px; font-family: var(--mono); }
 
+  .talk-box {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 9px;
+    padding: 10px 12px; margin-bottom: 12px;
+  }
+  .talk-box:focus-within { border-color: var(--accent); }
+  .talk-box textarea {
+    width: 100%; min-height: 54px; max-height: 220px; resize: vertical;
+    background: transparent; color: var(--fg); border: none; outline: none;
+    font: 13.5px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Segoe UI", sans-serif;
+  }
+  .talk-foot {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(37, 57, 78, 0.55);
+  }
+  .talk-status { font-size: 11.5px; color: var(--dim); font-family: var(--mono); }
+  .turn.pending { border-color: var(--accent); background: rgba(49, 129, 235, 0.08); }
+
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--dim); margin-right: 5px; }
   .dot.ok { background: var(--ok); box-shadow: 0 0 6px rgba(47, 206, 132, 0.45); }
   .dot.bad { background: var(--bad); box-shadow: 0 0 6px rgba(235, 96, 110, 0.45); }
@@ -319,10 +336,20 @@
 
   <section id="sec-thoughts" class="wide" data-group="thoughts">
     <div class="sec-head">
-      <h2>Thoughts — recent turns</h2>
+      <h2>Dialogue · Thoughts</h2>
       <span class="sub" id="thoughtsCount"></span>
       <span class="spacer"></span>
       <input id="thoughtsFilter" class="search-input" style="width:220px" placeholder="🔍 対話・ツールを検索 (/キー)">
+    </div>
+    <div class="talk-box" id="talkBox">
+      <textarea id="talkInput" rows="2" placeholder="澪へ話しかける… (⌘+Enter / Ctrl+Enter で送信)"></textarea>
+      <div class="talk-foot">
+        <span class="small muted">送信先: <strong id="talkSubjectBadge" class="mono"></strong></span>
+        <span class="talk-status" id="talkStatus"></span>
+        <span class="spacer"></span>
+        <button id="talkSend" class="primary">送信 (⌘↵)</button>
+      </div>
+      <div class="err" id="talkErr"></div>
     </div>
     <div id="thoughts"></div>
     <div class="err" id="thoughtsErr"></div>
@@ -516,7 +543,10 @@ async function api(path, opts) {
   let data; try { data = JSON.parse(text); } catch { data = {raw: text}; }
   if (!r.ok) {
     const msg = (data && (data.error && (data.error.message || data.error))) || r.status;
-    const e = new Error("HTTP " + r.status + " " + (typeof msg === "string" ? msg : JSON.stringify(msg)));
+    const tail = data && Array.isArray(data.stderr_tail) && data.stderr_tail.length
+      ? " — " + data.stderr_tail.join(" | ")
+      : "";
+    const e = new Error("HTTP " + r.status + " " + (typeof msg === "string" ? msg : JSON.stringify(msg)) + tail);
     e.status = r.status;
     throw e;
   }
@@ -1092,7 +1122,16 @@ function renderThoughts() {
     : turns;
   $("thoughtsCount").textContent = `${filtered.length}/${turns.length} turns`;
 
-  $("thoughts").innerHTML = filtered.length ? filtered.map((t, idx) => {
+  const pendingHtml = state.pendingTalk ? `<div class="turn pending">
+    <div class="turn-head">
+      ${channelPill(state.pendingTalk.subject)}<span class="pill">${esc(state.pendingTalk.subject)}</span>
+      <span class="pill accent">応答待ち…</span>
+    </div>
+    <div class="msg">${esc(state.pendingTalk.message)}</div>
+    <div class="resp muted">考え中…</div>
+  </div>` : "";
+
+  $("thoughts").innerHTML = pendingHtml + (filtered.length ? filtered.map((t, idx) => {
     const r = t.route || {};
     const subj = t.subject || "";
     const resp = t.response || (t.error ? "⚠ " + t.error : "");
@@ -1124,7 +1163,7 @@ function renderThoughts() {
       <div class="meta">${pills}</div>
       ${tools.length ? `<details style="margin-top:4px"><summary>tool calls (${tools.length})</summary><pre>${esc(JSON.stringify(tools, null, 2))}</pre></details>` : ""}
     </div>`;
-  }).join("") : '<span class="muted">該当するターンはありません (subject: ' + esc(cfg.subject) + ')</span>';
+  }).join("") : (pendingHtml ? "" : '<span class="muted">該当するターンはありません (subject: ' + esc(cfg.subject) + ')</span>'));
 
   $("thoughts").querySelectorAll("[data-copy-turn]").forEach(btn => {
     btn.onclick = () => {
@@ -1142,10 +1181,75 @@ function renderThoughts() {
   });
 }
 
+function resolveTalkSubject() {
+  const s = (cfg.subject || "").trim();
+  if (s && s !== "*" && s !== "all") return s;
+  const sel = $("subjectSel");
+  if (sel) {
+    for (const opt of sel.options) {
+      if (opt.value && opt.value !== "*" && opt.value !== "all") return opt.value;
+    }
+  }
+  return "eightman";
+}
+
+function updateTalkSubjectBadge() {
+  const badge = $("talkSubjectBadge");
+  if (badge) badge.textContent = resolveTalkSubject();
+}
+
+async function sendTalk() {
+  if (state.talkBusy) return;
+  const input = $("talkInput");
+  const message = (input.value || "").trim();
+  if (!message) return;
+  const subject = resolveTalkSubject();
+  state.talkBusy = true;
+  state.pendingTalk = { subject, message };
+  $("talkSend").disabled = true;
+  input.disabled = true;
+  setErr("talkErr");
+  renderThoughts();
+  const started = Date.now();
+  const tick = setInterval(() => {
+    $("talkStatus").textContent = `応答待ち… ${((Date.now() - started) / 1000).toFixed(1)}s`;
+  }, 200);
+  try {
+    const res = await post("/v1/kamimusuhi/talk", { subject, message });
+    input.value = "";
+    const sec = ((res && res.latency_ms ? res.latency_ms : (Date.now() - started)) / 1000).toFixed(1);
+    const model = res && res.route && res.route.model ? ` · ${res.route.model}` : "";
+    $("talkStatus").textContent = `完了 ${sec}s${model}`;
+    state.pendingTalk = null;
+    await Promise.allSettled([loadThoughts(), loadTasks(), loadMemory()]);
+  } catch (e) {
+    state.pendingTalk = null;
+    $("talkStatus").textContent = "";
+    setErr("talkErr", e);
+    renderThoughts();
+  } finally {
+    clearInterval(tick);
+    state.talkBusy = false;
+    $("talkSend").disabled = false;
+    input.disabled = false;
+    input.focus();
+  }
+}
+
+$("talkSend").onclick = sendTalk;
+$("talkInput").addEventListener("keydown", e => {
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.isComposing) {
+    e.preventDefault();
+    sendTalk();
+  }
+});
+
 async function loadThoughts() {
+  updateTalkSubjectBadge();
   try {
     const d = await post("/v1/kamimusuhi/history", {subject: cfg.subject, limit: 40});
     if (Array.isArray(d.subjects)) updateSubjectDropdown(d.subjects);
+    updateTalkSubjectBadge();
     state.turns = (d.turns || []).slice().reverse();
     renderThoughts();
     setErr("thoughtsErr");
