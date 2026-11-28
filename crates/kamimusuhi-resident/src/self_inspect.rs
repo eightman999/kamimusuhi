@@ -11,6 +11,8 @@ use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+use rusqlite::types::ValueRef;
+use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 
 use crate::config::AccessMode;
@@ -25,20 +27,22 @@ const DEFAULT_SEARCH_HITS: usize = 15;
 const MAX_SEARCH_HITS: usize = 30;
 const MAX_SEARCH_FILES: usize = 400;
 const MAX_SEARCH_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const DEFAULT_DB_ROWS: usize = 40;
+const MAX_DB_ROWS: usize = 100;
 
 pub fn definitions() -> Vec<Value> {
     vec![json!({
         "type": "function",
         "function": {
             "name": "self_inspect",
-            "description": "Read-only inspection of this Kamimusuhi node's own configuration (resident.json, runtime.json, identity-manifest.json), current_state, individual files, logs (trace.jsonl, routing/dialogue logs) and mounted NAS. Only available when tools.access_mode is full. Secret/credential files are always excluded.",
+            "description": "Read-only audit/inspection of this Kamimusuhi node's own configuration (resident.json, runtime.json, identity-manifest.json), current_state, individual files, logs (trace.jsonl, routing/dialogue logs), mounted NAS, and read-only SQLite tables/queries on kamimusuhi.sqlite (c0_proposals, c0_head, state_records, turns, audit_events, schema_meta, etc.). Only available when tools.access_mode is full. Secret/credential files and writes are always refused.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["overview", "list", "read", "tail", "search"],
-                        "description": "overview: show available roots and paths; list: list a directory; read: read text slice; tail: read last N lines; search: substring search"
+                        "enum": ["overview", "list", "read", "tail", "search", "db_tables", "db_query"],
+                        "description": "overview: show available roots and paths; list: list a directory; read: read text slice; tail: read last N lines; search: substring search; db_tables: list kamimusuhi.sqlite tables and row counts; db_query: run a bounded read-only SELECT/PRAGMA query on kamimusuhi.sqlite"
                     },
                     "root": {
                         "type": "string",
@@ -58,12 +62,17 @@ pub fn definitions() -> Vec<Value> {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 65536,
-                        "description": "Max bytes for read (default 16384, max 65536), max lines for tail (default 40, max 200), or max hits for search (default 15, max 30)"
+                        "description": "Max bytes for read (default 16384, max 65536), max lines for tail (default 40, max 200), max hits for search (default 15, max 30), or max rows for db_query (default 40, max 100)"
                     },
                     "q": {
                         "type": "string",
                         "minLength": 2,
                         "description": "Substring query for search"
+                    },
+                    "sql": {
+                        "type": "string",
+                        "minLength": 6,
+                        "description": "Single read-only SELECT/WITH/PRAGMA/EXPLAIN statement for db_query"
                     }
                 },
                 "required": ["action"]
@@ -127,7 +136,23 @@ pub fn call(shared: &Shared, args: &Value) -> (u16, Value) {
                 Err(e) => fail(&e),
             }
         }
-        _ => fail("action must be one of: overview, list, read, tail, search"),
+        "db_tables" => match db_tables(&roots) {
+            Ok(v) => ok(v),
+            Err(e) => fail(&e),
+        },
+        "db_query" => {
+            let Some(sql) = args["sql"].as_str().map(str::trim).filter(|s| !s.is_empty()) else {
+                return fail("db_query requires sql");
+            };
+            let limit = args["limit"].as_u64().map_or(DEFAULT_DB_ROWS, |n| {
+                (n as usize).clamp(1, MAX_DB_ROWS)
+            });
+            match db_query(&roots, sql, limit) {
+                Ok(v) => ok(v),
+                Err(e) => fail(&e),
+            }
+        }
+        _ => fail("action must be one of: overview, list, read, tail, search, db_tables, db_query"),
     }
 }
 
@@ -435,6 +460,142 @@ fn search_path(root_name: &str, target: &Path, query: &str, limit: usize) -> Res
     }))
 }
 
+fn open_individual_db_readonly(roots: &BTreeMap<&'static str, PathBuf>) -> Result<(PathBuf, Connection), String> {
+    let ind = roots
+        .get("individual")
+        .ok_or_else(|| "individual root is not available on this node".to_owned())?;
+    let db_path = ind.join("kamimusuhi.sqlite");
+    if !db_path.is_file() {
+        return Err(format!("individual database not found at {}", db_path.display()));
+    }
+    let conn = Connection::open_with_flags(
+        &db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| format!("failed to open individual database read-only: {e}"))?;
+    conn.busy_timeout(std::time::Duration::from_secs(3))
+        .map_err(|e| format!("busy_timeout failed: {e}"))?;
+    conn.execute_batch("PRAGMA query_only = ON;")
+        .map_err(|e| format!("failed to enforce query_only: {e}"))?;
+    Ok((db_path, conn))
+}
+
+fn db_tables(roots: &BTreeMap<&'static str, PathBuf>) -> Result<Value, String> {
+    let (db_path, conn) = open_individual_db_readonly(roots)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .map_err(|e| format!("failed to list tables: {e}"))?;
+    let names: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("failed to query tables: {e}"))?
+        .filter_map(Result::ok)
+        .collect();
+    let mut tables = Vec::with_capacity(names.len());
+    for name in names {
+        let escaped = name.replace('"', "\"\"");
+        let count: Option<i64> = conn
+            .query_row(&format!("SELECT COUNT(*) FROM \"{escaped}\""), [], |row| {
+                row.get(0)
+            })
+            .ok();
+        tables.push(json!({"name": name, "rows": count}));
+    }
+    Ok(json!({
+        "db_path": db_path.display().to_string(),
+        "tables": tables,
+    }))
+}
+
+fn validate_readonly_sql(sql: &str) -> Result<String, String> {
+    let cleaned = sql.trim().trim_end_matches(';').trim();
+    if cleaned.is_empty() {
+        return Err("sql must not be empty".to_owned());
+    }
+    if cleaned.contains(';') {
+        return Err("multiple SQL statements are not allowed".to_owned());
+    }
+    let upper = cleaned.to_ascii_uppercase();
+    let first = upper.split_whitespace().next().unwrap_or("");
+    if !matches!(first, "SELECT" | "WITH" | "PRAGMA" | "EXPLAIN") {
+        return Err("only read-only SELECT, WITH, PRAGMA, or EXPLAIN queries are allowed".to_owned());
+    }
+    for forbidden in [
+        "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "REPLACE", "ATTACH", "DETACH",
+        "VACUUM", "REINDEX",
+    ] {
+        if upper.split(|c: char| !c.is_ascii_alphanumeric() && c != '_').any(|tok| tok == forbidden) {
+            return Err(format!("mutating SQL keyword {forbidden} is not allowed"));
+        }
+    }
+    Ok(cleaned.to_owned())
+}
+
+fn sqlite_value_to_json(v: ValueRef<'_>) -> Value {
+    match v {
+        ValueRef::Null => Value::Null,
+        ValueRef::Integer(i) => json!(i),
+        ValueRef::Real(f) => json!(f),
+        ValueRef::Text(bytes) => {
+            let text = String::from_utf8_lossy(bytes);
+            if text.chars().count() > 2000 {
+                let clipped: String = text.chars().take(2000).collect();
+                json!(format!("{clipped}…"))
+            } else {
+                json!(text)
+            }
+        }
+        ValueRef::Blob(bytes) => json!(format!("<blob {} bytes>", bytes.len())),
+    }
+}
+
+fn db_query(
+    roots: &BTreeMap<&'static str, PathBuf>,
+    sql: &str,
+    max_rows: usize,
+) -> Result<Value, String> {
+    let cleaned = validate_readonly_sql(sql)?;
+    let (db_path, conn) = open_individual_db_readonly(roots)?;
+    let mut stmt = conn
+        .prepare(&cleaned)
+        .map_err(|e| format!("SQL prepare failed: {e}"))?;
+    let columns: Vec<String> = stmt.column_names().into_iter().map(str::to_owned).collect();
+    let col_count = columns.len();
+    let mut rows_iter = stmt
+        .query([])
+        .map_err(|e| format!("SQL query failed: {e}"))?;
+    let mut rows = Vec::new();
+    let mut truncated = false;
+    let mut approx_bytes = 0usize;
+    while let Some(row) = rows_iter
+        .next()
+        .map_err(|e| format!("SQL row fetch failed: {e}"))?
+    {
+        if rows.len() >= max_rows || approx_bytes >= MAX_READ_BYTES {
+            truncated = true;
+            break;
+        }
+        let mut obj = serde_json::Map::with_capacity(col_count);
+        for idx in 0..col_count {
+            let val = row
+                .get_ref(idx)
+                .map(sqlite_value_to_json)
+                .unwrap_or(Value::Null);
+            approx_bytes += val.to_string().len() + columns[idx].len() + 4;
+            obj.insert(columns[idx].clone(), val);
+        }
+        rows.push(Value::Object(obj));
+    }
+    Ok(json!({
+        "db_path": db_path.display().to_string(),
+        "columns": columns,
+        "rows": rows,
+        "row_count": rows.len(),
+        "truncated": truncated,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -584,5 +745,38 @@ mod tests {
             &json!({"action": "read", "path": outside.path().join("outside.txt").display().to_string()}),
         );
         assert_eq!(esc["ok"], false);
+    }
+
+    #[test]
+    fn full_mode_audits_sqlite_read_only_and_refuses_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = test_shared(dir.path(), AccessMode::Full);
+        let db_path = dir.path().join("runtime/individual/kamimusuhi.sqlite");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE c0_proposals (proposal_id TEXT, target TEXT, status TEXT);
+                 INSERT INTO c0_proposals VALUES ('p1', 'retrieval.episodic_top_k', 'accepted');",
+            )
+            .unwrap();
+        }
+        let (_, tables) = call(&shared, &json!({"action": "db_tables"}));
+        assert_eq!(tables["ok"], true);
+        assert_eq!(tables["result"]["tables"][0]["name"], "c0_proposals");
+        assert_eq!(tables["result"]["tables"][0]["rows"], 1);
+
+        let (_, queried) = call(
+            &shared,
+            &json!({"action": "db_query", "sql": "SELECT proposal_id, status FROM c0_proposals"}),
+        );
+        assert_eq!(queried["ok"], true);
+        assert_eq!(queried["result"]["rows"][0]["proposal_id"], "p1");
+        assert_eq!(queried["result"]["rows"][0]["status"], "accepted");
+
+        let (_, write_attempt) = call(
+            &shared,
+            &json!({"action": "db_query", "sql": "DELETE FROM c0_proposals"}),
+        );
+        assert_eq!(write_attempt["ok"], false);
     }
 }
