@@ -7,17 +7,19 @@
 //! a head that can move back. Every write here is still atomic and durable,
 //! and every lifecycle transition is also narrated into canonical evidence
 //! by the runtime, so the immutable record always says what the lane did.
+//! The `*_narrated` writes append that narration inside the lane's own
+//! transaction, so a lane move and its canonical record land or fail together.
 
 use kamimusuhi_core::c0::{
     Activation, C0Error, ImprovementDraft, ImprovementKind, ImprovementProposal, OperativeView,
     ProposalStatus, apply_proposal, validate_improvement_draft,
 };
-use kamimusuhi_core::evidence::EvidenceRecord;
+use kamimusuhi_core::evidence::{EvidenceError, EvidenceRecord, NewEvidence};
 use kamimusuhi_core::ids::{C0ActivationId, C0EvaluationId, C0ProposalId, IndividualId, TurnId};
 use kamimusuhi_core::time::UtcTimestamp;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use crate::evidence::{EVIDENCE_COLUMNS, facts_in};
+use crate::evidence::{EVIDENCE_COLUMNS, append_in, facts_in};
 use crate::store::SqliteStore;
 
 /// A recorded evaluation row.
@@ -260,43 +262,275 @@ fn validate_self_activation(
     Ok(())
 }
 
+/// Why a narrated lane transition failed: the lane refused or the canonical
+/// narration could not be appended. Neither case commits anything.
+#[derive(Debug)]
+pub enum C0NarratedError {
+    Lane(C0Error),
+    Narration(EvidenceError),
+}
+
+impl From<C0Error> for C0NarratedError {
+    fn from(e: C0Error) -> Self {
+        Self::Lane(e)
+    }
+}
+
+impl From<EvidenceError> for C0NarratedError {
+    fn from(e: EvidenceError) -> Self {
+        Self::Narration(e)
+    }
+}
+
+/// Insert a pending proposal on an open connection; `false` when the id
+/// already exists.
+fn insert_proposal_in(conn: &Connection, proposal: &ImprovementProposal) -> Result<bool, C0Error> {
+    let evidence_refs = serde_json::to_string(&proposal.evidence_refs)
+        .map_err(|e| C0Error::CorruptRow(e.to_string()))?;
+    let changed = conn
+        .execute(
+            &format!(
+                "INSERT OR IGNORE INTO c0_proposals ({PROPOSAL_COLUMNS}) \
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)"
+            ),
+            params![
+                proposal.proposal_id.to_string(),
+                proposal.individual_id.to_string(),
+                proposal.kind.as_str(),
+                proposal.target,
+                proposal.target_key,
+                proposal.old_value.as_ref().map(|v| v.to_string()),
+                proposal.proposed_value.to_string(),
+                evidence_refs,
+                proposal.expected_effect,
+                proposal.status.as_str(),
+                proposal.rejection_reason,
+                proposal.reflection_id.map(|id| id.to_string()),
+                proposal.created_at.unix_millis(),
+                proposal.decided_at.map(|t| t.unix_millis()),
+                proposal.activation_seq.map(|s| s as i64),
+                proposal.risk,
+                proposal.confidence,
+            ],
+        )
+        .map_err(backend)?;
+    Ok(changed > 0)
+}
+
+/// The activation write on an open transaction; the caller commits.
+fn apply_activation_in(
+    tx: &Connection,
+    proposal_id: C0ProposalId,
+    activation_id: C0ActivationId,
+    now: UtcTimestamp,
+) -> Result<Activation, C0Error> {
+    let proposal = tx
+        .query_row(
+            &format!("SELECT {PROPOSAL_COLUMNS} FROM c0_proposals WHERE proposal_id = ?1"),
+            params![proposal_id.to_string()],
+            proposal_from_row,
+        )
+        .optional()
+        .map_err(backend)?
+        .ok_or(C0Error::ProposalNotFound(proposal_id))?;
+    if proposal.status != ProposalStatus::Pending {
+        return Err(C0Error::ProposalNotPending(proposal_id));
+    }
+
+    let head: u64 = tx
+        .query_row(
+            "SELECT activation_seq FROM c0_head WHERE individual_id = ?1",
+            params![proposal.individual_id.to_string()],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(backend)?
+        .unwrap_or(0) as u64;
+
+    let view_at_head = verified_view_at(tx, proposal.individual_id, head)?;
+    validate_self_activation(tx, &proposal, &view_at_head)?;
+
+    let next_view = apply_proposal(&view_at_head, &proposal);
+    // Sequence numbers keep counting even across a rollback: a branch
+    // reuses no number, so every activation stays uniquely addressable.
+    let next_seq: u64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(activation_seq), 0) + 1 FROM c0_activations \
+                 WHERE individual_id = ?1",
+            params![proposal.individual_id.to_string()],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(backend)? as u64;
+
+    let activation = Activation {
+        activation_seq: next_seq,
+        activation_id,
+        individual_id: proposal.individual_id,
+        proposal_id,
+        predecessor_seq: head,
+        view: next_view,
+        rolled_back_at: None,
+        created_at: now,
+    };
+    let params_json = serde_json::to_string(&activation.view.params)
+        .map_err(|e| C0Error::CorruptRow(e.to_string()))?;
+    let self_json = serde_json::to_string(&activation.view.self_model)
+        .map_err(|e| C0Error::CorruptRow(e.to_string()))?;
+    tx.execute(
+        &format!(
+            "INSERT INTO c0_activations ({ACTIVATION_COLUMNS}) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,NULL,?8)"
+        ),
+        params![
+            next_seq as i64,
+            activation_id.to_string(),
+            proposal.individual_id.to_string(),
+            proposal_id.to_string(),
+            head as i64,
+            params_json,
+            self_json,
+            now.unix_millis(),
+        ],
+    )
+    .map_err(backend)?;
+
+    tx.execute(
+        "UPDATE c0_proposals SET status = 'accepted', decided_at = ?2, activation_seq = ?3 \
+             WHERE proposal_id = ?1",
+        params![proposal_id.to_string(), now.unix_millis(), next_seq as i64],
+    )
+    .map_err(backend)?;
+
+    // A pending proposal on the same target is superseded: the question
+    // it asked has been answered by a newer accepted one.
+    tx.execute(
+        "UPDATE c0_proposals SET status = 'superseded', decided_at = ?3 \
+             WHERE individual_id = ?1 AND target = ?2 AND status = 'pending' \
+             AND proposal_id != ?4 \
+             AND (target_key IS ?5 OR target_key = ?5)",
+        params![
+            proposal.individual_id.to_string(),
+            proposal.target,
+            now.unix_millis(),
+            proposal_id.to_string(),
+            proposal.target_key,
+        ],
+    )
+    .map_err(backend)?;
+
+    tx.execute(
+        "INSERT INTO c0_head (individual_id, activation_seq, updated_at) \
+             VALUES (?1, ?2, ?3) \
+             ON CONFLICT(individual_id) DO UPDATE SET activation_seq = ?2, updated_at = ?3",
+        params![
+            proposal.individual_id.to_string(),
+            next_seq as i64,
+            now.unix_millis()
+        ],
+    )
+    .map_err(backend)?;
+
+    // Read back inside the transaction. A trigger or a failed projection
+    // must not acknowledge a successful write or commit a moved head.
+    let stored_head: i64 = tx
+        .query_row(
+            "SELECT activation_seq FROM c0_head WHERE individual_id = ?1",
+            params![proposal.individual_id.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(backend)?;
+    if stored_head != next_seq as i64
+        || verified_view_at(tx, proposal.individual_id, next_seq)? != activation.view
+    {
+        return Err(C0Error::CorruptRow(
+            "activation readback mismatch".to_owned(),
+        ));
+    }
+    Ok(activation)
+}
+
+/// The rollback write on an open transaction; the caller commits.
+fn rollback_in(
+    tx: &Connection,
+    individual_id: IndividualId,
+    now: UtcTimestamp,
+) -> Result<RollbackOutcome, C0Error> {
+    let head: u64 = tx
+        .query_row(
+            "SELECT activation_seq FROM c0_head WHERE individual_id = ?1",
+            params![individual_id.to_string()],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(backend)?
+        .unwrap_or(0) as u64;
+    if head == 0 {
+        return Err(C0Error::NothingToRollBack);
+    }
+    let crossed = tx
+        .query_row(
+            "SELECT proposal_id, predecessor_seq FROM c0_activations \
+                 WHERE individual_id = ?1 AND activation_seq = ?2",
+            params![individual_id.to_string(), head as i64],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64)),
+        )
+        .optional()
+        .map_err(backend)?
+        .ok_or_else(|| C0Error::CorruptRow(format!("head points at missing activation {head}")))?;
+    let proposal_id: C0ProposalId = crossed
+        .0
+        .parse()
+        .map_err(|_| C0Error::CorruptRow("bad proposal id in activation".to_owned()))?;
+
+    tx.execute(
+        "UPDATE c0_activations SET rolled_back_at = ?3 \
+             WHERE individual_id = ?1 AND activation_seq = ?2",
+        params![individual_id.to_string(), head as i64, now.unix_millis()],
+    )
+    .map_err(backend)?;
+    tx.execute(
+        "UPDATE c0_head SET activation_seq = ?2, updated_at = ?3 WHERE individual_id = ?1",
+        params![
+            individual_id.to_string(),
+            crossed.1 as i64,
+            now.unix_millis()
+        ],
+    )
+    .map_err(backend)?;
+    Ok(RollbackOutcome {
+        rolled_back_seq: head,
+        restored_seq: crossed.1,
+        proposal_id,
+    })
+}
+
+/// Re-read the head after a narration append: a trigger on the evidence
+/// insert must not leave a narrated head that differs from the one written.
+fn expect_head(tx: &Connection, individual_id: IndividualId, seq: u64) -> Result<(), C0Error> {
+    let stored: Option<i64> = tx
+        .query_row(
+            "SELECT activation_seq FROM c0_head WHERE individual_id = ?1",
+            params![individual_id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(backend)?;
+    if stored.unwrap_or(0) != seq as i64 {
+        return Err(C0Error::CorruptRow(
+            "head moved under its narration".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 impl SqliteStore {
     /// Insert a pending proposal. Returns `false` when the id already exists —
     /// intake is idempotent, and a duplicate submission is not a new proposal.
     pub fn c0_insert_proposal(&self, proposal: &ImprovementProposal) -> Result<bool, C0Error> {
-        let evidence_refs = serde_json::to_string(&proposal.evidence_refs)
-            .map_err(|e| C0Error::CorruptRow(e.to_string()))?;
         let conn = self.conn().map_err(|e| C0Error::Backend {
             message: e.to_string(),
         })?;
-        let changed = conn
-            .execute(
-                &format!(
-                    "INSERT OR IGNORE INTO c0_proposals ({PROPOSAL_COLUMNS}) \
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)"
-                ),
-                params![
-                    proposal.proposal_id.to_string(),
-                    proposal.individual_id.to_string(),
-                    proposal.kind.as_str(),
-                    proposal.target,
-                    proposal.target_key,
-                    proposal.old_value.as_ref().map(|v| v.to_string()),
-                    proposal.proposed_value.to_string(),
-                    evidence_refs,
-                    proposal.expected_effect,
-                    proposal.status.as_str(),
-                    proposal.rejection_reason,
-                    proposal.reflection_id.map(|id| id.to_string()),
-                    proposal.created_at.unix_millis(),
-                    proposal.decided_at.map(|t| t.unix_millis()),
-                    proposal.activation_seq.map(|s| s as i64),
-                    proposal.risk,
-                    proposal.confidence,
-                ],
-            )
-            .map_err(backend)?;
-        Ok(changed > 0)
+        insert_proposal_in(&conn, proposal)
     }
 
     pub fn c0_proposal(
@@ -497,131 +731,77 @@ impl SqliteStore {
             message: e.to_string(),
         })?;
         let tx = conn.transaction().map_err(backend)?;
-
-        let proposal = tx
-            .query_row(
-                &format!("SELECT {PROPOSAL_COLUMNS} FROM c0_proposals WHERE proposal_id = ?1"),
-                params![proposal_id.to_string()],
-                proposal_from_row,
-            )
-            .optional()
-            .map_err(backend)?
-            .ok_or(C0Error::ProposalNotFound(proposal_id))?;
-        if proposal.status != ProposalStatus::Pending {
-            return Err(C0Error::ProposalNotPending(proposal_id));
-        }
-
-        let head: u64 = tx
-            .query_row(
-                "SELECT activation_seq FROM c0_head WHERE individual_id = ?1",
-                params![proposal.individual_id.to_string()],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()
-            .map_err(backend)?
-            .unwrap_or(0) as u64;
-
-        let view_at_head = verified_view_at(&tx, proposal.individual_id, head)?;
-        validate_self_activation(&tx, &proposal, &view_at_head)?;
-
-        let next_view = apply_proposal(&view_at_head, &proposal);
-        // Sequence numbers keep counting even across a rollback: a branch
-        // reuses no number, so every activation stays uniquely addressable.
-        let next_seq: u64 = tx
-            .query_row(
-                "SELECT COALESCE(MAX(activation_seq), 0) + 1 FROM c0_activations \
-                 WHERE individual_id = ?1",
-                params![proposal.individual_id.to_string()],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(backend)? as u64;
-
-        let activation = Activation {
-            activation_seq: next_seq,
-            activation_id,
-            individual_id: proposal.individual_id,
-            proposal_id,
-            predecessor_seq: head,
-            view: next_view,
-            rolled_back_at: None,
-            created_at: now,
-        };
-        let params_json = serde_json::to_string(&activation.view.params)
-            .map_err(|e| C0Error::CorruptRow(e.to_string()))?;
-        let self_json = serde_json::to_string(&activation.view.self_model)
-            .map_err(|e| C0Error::CorruptRow(e.to_string()))?;
-        tx.execute(
-            &format!(
-                "INSERT INTO c0_activations ({ACTIVATION_COLUMNS}) \
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,NULL,?8)"
-            ),
-            params![
-                next_seq as i64,
-                activation_id.to_string(),
-                proposal.individual_id.to_string(),
-                proposal_id.to_string(),
-                head as i64,
-                params_json,
-                self_json,
-                now.unix_millis(),
-            ],
-        )
-        .map_err(backend)?;
-
-        tx.execute(
-            "UPDATE c0_proposals SET status = 'accepted', decided_at = ?2, activation_seq = ?3 \
-             WHERE proposal_id = ?1",
-            params![proposal_id.to_string(), now.unix_millis(), next_seq as i64],
-        )
-        .map_err(backend)?;
-
-        // A pending proposal on the same target is superseded: the question
-        // it asked has been answered by a newer accepted one.
-        tx.execute(
-            "UPDATE c0_proposals SET status = 'superseded', decided_at = ?3 \
-             WHERE individual_id = ?1 AND target = ?2 AND status = 'pending' \
-             AND proposal_id != ?4 \
-             AND (target_key IS ?5 OR target_key = ?5)",
-            params![
-                proposal.individual_id.to_string(),
-                proposal.target,
-                now.unix_millis(),
-                proposal_id.to_string(),
-                proposal.target_key,
-            ],
-        )
-        .map_err(backend)?;
-
-        tx.execute(
-            "INSERT INTO c0_head (individual_id, activation_seq, updated_at) \
-             VALUES (?1, ?2, ?3) \
-             ON CONFLICT(individual_id) DO UPDATE SET activation_seq = ?2, updated_at = ?3",
-            params![
-                proposal.individual_id.to_string(),
-                next_seq as i64,
-                now.unix_millis()
-            ],
-        )
-        .map_err(backend)?;
-
-        // Read back inside the transaction. A trigger or a failed projection
-        // must not acknowledge a successful write or commit a moved head.
-        let stored_head: i64 = tx
-            .query_row(
-                "SELECT activation_seq FROM c0_head WHERE individual_id = ?1",
-                params![proposal.individual_id.to_string()],
-                |row| row.get(0),
-            )
-            .map_err(backend)?;
-        if stored_head != next_seq as i64
-            || verified_view_at(&tx, proposal.individual_id, next_seq)? != activation.view
-        {
-            return Err(C0Error::CorruptRow(
-                "activation readback mismatch".to_owned(),
-            ));
-        }
+        let activation = apply_activation_in(&tx, proposal_id, activation_id, now)?;
         tx.commit().map_err(backend)?;
         Ok(activation)
+    }
+
+    /// [`Self::c0_apply_activation`] with its canonical narration in the same
+    /// transaction. `narration` builds the record from the activation it
+    /// narrates; the record goes through every append-time check. Either the
+    /// head moves *and* the narration lands, or neither does — a failed
+    /// narration leaves the proposal pending, so a retry applies it afresh.
+    pub fn c0_apply_activation_narrated(
+        &self,
+        proposal_id: C0ProposalId,
+        activation_id: C0ActivationId,
+        now: UtcTimestamp,
+        narration: impl FnOnce(&Activation) -> NewEvidence,
+    ) -> Result<(Activation, EvidenceRecord), C0NarratedError> {
+        let mut conn = self.conn().map_err(|e| C0Error::Backend {
+            message: e.to_string(),
+        })?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(backend)?;
+        let activation = apply_activation_in(&tx, proposal_id, activation_id, now)?;
+        let narrated = append_in(&tx, narration(&activation), self.clock().now_utc())?;
+        expect_head(&tx, activation.individual_id, activation.activation_seq)?;
+        tx.commit().map_err(backend)?;
+        Ok((activation, narrated))
+    }
+
+    /// Insert a pending proposal and its canonical intake narration in one
+    /// transaction. `Ok(None)` when the id already exists: nothing is
+    /// inserted and nothing is narrated, as for [`Self::c0_insert_proposal`].
+    pub fn c0_insert_proposal_narrated(
+        &self,
+        proposal: &ImprovementProposal,
+        narration: impl FnOnce() -> NewEvidence,
+    ) -> Result<Option<EvidenceRecord>, C0NarratedError> {
+        let mut conn = self.conn().map_err(|e| C0Error::Backend {
+            message: e.to_string(),
+        })?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(backend)?;
+        if !insert_proposal_in(&tx, proposal)? {
+            return Ok(None);
+        }
+        let narrated = append_in(&tx, narration(), self.clock().now_utc())?;
+        tx.commit().map_err(backend)?;
+        Ok(Some(narrated))
+    }
+
+    /// [`Self::c0_rollback`] with its canonical narration in the same
+    /// transaction; see [`Self::c0_apply_activation_narrated`].
+    pub fn c0_rollback_narrated(
+        &self,
+        individual_id: IndividualId,
+        now: UtcTimestamp,
+        narration: impl FnOnce(&RollbackOutcome) -> NewEvidence,
+    ) -> Result<(RollbackOutcome, EvidenceRecord), C0NarratedError> {
+        let mut conn = self.conn().map_err(|e| C0Error::Backend {
+            message: e.to_string(),
+        })?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(backend)?;
+        let outcome = rollback_in(&tx, individual_id, now)?;
+        let narrated = append_in(&tx, narration(&outcome), self.clock().now_utc())?;
+        expect_head(&tx, individual_id, outcome.restored_seq)?;
+        tx.commit().map_err(backend)?;
+        Ok((outcome, narrated))
     }
 
     /// Move the head back over the most recent activation. The crossed
@@ -635,58 +815,9 @@ impl SqliteStore {
             message: e.to_string(),
         })?;
         let tx = conn.transaction().map_err(backend)?;
-
-        let head: u64 = tx
-            .query_row(
-                "SELECT activation_seq FROM c0_head WHERE individual_id = ?1",
-                params![individual_id.to_string()],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()
-            .map_err(backend)?
-            .unwrap_or(0) as u64;
-        if head == 0 {
-            return Err(C0Error::NothingToRollBack);
-        }
-        let crossed = tx
-            .query_row(
-                "SELECT proposal_id, predecessor_seq FROM c0_activations \
-                 WHERE individual_id = ?1 AND activation_seq = ?2",
-                params![individual_id.to_string(), head as i64],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64)),
-            )
-            .optional()
-            .map_err(backend)?
-            .ok_or_else(|| {
-                C0Error::CorruptRow(format!("head points at missing activation {head}"))
-            })?;
-        let proposal_id: C0ProposalId = crossed
-            .0
-            .parse()
-            .map_err(|_| C0Error::CorruptRow("bad proposal id in activation".to_owned()))?;
-
-        tx.execute(
-            "UPDATE c0_activations SET rolled_back_at = ?3 \
-             WHERE individual_id = ?1 AND activation_seq = ?2",
-            params![individual_id.to_string(), head as i64, now.unix_millis()],
-        )
-        .map_err(backend)?;
-        tx.execute(
-            "UPDATE c0_head SET activation_seq = ?2, updated_at = ?3 WHERE individual_id = ?1",
-            params![
-                individual_id.to_string(),
-                crossed.1 as i64,
-                now.unix_millis()
-            ],
-        )
-        .map_err(backend)?;
+        let outcome = rollback_in(&tx, individual_id, now)?;
         tx.commit().map_err(backend)?;
-
-        Ok(RollbackOutcome {
-            rolled_back_seq: head,
-            restored_seq: crossed.1,
-            proposal_id,
-        })
+        Ok(outcome)
     }
 
     pub fn c0_record_evaluation(&self, evaluation: &C0Evaluation) -> Result<(), C0Error> {

@@ -12,11 +12,12 @@
 受信（POST /v1/intercom または relay ポーリング）
   → envelope 検証 + seen による冪等受理
   → inbound キュー → dialogue::talk(subject="sister-<from>") で通常の対話ターンとして個体へ届く
+  → ターンが決着（answered / 5xx の1回再キュー / turn_failed）した書き込みで inbound から外す
 ```
 
 ## 不変条件
 
-1. 受理済みの手紙は再起動を生き残る。inbound・outbox・conversations・seen・relay cursor は `current_state/intercom.json`（atomic write）に保持し、遷移ごとに `conversations/intercom` へ `append_sync` でジャーナルする。
+1. 受理済みの手紙は再起動を生き残る。処理中の手紙も含む。inbound・outbox・conversations・seen・relay cursor・in_flight は `current_state/intercom.json`（atomic write）に保持し、遷移ごとに `conversations/intercom` へ `append_sync` でジャーナルする。受信の処理は at-least-once（下の「受信処理と再起動」）。
 2. 姉妹の発話は個体の通常 intake を通る —— memory gate・writer epoch・タスクボードを迂回しない。件名は `sister-<from>` で、発言者は姉妹個体と明記される（Peer の言葉が self の記録と混ざらない）。
 3. 返信は個体の能動行為（`peer_say`）。唯一の例外は operator が `intercom open <peer> <turns>` で開いた会話の自動返信モード —— `auto_left` が envelope と共に減り、受信側は自ノードの `auto_reply_turns` を超えて委譲されず、`max_hops` が無人連鎖の絶対上限。個体は `[end]` 行で会話を閉じられる。
 4. 直接配送と relay 経由の二重到着は無害（envelope id で dedup）。`accepted:false` は恒久拒否（hop 超過・宛先違い・個体不在）で dead-letter し、輸送失敗だけが再送対象。
@@ -38,6 +39,33 @@ auto_left: 0                 # 送信側が残す自動返信枠（受信側は�
 auto: false                  # 自動返信由来か
 retried: false               # turn 失敗で一度だけ再キュー
 ```
+
+## 受信処理と再起動
+
+inbound worker は先頭の envelope を `inbound` に**残したまま**、`in_flight: {id, starts}` を保存してから対話ターンを始める。
+envelope を `inbound` から外すのは、ターンが決着した時の書き込みだけ。
+
+- answered: 自動返信の転送（outbox への enqueue）・会話の close・`inbound` からの除去・`in_flight` の消去を、同じ1回の atomic write で保存する。
+  「返信は積まれたのに手紙はまだ未処理」というディスク像は無いので、決着後に落ちても返信が二重に積まれることはない。
+- 5xx（1回目）: `retried: true` を付けて末尾へ積み直す（従来どおり）。
+- それ以外の失敗: 除去してから `turn_failed` をジャーナルする（従来どおり）。
+
+ターンの途中でプロセスが落ちると、envelope は `inbound` の先頭に残り、再起動後の worker がもう一度処理する。
+`in_flight.id` が先頭の envelope と一致すれば `starts` を1増やす。
+`starts` が `MAX_TURN_STARTS`（3）を超えた envelope はターンを始めず、ジャーナルに `{"kind":"dead","direction":"inbound", …, "attempts", "error", "envelope"}` を書いてから除去する。
+手紙の本文はこの記録にだけ残る。`seen` には残るので、送信側の再送は従来どおり `dedup` になる（毒になる手紙で再起動を繰り返さない）。
+
+2回目以降の開始では、ジャーナルに `redelivered`（`starts` 付き）を書き、個体へ渡す本文の先頭に「前回の処理が途中で中断したため、もう一度届けている」旨を添える。
+outbox にこの手紙への返信（`in_reply_to` が手紙の id）がすでに在れば、その id も添える。
+
+`/status` の `intercom.inbound_queued` は処理中の1件を含み、`intercom.inbound_in_flight` が処理中の id と `starts` を示す。
+
+### 残る制約
+
+- 再処理は at-least-once で、runtime 側は冪等ではない。1回目のターンが入力証拠を書いた後で落ちると、同じ手紙の入力が runtime に2回記録される（1回目のターンは writeback marker が unresolved のまま残る）。2回目の入力には上の中断の注記が付くので、記録の上では再配達と区別できる。runtime 側で envelope id によって冪等にするのは未実装。
+- `peer_say` による返信は個体の能動行為で、ターン中に outbox へ直接積まれる。その後ターンが決着する前に落ちると、再処理のターンでもう一度 `peer_say` が呼ばれうる。注記で既存の返信 id を個体に知らせるが、重複送信を機械的には防がない。自動返信（auto-forward）は決着の書き込みと同時にしか積まれないので重複しない。
+- answered の保存とジャーナル追記の間で落ちると、状態は決着済みでもジャーナルに `answered` が無い。
+- 古いバイナリは `in_flight` を知らない（serde は未知の項目を無視する）。新しいバイナリが書いた処理中のファイルを古いバイナリが読むと、`inbound` の先頭に残った手紙を従来の方式で処理する（失われない）が、開始回数の上限は効かず、保存時に `in_flight` は消える。新しいバイナリは `in_flight` の無い古いファイルをそのまま読む。修正前のバイナリがすでに失った手紙（`inbound` から消え `seen` にだけ在る）は復元できない。
 
 ## 設定
 

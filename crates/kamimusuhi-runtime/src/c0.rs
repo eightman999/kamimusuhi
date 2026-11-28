@@ -32,6 +32,7 @@ use kamimusuhi_core::mutation::{
 use kamimusuhi_core::persona::ProposalDraft;
 use kamimusuhi_core::trace::{TraceCorrelation, TraceEventKind};
 use kamimusuhi_store_sqlite::SqliteStore;
+use kamimusuhi_store_sqlite::c0::C0NarratedError;
 use serde::Serialize;
 
 use crate::{Runtime, RuntimeError};
@@ -398,9 +399,43 @@ pub fn narrate(
     source_id: &str,
     links: &[(EvidenceId, kamimusuhi_core::evidence::EvidenceRelation)],
 ) -> Result<EvidenceId, RuntimeError> {
+    let record = narration(
+        runtime,
+        session_id,
+        turn_id,
+        kind,
+        origin_class,
+        payload,
+        source_id,
+    );
+    let evidence_id = record.evidence_id;
+    let stored = runtime.store().append(record)?;
+    for (to, relation) in links {
+        runtime.store().link(NewEvidenceLink {
+            from_evidence_id: evidence_id,
+            to_evidence_id: *to,
+            relation: *relation,
+        })?;
+    }
+    trace_narration(runtime, &stored);
+    Ok(evidence_id)
+}
+
+/// The record [`narrate`] appends, built without writing it — so a lane
+/// write can append it inside its own transaction (`*_narrated` store
+/// methods) and the transition and its narration commit together.
+fn narration(
+    runtime: &Runtime,
+    session_id: Option<SessionId>,
+    turn_id: Option<TurnId>,
+    kind: EvidenceKind,
+    origin_class: OriginClass,
+    payload: serde_json::Value,
+    source_id: &str,
+) -> NewEvidence {
     let evidence_id = EvidenceId::generate(runtime.ids().as_ref());
     let digest = kamimusuhi_core::digest::json_digest(&payload);
-    runtime.store().append(NewEvidence {
+    NewEvidence {
         evidence_id,
         individual_id: runtime.individual_id(),
         session_id,
@@ -411,26 +446,31 @@ pub fn narrate(
         source: EvidenceSource {
             source_id: Some(source_id.to_owned()),
             source_sequence: None,
-            content_digest: Some(digest.clone()),
+            content_digest: Some(digest),
         },
         retention_class: RetentionClass::Standard,
-    })?;
-    for (to, relation) in links {
-        runtime.store().link(NewEvidenceLink {
-            from_evidence_id: evidence_id,
-            to_evidence_id: *to,
-            relation: *relation,
-        })?;
     }
+}
+
+/// The trace event that follows a stored narration.
+fn trace_narration(runtime: &Runtime, stored: &EvidenceRecord) {
     runtime.trace().record_with(
         TraceEventKind::EvidenceRecorded,
         TraceCorrelation {
-            evidence_id: Some(evidence_id),
+            evidence_id: Some(stored.evidence_id),
             ..TraceCorrelation::default()
         },
-        serde_json::json!({"kind": kind, "content_digest": digest}),
+        serde_json::json!({"kind": stored.kind, "content_digest": stored.source.content_digest}),
     );
-    Ok(evidence_id)
+}
+
+impl From<C0NarratedError> for RuntimeError {
+    fn from(e: C0NarratedError) -> Self {
+        match e {
+            C0NarratedError::Lane(e) => e.into(),
+            C0NarratedError::Narration(e) => e.into(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -477,29 +517,33 @@ pub fn propose_param(
         decided_at: None,
         activation_seq: None,
     };
-    if !runtime.store().c0_insert_proposal(&proposal)? {
+    // The proposal row and its intake narration commit together: a failed
+    // narration leaves no pending proposal the canonical record never saw.
+    let narrated = runtime.store().c0_insert_proposal_narrated(&proposal, || {
+        narration(
+            runtime,
+            None,
+            None,
+            EvidenceKind::SystemEvent,
+            OriginClass::Inferred,
+            serde_json::json!({
+                "event": "improvement_proposal",
+                "proposal_id": proposal.proposal_id,
+                "kind": proposal.kind,
+                "target": proposal.target,
+                "proposed_value": proposal.proposed_value,
+                "via": "self-improve-tool",
+            }),
+            "self-improve-tool",
+        )
+    })?;
+    let Some(stored) = narrated else {
         return Err(RuntimeError::Usage(format!(
             "proposal {} was already recorded",
             proposal.proposal_id
         )));
-    }
-    narrate(
-        runtime,
-        None,
-        None,
-        EvidenceKind::SystemEvent,
-        OriginClass::Inferred,
-        serde_json::json!({
-            "event": "improvement_proposal",
-            "proposal_id": proposal.proposal_id,
-            "kind": proposal.kind,
-            "target": proposal.target,
-            "proposed_value": proposal.proposed_value,
-            "via": "self-improve-tool",
-        }),
-        "self-improve-tool",
-        &[],
-    )?;
+    };
+    trace_narration(runtime, &stored);
     Ok(proposal)
 }
 
@@ -544,25 +588,31 @@ pub fn activate(
     turn_id: Option<TurnId>,
 ) -> Result<Activation, RuntimeError> {
     let activation_id = C0ActivationId::generate(runtime.ids().as_ref());
-    let activation =
-        runtime
-            .store()
-            .c0_apply_activation(proposal_id, activation_id, runtime.now())?;
-    narrate(
-        runtime,
-        session_id,
-        turn_id,
-        EvidenceKind::SystemEvent,
-        OriginClass::Inferred,
-        serde_json::json!({
-            "event": "c0_activation_applied",
-            "activation_seq": activation.activation_seq,
-            "activation_id": activation_id,
-            "proposal_id": proposal_id,
-        }),
-        "c0-derived-lane",
-        &[],
+    // The head move and its canonical narration are one transaction: a
+    // failed narration leaves the proposal pending and the head unmoved, so
+    // a retry applies it with both records.
+    let (activation, stored) = runtime.store().c0_apply_activation_narrated(
+        proposal_id,
+        activation_id,
+        runtime.now(),
+        |activation| {
+            narration(
+                runtime,
+                session_id,
+                turn_id,
+                EvidenceKind::SystemEvent,
+                OriginClass::Inferred,
+                serde_json::json!({
+                    "event": "c0_activation_applied",
+                    "activation_seq": activation.activation_seq,
+                    "activation_id": activation_id,
+                    "proposal_id": proposal_id,
+                }),
+                "c0-derived-lane",
+            )
+        },
     )?;
+    trace_narration(runtime, &stored);
     runtime.trace().record_with(
         TraceEventKind::MutationDecided,
         TraceCorrelation::default(),
@@ -582,23 +632,27 @@ pub fn rollback(
     session_id: Option<SessionId>,
     turn_id: Option<TurnId>,
 ) -> Result<kamimusuhi_store_sqlite::c0::RollbackOutcome, RuntimeError> {
-    let outcome = runtime
-        .store()
-        .c0_rollback(runtime.individual_id(), runtime.now())?;
-    narrate(
-        runtime,
-        session_id,
-        turn_id,
-        EvidenceKind::SystemEvent,
-        OriginClass::Observed,
-        serde_json::json!({
-            "event": "c0_rollback",
-            "rolled_back_seq": outcome.rolled_back_seq,
-            "restored_seq": outcome.restored_seq,
-            "proposal_id": outcome.proposal_id,
-        }),
-        "c0-derived-lane",
-        &[],
+    // Same transaction as the head move; see `activate`.
+    let (outcome, stored) = runtime.store().c0_rollback_narrated(
+        runtime.individual_id(),
+        runtime.now(),
+        |outcome| {
+            narration(
+                runtime,
+                session_id,
+                turn_id,
+                EvidenceKind::SystemEvent,
+                OriginClass::Observed,
+                serde_json::json!({
+                    "event": "c0_rollback",
+                    "rolled_back_seq": outcome.rolled_back_seq,
+                    "restored_seq": outcome.restored_seq,
+                    "proposal_id": outcome.proposal_id,
+                }),
+                "c0-derived-lane",
+            )
+        },
     )?;
+    trace_narration(runtime, &stored);
     Ok(outcome)
 }
