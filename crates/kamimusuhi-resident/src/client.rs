@@ -260,14 +260,74 @@ fn pending(url: &str, token: Option<&str>) -> Vec<Value> {
         .collect()
 }
 
+/// Optional Cloudflare Access Service Token headers, read from
+/// `$CF_ACCESS_CLIENT_ID` / `$CF_ACCESS_CLIENT_SECRET` or
+/// `~/.config/kamimusuhi/cf_access` (`KEY=VALUE` lines).
+pub fn cf_access_headers() -> Vec<Header> {
+    let env_pair = (
+        std::env::var("CF_ACCESS_CLIENT_ID")
+            .ok()
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty()),
+        std::env::var("CF_ACCESS_CLIENT_SECRET")
+            .ok()
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty()),
+    );
+    let (id, secret) = match env_pair {
+        (Some(id), Some(secret)) => (Some(id), Some(secret)),
+        _ => {
+            let mut file_id = None;
+            let mut file_secret = None;
+            if let Some(home) = std::env::var_os("HOME") {
+                let path = std::path::Path::new(&home).join(".config/kamimusuhi/cf_access");
+                if let Ok(text) = std::fs::read_to_string(path) {
+                    for line in text.lines() {
+                        let line = line.trim();
+                        if line.is_empty() || line.starts_with('#') {
+                            continue;
+                        }
+                        if let Some(v) = line.strip_prefix("CF_ACCESS_CLIENT_ID=") {
+                            let v = v.trim();
+                            if !v.is_empty() {
+                                file_id = Some(v.to_owned());
+                            }
+                        } else if let Some(v) = line.strip_prefix("CF_ACCESS_CLIENT_SECRET=") {
+                            let v = v.trim();
+                            if !v.is_empty() {
+                                file_secret = Some(v.to_owned());
+                            }
+                        }
+                    }
+                }
+            }
+            (file_id, file_secret)
+        }
+    };
+    match (id, secret) {
+        (Some(id), Some(secret)) => vec![
+            Header {
+                name: "CF-Access-Client-Id".to_owned(),
+                value: id,
+            },
+            Header {
+                name: "CF-Access-Client-Secret".to_owned(),
+                value: secret,
+            },
+        ],
+        _ => Vec::new(),
+    }
+}
+
 pub fn auth(token: Option<&str>) -> Vec<Header> {
-    token
-        .map(|t| Header {
+    let mut headers = cf_access_headers();
+    if let Some(t) = token {
+        headers.push(Header {
             name: "Authorization".to_owned(),
             value: format!("Bearer {t}"),
-        })
-        .into_iter()
-        .collect()
+        });
+    }
+    headers
 }
 
 /// First candidate whose `/health` answers.
@@ -278,9 +338,10 @@ pub fn discover(candidates: &[String]) -> Result<String, String> {
                 .to_owned(),
         );
     }
+    let headers = cf_access_headers();
     let mut errors = Vec::new();
     for url in candidates {
-        match get_json(url, "/health", &[], Duration::from_secs(3)) {
+        match get_json(url, "/health", &headers, Duration::from_secs(3)) {
             Ok(_) => return Ok(url.clone()),
             Err(e) => errors.push(format!("{url}: {e}")),
         }

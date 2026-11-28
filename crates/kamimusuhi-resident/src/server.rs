@@ -175,12 +175,27 @@ fn json_response(stream: TcpStream, status: u16, value: &Value, extra: &[(&str, 
     let _ = respond(stream, status, "application/json", &body, extra);
 }
 
+/// True when a request arrived via a local reverse proxy or tunnel
+/// (e.g. `cloudflared`, nginx, Caddy). Even though the TCP peer is loopback,
+/// the caller is remote and must present the bearer token.
+fn is_proxied_request(request: &Request) -> bool {
+    [
+        "cf-connecting-ip",
+        "cf-ray",
+        "x-forwarded-for",
+        "x-real-ip",
+        "forwarded",
+    ]
+    .iter()
+    .any(|name| request.header(name).is_some())
+}
+
 fn authorized(shared: &Shared, stream: &TcpStream, request: &Request) -> bool {
-    if stream.peer_addr().is_ok_and(|a| a.ip().is_loopback()) {
+    if stream.peer_addr().is_ok_and(|a| a.ip().is_loopback()) && !is_proxied_request(request) {
         return true;
     }
     let Some(token) = &shared.token else {
-        // No token configured: only loopback may use privileged endpoints.
+        // No token configured: only direct loopback may use privileged endpoints.
         return false;
     };
     request
