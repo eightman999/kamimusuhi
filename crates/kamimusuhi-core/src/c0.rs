@@ -370,6 +370,13 @@ pub struct RetrievalParams {
     /// Records last served within this many seconds seed the link/tag frames
     /// as "hot" with a freshness-scaled strength. 0 disables hot seeds.
     pub recall_hot_window_secs: u64,
+    /// How much a record's use count stretches its hot-seed lifetime. 0 keeps
+    /// the linear window (1.0 -> 0.5, then nothing). Above 0 a hot seed's
+    /// strength is a heat `0.05^(age / (window * m))` with
+    /// `m = 1 + gain * ln(min(use_count, 20))`: one use cools out exactly at
+    /// the window, frequent use lasts longer, and the stretch is capped at
+    /// `1 + gain * ln 20` so no record stays hot forever.
+    pub recall_hot_use_gain: f64,
     /// Per-pointer score bonus for a traversed record whose in-degree is at
     /// least 2 (FIO's "knot": distant memories surface only when several
     /// paths point at them). Effective multiplier is
@@ -402,6 +409,7 @@ impl Default for RetrievalParams {
             recall_hop_decay: 0.45,
             recall_declared_budget: 6,
             recall_hot_window_secs: 72 * 60 * 60,
+            recall_hot_use_gain: 0.0,
             recall_knot_bonus: 0.1,
             recall_reverse_decay: 0.20,
             self_notes_max: 5,
@@ -443,6 +451,7 @@ const PARAM_BOUNDS: &[(&str, f64, f64)] = &[
     ("retrieval.recall_hop_decay", 0.0, 1.0),
     ("retrieval.recall_declared_budget", 0.0, 16.0),
     ("retrieval.recall_hot_window_secs", 0.0, 31_536_000.0),
+    ("retrieval.recall_hot_use_gain", 0.0, 2.0),
     ("retrieval.recall_knot_bonus", 0.0, 1.0),
     ("retrieval.recall_reverse_decay", 0.0, 1.0),
     ("retrieval.self_notes_max", 0.0, 16.0),
@@ -473,6 +482,7 @@ fn param_is_integer(key: &str) -> bool {
         key,
         "retrieval.min_score"
             | "retrieval.recall_hop_decay"
+            | "retrieval.recall_hot_use_gain"
             | "retrieval.recall_knot_bonus"
             | "retrieval.recall_reverse_decay"
     )
@@ -492,6 +502,7 @@ impl OperativeParams {
             "retrieval.recall_hop_decay" => self.retrieval.recall_hop_decay.into(),
             "retrieval.recall_declared_budget" => self.retrieval.recall_declared_budget.into(),
             "retrieval.recall_hot_window_secs" => self.retrieval.recall_hot_window_secs.into(),
+            "retrieval.recall_hot_use_gain" => self.retrieval.recall_hot_use_gain.into(),
             "retrieval.recall_knot_bonus" => self.retrieval.recall_knot_bonus.into(),
             "retrieval.recall_reverse_decay" => self.retrieval.recall_reverse_decay.into(),
             "retrieval.self_notes_max" => self.retrieval.self_notes_max.into(),
@@ -529,6 +540,7 @@ impl OperativeParams {
             "retrieval.recall_hot_window_secs" => {
                 self.retrieval.recall_hot_window_secs = number as u64;
             }
+            "retrieval.recall_hot_use_gain" => self.retrieval.recall_hot_use_gain = number,
             "retrieval.recall_knot_bonus" => self.retrieval.recall_knot_bonus = number,
             "retrieval.recall_reverse_decay" => self.retrieval.recall_reverse_decay = number,
             "retrieval.self_notes_max" => self.retrieval.self_notes_max = number as usize,
@@ -1244,6 +1256,47 @@ mod tests {
                 .unwrap_err()
                 .reason
                 .contains("outside")
+        );
+    }
+
+    #[test]
+    fn recall_hot_use_gain_is_a_bounded_float_in_the_closed_vocabulary() {
+        assert!(param_keys().any(|key| key == "retrieval.recall_hot_use_gain"));
+        let mut params = OperativeParams::default();
+        // Off by default: the linear hot window is unchanged.
+        assert_eq!(
+            params.get("retrieval.recall_hot_use_gain"),
+            Some(serde_json::json!(0.0))
+        );
+        for value in [0.0, 0.75, 2.0] {
+            assert_eq!(
+                OperativeParams::check("retrieval.recall_hot_use_gain", &serde_json::json!(value))
+                    .expect("in-bounds"),
+                value
+            );
+        }
+        for value in [-0.01, 2.01] {
+            assert!(matches!(
+                OperativeParams::check("retrieval.recall_hot_use_gain", &serde_json::json!(value)),
+                Err(C0Error::MalformedProposal { .. })
+            ));
+        }
+        assert!(matches!(
+            OperativeParams::check("retrieval.recall_hot_use_gainz", &serde_json::json!(0.5)),
+            Err(C0Error::MalformedProposal { .. })
+        ));
+        params
+            .set("retrieval.recall_hot_use_gain", serde_json::json!(0.5))
+            .expect("fractions are valid for a float knob");
+        assert_eq!(params.retrieval.recall_hot_use_gain, 0.5);
+        assert_eq!(
+            params.get("retrieval.recall_hot_use_gain"),
+            Some(serde_json::json!(0.5))
+        );
+        assert!(
+            params
+                .set("retrieval.recall_hot_use_gainz", serde_json::json!(0.5))
+                .is_err()
         );
     }
 
