@@ -327,7 +327,10 @@ impl EvidenceLookup for SqliteStore {
     }
 }
 
-fn append_in(
+/// Append one record on an open connection (or transaction) with every
+/// append-time check. Shared with the C0 lane so a narrated transition and
+/// its canonical record commit together.
+pub(crate) fn append_in(
     conn: &Connection,
     record: NewEvidence,
     now: UtcTimestamp,
